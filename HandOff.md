@@ -1,6 +1,6 @@
 # CraftWave 工作交接（HandOff）
 
-> 生成于 2026-10-28（同日二次更新）。14 号票合并后追加两项用户决策优化：废除 keyring（Key 明文存 config.json + 0600）与 dev 模式原始错误输出（技术设计文档 v2.5）。
+> 生成于 2026-10-28（同日三次更新）。追加：设置界面重写（照抄 CodeWave + shadcn 手写基件，`29d4f90`）与 GLM Coding Plan 端点排障（用户配置修复）。
 > 规则：本文件只做索引与状态快照，细节一律引用票文件/文档/提交，不复述。
 
 ## 一、必读顺序（新会话开场）
@@ -10,13 +10,15 @@
 3. `docs/技术设计文档.md`——开发直接依据（P0 字段级）；附录 C 为未决问题清单。
 4. 票目录 `docs/specs/m1-mvp/tasks/`——一票一文件，Answer 节是各票结论。
 
-## 二、当前状态快照（main = `35a7dd8`，本地领先 origin 4 个提交未推送）
+## 二、当前状态快照（main = `acda953`，本地领先 origin 6 个提交未推送）
 
 - **地图进度**：01–14 号票全部关闭。四张 spike（S1/S2+S3/S4/S5/S6）+ 三张实现切片（storage/tools/providers）+ 核心链路（13 号）+ 工具系统接线（14 号）均已合并进 main。
-- **测试基线**：Rust 233 单测/集成（lib 209 + 集成 24，另 1 例真钥匙串冒烟 `#[ignore]`）；前端 vitest 75 例；biome/tsc 全绿。测试方法命名已全仓英文化（纪律见五）。
+- **测试基线**：Rust 233 单测/集成（lib 209 + 集成 24，另 1 例真钥匙串冒烟 `#[ignore]`）；前端 vitest 81 例；biome/tsc 全绿。测试方法命名已全仓英文化（纪律见五）。
 - **已通的能力**：在 13 号（backend RunLoop + 帧渲染 + 取消全链）之上，14 号新增——注册表 8 工具（command/plan/ask 接入，suggest 为 run 尾后台小调用不开放模型）；审批门生产化（矩阵×围栏×计划门×签名放行，**批级预判零执行挂起** + DriveState 延续恢复 + deny 补帧 + autoConfirm 300s）；ask 协议（AskSlot/resolve_ask，挂起与问卷双路径共用）；事件面 5 键（EventSink 抽象：ask:opened/closed、plan:update、run:suggestions、tokens:update）；`approve_plan` 命令（§3.3 26c）；前端正式 toolkit（参数与 Rust ToolSpec 经 manifest `toolSpecs` 双向锁定）+ 7 卡片 + AskPanel + suggest ghost + sessionUsage 事件校正。
 - **同日追加（v2.5 用户决策）**：① **keyring 已废除**——API Key 明文存 config.json（ProviderConfig.apiKey；credentialRef/credentialCount 已删），config.json 落盘/加载统一收紧 0600，intent.json 协议移除，keyring crate 依赖删除（§9.4 改写）；② dev 模式原始错误输出：前端 DEV 条件 console（start_chat reject + runEnded error 帧）、Rust debug_assertions eprintln（send_error_ended）。另修复：lib.rs 曾漏 manage RunManager 导致 GUI start_chat 报 "state not managed"（headless 测试盲区，已补）。
 - **14 号票顺带修正两处 13 号缺陷**（测试钉死）：挂起重放重复执行（改批级预判）；跨轮桥接 callId 撞车（派生 id 加 turn 前缀）。文档修订 v2.4 六处。
+- **设置界面重写**（用户直派无票，`29d4f90`，分支 `feat/settings-ui-revamp` 已并回）：shadcn 风格基件手写移植（`ui/src/components/ui/*` 12 件，零新依赖）+ 亮暗两套设计令牌（styles.css）；设置页照抄 CodeWave 布局（左导航三组 10 页 + 操作条 + 页体 50% 居中 + 逐页脏标记 + 搜索态 + 离开三选弹框 + 页内 Esc）；**供应商页完整复刻 ProvidersPanel 交互**（860px 单弹框内供应商表单 ↔ 模型编辑器同框切换、API 格式切换同步官方端点、凭据保留/替换、校验红字按 touched/提交时机、删除确认、activeModelId 悬空兜底、纯草稿语义统一页头保存）；settings store 增 baseline/patchConfig。未接线：MCP/技能/写入后检查/工作区与智能体四页占位待票；暗色主题仅编辑落盘、全应用换肤未接线。
+- **GLM Coding Plan 500 排障**（用户配置修复，无代码改动）：用户 config.json 原配 `/api/v1` + `glm-5.3-flash[1m]`——`/api/v1` 是 Responses 协议端点、与 rig 的 Chat Completions 方言不匹配；`[1m]` 后缀无效。已改为 `https://open.bigmodel.cn/api/coding/paas/v4` + `glm-5.3-flash`（curl 实测 200）。
 
 ## 三、下一步（按地图雾区顺序）
 
@@ -38,6 +40,8 @@
 - **测试方法命名一律英文**（snake_case，2026-10-27 用户指令，全仓已统一）；断言消息保持中文。
 - **rig 非流式坑**：`Model::call`（单次补全，suggest 用）期待 `chat.completion` JSON，mock_openai 已支持流式/非流式两形态——新写后台小调用测试直接复用。
 - 新依赖：`anstream`（ANSI 清洗，Rust）、`@types/json-schema`（ui devDep，toolkit 参数类型）；`sha2` 全仓统一 **0.11**，勿回 0.10。
+- **智谱 GLM Coding Plan 端点三协议分流**（官方 quick-start）：Anthropic 协议 `…/api/anthropic`；OpenAI Chat Completions 协议 `…/api/coding/paas/v4`；OpenAI Responses 协议 `…/api/v1`。rig 的 openai_chat 方言拼 `{baseUrl}/chat/completions`，端点协议不匹配时服务端回 5xx/403 而非明确报错——排障先拿用户 Key curl 三个端点对照。
+- **前端纯浏览器黑屏是既有行为**：主入口与 `?mirror=1` 在无 Tauri IPC 的浏览器里都不渲染（React 挂载后整树卸载）；UI 视觉调试用临时 `preview.html` 入口预置 store 数据绕开 IPC（用完即删，勿提交）。
 - 测试不进源码文件：Rust 用 `*_test.rs` / `tests/`，前端用 `*.test.ts(x)`。
 - 提交：Conventional Commits 中文主题、按路径精确 add（禁 `add -A`）、禁 `--no-verify`、重构与功能分开；代码合并需用户点头，tracker/文档记账类提交按既有实践直提 main。
 
@@ -51,4 +55,4 @@
 
 ## 七、敏感信息
 
-无。API Key 走系统钥匙串（keyring trait + mock），仓库与配置文件不含明文密钥。
+API Key 明文存 `~/.craftwave/config.json`（v2.5 用户决策废除 keyring，文件权限 0600）；**仓库内不含任何密钥**。用户本机已配 GLM Coding Plan Key，排障时可用其 curl 但不得写入仓库/日志。
