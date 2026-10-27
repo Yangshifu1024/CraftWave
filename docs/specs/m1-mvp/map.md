@@ -22,11 +22,12 @@ CraftWave M1 MVP 出口准则达成：P0 需求全集实现，NFR-01/02/06/09/12
 
 - [调研：TS 契约生成方案（C-2 前置）](tasks/02-research-ts-contract-generation.md)：键面保留 manifest 契约测试，payload 类型 M1 即引入 ts-rs 12（tauri-specta 维持观望）；NFR-12 双向扫描任何路线都不可删。
 - [调研：rig 0.45 稳定版 vs 0.46-rc.1 锁版底料（C-6 前置）](tasks/03-research-rig-version-choice.md)：锁 0.45.0 为主底料，0.46.0-rc.1 仅平行验证；两版 API 面签名级一致，大断层在 0.44→0.45，从 0.45 入场即绕过。
+- [S6 最小骨架与三平台构建验证（含 C-7）](tasks/04-spike-s6-scaffold-platform.md)：骨架落地（tauri 2.12.5 × React 19 × assistant-ui 0.15.31 × Rust 1.97.0），三平台 CI 绿；C-7 兼容无需退化；CSP 收紧版实测落地；工具链组件须在 rust-toolchain.toml 显式声明。
 - [修正 AGENTS.md 构建检查段（Go 残留 → Tauri 工具链）](tasks/01-fix-agents-md-buildchain.md)：检查链换为 cargo 三件套（src-tauri/）+ 前端三项（ui/），scope 改 §2.2 九模块，CGO 与旧模板目录清空；骨架落地时若布局有出入需回头同步。
 
 ## Not yet specified
 
-- **工程骨架与 CI**——最小可运行 Tauri+React 骨架、rust-toolchain 锁定、三平台 CI 矩阵。最小可运行部分已随「S6 最小骨架与三平台构建验证（含 C-7）」立票毕业，此处仅剩骨架随开发推进的增量维护。
+- **工程骨架随开发推进的增量维护**——最小骨架与三平台 CI 已随「S6 最小骨架与三平台构建验证（含 C-7）」落地，无独立决策点；后续仅随票增量维护（依赖升级、CI 注解治理等顺手做，不单独立票）。
 - **单会话核心链路**——start_chat → rig 流 → Channel 帧 → assistant-ui 渲染、打字机、思考流、运行过程实时展示、取消 UI。细节依赖「S2+S3 rig 流事件保真与手动工具循环」「S5 取消传播全链路」的结论。
 - **工具系统与安全审批**——9 个 P0 工具（read/write/edit/list_files/grep/command/plan/ask/suggest）、权限四档、审批门、围栏 P0（高危黑名单+只读白名单）、safe_join 路径边界、结果双通道、工具卡片 UI。
 - **持久化与会话树**——append-only 分段 JSONL、原子写、树 roundtrip 工程化、分支/编辑/重生成的完整落地、崩溃恢复。细节依赖「S4 消息树持久化 roundtrip」的结论。
