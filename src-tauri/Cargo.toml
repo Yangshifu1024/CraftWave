@@ -22,6 +22,9 @@ rig = "0.45.0"
 futures = "0.3"
 # 【S1 spike 原型】mock_chat 的 sleep（time feature）；后续后端模块本就会用到
 tokio = { version = "1", default-features = false, features = ["time"] }
+# storage（§7）：段指纹/条目内容哈希（sha2）；整文件原子写 temp+fsync+rename（tempfile，§7.4）
+sha2 = "0.10"
+tempfile = "3"
 
 [dev-dependencies]
 # 本地 OpenAI 兼容 mock SSE 服务（S2 流保真 / S3 工具循环测试用，不进产物）
