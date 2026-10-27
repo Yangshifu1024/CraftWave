@@ -36,11 +36,11 @@ CraftWave M1 MVP 出口准则达成：P0 需求全集实现，NFR-01/02/06/09/12
 ## Not yet specified
 
 - **工程骨架随开发推进的增量维护**——最小骨架与三平台 CI 已随「S6 最小骨架与三平台构建验证（含 C-7）」落地，无独立决策点；后续仅随票增量维护（依赖升级、CI 注解治理等顺手做，不单独立票）。
-- **单会话核心链路**——start_chat → rig 流 → Channel 帧 → assistant-ui 渲染、打字机、思考流、运行过程实时展示、取消 UI。backend 形态（AgentRun 步进 + 序列化审批挂起）、帧协议修订（ts/callId 同源/节流语义）已随「S2+S3」钉死、镜像工具渲染路线已随「S1」钉死；剩余未知仅「S5 取消传播全链路」（08 号票，已解锁），其结论落地后即可按关键路径切成实现票。
-- **工具系统与安全审批**——9 个 P0 工具（read/write/edit/list_files/grep/command/plan/ask/suggest）、权限四档、审批门、围栏 P0（高危黑名单+只读白名单）、safe_join 路径边界、结果双通道、工具卡片 UI。工具卡片渲染路线已随「S1」钉死（§10.3），审批挂起/恢复机制已随「S2+S3」钉死。
-- **持久化与会话树**——append-only 分段 JSONL、原子写、树 roundtrip 工程化、分支/编辑/重生成的完整落地、崩溃恢复。roundtrip 与 C-4 结构已随「S4」钉死（§6.1/§6.3/§7.2 定稿），**已无不依赖未知项**，实现切片（storage 读写器 + save/load_session_tree 命令）随时可立票。
+- **单会话核心链路**——start_chat → rig 流 → Channel 帧 → assistant-ui 渲染、打字机、思考流、运行过程实时展示、取消 UI。backend 形态（AgentRun 步进 + 序列化审批挂起）已随「S2+S3」钉死、镜像工具渲染路线已随「S1」钉死、取消全链已随「S5」（08 号票）实测落地；实现票「13-impl-core-run-loop」已立，不再有未知项。
+- **工具系统与安全审批**——9 个 P0 工具（read/write/edit/list_files/grep/command/plan/ask/suggest）、权限四档、审批门、围栏 P0（高危黑名单+只读白名单）、safe_join 路径边界、结果双通道、工具卡片 UI。工具卡片渲染路线已随「S1」钉死（§10.3），审批挂起/恢复机制已随「S2+S3」钉死；文件类五工具、safe_join、围栏 P0、权限四档判定与 C-10 共用解码器已随「实现：工具系统只读/写切片」（11 号票）落地；剩余：command/plan/ask/suggest 工具、审批门与工具卡片 UI 接线（依赖核心链路）。
+- **持久化与会话树**——append-only 分段 JSONL、原子写、树 roundtrip 工程化、分支/编辑/重生成的完整落地、崩溃恢复。roundtrip 与 C-4 结构已随「S4」钉死；读写器、原子写、save/load_session_tree 与契约测试已随「实现：storage 读写器与会话树命令」（10 号票）落地；剩余：index.json、run 生命周期落盘点、分支/编辑/重生成 UI 落地、崩溃恢复，及两处合同面缺口（§3.3 注册表补 load_session_tree 行、§3.6 补 E_STORAGE_IO，随核心链路票收敛）。
 - **多会话与项目**——多 Tab 并行、临时/项目会话双形态、项目注册表、workspace 读写与路径搜索命令。
-- **Provider 管理与设置**——CW schema v2、keyring 提交协议、内置供应商预设、自定义 OpenAI 兼容端点、config 协调器、设置页结构。
+- **Provider 管理与设置**——CW schema v2、keyring 提交协议、内置供应商预设、自定义 OpenAI 兼容端点、config 协调器、设置页结构。schema v2、keyring 协议、协调器、4 个 P0 命令与设置页骨架已随「实现：Provider 管理与设置切片」（12 号票）落地；剩余：session_prefs/ui_state 域命令、pending_intent UI 接线、设置页与预设打磨。
 - **桌面体验**——三栏布局、Composer、自绘标题栏、托盘+后台运行+系统通知直达会话、快捷键体系、主题、单实例、滚动跟随。
 - **三平台打包与 1 周真实使用验收**——打包矩阵（dmg/nsis/AppImage+deb）、验收剧本（真实项目、记录方式）、未决项 C-8（临时会话 roots 边界）安全复判在此毕业成票。
 
