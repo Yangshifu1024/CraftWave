@@ -1,0 +1,35 @@
+//! config 域命令（§3.3 #6/#7）：get_config / save_config。
+//!
+//! 薄壳：参数即类型校验（serde 反序列化）+ 转调 providers::service。
+
+use serde::Deserialize;
+use tauri::State;
+
+use crate::host::AppState;
+use crate::providers::service;
+use crate::providers::types::AppConfig;
+use crate::util::errors::IpcError;
+
+/// `save_config` 参数契约（§3.3 #7；文档命名锚点，命令形参按字段平铺展开）。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveConfigArgs {
+    pub config: AppConfig,
+}
+
+/// §3.3 #6：读取当前配置（协调器缓存优先）。
+#[tauri::command]
+pub async fn get_config(state: State<'_, AppState>) -> Result<AppConfig, IpcError> {
+    service::get_config(&state.config)
+}
+
+/// §3.3 #7：整份配置经协调器归一化原子落盘，返回归一化结果。
+#[tauri::command]
+pub async fn save_config(
+    state: State<'_, AppState>,
+    config: AppConfig,
+) -> Result<AppConfig, IpcError> {
+    // 契约命名单一事实源：平铺形参回组为文档契约结构
+    let args = SaveConfigArgs { config };
+    service::save_config(&state.config, args.config)
+}

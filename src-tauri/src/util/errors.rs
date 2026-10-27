@@ -1,9 +1,13 @@
-//! 工具错误与错误码（§3.6 错误码注册表）。
+//! 工具错误与 IPC 错误（§3.6 错误码注册表）。
 //!
-//! 放 util 而非 tools：safety（safe_join/围栏）与 tools 都要返回它，
-//! util 是被所有层依赖的最底层，避免 safety 反向依赖 tools 造成环。
+//! 放 util 而非 tools：safety（safe_join/围栏）与 tools 都要返回 `ToolError`；
+//! `IpcError` 是 IPC 命令统一 reject 负载，host 与 providers 共用——util 是被
+//! 所有层依赖的最底层，两个类型下沉于此，避免 providers 反向依赖 host 造成环。
 
 use std::fmt;
+
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// 工具/安全层错误的统一载体：`code` 必须取自 §3.6 错误码注册表。
 #[derive(Debug, Clone, serde::Serialize)]
@@ -78,3 +82,79 @@ impl From<std::io::Error> for ToolError {
         }
     }
 }
+
+// ---- 错误码常量（§3.6 注册表内已落地的键面）----
+
+pub const E_INVALID_ARG: &str = "E_INVALID_ARG";
+pub const E_NOT_FOUND: &str = "E_NOT_FOUND";
+pub const E_SESSION_REV: &str = "E_SESSION_REV";
+pub const E_STORAGE_IO: &str = "E_STORAGE_IO";
+pub const E_KEYRING: &str = "E_KEYRING";
+pub const E_INTERNAL: &str = "E_INTERNAL";
+
+/// IPC 命令统一错误负载（§3.1/§3.6，D14）：`{ code, message, detail? }`，camelCase。
+///
+/// 命令层一律返回 `Result<T, IpcError>`；Tauri 把 Serialize 错误直接序列化给
+/// 前端 reject。与 `ToolError` 的分工：IpcError 走 IPC 边界（可带 `detail`、
+/// 需要 Deserialize 供测试/工具回放），ToolError 承载于 ToolOutcome。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IpcError {
+    pub code: String,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<Value>,
+}
+
+impl IpcError {
+    pub fn new(code: &str, message: impl Into<String>) -> Self {
+        Self {
+            code: code.to_string(),
+            message: message.into(),
+            detail: None,
+        }
+    }
+
+    pub fn with_detail(mut self, detail: Value) -> Self {
+        self.detail = Some(detail);
+        self
+    }
+
+    /// E_INVALID_ARG：参数校验失败（§3.6）。
+    pub fn invalid_arg(message: impl Into<String>) -> Self {
+        Self::new(E_INVALID_ARG, message)
+    }
+
+    /// E_NOT_FOUND：目标不存在（§3.6）。
+    pub fn not_found(message: impl Into<String>) -> Self {
+        Self::new(E_NOT_FOUND, message)
+    }
+
+    /// E_SESSION_REV：树同步基线过期（§3.6/§6.4）。
+    pub fn session_rev(message: impl Into<String>) -> Self {
+        Self::new(E_SESSION_REV, message)
+    }
+
+    /// E_STORAGE_IO：磁盘 IO 失败（§3.6 暂缺，见 host/error.rs 模块注释）。
+    pub fn storage_io(message: impl Into<String>) -> Self {
+        Self::new(E_STORAGE_IO, message)
+    }
+
+    /// E_KEYRING：钥匙串读写失败（§9.4，FR-05-09）。
+    pub fn keyring(message: impl Into<String>) -> Self {
+        Self::new(E_KEYRING, message)
+    }
+
+    /// E_INTERNAL：内部状态兜底。
+    pub fn internal(message: impl Into<String>) -> Self {
+        Self::new(E_INTERNAL, message)
+    }
+}
+
+impl fmt::Display for IpcError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "[{}] {}", self.code, self.message)
+    }
+}
+
+impl std::error::Error for IpcError {}

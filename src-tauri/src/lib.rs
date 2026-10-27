@@ -1,7 +1,8 @@
-use tauri::WebviewWindow;
+use tauri::{Manager, WebviewWindow};
 use tauri_plugin_decoration::WebviewWindowExt;
 
 pub mod host;
+pub mod providers;
 pub mod safety;
 pub mod spike;
 pub mod storage;
@@ -11,10 +12,18 @@ pub mod util;
 // 契约类型仅在 `ipc_commands!` 清单中经 stringify! 引用（manifest 的 args_type/ret_type 名），
 // 实际类型面由命令形参承载；这些导入为清单可读性服务，编译器视为未用。
 #[allow(unused_imports)]
+use host::commands::config::{SaveConfigArgs, get_config, save_config};
+#[allow(unused_imports)]
+use host::commands::provider::{
+    DeleteProviderArgs, SaveProviderArgs, delete_provider, save_provider,
+};
+#[allow(unused_imports)]
 use host::commands::session_tree::{
     LoadSessionTreeArgs, SaveSessionTreeArgs, SaveSessionTreeResult,
 };
 use host::commands::session_tree::{load_session_tree, save_session_tree};
+#[allow(unused_imports)]
+use providers::types::{AppConfig, ProviderConfig};
 use storage::SessionStore;
 #[allow(unused_imports)]
 use storage::SessionTreeData;
@@ -70,6 +79,10 @@ ipc_commands! {
     restore_native_titlebar => args: (), ret: ();
     save_session_tree => args: SaveSessionTreeArgs, ret: SaveSessionTreeResult;
     load_session_tree => args: LoadSessionTreeArgs, ret: SessionTreeData;
+    host::commands::config::get_config => args: (), ret: AppConfig;
+    host::commands::config::save_config => args: SaveConfigArgs, ret: AppConfig;
+    host::commands::provider::save_provider => args: SaveProviderArgs, ret: ProviderConfig;
+    host::commands::provider::delete_provider => args: DeleteProviderArgs, ret: ();
     #[cfg(debug_assertions)]
     mock_chat::mock_chat_run => args: (), ret: ();
 }
@@ -100,6 +113,17 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_decoration::init())
         .manage(SessionStore::with_root(SessionStore::default_root()))
+        .setup(|app| {
+            // §7.1：数据目录 ~/.craftwave（config.json + intent.json）
+            let home = app.path().home_dir()?;
+            let data_dir = home.join(".craftwave");
+            std::fs::create_dir_all(&data_dir)?;
+            app.manage(host::AppState::new_in(
+                data_dir,
+                std::sync::Arc::new(providers::keyring::OsKeyring),
+            ));
+            Ok(())
+        })
         .invoke_handler(invoke_handler())
         .run(tauri::generate_context!())
         .expect("CraftWave 启动失败");

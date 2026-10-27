@@ -25,7 +25,11 @@ futures = "0.3"
 tokio = { version = "1", default-features = false, features = ["time", "process", "macros", "sync", "rt"] }
 # 【S5 spike】CancellationToken（§5.3 cancel_run 置位载体）
 tokio-util = { version = "0.7", features = ["rt"] }
-# storage（§7）：段指纹/条目内容哈希；tools：edit 版本指纹
+# providers（§9.4）：keyring 4.2 默认 v1 feature = apple keychain / windows native / zbus-secret-service
+keyring = "4.2"
+# providers（§3.2）：ProviderConfig.id / ProviderModel.id 的 uuid v4
+uuid = { version = "1", features = ["v4"] }
+# storage（§7）：段指纹/条目内容哈希；tools：edit 版本指纹；providers：keyring 指纹
 sha2 = "0.11"
 # storage（§7）：整文件原子写 temp+fsync+rename（§7.4）
 tempfile = "3"
@@ -54,7 +58,6 @@ windows-sys = { version = "0.59", features = [
 [dev-dependencies]
 # 本地 OpenAI 兼容 mock SSE 服务（S2 流保真 / S3 工具循环测试用，不进产物）
 axum = "0.8"
-tempfile = "3.27.0"
 tokio = { version = "1", features = ["full"] }
 
 [profile.release]

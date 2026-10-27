@@ -30,10 +30,33 @@ fn 导出_ipc_manifest与跨语言roundtrip_fixture() {
             .find(|c| c.name == name)
             .unwrap_or_else(|| panic!("manifest 缺命令 {name}"))
     };
+
+    // 键面不变式：invoke 名唯一且 snake_case（§3.1/D14）
+    let mut names: Vec<&str> = commands.iter().map(|c| c.name.as_str()).collect();
+    let before = names.len();
+    names.sort_unstable();
+    names.dedup();
+    assert_eq!(before, names.len(), "命令名必须唯一");
+    for name in &names {
+        assert!(
+            name.chars()
+                .all(|c| c.is_ascii_lowercase() || c == '_' || c.is_ascii_digit()),
+            "命令名必须 snake_case：{name}"
+        );
+    }
+
+    // 存储两命令的契约类型名锚点（10 号票）
     assert_eq!(find("save_session_tree").args_type, "SaveSessionTreeArgs");
     assert_eq!(find("save_session_tree").ret_type, "SaveSessionTreeResult");
     assert_eq!(find("load_session_tree").args_type, "LoadSessionTreeArgs");
     assert_eq!(find("load_session_tree").ret_type, "SessionTreeData");
+    // provider/config 四命令的契约类型名锚点（12 号票，收编同一宏）
+    assert_eq!(find("get_config").ret_type, "AppConfig");
+    assert_eq!(find("save_config").args_type, "SaveConfigArgs");
+    assert_eq!(find("save_config").ret_type, "AppConfig");
+    assert_eq!(find("save_provider").args_type, "SaveProviderArgs");
+    assert_eq!(find("save_provider").ret_type, "ProviderConfig");
+    assert_eq!(find("delete_provider").args_type, "DeleteProviderArgs");
     // 标题栏命令（骨架既有）仍在注册表
     assert!(
         commands
@@ -43,11 +66,14 @@ fn 导出_ipc_manifest与跨语言roundtrip_fixture() {
 
     let manifest = serde_json::json!({
         "commands": commands,
-        // ChatFrame（§3.4）/事件键（§3.5）/镜像工具清单由各自模块实装时填充，P0 尚未到对应层
-        "frames": [],
-        "events": [],
-        "tools": [],
+        // ChatFrame P0 全集 9 帧（§3.4）；事件键（§3.5）占位空集
+        "frames": crate::host::commands::FRAMES,
+        "events": crate::host::commands::EVENTS,
+        // 镜像工具清单（§12.3）：工具注册表单一事实源
+        "tools": crate::tools::TOOL_NAMES,
     });
+    assert_eq!(manifest["frames"].as_array().unwrap().len(), 9);
+    assert_eq!(manifest["tools"].as_array().unwrap().len(), 5);
     fs::create_dir_all(target_dir()).unwrap();
     fs::write(
         target_dir().join("ipc-manifest.json"),

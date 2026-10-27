@@ -1,9 +1,11 @@
 //! storage 模块（§2.2/§7）：会话 JSONL、索引、配置协调器、原子写、toolres 边车、UI 状态。
 //!
-//! 本切片（10 号票）落地：§6.1 条目类型、append-only 分段 JSONL 读写器（§7.2–7.4）、
-//! 会话树存取引擎（save/load_session_tree 的 storage 层）。索引（sessions/index.json）、
-//! toolres 边车、配置协调器、UI 状态由后续票接入。
+//! 已落地：§6.1 条目类型、append-only 分段 JSONL 读写器（§7.2–7.4）、
+//! 会话树存取引擎（save/load_session_tree 的 storage 层，10 号票）、
+//! 配置协调器（§7.6，12 号票）。索引（sessions/index.json）、toolres 边车、
+//! UI 状态由后续票接入。
 
+pub mod config_store;
 pub mod entries;
 pub mod locks;
 pub mod segment;

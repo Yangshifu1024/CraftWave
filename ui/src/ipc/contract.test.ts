@@ -1,14 +1,20 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { readdirSync, readFileSync } from "node:fs";
+import path, { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { beforeAll, describe, expect, it } from "vitest";
 import { entriesToExported, parseSessionJsonl } from "../chat/tree-persistence";
+import { COMMANDS } from "./client";
 import type { MessageEntry, StoredEntry } from "./types";
 
 /**
  * §12.3 契约测试（前端侧，NFR-12 双向扫描 + 跨语言 roundtrip）：
  *
- * 1. manifest 扫描：client.ts 中每个 invoke 命令名 ∈ ipc-manifest.json 的 commands；
- * 2. 跨语言 fixture：cargo test 产出的 session-tree-fixture.jsonl（Rust serde 落盘
+ * 1. manifest 扫描：client.ts（唯一 invoke 出口）注册的命令名全集
+ *    （COMMANDS 注册表 + 直接 invoke 字面量）⊆ ipc-manifest.json 的 commands，
+ *    storage/provider 两个切片的命令在 client.ts 全部接线（双向）；
+ * 2. 键面卫生：ui/src 全源码不得出现绕过唯一出口的未知 invoke 字面量；
+ * 3. manifest.frames 覆盖 §3.4 P0 全集 9 帧，manifest.tools 覆盖工具注册表 5 工具；
+ * 4. 跨语言 fixture：cargo test 产出的 session-tree-fixture.jsonl（Rust serde 落盘
  *    字节即 storage 分段 JSONL 行格式）——TS 镜像期望值逐条目比对 + 树还原校验。
  *
  * 两个产物文件由 `cargo test`（src-tauri/）生成；CI 顺序 = cargo test → vitest（§12.3），
@@ -16,38 +22,150 @@ import type { MessageEntry, StoredEntry } from "./types";
  */
 
 const targetDir = resolve(import.meta.dirname, "../../../src-tauri/target");
+const uiSrcDir = fileURLToPath(new URL("..", import.meta.url));
 
-function readArtifact(name: string): string {
-  const path = resolve(targetDir, name);
+let manifest: {
+  commands: { name: string; args_type: string; ret_type: string }[];
+  frames: string[];
+  events: string[];
+  tools: string[];
+};
+
+beforeAll(() => {
+  const manifestPath = resolve(targetDir, "ipc-manifest.json");
+  let raw: string;
   try {
-    return readFileSync(path, "utf8");
+    raw = readFileSync(manifestPath, "utf8");
   } catch {
     throw new Error(
-      `契约产物缺失：${path}\n请先在 src-tauri/ 下运行 cargo test 生成（§12.3 CI 顺序：cargo test → vitest）`,
+      `契约产物缺失：${manifestPath}\n请先在 src-tauri/ 下运行 cargo test 生成（§12.3 CI 顺序：cargo test → vitest）`,
+    );
+  }
+  manifest = JSON.parse(raw) as typeof manifest;
+});
+
+function readArtifact(name: string): string {
+  const artifactPath = resolve(targetDir, name);
+  try {
+    return readFileSync(artifactPath, "utf8");
+  } catch {
+    throw new Error(
+      `契约产物缺失：${artifactPath}\n请先在 src-tauri/ 下运行 cargo test 生成（§12.3 CI 顺序：cargo test → vitest）`,
     );
   }
 }
 
-type ManifestCommand = { name: string; args_type: string; ret_type: string };
-
-function readManifestCommands(): ManifestCommand[] {
-  const manifest = JSON.parse(readArtifact("ipc-manifest.json")) as {
-    commands: ManifestCommand[];
-  };
-  expect(Array.isArray(manifest.commands)).toBe(true);
-  return manifest.commands;
-}
-
-/** 扫描 client.ts 源码中全部 invoke("命令名") 字面量（§12.3：前端 invoke 名单扫描）。 */
-function scannedInvokeNames(): string[] {
+/** client.ts 注册的命令名全集：COMMANDS 注册表值 + 直接 invoke 字面量（防绕过注册表）。 */
+function scannedClientCommandNames(): string[] {
   const source = readFileSync(resolve(import.meta.dirname, "./client.ts"), "utf8");
-  const names: string[] = [];
+  const names = new Set<string>(Object.values(COMMANDS));
   for (const match of source.matchAll(/invoke\(\s*"([a-z_]+)"/g)) {
-    names.push(match[1]!);
+    names.add(match[1]!);
   }
-  expect(names.length, "client.ts 应至少注册一个 invoke 命令").toBeGreaterThan(0);
-  return names;
+  expect(names.size, "client.ts 应至少注册一个 invoke 命令").toBeGreaterThan(0);
+  return [...names];
 }
+
+/** S5 spike 的前端取消桥接为注入式原型，Rust 侧 cancel_run 命令属后续票（invoke 静默失败）。 */
+const SPIKE_ONLY_INVOKES = new Set(["cancel_run"]);
+
+describe("§12.3 manifest 双向扫描", () => {
+  it("client.ts 注册的命令名全部存在于 manifest.commands", () => {
+    const commands = new Set(manifest.commands.map((c) => c.name));
+    for (const name of scannedClientCommandNames()) {
+      expect(commands, `命令 ${name} 未在 manifest 中注册`).toContain(name);
+    }
+  });
+
+  it("storage/provider 两切片命令在 client.ts 全部接线（双向）", () => {
+    const wired = new Set(scannedClientCommandNames());
+    for (const name of [
+      "save_session_tree",
+      "load_session_tree",
+      "get_config",
+      "save_config",
+      "save_provider",
+      "delete_provider",
+    ]) {
+      expect(wired, `manifest 命令 ${name} 未在 client.ts 接线（禁止只注册不使用）`).toContain(
+        name,
+      );
+    }
+  });
+
+  it("两切片命令的契约类型名与文档锚点一致", () => {
+    const find = (name: string) => {
+      const command = manifest.commands.find((c) => c.name === name);
+      expect(command, `manifest 缺命令 ${name}`).toBeDefined();
+      return command!;
+    };
+    expect(find("save_session_tree")).toMatchObject({
+      args_type: "SaveSessionTreeArgs",
+      ret_type: "SaveSessionTreeResult",
+    });
+    expect(find("load_session_tree")).toMatchObject({
+      args_type: "LoadSessionTreeArgs",
+      ret_type: "SessionTreeData",
+    });
+    expect(find("get_config")).toMatchObject({ args_type: "()", ret_type: "AppConfig" });
+    expect(find("save_config")).toMatchObject({
+      args_type: "SaveConfigArgs",
+      ret_type: "AppConfig",
+    });
+    expect(find("save_provider")).toMatchObject({
+      args_type: "SaveProviderArgs",
+      ret_type: "ProviderConfig",
+    });
+    expect(find("delete_provider")).toMatchObject({
+      args_type: "DeleteProviderArgs",
+      ret_type: "()",
+    });
+  });
+
+  it("ui/src 全源码无绕过唯一出口的未知 invoke 字面量", () => {
+    const manifestNames = new Set(manifest.commands.map((c) => c.name));
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walk(full);
+        } else if (/\.(ts|tsx)$/.test(entry.name) && !entry.name.endsWith(".test.ts")) {
+          const source = readFileSync(full, "utf8");
+          for (const match of source.matchAll(/invoke[<(]\s*["'`]([^"'`]+)["'`]/g)) {
+            const name = match[1];
+            if (name && !manifestNames.has(name) && !SPIKE_ONLY_INVOKES.has(name)) {
+              offenders.push(`${path.relative(uiSrcDir, full)}: ${name}`);
+            }
+          }
+        }
+      }
+    };
+    walk(uiSrcDir);
+    expect(offenders, `未知 invoke 命令：\n${offenders.join("\n")}`).toEqual([]);
+  });
+
+  it("manifest.frames 覆盖 §3.4 P0 全集 9 帧", () => {
+    expect(manifest.frames).toHaveLength(9);
+    for (const frame of [
+      "runStarted",
+      "stepStarted",
+      "textDelta",
+      "reasoningDelta",
+      "toolStarted",
+      "toolArgs",
+      "toolResult",
+      "usage",
+      "runEnded",
+    ]) {
+      expect(manifest.frames).toContain(frame);
+    }
+  });
+
+  it("manifest.tools 覆盖工具注册表五文件类工具", () => {
+    expect(manifest.tools).toEqual(["read", "write", "edit", "list_files", "grep"]);
+  });
+});
 
 // ---- 跨语言 fixture 期望值：与 src-tauri/src/ipc_manifest_test.rs 的 fixture_entries() 逐字段一致 ----
 
@@ -111,29 +229,6 @@ const EXPECTED_ENTRIES: StoredEntry[] = [
   },
   { kind: "meta", activeLeafId: "a3", revision: 3 },
 ];
-
-describe("§12.3 manifest 双向扫描", () => {
-  it("client.ts 的每个 invoke 名都在 manifest.commands 内", () => {
-    const commands = readManifestCommands().map((c) => c.name);
-    for (const name of scannedInvokeNames()) {
-      expect(commands).toContain(name);
-    }
-  });
-
-  it("存储两命令的契约类型名与文档锚点一致", () => {
-    const commands = readManifestCommands();
-    const save = commands.find((c) => c.name === "save_session_tree");
-    const load = commands.find((c) => c.name === "load_session_tree");
-    expect(save).toMatchObject({
-      args_type: "SaveSessionTreeArgs",
-      ret_type: "SaveSessionTreeResult",
-    });
-    expect(load).toMatchObject({
-      args_type: "LoadSessionTreeArgs",
-      ret_type: "SessionTreeData",
-    });
-  });
-});
 
 describe("§6.1 跨语言 fixture roundtrip（Rust serde 落盘 ↔ TS 镜像）", () => {
   const fixtureText = readArtifact("session-tree-fixture.jsonl");

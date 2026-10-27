@@ -1,6 +1,6 @@
 //! IpcError 单元测试（独立测试文件，源码零测试）。
 
-use super::IpcError;
+use crate::host::IpcError;
 use crate::storage::StorageError;
 
 #[test]

@@ -1,8 +1,11 @@
-//! 整文件原子写（§7.4）：临时文件同目录 + `fsync` + rename。
+//! 整文件原子写（§7.4）：临时文件同目录 + `fsync` + rename + 目录 fsync（尽力）。
 //!
-//! 文档指定机制：所有整文件（config/index/prefs/ui-state/segmeta）用此路径写；
-//! Windows 侧 rename 语义为 `MoveFileExW(MOVEFILE_REPLACE_EXISTING)`
-//! （`tempfile::NamedTempFile::persist` 的既有行为，无需自写 FFI）。
+//! 文档指定机制：所有整文件（config/index/prefs/ui-state/segmeta）用此路径写。
+//! 临时文件用 `tempfile::NamedTempFile`（同目录、文件名无碰撞），写完 `fsync`
+//! 后 `persist`（即 rename 覆盖；Windows 侧语义为
+//! `MoveFileExW(MOVEFILE_REPLACE_EXISTING)`，无需自写 FFI）。
+//! 目录 fsync 仅在 Unix 执行（Windows 打开目录句柄做 flush 不可行，rename
+//! 原子性由 NTFS 元数据操作保证）。
 
 use std::fs;
 use std::io::{self, Write};
@@ -25,6 +28,13 @@ pub fn write_atomic(path: &Path, contents: &[u8]) -> io::Result<()> {
         let _ = dir_file.sync_all();
     }
     Ok(())
+}
+
+/// 原子写 UTF-8 JSON（pretty 排版 + 尾部换行，供 config.json / intent.json 等人读文件）。
+pub fn write_json(path: &Path, value: &serde_json::Value) -> io::Result<()> {
+    let mut bytes = serde_json::to_vec_pretty(value)?;
+    bytes.push(b'\n');
+    write_atomic(path, &bytes)
 }
 
 #[cfg(test)]

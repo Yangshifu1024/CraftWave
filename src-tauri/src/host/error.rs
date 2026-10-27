@@ -1,51 +1,14 @@
-//! IPC 统一错误形状（D14）：`{ code, message, detail? }`。
+//! storage 错误 → IPC 错误的映射（host 层职责）。
+//!
+//! `IpcError` 形状本身定义在 `util::errors`（util 为最底层，providers 亦依赖）；
+//! 本模块只承载 `From<StorageError>` 映射——它必须位于 storage 之上，不能下沉。
 //!
 //! code 取值须落在 §3.6 错误码注册表；`E_STORAGE_IO` 为注册表当前未覆盖的
 //! 磁盘 IO 失败承载（10 号票 Answer 记录，待后续票补 §3.6）。
 
-use serde::Serialize;
-use serde_json::Value;
-
 use crate::storage::StorageError;
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct IpcError {
-    pub code: String,
-    pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub detail: Option<Value>,
-}
-
-impl IpcError {
-    pub fn new(code: &str, message: impl Into<String>) -> Self {
-        Self {
-            code: code.to_string(),
-            message: message.into(),
-            detail: None,
-        }
-    }
-
-    /// E_INVALID_ARG：参数校验失败（§3.6）。
-    pub fn invalid_arg(message: impl Into<String>) -> Self {
-        Self::new("E_INVALID_ARG", message)
-    }
-
-    /// E_NOT_FOUND：目标不存在（§3.6）。
-    pub fn not_found(message: impl Into<String>) -> Self {
-        Self::new("E_NOT_FOUND", message)
-    }
-
-    /// E_SESSION_REV：树同步基线过期（§3.6/§6.4）。
-    pub fn session_rev(message: impl Into<String>) -> Self {
-        Self::new("E_SESSION_REV", message)
-    }
-
-    /// E_STORAGE_IO：磁盘 IO 失败（§3.6 暂缺，见模块注释）。
-    pub fn storage_io(message: impl Into<String>) -> Self {
-        Self::new("E_STORAGE_IO", message)
-    }
-}
+use crate::util::errors::IpcError;
 
 impl From<StorageError> for IpcError {
     fn from(err: StorageError) -> Self {
