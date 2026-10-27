@@ -3,6 +3,12 @@ use tauri_plugin_decoration::WebviewWindowExt;
 
 pub mod spike;
 
+// 【S1 spike 原型】dev-only mock 帧源（release 不编译、不注册）
+#[cfg(debug_assertions)]
+mod mock_chat;
+#[cfg(test)]
+mod mock_chat_test;
+
 /// 激活覆盖式自绘标题栏；macOS 上按 40px 顶栏摆放交通灯（y=顶栏中线）。
 #[tauri::command]
 async fn activate_custom_titlebar(window: WebviewWindow) -> Result<(), String> {
@@ -30,7 +36,9 @@ pub fn run() {
         .plugin(tauri_plugin_decoration::init())
         .invoke_handler(tauri::generate_handler![
             activate_custom_titlebar,
-            restore_native_titlebar
+            restore_native_titlebar,
+            #[cfg(debug_assertions)]
+            mock_chat::mock_chat_run,
         ])
         .run(tauri::generate_context!())
         .expect("CraftWave 启动失败");

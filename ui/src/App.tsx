@@ -2,6 +2,7 @@ import { AssistantRuntimeProvider, useLocalRuntime } from "@assistant-ui/react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect } from "react";
+import { MirrorDemo } from "@/chat/mirror/MirrorDemo";
 import { echoAdapter } from "@/chat/runtime";
 import { ChatThread } from "@/chat/Thread";
 
@@ -59,6 +60,15 @@ function useTitlebarActivation() {
 
 export default function App() {
   useTitlebarActivation();
+  // 【S1 spike 原型入口】?mirror=1 切到镜像工具桥接 demo，随时可弃
+  if (new URLSearchParams(window.location.search).has("mirror")) {
+    return <MirrorDemo />;
+  }
+  return <SkeletonApp />;
+}
+
+/** S6 骨架回声聊天（原型期间原样保留）。 */
+function SkeletonApp() {
   const runtime = useLocalRuntime(echoAdapter);
   return (
     <AssistantRuntimeProvider runtime={runtime}>

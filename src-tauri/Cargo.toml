@@ -20,11 +20,13 @@ tauri-plugin-decoration = "3.0"
 # S2/S3 spike（C-6 双版本验证）：0.45.0 主底料；=0.46.0-rc.1 已平行重验通过（零改动）
 rig = "0.45.0"
 futures = "0.3"
+# 【S1 spike 原型】mock_chat 的 sleep（time feature）；后续后端模块本就会用到
+tokio = { version = "1", default-features = false, features = ["time"] }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["full"] }
 # 本地 OpenAI 兼容 mock SSE 服务（S2 流保真 / S3 工具循环测试用，不进产物）
 axum = "0.8"
+tokio = { version = "1", features = ["full"] }
 
 [profile.release]
 codegen-units = 1
