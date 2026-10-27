@@ -511,3 +511,50 @@ fn index_upsert_list_and_toolres_roundtrip() {
     assert_eq!(loaded["t1-c1"]["uiSummary"], "读取完成");
     assert_eq!(loaded["t1-c1"]["data"]["lineCount"], 3);
 }
+
+// ---- 会话删除（16 号票，§3.3 #16 存储面）----
+
+#[test]
+fn delete_session_clears_index_and_disk_artifacts() {
+    let (store, dir) = store();
+    let root = dir.path().to_path_buf();
+    // 造全量磁盘痕迹：历史树 + index + prefs + toolres
+    store
+        .save_session_tree("gone", &[user("u1", None, "再见")], None, 0)
+        .unwrap();
+    store
+        .index()
+        .upsert(crate::storage::SessionMeta {
+            id: "gone".to_string(),
+            project_id: Some("p1".to_string()),
+            title: "待删会话".to_string(),
+            created_at: 0,
+            updated_at: 0,
+            revision: 1,
+            message_count: 1,
+            total_tokens: 0,
+        })
+        .unwrap();
+    fs::write(root.join("sessions").join("gone.prefs.json"), b"{}").unwrap();
+    let outcome = crate::tools::ToolOutcome::success(serde_json::json!({}), "结果".to_string());
+    crate::storage::write_outcome(&root, "gone", "call-1", &outcome);
+
+    assert!(store.delete_session("gone").unwrap());
+    assert_eq!(store.index().get("gone"), None);
+    assert!(!root.join("histories").join("gone").exists());
+    assert!(!root.join("sessions").join("gone.prefs.json").exists());
+    assert!(!root.join("sessions").join("gone.toolres").exists());
+}
+
+#[test]
+fn delete_missing_session_is_idempotent_false() {
+    let (store, _dir) = store();
+    assert!(!store.delete_session("never-existed").unwrap());
+}
+
+#[test]
+fn delete_session_rejects_invalid_id() {
+    let (store, _dir) = store();
+    let err = store.delete_session("../escape").unwrap_err();
+    assert!(matches!(err, crate::storage::StorageError::InvalidArg(_)));
+}

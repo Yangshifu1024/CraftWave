@@ -42,6 +42,8 @@ regex = "1.13.1"
 base64 = "0.23.1"
 # tools（§8.8）：命令输出 ANSI/OSC 清洗（纯 Rust，anstyle 生态）
 anstream = "0.6"
+# host（§3.3 #5）：select_dir 原生目录选择（同步命令主线程模态；tauri-plugin-dialog 的同款内核，免 JS 插件与 capability）
+rfd = "0.15"
 
 # 【S5 spike，cfg(unix)】进程组收割：kill(-pgid, SIGTERM/SIGKILL)
 [target.'cfg(unix)'.dependencies]

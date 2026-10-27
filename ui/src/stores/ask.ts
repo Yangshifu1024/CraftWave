@@ -2,8 +2,11 @@
  * ask / askHint store（§10.1 状态分界：ask/审批 zustand `ask`（事件驱动）+
  * 建议提示词 `askHint`（run:suggestions 驱动））。
  *
- * 事件桥（App.tsx 的 useEventBridge）把 §3.5 五键事件分发到本 store 与
+ * 事件桥（App.tsx 的 useBackendEvents）把 §3.5 五键事件分发到本 store 与
  * runMetrics；命令应答走 ipc/client.resolveAsk。
+ *
+ * 16 号票多会话：未决 ask 与 hint 按 sessionId 分桶——AskPanel 只渲染本会话
+ * 桶（跨 Tab 并行 run 的审批互不遮挡）。
  */
 
 import { create } from "zustand";
@@ -16,35 +19,65 @@ export interface AskPanelState {
 }
 
 export interface AskStore {
-  /** 当前未决 ask（null = 无，AskPanel 收起）。 */
-  current: AskPanelState | null;
-  /** 建议提示词（run:suggestions；§10.4 ghost 承载，接受后清除）。 */
-  hint: string | null;
-  open: (askId: string, payload: AskPayload) => void;
-  close: (askId: string) => void;
-  setHint: (text: string) => void;
-  clearHint: () => void;
+  /** sessionId → 未决 ask（AskPanel 渲染本会话桶）。 */
+  bySession: Record<string, AskPanelState>;
+  /** sessionId → 建议提示词（run:suggestions；§10.4 ghost 承载，接受后清除）。 */
+  hints: Record<string, string>;
+  open: (sessionId: string, askId: string, payload: AskPayload) => void;
+  close: (sessionId: string, askId: string) => void;
+  setHint: (sessionId: string, text: string) => void;
+  clearHint: (sessionId: string) => void;
+  forgetSession: (sessionId: string) => void;
 }
 
-export const useAskStore = create<AskStore>((set, get) => ({
-  current: null,
-  hint: null,
+export const useAskStore = create<AskStore>((set) => ({
+  bySession: {},
+  hints: {},
 
-  open: (askId, payload) => {
-    // 同一时刻至多一个未决 ask（后端串行保证）；后到覆盖防御
-    set({ current: { askId, payload } });
+  open: (sessionId, askId, payload) => {
+    // 同一会话同一时刻至多一个未决 ask（后端串行保证）；后到覆盖防御
+    set((s) => ({ bySession: { ...s.bySession, [sessionId]: { askId, payload } } }));
   },
 
-  close: (askId) => {
-    if (get().current?.askId === askId) {
-      set({ current: null });
-    }
+  close: (sessionId, askId) => {
+    set((s) => {
+      if (s.bySession[sessionId]?.askId !== askId) return s;
+      const bySession = { ...s.bySession };
+      delete bySession[sessionId];
+      return { bySession };
+    });
   },
 
-  setHint: (text) => set({ hint: text }),
+  setHint: (sessionId, text) => set((s) => ({ hints: { ...s.hints, [sessionId]: text } })),
 
-  clearHint: () => set({ hint: null }),
+  clearHint: (sessionId) =>
+    set((s) => {
+      if (!(sessionId in s.hints)) return s;
+      const hints = { ...s.hints };
+      delete hints[sessionId];
+      return { hints };
+    }),
+
+  forgetSession: (sessionId) =>
+    set((s) => {
+      if (!(sessionId in s.bySession) && !(sessionId in s.hints)) return s;
+      const bySession = { ...s.bySession };
+      const hints = { ...s.hints };
+      delete bySession[sessionId];
+      delete hints[sessionId];
+      return { bySession, hints };
+    }),
 }));
+
+/** 读本会话未决 ask（无则 null）。 */
+export function currentAsk(state: AskStore, sessionId: string): AskPanelState | null {
+  return state.bySession[sessionId] ?? null;
+}
+
+/** 读本会话 hint（无则 null）。 */
+export function sessionHint(state: AskStore, sessionId: string): string | null {
+  return state.hints[sessionId] ?? null;
+}
 
 /**
  * ghost 提示匹配（§10.4：输入为空时整句 / 前缀匹配时补尾部）。

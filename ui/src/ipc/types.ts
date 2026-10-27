@@ -102,6 +102,28 @@ export interface SessionMeta {
   totalTokens: number;
 }
 
+// ---- 项目注册表与 workspace 只读（§3.3 #10–12/#27/#28，16 号票）----
+
+/** §3.2 ProjectMeta（directories.json 元素与 list_projects 返回） */
+export interface ProjectMeta {
+  id: string;
+  name: string;
+  homeDir: string;
+  createdAt: number;
+}
+
+/** §3.3 #11 save_project 参数（新建/更新） */
+export type SaveProjectArgs = { project: { id?: string; name: string; homeDir: string } };
+
+/** §3.3 #27 search_workspace_paths 命中条目 */
+export type WorkspacePathHit = { path: string; kind: "file" | "dir" };
+
+/** §3.3 #28 read_workspace_file 行区间 */
+export type WorkspaceReadRange = { offset: number; limit: number };
+
+/** §3.3 #28 read_workspace_file 返回 */
+export type ReadWorkspaceResult = { content: string; truncated: boolean };
+
 /** load_tool_outcomes 返回（边车 ToolOutcome 全量 JSON；缺文件调用不在表中） */
 export type ToolOutcomeJson = {
   ok: boolean;

@@ -345,6 +345,30 @@ impl SessionStore {
             .count() as u64)
     }
 
+    /// 会话删除（§3.3 #16 存储面）：index 条目 + histories/ + prefs +
+    /// toolres 边车一并清除。运行中拒绝在命令层判定（E_SESSION_RUNNING）。
+    /// 返回是否存在（幂等面：不存在 → Ok(false)，命令层转 E_NOT_FOUND）。
+    pub fn delete_session(&self, session_id: &str) -> Result<bool, StorageError> {
+        validate_session_id(session_id)?;
+        let mutex = self.locks.get(session_id);
+        let _guard = mutex
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let removed = self
+            .index
+            .remove(session_id)
+            .map_err(|e| StorageError::Io(format!("{e:?}")))?;
+        if removed.is_none() {
+            return Ok(false);
+        }
+        // 索引已摘除，磁盘清理尽力而为（半删残留不阻塞用户操作）
+        let _ = std::fs::remove_dir_all(self.histories_dir().join(session_id));
+        let sessions_dir = self.root.join("sessions");
+        let _ = std::fs::remove_file(sessions_dir.join(format!("{session_id}.prefs.json")));
+        let _ = std::fs::remove_dir_all(sessions_dir.join(format!("{session_id}.toolres")));
+        Ok(true)
+    }
+
     fn histories_dir(&self) -> PathBuf {
         self.root.join("histories")
     }

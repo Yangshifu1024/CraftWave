@@ -94,6 +94,16 @@ ipc_commands! {
     load_session_tree => args: LoadSessionTreeArgs, ret: SessionTreeData;
     host::commands::session_tree::list_sessions => args: ListSessionsArgs, ret: Vec<SessionMeta>;
     host::commands::session_tree::load_tool_outcomes => args: LoadToolOutcomesArgs, ret: HashMap<String, Value>;
+    host::commands::project::list_projects => args: (), ret: Vec<ProjectMeta>;
+    host::commands::project::save_project => args: SaveProjectArgs, ret: ProjectMeta;
+    host::commands::project::delete_project => args: DeleteProjectArgs, ret: ();
+    host::commands::session::create_session => args: CreateSessionArgs, ret: SessionMeta;
+    host::commands::session::delete_session => args: DeleteSessionArgs, ret: ();
+    host::commands::session::rename_session => args: RenameSessionArgs, ret: SessionMeta;
+    host::commands::workspace::search_workspace_paths => args: SearchWorkspacePathsArgs, ret: Vec<WorkspacePathHit>;
+    host::commands::workspace::read_workspace_file => args: ReadWorkspaceFileArgs, ret: ReadWorkspaceResult;
+    host::commands::ui_state::get_ui_state => args: GetUiStateArgs, ret: Value;
+    host::commands::ui_state::set_ui_state => args: SetUiStateArgs, ret: ();
     host::commands::config::get_config => args: (), ret: AppConfig;
     host::commands::config::save_config => args: SaveConfigArgs, ret: AppConfig;
     host::commands::provider::save_provider => args: SaveProviderArgs, ret: ProviderConfig;
@@ -104,6 +114,16 @@ ipc_commands! {
     host::commands::chat::approve_plan => args: ApprovePlanArgs, ret: ();
     #[cfg(debug_assertions)]
     mock_chat::mock_chat_run => args: (), ret: ();
+    select_dir => args: (), ret: Option<String>;
+}
+
+/// 原生目录选择（§3.3 #5）：同步命令在主线程执行（macOS NSOpenPanel 的
+/// 线程约束）；用户取消 → null。
+#[tauri::command]
+fn select_dir() -> Option<String> {
+    rfd::FileDialog::new()
+        .pick_folder()
+        .map(|path| path.to_string_lossy().into_owned())
 }
 
 /// 激活覆盖式自绘标题栏；macOS 上按 40px 顶栏摆放交通灯（y=顶栏中线）。

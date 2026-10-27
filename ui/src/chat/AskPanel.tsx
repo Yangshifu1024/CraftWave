@@ -8,12 +8,14 @@
  */
 
 import { useState } from "react";
+import { useSessionScope } from "@/chat/session-scope";
 import { resolveAsk } from "@/ipc/client";
 import type { AskPayload, DiffLine } from "@/ipc/types";
 import { useAskStore } from "@/stores/ask";
 
 export function AskPanel() {
-  const current = useAskStore((s) => s.current);
+  const sessionId = useSessionScope();
+  const current = useAskStore((s) => s.bySession[sessionId]);
   if (!current) return null;
   return (
     <div

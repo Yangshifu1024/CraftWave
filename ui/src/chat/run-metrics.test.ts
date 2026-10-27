@@ -3,10 +3,11 @@ import type { ChatFrame } from "@/ipc/types";
 import { contextProgress, useRunMetricsStore } from "./run-metrics";
 
 /**
- * runMetrics store 口径测试（§10.5 + C-9）：
+ * runMetrics store 口径测试（§10.5 + C-9；16 号票改按会话分桶）：
  * - rate = usage 帧 rate（缺省保持上次值）；
  * - turnUsage 运行内累计、runStarted 清零、runEnded 冻结（lastRun 摘要）；
- * - sessionUsage 只增不减（M1 无后台小调用源，C-9 口径天然满足）。
+ * - sessionUsage 只增不减（M1 无后台小调用源，C-9 口径天然满足）；
+ * - 同 store 多会话桶互不串扰（跨 Tab 并行 run）。
  */
 
 let seq = 0;
@@ -16,19 +17,15 @@ function f(frame: DistributiveOmit<ChatFrame, "seq">): ChatFrame {
 }
 
 beforeEach(() => {
-  useRunMetricsStore.setState({
-    rate: null,
-    turnUsage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    sessionUsage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    lastRun: null,
-  });
+  useRunMetricsStore.setState(useRunMetricsStore.getInitialState());
 });
 
-describe("runMetrics ingest", () => {
+describe("runMetrics ingest（单会话桶）", () => {
   it("usage 帧累计 turn 与 session 两口径，rate 取帧值", () => {
     const store = useRunMetricsStore.getState();
-    store.ingest(f({ type: "runStarted", runId: "run-1", model: "gpt-4o-mock" }));
+    store.ingest("s", f({ type: "runStarted", runId: "run-1", model: "gpt-4o-mock" }));
     store.ingest(
+      "s",
       f({
         type: "usage",
         usage: { input: 120, output: 48, cacheRead: 0, cacheWrite: 0 },
@@ -36,42 +33,65 @@ describe("runMetrics ingest", () => {
       }),
     );
     store.ingest(
+      "s",
       f({
         type: "usage",
         usage: { input: 200, output: 30, cacheRead: 64, cacheWrite: 8 },
       }),
     );
-    const { turnUsage, sessionUsage, rate } = useRunMetricsStore.getState();
-    expect(turnUsage).toEqual({ input: 320, output: 78, cacheRead: 64, cacheWrite: 8 });
-    expect(sessionUsage).toEqual(turnUsage);
-    expect(rate).toBe(120.5); // 无 rate 帧时保持上次值
+    const bucket = useRunMetricsStore.getState().bySession.s;
+    expect(bucket?.turnUsage).toEqual({ input: 320, output: 78, cacheRead: 64, cacheWrite: 8 });
+    expect(bucket?.sessionUsage).toEqual(bucket?.turnUsage);
+    expect(bucket?.rate).toBe(120.5); // 无 rate 帧时保持上次值
   });
 
   it("新 run 起点清零 turnUsage，sessionUsage 保留；runEnded 冻结摘要", () => {
     const store = useRunMetricsStore.getState();
-    store.ingest(f({ type: "runStarted", runId: "run-1", model: "m" }));
+    store.ingest("s", f({ type: "runStarted", runId: "run-1", model: "m" }));
     store.ingest(
+      "s",
       f({ type: "usage", usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0 } }),
     );
-    store.ingest(f({ type: "runEnded", reason: "done", durationMs: 800, toolCount: 1, turn: 2 }));
-    const after = useRunMetricsStore.getState();
-    expect(after.lastRun).toEqual({ reason: "done", durationMs: 800, toolCount: 1 });
-    expect(after.turnUsage.input).toBe(10);
+    store.ingest(
+      "s",
+      f({ type: "runEnded", reason: "done", durationMs: 800, toolCount: 1, turn: 2 }),
+    );
+    const after = useRunMetricsStore.getState().bySession.s;
+    expect(after?.lastRun).toEqual({ reason: "done", durationMs: 800, toolCount: 1 });
+    expect(after?.turnUsage.input).toBe(10);
 
-    store.ingest(f({ type: "runStarted", runId: "run-2", model: "m" }));
-    const next = useRunMetricsStore.getState();
-    expect(next.turnUsage).toEqual({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
-    expect(next.sessionUsage.input).toBe(10); // 会话累计跨 run 保留
-    expect(next.lastRun).toBeNull();
+    store.ingest("s", f({ type: "runStarted", runId: "run-2", model: "m" }));
+    const next = useRunMetricsStore.getState().bySession.s;
+    expect(next?.turnUsage).toEqual({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+    expect(next?.sessionUsage.input).toBe(10); // 会话累计跨 run 保留
+    expect(next?.lastRun).toBeNull();
   });
 
   it("取消终态与错误终态照常记录（runMetrics 无异常路径）", () => {
     const store = useRunMetricsStore.getState();
-    store.ingest(f({ type: "runStarted", runId: "r", model: "m" }));
+    store.ingest("s", f({ type: "runStarted", runId: "r", model: "m" }));
     store.ingest(
+      "s",
       f({ type: "runEnded", reason: "cancelled", durationMs: 10, toolCount: 2, turn: 1 }),
     );
-    expect(useRunMetricsStore.getState().lastRun?.reason).toBe("cancelled");
+    expect(useRunMetricsStore.getState().bySession.s?.lastRun?.reason).toBe("cancelled");
+  });
+
+  it("多会话桶互不串扰（跨 Tab 并行 run）", () => {
+    const store = useRunMetricsStore.getState();
+    store.ingest(
+      "s1",
+      f({ type: "usage", usage: { input: 10, output: 0, cacheRead: 0, cacheWrite: 0 } }),
+    );
+    store.ingest(
+      "s2",
+      f({ type: "usage", usage: { input: 99, output: 0, cacheRead: 0, cacheWrite: 0 } }),
+    );
+    expect(useRunMetricsStore.getState().bySession.s1?.sessionUsage.input).toBe(10);
+    expect(useRunMetricsStore.getState().bySession.s2?.sessionUsage.input).toBe(99);
+    store.forgetSession("s1");
+    expect(useRunMetricsStore.getState().bySession.s1).toBeUndefined();
+    expect(useRunMetricsStore.getState().bySession.s2?.sessionUsage.input).toBe(99);
   });
 });
 

@@ -34,16 +34,19 @@ export function useBackendEvents(deps: EventBridgeDeps = defaultEventBridgeDeps)
   useEffect(() => {
     const unlistens = [
       deps.listen(EVENT_KEYS.askOpened, (p: AskOpenedEvent) => {
-        useAskStore.getState().open(p.askId, p.payload);
+        useAskStore.getState().open(p.sessionId, p.askId, p.payload);
       }),
       deps.listen(EVENT_KEYS.askClosed, (p: AskClosedEvent) => {
-        useAskStore.getState().close(p.askId);
+        // ask:closed 载荷无 sessionId（§3.5），按 askId 全桶定位关闭
+        for (const sessionId of Object.keys(useAskStore.getState().bySession)) {
+          useAskStore.getState().close(sessionId, p.askId);
+        }
       }),
       deps.listen(EVENT_KEYS.runSuggestions, (p: RunSuggestionsEvent) => {
-        useAskStore.getState().setHint(p.text);
+        useAskStore.getState().setHint(p.sessionId, p.text);
       }),
       deps.listen(EVENT_KEYS.tokensUpdate, (p: TokensUpdateEvent) => {
-        useRunMetricsStore.getState().applyTokensUpdate(p.usage);
+        useRunMetricsStore.getState().applyTokensUpdate(p.sessionId, p.usage);
       }),
     ];
     return () => {

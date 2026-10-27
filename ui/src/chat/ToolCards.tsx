@@ -10,7 +10,7 @@
 
 import { type ToolCallMessagePartProps, useToolArgsStatus } from "@assistant-ui/react";
 import { useEffect, useState } from "react";
-import { LOCAL_SESSION_ID } from "@/chat/runtime";
+import { useSessionScope } from "@/chat/session-scope";
 import * as client from "@/ipc/client";
 import type { ToolOutcomeJson } from "@/ipc/types";
 
@@ -34,12 +34,13 @@ interface CardProps extends ToolCallMessagePartProps<CardArgs, unknown> {
 
 /** 终态卡片的边车 detail（§7.5）：按 callId 拉一次，缺文件静默（summary 降级）。 */
 function useToolOutcomeDetail(toolCallId: string, settled: boolean): ToolOutcomeJson | null {
+  const sessionId = useSessionScope();
   const [outcome, setOutcome] = useState<ToolOutcomeJson | null>(null);
   useEffect(() => {
     if (!settled) return;
     let cancelled = false;
     void client
-      .loadToolOutcomes(LOCAL_SESSION_ID, [toolCallId])
+      .loadToolOutcomes(sessionId, [toolCallId])
       .then((map) => {
         if (!cancelled) setOutcome(map[toolCallId] ?? null);
       })
@@ -49,7 +50,7 @@ function useToolOutcomeDetail(toolCallId: string, settled: boolean): ToolOutcome
     return () => {
       cancelled = true;
     };
-  }, [toolCallId, settled]);
+  }, [toolCallId, settled, sessionId]);
   return outcome;
 }
 

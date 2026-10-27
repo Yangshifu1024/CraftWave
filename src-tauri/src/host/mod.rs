@@ -23,11 +23,14 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use serde_json::Value;
+
 use crate::agent::RunManager;
 use crate::backend::frames::UsageTotal;
 use crate::providers::types::AppConfig;
 use crate::storage::SessionStore;
 use crate::storage::config_store::ConfigStore;
+use crate::storage::project_store::ProjectStore;
 use crate::util::events::EventSink;
 
 /// 应用级共享状态（tauri manage）。
@@ -42,6 +45,10 @@ pub struct AppState {
     pub session_usage: Mutex<HashMap<String, UsageTotal>>,
     /// 会话存储器（15 号票：run 落盘器与命令层共享同一锁表/索引）。
     pub store: Arc<SessionStore>,
+    /// 项目注册表（FR-10-01，16 号票）。
+    pub projects: ProjectStore,
+    /// UI 状态（§3.3 #30/31，16 号票：Tab 布局等前端自管 Json）。
+    pub ui_state: ConfigStore<Value>,
 }
 
 impl AppState {
@@ -54,6 +61,8 @@ impl AppState {
             events,
             session_usage: Mutex::new(HashMap::new()),
             store,
+            projects: ProjectStore::new(&data_dir),
+            ui_state: ConfigStore::new(data_dir.join("ui-state.json")),
         }
     }
 

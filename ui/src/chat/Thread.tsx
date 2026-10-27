@@ -10,23 +10,15 @@ import {
   useAui,
   useAuiState,
 } from "@assistant-ui/react";
-import { useRunMetricsStore } from "@/chat/run-metrics";
+import { useSessionMetrics } from "@/chat/run-metrics";
+import { useSessionScope } from "@/chat/session-scope";
 import { matchGhost, useAskStore } from "@/stores/ask";
 
-/** S6 最小聊天窗：primitives 手搭（kit copy-paste 属后续 UX 票的增量）。 */
+/** S6 最小聊天窗（多会话 Tab 的内容面，16 号票）：primitives 手搭（kit
+ * copy-paste 属后续 UX 票的增量）；会话相关取数经 useSessionScope。 */
 export function ChatThread() {
   return (
-    <div className="flex h-dvh flex-col bg-neutral-950 text-neutral-100">
-      <header
-        data-tauri-drag-region
-        className="flex h-10 shrink-0 cursor-default select-none items-center justify-center bg-neutral-900 text-xs text-neutral-400"
-        style={{
-          paddingLeft: "var(--tauri-plugin-decoration-left-clearance, 76px)",
-          paddingRight: "var(--tauri-plugin-decoration-right-clearance, 8px)",
-        }}
-      >
-        CraftWave · S6 骨架（顶栏即拖拽区）
-      </header>
+    <div className="flex h-full min-h-0 flex-1 flex-col bg-neutral-950 text-neutral-100">
       <ThreadPrimitive.Root className="flex min-h-0 flex-1 flex-col">
         <ThreadPrimitive.Viewport className="flex flex-1 flex-col overflow-y-auto p-4">
           <AuiIf condition={(s) => s.thread.isEmpty}>
@@ -153,9 +145,11 @@ function BranchBar({ editOnly }: { editOnly: boolean }) {
   );
 }
 
-/** 计数条三数（§10.5：rate / turnUsage / sessionUsage 常驻 Composer 下方）。 */
+/** 计数条三数（§10.5：rate / turnUsage / sessionUsage 常驻 Composer 下方；
+ * 16 号票按本会话桶取数）。 */
 function RunMetricsBar() {
-  const { rate, turnUsage, sessionUsage, lastRun } = useRunMetricsStore();
+  const sessionId = useSessionScope();
+  const { rate, turnUsage, sessionUsage, lastRun } = useSessionMetrics(sessionId);
   const tokens = (u: { input: number; output: number }) => `${u.input + u.output}`;
   return (
     <div className="mt-1 flex items-center gap-3 px-2 text-[11px] text-neutral-500">
@@ -175,16 +169,18 @@ function RunMetricsBar() {
   );
 }
 
-/** ghost 填入动作（Tab 与按钮共用）：填入整句建议并清除 hint（§10.4）。 */
+/** ghost 填入动作（Tab 与按钮共用）：填入整句建议并清除 hint（§10.4）。
+ * hint 取本会话桶（16 号票）。 */
 function useGhostFill(): (() => void) | null {
-  const hint = useAskStore((s) => s.hint);
+  const sessionId = useSessionScope();
+  const hint = useAskStore((s) => s.hints[sessionId]);
   const clearHint = useAskStore((s) => s.clearHint);
   const input = useAuiState((s) => s.composer.text);
   const aui = useAui();
-  if (matchGhost(hint, input) === null) return null;
+  if (matchGhost(hint ?? null, input) === null) return null;
   return () => {
     aui.composer.setText(hint ?? "", { origin: "user" });
-    clearHint();
+    clearHint(sessionId);
   };
 }
 
@@ -199,9 +195,11 @@ function useGhostTabFill(): React.KeyboardEventHandler<HTMLTextAreaElement> {
   };
 }
 
-/** 建议提示词 ghost（§10.4：空输入整句 / 前缀匹配补尾；接受 = 填入不发送）。 */
+/** 建议提示词 ghost（§10.4：空输入整句 / 前缀匹配补尾；接受 = 填入不发送；
+ * hint 取本会话桶，16 号票）。 */
 function ComposerGhost() {
-  const hint = useAskStore((s) => s.hint);
+  const sessionId = useSessionScope();
+  const hint = useAskStore((s) => s.hints[sessionId]) ?? null;
   const input = useAuiState((s) => s.composer.text);
   const ghost = matchGhost(hint, input);
   const fill = useGhostFill();

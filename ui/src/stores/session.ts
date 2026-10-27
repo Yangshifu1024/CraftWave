@@ -20,23 +20,56 @@ import { toWire } from "@/chat/runtime";
 import * as client from "@/ipc/client";
 import type { MessageEntry, SessionTreeData } from "@/ipc/types";
 
-/** 运行态节点记账：adapter 产出（messageId → runId）。 */
-export interface SessionPersistState {
+/** 每会话一份的运行态记账（16 号票多会话分桶）。 */
+export interface SessionPersistScope {
   /** 乐观并发基线（save_session_tree.baseRevision；0 = 尚未同步过）。 */
   revision: number;
   /** 本 app 生命周期内 adapter 产出的 assistant 消息（不进 save 载荷）。 */
   runtimeNodes: Map<string, string>;
-  setRevision: (revision: number) => void;
-  noteRuntimeNode: (messageId: string, runId: string) => void;
 }
 
-export const useSessionPersistStore = create<SessionPersistState>((set) => ({
+export interface SessionPersistState {
+  /** sessionId → 记账（缺省 = { revision: 0, 空 Map }）。 */
+  scopes: Record<string, SessionPersistScope>;
+  setRevision: (sessionId: string, revision: number) => void;
+  noteRuntimeNode: (sessionId: string, messageId: string, runId: string) => void;
+  forgetScope: (sessionId: string) => void;
+}
+
+const emptyScope = (): SessionPersistScope => ({
   revision: 0,
   runtimeNodes: new Map(),
-  setRevision: (revision) => set({ revision }),
-  noteRuntimeNode: (messageId, runId) =>
-    set((s) => ({ runtimeNodes: new Map(s.runtimeNodes).set(messageId, runId) })),
+});
+
+export const useSessionPersistStore = create<SessionPersistState>((set) => ({
+  scopes: {},
+  setRevision: (sessionId, revision) =>
+    set((s) => {
+      const scope = s.scopes[sessionId] ?? emptyScope();
+      return { scopes: { ...s.scopes, [sessionId]: { ...scope, revision } } };
+    }),
+  noteRuntimeNode: (sessionId, messageId, runId) =>
+    set((s) => {
+      const scope = s.scopes[sessionId] ?? emptyScope();
+      const runtimeNodes = new Map(scope.runtimeNodes).set(messageId, runId);
+      return { scopes: { ...s.scopes, [sessionId]: { ...scope, runtimeNodes } } };
+    }),
+  forgetScope: (sessionId) =>
+    set((s) => {
+      if (!(sessionId in s.scopes)) return s;
+      const scopes = { ...s.scopes };
+      delete scopes[sessionId];
+      return { scopes };
+    }),
 }));
+
+/** 取会话记账（只读快照；store 外使用）。 */
+export function getPersistScope(
+  state: SessionPersistState,
+  sessionId: string,
+): SessionPersistScope {
+  return state.scopes[sessionId] ?? emptyScope();
+}
 
 /** 运行态节点的 canonical 等价 id（链尾 marker）。 */
 function canonicalEquiv(messageId: string, runtimeNodes: Map<string, string>): string | null {
@@ -89,22 +122,23 @@ export async function syncTreeBeforeSend(
   sessionId: string,
   messages: readonly ThreadMessage[],
 ): Promise<void> {
-  const persist = useSessionPersistStore.getState();
-  const { messages: payload, activeLeafId } = toSavePayload(messages, persist.runtimeNodes);
+  const store = useSessionPersistStore.getState();
+  const { revision, runtimeNodes } = getPersistScope(store, sessionId);
+  const { messages: payload, activeLeafId } = toSavePayload(messages, runtimeNodes);
   if (payload.length === 0) return;
   const attempt = async (baseRevision: number) =>
     client.saveSessionTree({ sessionId, messages: payload, activeLeafId, baseRevision });
   try {
-    const result = await attempt(persist.revision);
-    useSessionPersistStore.getState().setRevision(result.revision);
+    const result = await attempt(revision);
+    useSessionPersistStore.getState().setRevision(sessionId, result.revision);
   } catch (err) {
     const ipcErr = client.toIpcError(err);
     if (ipcErr.code !== "E_SESSION_REV") throw err;
     // canonical 已推进（run 落盘/挂起恢复）：重载基线重试一次（§6.4）
     const tree = await client.loadSessionTree(sessionId);
-    useSessionPersistStore.getState().setRevision(tree.revision);
+    useSessionPersistStore.getState().setRevision(sessionId, tree.revision);
     const result = await attempt(tree.revision);
-    useSessionPersistStore.getState().setRevision(result.revision);
+    useSessionPersistStore.getState().setRevision(sessionId, result.revision);
   }
 }
 
@@ -112,7 +146,7 @@ export async function syncTreeBeforeSend(
 export async function loadHistory(sessionId: string): Promise<SessionTreeData | null> {
   try {
     const tree = await client.loadSessionTree(sessionId);
-    useSessionPersistStore.getState().setRevision(tree.revision);
+    useSessionPersistStore.getState().setRevision(sessionId, tree.revision);
     return tree;
   } catch (err) {
     const ipcErr = client.toIpcError(err);

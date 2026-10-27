@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AskPayload } from "@/ipc/types";
 import { useAskStore } from "@/stores/ask";
 import { AskPanel } from "./AskPanel";
+import { SessionScopeContext } from "./session-scope";
 
 const resolveAskMock = vi.fn<(askId: string, answer: unknown) => Promise<void>>();
 vi.mock("@/ipc/client", async (importOriginal) => {
@@ -22,9 +23,18 @@ vi.mock("@/ipc/client", async (importOriginal) => {
 beforeEach(() => {
   resolveAskMock.mockReset();
   resolveAskMock.mockResolvedValue(undefined);
-  useAskStore.setState({ current: null, hint: null });
+  useAskStore.setState({ bySession: {}, hints: {} });
 });
 afterEach(cleanup);
+
+/** AskPanel 经 useSessionScope 取所属会话桶：统一以 "s1" 作用域渲染。 */
+function renderPanel() {
+  return render(
+    <SessionScopeContext.Provider value="s1">
+      <AskPanel />
+    </SessionScopeContext.Provider>,
+  );
+}
 
 const questionPayload: AskPayload = {
   kind: "question",
@@ -60,19 +70,19 @@ const approvalPayload: AskPayload = {
 };
 
 function openPanel(payload: AskPayload) {
-  useAskStore.getState().open("ask-1", payload);
+  useAskStore.getState().open("s1", "ask-1", payload);
 }
 
 describe("AskPanel：question 形态", () => {
   it("无未决 ask 时不渲染", () => {
-    const { container } = render(<AskPanel />);
+    const { container } = renderPanel();
     expect(container.childElementCount).toBe(0);
     expect(screen.queryByTestId("ask-panel")).toBeNull();
   });
 
   it("选项点选 + 自由文本 → 提交 answers", () => {
     openPanel(questionPayload);
-    render(<AskPanel />);
+    renderPanel();
     expect(screen.getByTestId("ask-panel").getAttribute("data-kind")).toBe("question");
 
     const submit = screen.getByText("提交回答");
@@ -109,7 +119,7 @@ describe("AskPanel：approval 形态", () => {
         ],
       },
     });
-    render(<AskPanel />);
+    renderPanel();
     expect(screen.getByTestId("ask-panel").getAttribute("data-kind")).toBe("approval");
     expect(screen.getByTestId("ask-panel").textContent).toContain("echo hi > out.txt");
     expect(screen.getByTestId("ask-panel").textContent).toContain("写信号");

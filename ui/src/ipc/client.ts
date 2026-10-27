@@ -14,8 +14,11 @@ import type {
   ChatFrame,
   DeleteProviderArgs,
   IpcError,
+  ProjectMeta,
   ProviderConfig,
+  ReadWorkspaceResult,
   SaveConfigArgs,
+  SaveProjectArgs,
   SaveProviderArgs,
   SaveSessionTreeArgs,
   SaveSessionTreeResult,
@@ -24,12 +27,14 @@ import type {
   StartChatArgs,
   StartChatResult,
   ToolOutcomeJson,
+  WorkspacePathHit,
 } from "./types";
 
 /** 本文件已接线的命令名（§3.3 键面，snake_case）。 */
 export const COMMANDS = {
   activateCustomTitlebar: "activate_custom_titlebar",
   restoreNativeTitlebar: "restore_native_titlebar",
+  selectDir: "select_dir",
   saveSessionTree: "save_session_tree",
   loadSessionTree: "load_session_tree",
   listSessions: "list_sessions",
@@ -42,6 +47,16 @@ export const COMMANDS = {
   cancelRun: "cancel_run",
   resolveAsk: "resolve_ask",
   approvePlan: "approve_plan",
+  listProjects: "list_projects",
+  saveProject: "save_project",
+  deleteProject: "delete_project",
+  createSession: "create_session",
+  deleteSession: "delete_session",
+  renameSession: "rename_session",
+  searchWorkspacePaths: "search_workspace_paths",
+  readWorkspaceFile: "read_workspace_file",
+  getUiState: "get_ui_state",
+  setUiState: "set_ui_state",
 } as const;
 
 /** 本文件已接线的事件键（§3.5，14 号票实装 5 键）。 */
@@ -64,6 +79,11 @@ export function listenEvent<T>(key: string, handler: (payload: T) => void): Prom
 /** 激活覆盖式自绘标题栏（§2.1 防闪启动协议，App.tsx 看门狗用）。 */
 export function activateCustomTitlebar(): Promise<void> {
   return invoke<void>(COMMANDS.activateCustomTitlebar);
+}
+
+/** §3.3 #5：原生目录选择；用户取消 → null。 */
+export function selectDir(): Promise<string | null> {
+  return invoke<string | null>(COMMANDS.selectDir, {});
 }
 
 /** 看门狗超时后的退化路径：恢复系统标题栏。 */
@@ -169,4 +189,70 @@ export function toIpcError(err: unknown): IpcError {
     return err as IpcError;
   }
   return { code: "E_INTERNAL", message: String(err) };
+}
+
+// ---- 项目注册表（§3.3 #10–12，16 号票）----
+
+/** §3.3 #10：项目注册表全量。 */
+export function listProjects(): Promise<ProjectMeta[]> {
+  return invoke(COMMANDS.listProjects, {});
+}
+
+/** §3.3 #11：项目新建/更新（homeDir 变更触发 project.json 重绑）。 */
+export function saveProject(args: SaveProjectArgs): Promise<ProjectMeta> {
+  return invoke<ProjectMeta>(COMMANDS.saveProject, { project: args.project });
+}
+
+/** §3.3 #12：删除项目注册（不删项目数据目录；名下会话转临时）。 */
+export function deleteProject(projectId: string): Promise<void> {
+  return invoke(COMMANDS.deleteProject, { projectId });
+}
+
+// ---- 会话生命周期（§3.3 #13/#16/#17，16 号票）----
+
+/** §3.3 #13：新建会话（projectId 缺省 = 临时会话）。 */
+export function createSession(projectId?: string): Promise<SessionMeta> {
+  return invoke<SessionMeta>(COMMANDS.createSession, { projectId });
+}
+
+/** §3.3 #16：删除会话（运行中拒绝 E_SESSION_RUNNING）。 */
+export function deleteSession(sessionId: string): Promise<void> {
+  return invoke(COMMANDS.deleteSession, { sessionId });
+}
+
+/** §3.3 #17：会话重命名。 */
+export function renameSession(sessionId: string, title: string): Promise<SessionMeta> {
+  return invoke<SessionMeta>(COMMANDS.renameSession, { sessionId, title });
+}
+
+// ---- workspace 只读（§3.3 #27/#28，16 号票）----
+
+/** §3.3 #27：@ 引用补全（会话 roots 内基名子串匹配）。 */
+export function searchWorkspacePaths(
+  sessionId: string,
+  query: string,
+  limit?: number,
+): Promise<WorkspacePathHit[]> {
+  return invoke(COMMANDS.searchWorkspacePaths, { sessionId, query, limit });
+}
+
+/** §3.3 #28：预览读取（roots 内校验；range 按行翻页；单次 ≤512KB）。 */
+export function readWorkspaceFile(
+  sessionId: string,
+  path: string,
+  range?: { offset: number; limit: number },
+): Promise<ReadWorkspaceResult> {
+  return invoke(COMMANDS.readWorkspaceFile, { sessionId, path, range });
+}
+
+// ---- UI 状态（§3.3 #30/#31，16 号票）----
+
+/** §3.3 #30：读取 UI 状态（Json 原样；从未保存过 → null）。 */
+export function getUiState(): Promise<unknown> {
+  return invoke(COMMANDS.getUiState, {});
+}
+
+/** §3.3 #31：整份替换 UI 状态（防抖由前端负责）。 */
+export function setUiState(state: unknown): Promise<void> {
+  return invoke(COMMANDS.setUiState, { state });
 }

@@ -98,7 +98,7 @@ describe("syncTreeBeforeSend（E_SESSION_REV 自愈）", () => {
     expect(save).toHaveBeenCalledWith(
       expect.objectContaining({ sessionId: "s1", baseRevision: 0 }),
     );
-    expect(useSessionPersistStore.getState().revision).toBe(3);
+    expect(useSessionPersistStore.getState().scopes.s1?.revision).toBe(3);
   });
 
   it("revision 过期 → load 校正后重试一次", async () => {
@@ -115,7 +115,7 @@ describe("syncTreeBeforeSend（E_SESSION_REV 自愈）", () => {
     expect(load).toHaveBeenCalledWith("s1");
     expect(save).toHaveBeenCalledTimes(2);
     expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ baseRevision: 8 }));
-    expect(useSessionPersistStore.getState().revision).toBe(9);
+    expect(useSessionPersistStore.getState().scopes.s1?.revision).toBe(9);
   });
 
   it("非 REV 错误上抛（发送流程 catch 后继续）", async () => {
@@ -144,6 +144,6 @@ describe("loadHistory", () => {
     };
     vi.mocked(client.loadSessionTree).mockResolvedValue(tree);
     expect(await loadHistory("s1")).toBe(tree);
-    expect(useSessionPersistStore.getState().revision).toBe(5);
+    expect(useSessionPersistStore.getState().scopes.s1?.revision).toBe(5);
   });
 });

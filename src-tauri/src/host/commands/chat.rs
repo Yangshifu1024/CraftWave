@@ -631,12 +631,19 @@ pub async fn start_chat_core(
     let cancel = handle.cancel.clone();
     let executor: Arc<dyn crate::backend::run_loop::CancellableExecutor> = Arc::new(
         ToolsetExecutor::new(
-            // 临时会话 roots = 全局数据目录（§6.2 注；项目会话随项目票接入）。
-            // 数据根统一取 AppState.store（与存储/边车同根；测试注入临时目录）。
+            // 会话 roots（§6.2/§9.1，16 号票）：项目会话=项目主目录，
+            // 临时会话=数据目录；数据根恒为 AppState.store（与存储/边车同根；
+            // 测试注入临时目录）。
             {
-                let root = app.store.root().to_path_buf();
-                let _ = std::fs::create_dir_all(&root);
-                crate::tools::ToolsContext::new(root.clone(), root)
+                let data_root = app.store.root().to_path_buf();
+                let _ = std::fs::create_dir_all(&data_root);
+                let project_root = crate::host::commands::workspace::resolve_session_roots(
+                    app,
+                    &session_id,
+                )
+                .0;
+                let _ = std::fs::create_dir_all(&project_root);
+                crate::tools::ToolsContext::new(project_root, data_root)
             },
             run_config.tier,
         )

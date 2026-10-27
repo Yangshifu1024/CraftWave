@@ -5,12 +5,20 @@
 
 pub mod chat;
 pub mod config;
+pub mod project;
 pub mod provider;
+pub mod session;
 pub mod session_tree;
+pub mod ui_state;
+pub mod workspace;
 
 #[cfg(test)]
 #[path = "chat_test.rs"]
 mod chat_test;
+
+#[cfg(test)]
+#[path = "workspace_test.rs"]
+mod workspace_test;
 
 /// ChatFrame P0 全集 9 帧（§3.4；type 值与 TS 判别值一致）。
 pub const FRAMES: &[&str] = &[

@@ -52,8 +52,8 @@ export const echoAdapter: ChatModelAdapter = {
 // ---- tauri 后端适配器（§10.2：start_chat + Channel 帧 → assistant-ui） ----
 
 /**
- * M1 单会话（多会话 Tab 不在本票）：临时会话 id。会话域（列表/Tab/持久化
- * 会话）落地后由 sessions store 提供。
+ * 单会话调试常量（S6 骨架遗留）：生产路径已由 sessions store 提供
+ * 真实会话 id（16 号票）；保留供测试与 ?mirror 入口。
  */
 export const LOCAL_SESSION_ID = "local";
 
@@ -167,11 +167,23 @@ function endStatus(reason: "done" | "error" | "cancelled"): ChatModelRunResult["
   }
 }
 
-/** 生产 adapter（§10.2 伪代码的产品化落地）。 */
+/** 生产 adapter（§10.2 伪代码的产品化落地，S6 骨架遗留单例形态）。 */
 export const tauriChatModel: ChatModelAdapter = createTauriChatAdapter({
   ...defaultDeps,
-  onFrame: (frame) => useRunMetricsStore.getState().ingest(frame),
+  onFrame: (frame) => useRunMetricsStore.getState().ingest(defaultDeps.sessionId, frame),
 });
+
+/**
+ * 按会话产出生产 adapter（16 号票多会话）：每 Tab 一个实例——帧入本会话的
+ * metrics 桶，运行态节点记账记到本会话的 persist 分桶。
+ */
+export function sessionAdapter(sessionId: string): ChatModelAdapter {
+  return createTauriChatAdapter({
+    ...defaultDeps,
+    sessionId,
+    onFrame: (frame) => useRunMetricsStore.getState().ingest(sessionId, frame),
+  });
+}
 
 /**
  * 可注入 adapter 工厂：start_chat 带 channel → FrameBuffer 累积 → 64ms 节流
@@ -213,11 +225,13 @@ export function createTauriChatAdapter(deps: TauriAdapterDeps): ChatModelAdapter
             if (
               unstable_assistantMessageId !== undefined &&
               frame.type === "runStarted" &&
-              !useSessionPersistStore.getState().runtimeNodes.has(unstable_assistantMessageId)
+              !useSessionPersistStore
+                .getState()
+                .scopes[deps.sessionId]?.runtimeNodes.has(unstable_assistantMessageId)
             ) {
               useSessionPersistStore
                 .getState()
-                .noteRuntimeNode(unstable_assistantMessageId, frame.runId);
+                .noteRuntimeNode(deps.sessionId, unstable_assistantMessageId, frame.runId);
             }
             buffer.push(frame);
             deps.onFrame?.(frame);
