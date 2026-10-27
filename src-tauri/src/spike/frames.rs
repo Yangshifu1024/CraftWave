@@ -49,6 +49,9 @@ pub enum ChatFrame {
         call_id: String,
         ok: bool,
         ui_summary: String,
+        /// 错误面（§3.4 `error?`）：被取消工具补 E_CANCELLED（S5），其余 None。
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<FrameError>,
     },
     RunEnded {
         reason: EndReason,
@@ -64,6 +67,14 @@ pub enum EndReason {
     Done,
     Error,
     Cancelled,
+}
+
+/// 帧错误面（§3.4 `error?: { code, message }`，§3.6 错误码注册表）。
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FrameError {
+    pub code: String,
+    pub message: String,
 }
 
 /// 帧出口：生产实现发 tauri `ipc::Channel<ChatFrame>`，测试实现收进 Vec。

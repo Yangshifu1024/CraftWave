@@ -1229,6 +1229,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "futures",
+ "libc",
  "rig",
  "serde",
  "serde_json",
@@ -1236,6 +1237,8 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-decoration",
  "tokio",
+ "tokio-util",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -8264,6 +8267,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
  "libc",
  "pin-project-lite",
  "tokio",

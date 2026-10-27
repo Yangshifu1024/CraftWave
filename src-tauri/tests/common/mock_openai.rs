@@ -58,13 +58,26 @@ pub struct MockOpenAI {
     server: JoinHandle<()>,
 }
 
+/// SSE 脚本事件：`(kind 摘要, OpenAI 兼容 chunk 负载)`。
+pub type ScriptEvent = (&'static str, String);
+
 impl MockOpenAI {
-    /// 启动 mock（随机端口），chunk 间隔 30ms。
+    /// 启动 mock（随机端口），chunk 间隔 30ms，默认 S2/S3 脚本。
     pub async fn start() -> Self {
         Self::start_with_gap(CHUNK_GAP).await
     }
 
+    /// 启动 mock，第 1 轮脚本换成调用方给的序列（S5：长流 / 双工具）；
+    /// 带 tool_result 的第 2 轮请求仍走默认答复脚本。chunk 间隔 30ms。
+    pub async fn start_with_turn1(turn1: Vec<ScriptEvent>) -> Self {
+        Self::start_scripts(CHUNK_GAP, turn1).await
+    }
+
     pub async fn start_with_gap(gap: Duration) -> Self {
+        Self::start_scripts(gap, turn1_events()).await
+    }
+
+    async fn start_scripts(gap: Duration, turn1: Vec<ScriptEvent>) -> Self {
         let sent: Arc<Mutex<Vec<SentChunk>>> = Arc::default();
         let requests: Arc<Mutex<Vec<Value>>> = Arc::default();
         let route_sent = sent.clone();
@@ -75,7 +88,8 @@ impl MockOpenAI {
                 post(move |Json(body): Json<Value>| {
                     let sent = route_sent.clone();
                     let requests = route_requests.clone();
-                    async move { handle_completion(body, sent, requests, gap).await }
+                    let turn1 = turn1.clone();
+                    async move { handle_completion(body, sent, requests, gap, turn1).await }
                 }),
             )
             .route("/v1/models", get(get_models));
@@ -157,56 +171,85 @@ fn usage_chunk() -> String {
     )
 }
 
-/// 第 1 轮脚本：思考 → 文本 → 工具名 → 参数三段（第二段结尾半截 JSON）→ 收尾。
-fn turn1_events() -> Vec<(&'static str, String)> {
-    let mut events = Vec::new();
-    events.push((
-        "reasoning",
-        chunk(json!({"reasoning_content": "用户要我看配置，"}), None),
-    ));
-    events.push((
-        "reasoning",
-        chunk(json!({"reasoning_content": "先调用 read。"}), None),
-    ));
-    events.push(("content", chunk(json!({"content": "我来读一下"}), None)));
-    events.push(("content", chunk(json!({"content": "配置文件。"}), None)));
-    events.push((
+// —— 脚本组合子（公开：S5 测试自造 turn1 脚本用） ——
+
+/// 一条正文 delta chunk。
+pub fn content_delta(text: &str) -> ScriptEvent {
+    ("content", chunk(json!({"content": text}), None))
+}
+
+/// 工具调用开启 chunk（带 id/name；参数由后续 tool_args 增量给出）。
+pub fn tool_open(index: usize, id: &str, name: &str) -> ScriptEvent {
+    (
         "tool_name",
         chunk(
-            json!({"tool_calls": [{"index": 0, "id": "call_1", "type": "function",
-                "function": {"name": TURN1_TOOL_NAME, "arguments": ""}}]}),
+            json!({"tool_calls": [{"index": index, "id": id, "type": "function",
+                "function": {"name": name, "arguments": ""}}]}),
             None,
         ),
-    ));
-    for part in TURN1_TOOL_ARG_PARTS {
-        events.push((
-            "tool_args",
-            chunk(
-                json!({"tool_calls": [{"index": 0,
-                    "function": {"arguments": part}}]}),
-                None,
-            ),
-        ));
-    }
-    events.push(("finish", chunk(json!({}), Some("tool_calls"))));
-    events.push(("usage", usage_chunk()));
-    events.push(("done", "data: [DONE]\n\n".to_string()));
-    events
+    )
+}
+
+/// 工具参数增量 chunk（半截 JSON 原样）。
+pub fn tool_args_delta(index: usize, part: &str) -> ScriptEvent {
+    (
+        "tool_args",
+        chunk(
+            json!({"tool_calls": [{"index": index,
+                "function": {"arguments": part}}]}),
+            None,
+        ),
+    )
+}
+
+/// finish 收尾 chunk。
+pub fn finish_chunk(reason: &str) -> ScriptEvent {
+    ("finish", chunk(json!({}), Some(reason)))
+}
+
+/// usage 记账 chunk。
+pub fn usage_event() -> ScriptEvent {
+    ("usage", usage_chunk())
+}
+
+/// 流终止标记。
+pub fn done_marker() -> ScriptEvent {
+    ("done", "data: [DONE]\n\n".to_string())
+}
+
+/// 第 1 轮脚本：思考 → 文本 → 工具名 → 参数三段（第二段结尾半截 JSON）→ 收尾。
+fn turn1_events() -> Vec<ScriptEvent> {
+    vec![
+        (
+            "reasoning",
+            chunk(json!({"reasoning_content": "用户要我看配置，"}), None),
+        ),
+        (
+            "reasoning",
+            chunk(json!({"reasoning_content": "先调用 read。"}), None),
+        ),
+        content_delta("我来读一下"),
+        content_delta("配置文件。"),
+        tool_open(0, "call_1", TURN1_TOOL_NAME),
+        tool_args_delta(0, TURN1_TOOL_ARG_PARTS[0]),
+        tool_args_delta(0, TURN1_TOOL_ARG_PARTS[1]),
+        tool_args_delta(0, TURN1_TOOL_ARG_PARTS[2]),
+        finish_chunk("tool_calls"),
+        usage_event(),
+        done_marker(),
+    ]
 }
 
 /// 第 2 轮脚本：纯文本答复。
-fn turn2_events() -> Vec<(&'static str, String)> {
-    let mut events = Vec::new();
-    events.push((
-        "content",
-        chunk(json!({"content": "配置文件共 12 行，"}), None),
-    ));
-    events.push(("content", chunk(json!({"content": "端口是"}), None)));
-    events.push(("content", chunk(json!({"content": " 8087。"}), None)));
-    events.push(("finish", chunk(json!({}), Some("stop"))));
-    events.push(("usage", usage_chunk()));
-    events.push(("done", "data: [DONE]\n\n".to_string()));
-    events
+fn turn2_events() -> Vec<ScriptEvent> {
+    vec![
+        content_delta("配置文件共 12 行，"),
+        content_delta("端口是"),
+        content_delta(" 8087。"),
+        finish_chunk("stop"),
+        usage_event(),
+        done_marker(),
+    ]
 }
 
 async fn handle_completion(
@@ -214,12 +257,13 @@ async fn handle_completion(
     sent: Arc<Mutex<Vec<SentChunk>>>,
     requests: Arc<Mutex<Vec<Value>>>,
     gap: Duration,
+    turn1: Vec<ScriptEvent>,
 ) -> Response {
     requests.lock().await.push(body.clone());
     let script = if has_tool_result(&body) {
         turn2_events()
     } else {
-        turn1_events()
+        turn1
     };
     let stream =
         futures::stream::iter(script.into_iter().map(Ok::<_, Infallible>)).then(move |item| {
