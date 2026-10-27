@@ -27,6 +27,7 @@ CraftWave M1 MVP 出口准则达成：P0 需求全集实现，NFR-01/02/06/09/12
 - [S2+S3 rig 流事件保真与手动工具循环（含 C-6 收口）](tasks/05-spike-s2s3-rig-stream-loop.md)：两者均可行——载体 `rig::run::AgentRun`（sans-IO）+ CallTools 整只 run 序列化审批挂起（含跨重启）；锁 0.45.0（双版本零改动实证）；NFR-02 余量 >35ms；帧协议增 `ts?`/callId 同源/节流语义钉死；**附带发现 rig MSRV=1.97.1，工具链已抬升**。
 - [S1 assistant-ui 镜像工具桥接](tasks/06-spike-s1-mirror-tools.md)：可行，不退 D11；唯一修正：local runtime 无 execute 管线，改为 adapter 直写 result；`makeAssistantToolUI` 已废弃、`Tools` 是 resource 工厂、partial JSON 依赖 assistant-stream 显式声明（§10.3 已重写）。
 - [S4 消息树持久化 roundtrip（含 C-4 钉死）](tasks/07-spike-s4-tree-roundtrip.md)：roundtrip 通过（编辑/重生成/分支切换逐节点一致，vitest 11 例）；C-4 定案（headId/messages 结构钉死，§6.1 增 `status?`）；D12 复核 rig-memory 直接承载不可行，决策维持并增补 redact 复刻点。
+- [实现：storage 读写器与会话树命令](tasks/10-impl-storage-session-tree.md)：分段 JSONL 读写器（封口/指纹/尾段容错）+ 原子写 + save/load_session_tree 命令与 manifest 契约测试落地，Rust/前端 roundtrip 全绿，§6/§7 无出入。
 
 ## Not yet specified
 
