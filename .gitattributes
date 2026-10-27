@@ -1,0 +1,7 @@
+# 统一行尾：文本文件一律 LF（Windows runner 全局 autocrlf=true 会转 CRLF，biome 会报格式错）
+* text=auto eol=lf
+
+# 二进制产物
+*.png binary
+*.ico binary
+*.icns binary
