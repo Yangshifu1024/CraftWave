@@ -1,15 +1,18 @@
 //! 工具系统：注册表 + 各工具实现 + 批次调度（§8.1）。
 //!
-//! M1 第一切片（11 号票）：五个文件类工具（read/write/edit/list_files/grep）
-//! 与围栏判定纯逻辑。command/ask/suggest/plan 工具、审批门、工具卡片 UI
-//! 接线、写后检查不在本切片。
+//! M1 第二切片（14 号票）：在五文件类工具（11 号票）之上接线
+//! command/plan/ask 三工具与 suggest 后台小调用（非模型工具，不进注册表，
+//! 由 host 在 run 收尾发起）。审批门与工具卡片 UI 接线同票落地。
 //!
 //! 双通道结果（§8.2）：工具返回 [`ToolOutcome`]，模型通道 compact 文本经
 //! [`compact_text`] 生成（成功头 4KB + 尾 8KB 截断；失败 error code+message）。
 
+pub mod ask;
+pub mod command;
 pub mod edit;
 pub mod grep;
 pub mod list_files;
+pub mod plan;
 pub mod process;
 pub mod read;
 pub mod write;
@@ -169,9 +172,18 @@ fn floor_char_boundary(s: &str, mut index: usize) -> usize {
     index
 }
 
-/// 工具名称与顺序钉死（§8.1：集成测试防漂移）。本切片 5 个，
-/// 后续切片在尾部追加（read/write/edit/list_files/grep/command/plan/ask/suggest）。
-pub const TOOL_NAMES: [&str; 5] = ["read", "write", "edit", "list_files", "grep"];
+/// 工具名称与顺序钉死（§8.1：集成测试防漂移）。M1 注册表 8 个
+/// （§8.3 P0 9 个中的模型可见子集；suggest 仅 run 尾调用不开放模型）。
+pub const TOOL_NAMES: [&str; 8] = [
+    "read",
+    "write",
+    "edit",
+    "list_files",
+    "grep",
+    "command",
+    "plan",
+    "ask",
+];
 
 /// 静态注册表（§8.1：启动时构建）。顺序与 [`TOOL_NAMES`] 一致。
 pub fn build_registry() -> Vec<ToolSpec> {
@@ -181,6 +193,9 @@ pub fn build_registry() -> Vec<ToolSpec> {
         edit::spec(),
         list_files::spec(),
         grep::spec(),
+        command::spec(),
+        plan::spec(),
+        ask::spec(),
     ]
 }
 
@@ -195,5 +210,17 @@ pub fn filter_for_tier(specs: Vec<ToolSpec>, tier: PermissionTier) -> Vec<ToolSp
 }
 
 #[cfg(test)]
+#[path = "ask_test.rs"]
+mod ask_test;
+
+#[cfg(test)]
+#[path = "command_test.rs"]
+mod command_test;
+
+#[cfg(test)]
 #[path = "compact_test.rs"]
 mod compact_test;
+
+#[cfg(test)]
+#[path = "plan_test.rs"]
+mod plan_test;

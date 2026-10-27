@@ -8,6 +8,7 @@
 pub mod atomic;
 pub mod encoding;
 pub mod errors;
+pub mod events;
 pub mod ids;
 
 #[cfg(test)]

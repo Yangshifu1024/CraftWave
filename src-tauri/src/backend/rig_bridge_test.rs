@@ -45,7 +45,7 @@ fn text_delta(part: usize, text: &str) -> Item<StreamEvent> {
 }
 
 #[test]
-fn 文本与参数增量原样转发_半截json保留() {
+fn text_and_args_deltas_passthrough_partial_json_kept() {
     let mut b = RigEventBridge::new();
     let mut frames = Vec::new();
     for item in [
@@ -66,15 +66,15 @@ fn 文本与参数增量原样转发_半截json保留() {
                 delta: "我来读".into()
             },
             ChatFrame::ToolStarted {
-                call_id: "call_part_1".into(),
+                call_id: "call_part_1_1".into(),
                 name: "read".into()
             },
             ChatFrame::ToolArgs {
-                call_id: "call_part_1".into(),
+                call_id: "call_part_1_1".into(),
                 chunk: "{\"pa".into()
             },
             ChatFrame::ToolArgs {
-                call_id: "call_part_1".into(),
+                call_id: "call_part_1_1".into(),
                 chunk: "th\": \"/a.toml\"}".into()
             },
         ],
@@ -83,7 +83,7 @@ fn 文本与参数增量原样转发_半截json保留() {
 }
 
 #[test]
-fn end_事件登记模型call映射_反查得帧面id() {
+fn end_registers_model_call_mapping_reverse_lookup() {
     let mut b = RigEventBridge::new();
     let _ = b.bridge(&tool_start(1, "read"), 1);
     let _ = b.bridge(&tool_args(1, "{}"), 1);
@@ -92,7 +92,7 @@ fn end_事件登记模型call映射_反查得帧面id() {
 
     assert_eq!(
         b.frame_call_id_for_model("call_model_9"),
-        "call_part_1",
+        "call_part_1_1",
         "模型 call id 反查到帧面桥接 id（toolResult 同源用）"
     );
     assert_eq!(
@@ -103,7 +103,7 @@ fn end_事件登记模型call映射_反查得帧面id() {
 }
 
 #[test]
-fn 多工具调用映射逐一对应() {
+fn multi_tool_calls_map_one_to_one() {
     let mut b = RigEventBridge::new();
     for item in [
         tool_start(1, "read"),
@@ -115,12 +115,12 @@ fn 多工具调用映射逐一对应() {
     ] {
         let _ = b.bridge(&item, 1);
     }
-    assert_eq!(b.frame_call_id_for_model("call_A"), "call_part_1");
-    assert_eq!(b.frame_call_id_for_model("call_B"), "call_part_2");
+    assert_eq!(b.frame_call_id_for_model("call_A"), "call_part_1_1");
+    assert_eq!(b.frame_call_id_for_model("call_B"), "call_part_1_2");
 }
 
 #[test]
-fn 未命名的start先占位_首参数补登记() {
+fn anonymous_start_placeholder_first_args_registers() {
     let mut b = RigEventBridge::new();
     // Start 未带名（OpenAI 首个 tool_calls chunk 只有 index 的边缘形态）
     let anonymous = Item::Event(StreamEvent::Start {
@@ -139,5 +139,26 @@ fn 未命名的start先占位_首参数补登记() {
     let ChatFrame::ToolArgs { call_id, .. } = &frames[0] else {
         panic!("应为 toolArgs 帧");
     };
-    assert_eq!(call_id, "call_part_3", "首参数事件补登记桥接 id");
+    assert_eq!(call_id, "call_part_1_3", "首参数事件补登记桥接 id");
+}
+
+#[test]
+fn derived_ids_no_collision_across_turns() {
+    // 14 号票修正：part 序号按响应各自从 0 计，两轮各自的 part 1 若无
+    // turn 前缀会撞同一帧面 id（前端卡片 Map 合并丢失）。
+    let mut b = RigEventBridge::new();
+    let _ = b.bridge(&tool_start(1, "read"), 1);
+    let _ = b.bridge(&tool_end_event(1, "call_t1"), 1);
+    let _ = b.bridge(&tool_start(1, "grep"), 2);
+    let _ = b.bridge(&tool_end_event(1, "call_t2"), 2);
+    assert_eq!(
+        b.frame_call_id_for_model("call_t1"),
+        "call_part_1_1",
+        "第一轮 part 1"
+    );
+    assert_eq!(
+        b.frame_call_id_for_model("call_t2"),
+        "call_part_2_1",
+        "第二轮 part 1 —— 与第一轮不同 id"
+    );
 }

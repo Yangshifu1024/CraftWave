@@ -6,7 +6,7 @@ use std::fs;
 use super::{write_atomic, write_json};
 
 #[test]
-fn 原子写_覆盖既有内容且不留临时文件() {
+fn atomic_write_overwrites_no_temp_left() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("segmeta.json");
     write_atomic(&path, b"v1").unwrap();
@@ -23,7 +23,7 @@ fn 原子写_覆盖既有内容且不留临时文件() {
 }
 
 #[test]
-fn 原子写_目标不存在时自动建父目录() {
+fn atomic_write_missing_target_creates_parent() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("histories/s1/.segmeta.json");
     write_atomic(&path, b"{}").unwrap();
@@ -31,14 +31,14 @@ fn 原子写_目标不存在时自动建父目录() {
 }
 
 #[test]
-fn 原子写_无效目标路径返回错误() {
+fn atomic_write_invalid_target_errors() {
     // 根路径没有父目录，应返回 InvalidInput 而非 panic
     let err = write_atomic(std::path::Path::new("/"), b"x").unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
 }
 
 #[test]
-fn 原子写_json_自动创建缺失目录且内容可回读() {
+fn atomic_write_json_creates_dirs_readable() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("a/b/config.json");
 
@@ -48,7 +48,7 @@ fn 原子写_json_自动创建缺失目录且内容可回读() {
 }
 
 #[test]
-fn 原子写_父目录被文件占位时失败且无残留() {
+fn atomic_write_parent_blocked_fails_no_residue() {
     let dir = tempfile::tempdir().unwrap();
     // 指向一个"文件当目录"的路径，使 create_dir_all 失败
     let blocker = dir.path().join("blocker");

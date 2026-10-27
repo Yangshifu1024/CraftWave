@@ -6,7 +6,7 @@ use std::thread;
 use super::LockMap;
 
 #[test]
-fn 同一会话互斥_不同会话并行() {
+fn same_session_mutex_different_parallel() {
     let map = Arc::new(LockMap::default());
     let mutex = map.get("s1");
     let guard = mutex.lock().unwrap();
@@ -22,7 +22,7 @@ fn 同一会话互斥_不同会话并行() {
 }
 
 #[test]
-fn 会话锁释放后可重入() {
+fn session_lock_reentrant_after_release() {
     let map = LockMap::default();
     drop(map.get("s1").lock().unwrap());
     let mutex = map.get("s1");

@@ -37,16 +37,30 @@ impl RigEventBridge {
         Self::default()
     }
 
+    /// 以既有「模型 call id → 桥接 id」映射播种（审批挂起恢复：挂起批的
+    /// toolStarted/toolArgs 帧已按旧映射发出，恢复后的 toolResult 须同源）。
+    pub fn seed_model_call_ids(&mut self, map: HashMap<String, String>) {
+        self.model_call_ids = map;
+    }
+
+    /// 映射快照（挂起时随 DriveState 带出）。
+    pub fn model_call_ids(&self) -> &HashMap<String, String> {
+        &self.model_call_ids
+    }
+
     /// 转换一个 rig 流事件。`turn` 为帧的 turn 字段（从 1 起）。
     pub fn bridge(&mut self, item: &Item<StreamEvent>, turn: u32) -> Bridged {
         let Item::Event(event) = item else {
             // 未建模的 provider 透传负载：不出帧（生产应记日志）
             return Bridged::None;
         };
+        // 派生 id 带 turn 前缀：part 序号按响应各自从 0 计，跨轮会撞车
+        // （14 号票修正：第二轮 tool-call 的帧面 callId 不得复用第一轮的）。
+        let derive = |part_index: usize| format!("call_part_{turn}_{part_index}");
         match event {
             StreamEvent::Start { part, kind, name } => match kind {
                 PartKind::ToolCall => {
-                    let call_id = format!("call_part_{}", part.index());
+                    let call_id = derive(part.index());
                     if let Some(tool_name) = name {
                         // 幂等：wire 层在 close 阶段可能补发 Start（同 part），
                         // 已登记的 part 不重发 toolStarted（帧面不重复）。
@@ -65,7 +79,7 @@ impl RigEventBridge {
                         // Start 未带名：暂不出帧，等首个 Arguments 事件补登记
                         self.open_tool_calls
                             .entry(part.index())
-                            .or_insert_with(|| format!("call_part_{}", part.index()));
+                            .or_insert_with(|| derive(part.index()));
                         Bridged::None
                     }
                 }
@@ -93,7 +107,7 @@ impl RigEventBridge {
                 let call_id = self
                     .open_tool_calls
                     .entry(part.index())
-                    .or_insert_with(|| format!("call_part_{}", part.index()))
+                    .or_insert_with(|| derive(part.index()))
                     .clone();
                 // 参数增量 JSON 片段原样转发（半截 JSON 保留原样，前端以
                 // 「参数准备中」态渲染——§10.2）
@@ -109,7 +123,7 @@ impl RigEventBridge {
                         .open_tool_calls
                         .get(&part.index())
                         .cloned()
-                        .unwrap_or_else(|| format!("call_part_{}", part.index()));
+                        .unwrap_or_else(|| derive(part.index()));
                     self.model_call_ids
                         .insert(call.id.to_string(), bridged.clone());
                     self.open_tool_calls.insert(part.index(), bridged);

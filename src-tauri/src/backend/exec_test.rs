@@ -25,7 +25,7 @@ async fn execute(name: &str, args_json: &str) -> (ToolExecution, ToolsContext) {
 }
 
 #[tokio::test]
-async fn read工具执行成功_模型通道为compact文本() {
+async fn read_success_model_channel_compact_text() {
     let (out, _ctx_guard) = {
         let ctx = temp_ctx();
         std::fs::write(ctx.project_root.join("a.txt"), "第一行\n第二行").unwrap();
@@ -58,7 +58,7 @@ async fn read工具执行成功_模型通道为compact文本() {
 }
 
 #[tokio::test]
-async fn 非法参数回喂工具级失败_不中断run() {
+async fn invalid_args_tool_level_failure_run_continues() {
     let (out, _ctx) = execute("read", "{oops 半截").await;
     let ToolExecution::Completed {
         ok,
@@ -79,7 +79,7 @@ async fn 非法参数回喂工具级失败_不中断run() {
 }
 
 #[tokio::test]
-async fn 未知工具回喂invalid_arg() {
+async fn unknown_tool_feeds_back_invalid_arg() {
     let (out, _) = execute("rm_rf", "{}").await;
     let ToolExecution::Completed { ok, error, .. } = out else {
         panic!("应为 Completed");
@@ -89,7 +89,7 @@ async fn 未知工具回喂invalid_arg() {
 }
 
 #[tokio::test]
-async fn plan档写类工具被排除_工具受阻错误() {
+async fn plan_tier_write_tools_excluded_tool_blocked() {
     let ctx = temp_ctx();
     let token = CancellationToken::new();
     let executor = Arc::new(ToolsetExecutor::new(ctx.clone(), PermissionTier::Plan));

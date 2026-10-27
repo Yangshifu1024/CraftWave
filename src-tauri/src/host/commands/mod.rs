@@ -8,6 +8,10 @@ pub mod config;
 pub mod provider;
 pub mod session_tree;
 
+#[cfg(test)]
+#[path = "chat_test.rs"]
+mod chat_test;
+
 /// ChatFrame P0 全集 9 帧（§3.4；type 值与 TS 判别值一致）。
 pub const FRAMES: &[&str] = &[
     "runStarted",
@@ -21,5 +25,13 @@ pub const FRAMES: &[&str] = &[
     "runEnded",
 ];
 
-/// 事件键（§3.5 P0 18 键）。事件汇属后续票；本切片不发射事件，先占位空表。
-pub const EVENTS: &[&str] = &[];
+/// 事件键（§3.5 P0 子集）：14 号票实装 5 键（ask 协议 / plan / suggest /
+/// 会话用量）；其余键（run:* / tool:* / session:title / notify / menu /
+/// app:exit_requested）随对应票填充。
+pub const EVENTS: &[&str] = &[
+    "ask:opened",
+    "ask:closed",
+    "plan:update",
+    "run:suggestions",
+    "tokens:update",
+];

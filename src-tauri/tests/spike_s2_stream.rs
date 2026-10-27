@@ -39,7 +39,7 @@ fn is_args(f: &ChatFrame) -> bool {
 }
 
 #[tokio::test]
-async fn s2_直通模式_流事件无丢失无乱序() {
+async fn s2_passthrough_no_loss_no_reorder() {
     let mock = MockOpenAI::start().await;
     let sink = TimedSink::default();
     let response = drive_direct(
@@ -130,7 +130,7 @@ async fn s2_直通模式_流事件无丢失无乱序() {
 
 /// 打字机流畅佐证：64ms 节流合并下，文本帧间隔 ≥ 节流窗口，拼接仍无损。
 #[tokio::test]
-async fn s2_节流模式_64ms合并_帧间隔实测() {
+async fn s2_throttle_64ms_merge_frame_interval() {
     let mock = MockOpenAI::start().await; // chunk 间隔 30ms
     let throttler = Arc::new(Mutex::new(DeltaThrottler::new()));
     let sink = TimedSink::default();
@@ -256,7 +256,7 @@ async fn report_latency(mock: &MockOpenAI, frames: &[TimedFrame], label: &str) {
 
 /// 帧协议序列化形态检查（camelCase + 内部 tag，§3.1/§3.4 契约）。
 #[test]
-fn s2_帧协议_camel_case与snake_case_tag() {
+fn s2_frame_protocol_camel_and_snake_tag() {
     let v = serde_json::to_value(ChatFrame::RunEnded {
         reason: EndReason::Done,
         duration_ms: 12,

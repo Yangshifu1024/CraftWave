@@ -5,7 +5,7 @@ use super::frames::{ChatFrame, EndReason, FrameError};
 
 /// 取消终态帧的序列化形态：reason=cancelled（§3.4 枚举），取消不是 error。
 #[test]
-fn run_ended_取消终态序列化形态() {
+fn run_ended_cancelled_serialization_shape() {
     let v = serde_json::to_value(ChatFrame::RunEnded {
         reason: EndReason::Cancelled,
         duration_ms: 87,
@@ -22,7 +22,7 @@ fn run_ended_取消终态序列化形态() {
 
 /// 被取消工具的 toolResult：ok=false + error.code=E_CANCELLED（camelCase）。
 #[test]
-fn tool_result_取消标记带_e_cancelled_错误码() {
+fn tool_result_cancel_marked_e_cancelled() {
     let v = serde_json::to_value(ChatFrame::ToolResult {
         call_id: "call_2".into(),
         ok: false,
@@ -41,7 +41,7 @@ fn tool_result_取消标记带_e_cancelled_错误码() {
 
 /// 已完成工具的 toolResult 不带 error 字段（§3.4 skip 序列化，前端兼容）。
 #[test]
-fn tool_result_已完成结果不带错误面() {
+fn tool_result_completed_no_error() {
     let v = serde_json::to_value(ChatFrame::ToolResult {
         call_id: "call_1".into(),
         ok: true,
@@ -55,7 +55,7 @@ fn tool_result_已完成结果不带错误面() {
 
 /// 工具结果语义：Completed 保留 / Cancelled 补标记（收齐后由 RunLoop 出帧）。
 #[test]
-fn tool_outcome_语义区分() {
+fn tool_outcome_semantics() {
     let done = ToolOutcome::Completed("[read] 12 行".into());
     let cancelled = ToolOutcome::Cancelled("进程组已收割".into());
     assert!(matches!(done, ToolOutcome::Completed(_)));

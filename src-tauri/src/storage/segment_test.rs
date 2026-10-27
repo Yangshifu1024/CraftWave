@@ -44,7 +44,7 @@ fn sample_log() -> Vec<StoredEntry> {
 // ---- 序列化形状（跨语言契约的字节级口径） ----
 
 #[test]
-fn 条目行_kind标签与驼峰字段() {
+fn entry_line_kind_tag_camel_fields() {
     let line = entry_line(&sample_log()[1]).unwrap();
     assert!(line.starts_with(r#"{"kind":"message""#), "tag=kind: {line}");
     assert!(line.contains(r#""createdAt":"#), "camelCase: {line}");
@@ -56,7 +56,7 @@ fn 条目行_kind标签与驼峰字段() {
 }
 
 #[test]
-fn tool_part与状态_序列化形状() {
+fn tool_part_and_status_shape() {
     let entry = StoredEntry::Message(MessageEntry {
         id: "a1".into(),
         parent_id: Some("u1".into()),
@@ -92,7 +92,7 @@ fn tool_part与状态_序列化形状() {
 }
 
 #[test]
-fn requires_action_与incomplete_与计划条目_序列化形状() {
+fn requires_action_incomplete_plan_items_shape() {
     let status = MessageStatus::RequiresAction {
         reason: super::entries::RequiresActionReason::ToolCalls,
     };
@@ -134,7 +134,7 @@ fn requires_action_与incomplete_与计划条目_序列化形状() {
 // ---- 打开/追加/封口 ----
 
 #[test]
-fn 追加_读取_往返一致且fsync后文件干净收尾() {
+fn append_read_roundtrip_clean_after_fsync() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("s1");
     let mut log = SessionLog::open(path.clone()).unwrap();
@@ -154,7 +154,7 @@ fn 追加_读取_往返一致且fsync后文件干净收尾() {
 }
 
 #[test]
-fn 满200条滚动新段且segmeta记录封口段() {
+fn two_hundred_entries_roll_new_segment() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("s1");
     let mut log = SessionLog::open(path.clone()).unwrap();
@@ -185,7 +185,7 @@ fn 满200条滚动新段且segmeta记录封口段() {
 }
 
 #[test]
-fn 大字节批量封口_字节阈值触发滚动() {
+fn large_batch_seal_byte_threshold_rolls() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("s1");
     let mut log = SessionLog::open(path.clone()).unwrap();
@@ -210,7 +210,7 @@ fn 大字节批量封口_字节阈值触发滚动() {
 // ---- 损坏尾段容错 ----
 
 #[test]
-fn 崩溃半行_跳过且后续追加滚动新段() {
+fn crashed_half_line_skipped_new_segment() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("s1");
     let mut log = SessionLog::open(path.clone()).unwrap();
@@ -242,7 +242,7 @@ fn 崩溃半行_跳过且后续追加滚动新段() {
 }
 
 #[test]
-fn 尾段非法行_其后的内容一并跳过() {
+fn tail_invalid_line_skips_rest() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("s1");
     let mut log = SessionLog::open(path.clone()).unwrap();
@@ -258,7 +258,7 @@ fn 尾段非法行_其后的内容一并跳过() {
 }
 
 #[test]
-fn 非最后一段损坏_直接报错不容错() {
+fn non_tail_segment_corrupt_errors() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("s1");
     let mut log = SessionLog::open(path.clone()).unwrap();
@@ -280,7 +280,7 @@ fn 非最后一段损坏_直接报错不容错() {
 // ---- 指纹 ----
 
 #[test]
-fn 指纹校验_篡改封口段内容即失配且不续写() {
+fn fingerprint_mismatch_tampered_segment_no_append() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("s1");
     let mut log = SessionLog::open(path.clone()).unwrap();
@@ -311,7 +311,7 @@ fn 指纹校验_篡改封口段内容即失配且不续写() {
 }
 
 #[test]
-fn 无segmeta视为通过_开放段可续写() {
+fn no_segmeta_passes_open_segment_appendable() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("s1");
     let mut log = SessionLog::open(path.clone()).unwrap();

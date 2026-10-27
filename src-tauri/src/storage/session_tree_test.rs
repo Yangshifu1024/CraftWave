@@ -71,7 +71,7 @@ fn tool_assistant(id: &str, parent: &str) -> MessageEntry {
 // ---- roundtrip 与追加纪律 ----
 
 #[test]
-fn save_load_roundtrip_逐条目一致() {
+fn save_load_roundtrip_entries_equal() {
     let (store, _dir) = store();
     let messages = vec![
         user("u1", None, "你好"),
@@ -95,7 +95,7 @@ fn save_load_roundtrip_逐条目一致() {
 }
 
 #[test]
-fn 首存自动写session头条目且仅一条() {
+fn first_save_writes_single_session_header() {
     let (store, _dir) = store();
     store
         .save_session_tree("s1", &[user("u1", None, "你好")], Some("u1"), 0)
@@ -134,7 +134,7 @@ fn first_session_created(content: &str) -> i64 {
 }
 
 #[test]
-fn 幂等全量同步_重复save仅追加meta行() {
+fn idempotent_sync_repeat_save_appends_meta_only() {
     let (store, dir) = store();
     let messages = vec![user("u1", None, "你好"), assistant("a1", "u1", "回复")];
     let rev1 = store
@@ -159,7 +159,7 @@ fn 幂等全量同步_重复save仅追加meta行() {
 }
 
 #[test]
-fn 追加分支只落新行_既有行字节不变() {
+fn branch_append_new_lines_existing_unchanged() {
     let (store, dir) = store();
     let v1 = vec![user("u1", None, "原问题"), assistant("a1", "u1", "原回复")];
     store.save_session_tree("s1", &v1, Some("a1"), 0).unwrap();
@@ -204,7 +204,7 @@ fn loaded_messages_meta(file: &std::path::Path) -> Vec<MetaEntry> {
 }
 
 #[test]
-fn 空树保存与加载() {
+fn empty_tree_save_and_load() {
     let (store, _dir) = store();
     let rev = store.save_session_tree("s1", &[], None, 0).unwrap();
     assert_eq!(rev, 1);
@@ -215,7 +215,7 @@ fn 空树保存与加载() {
 }
 
 #[test]
-fn 多轮save跨段后load一致_revision最新赢() {
+fn multi_save_across_segments_latest_revision_wins() {
     let (store, _dir) = store();
     // 第一轮：写满一段触发封口
     let mut messages = vec![user("u1", None, "根")];
@@ -243,7 +243,7 @@ fn 多轮save跨段后load一致_revision最新赢() {
 // ---- 并发与校验（§6.4） ----
 
 #[test]
-fn 基线修订号过期返回冲突() {
+fn stale_base_revision_conflict() {
     let (store, _dir) = store();
     store
         .save_session_tree("s1", &[user("u1", None, "你好")], Some("u1"), 0)
@@ -262,7 +262,7 @@ fn 基线修订号过期返回冲突() {
 }
 
 #[test]
-fn 同id内容漂移返回冲突() {
+fn same_id_content_drift_conflict() {
     let (store, _dir) = store();
     store
         .save_session_tree("s1", &[user("u1", None, "v1")], Some("u1"), 0)
@@ -277,7 +277,7 @@ fn 同id内容漂移返回冲突() {
 }
 
 #[test]
-fn 孤儿消息与未知活动叶返回参数错误() {
+fn orphan_message_unknown_leaf_invalid_arg() {
     let (store, _dir) = store();
     let err = store
         .save_session_tree("s1", &[user("u2", Some("ghost"), "孤儿")], None, 0)
@@ -294,7 +294,7 @@ fn 孤儿消息与未知活动叶返回参数错误() {
 }
 
 #[test]
-fn 非法会话id被拒绝() {
+fn invalid_session_id_rejected() {
     let (store, _dir) = store();
     for bad in ["", "../evil", "a/b", "a\\b", ".."] {
         let err = store.save_session_tree(bad, &[], None, 0).unwrap_err();
@@ -303,14 +303,14 @@ fn 非法会话id被拒绝() {
 }
 
 #[test]
-fn 加载不存在会话返回未找到() {
+fn load_missing_session_not_found() {
     let (store, _dir) = store();
     let err = store.load_session_tree("missing").unwrap_err();
     assert_eq!(err, StorageError::NotFound("missing".to_string()));
 }
 
 #[test]
-fn 加载返回结构可序列化为驼峰契约() {
+fn load_result_serializes_camel_contract() {
     let (store, _dir) = store();
     store
         .save_session_tree("s1", &[user("u1", None, "你好")], Some("u1"), 0)

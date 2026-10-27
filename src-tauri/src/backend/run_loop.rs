@@ -2,14 +2,18 @@
 //! 取消传播收齐语义（§5.3）。
 //!
 //! 产品化自 S2/S3/S5 spike（`spike/turn.rs` 的手动循环与 `spike/cancel.rs` 的
-//! 取消版），增量：runStarted/stepStarted/usage 帧生产（§3.4）、64ms 节流内聚
-//! （帧生产是 backend 职责）、callId 同源反查（§3.4）、门控挂起点（§5.2「审批
-//! 挂起 = CallTools 步骤上把整只 run 序列化挂起」的机制层——审批 UI 接线属
-//! 工具系统后续票）。
+//! 取消版），13 号票落地帧生产/节流/callId 同源/挂起机制层；14 号票增量：
+//! - 门控批级预判（§5.4 ①–④）：CallTools 先对整批判定再执行——首个 Suspend
+//!   即挂起（**挂起时批内零执行**，恢复后 `next_step` 原样重放全部 calls，
+//!   不存在重复副作用）；Blocked 回喂错误结果帧（不中断 run）；
+//! - [`DriveState`]：跨挂起/恢复延续计时、usage 累计、工具计数与 callId 映射
+//!   （恢复不重发 `runStarted`、usage 不回退、toolResult 与挂起前
+//!   toolStarted/toolArgs 帧同源）。
 //!
 //! 错误语义：`PromptError`（rig 侧失败）冒泡给调用方（RunManager 的 run 任务），
 //! 由其发 `runEnded(error)` 终态帧——保证任何退出路径前端都有终态。
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -43,7 +47,7 @@ pub enum ToolExecution {
 }
 
 /// 取消可感知的工具执行器（§5.4 门控与执行的 backend 侧契约；生产装配见
-/// [`super::exec::ToolsetExecutor`]，未来 command 工具在实现内部以 `token`
+/// [`super::exec::ToolsetExecutor`]，command 工具在实现内部以 `token`
 /// select! 收割进程组——原语见 `tools::process`）。
 pub trait CancellableExecutor: Send + Sync {
     fn execute<'a>(
@@ -55,28 +59,59 @@ pub trait CancellableExecutor: Send + Sync {
     ) -> Pin<Box<dyn Future<Output = ToolExecution> + Send + 'a>>;
 }
 
-/// 工具门控判定（§5.4 步骤①–④的宿主挂点）。本票只钉机制层：
-/// `Allow` 直执行；`Suspend` 表示需审批/询问——RunLoop 把整只 run 序列化挂起
-/// 并返回 [`RunExit::Suspended`]，宿主拿到审批应答后反序列化恢复继续
-/// （跨重启恢复由序列化面天然支持，S3 实证）。权限档判定与审批门策略属
-/// 工具系统后续票。
+/// 工具门控判定（§5.4 步骤①–④）。`Allow` 直执行；`Suspend` 表示需审批/
+/// 围栏确认——RunLoop 把整只 run 序列化挂起并返回 [`RunExit::Suspended`]，
+/// 宿主拿到审批应答后反序列化恢复继续（跨重启恢复由序列化面天然支持，
+/// S3 实证）；`Blocked` 硬拦（围栏黑名单/权限过滤/计划门）——回喂错误
+/// 结果帧，不中断 run。生产策略装配见 [`super::gate::ApprovalGate`]。
 pub trait ToolGate: Send + Sync {
     fn judge(&self, name: &str, args_json: &str) -> GateVerdict;
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum GateVerdict {
     Allow,
-    Suspend,
+    /// 挂起等待审批（`fence_reason`：围栏 Confirm 的写信号原因，AskPayload 用）。
+    Suspend {
+        fence_reason: Option<String>,
+    },
+    /// 硬拦：结果帧回喂（code ∈ {E_FENCE_BLOCKED, E_TOOL_BLOCKED, E_PLAN_STALE}）。
+    Blocked {
+        code: &'static str,
+        message: String,
+    },
 }
 
-/// 全放行门（本票 host 装配的默认门；审批门策略接入前的占位实现）。
+/// 全放行门（测试装配；生产审批门为 [`super::gate::ApprovalGate`]）。
 pub struct AllowAllGate;
 
 impl ToolGate for AllowAllGate {
     fn judge(&self, _name: &str, _args_json: &str) -> GateVerdict {
         GateVerdict::Allow
     }
+}
+
+/// 挂起点信息：触发挂起的调用（宿主构造 AskPayload / 恢复后按签名放行用）。
+#[derive(Debug, Clone)]
+pub struct PendingCall {
+    /// 模型侧 call id（approve 登记签名与 spill 文件名用）。
+    pub model_call_id: String,
+    pub name: String,
+    pub args_json: String,
+    /// 围栏 Confirm 的写信号原因（None = 纯权限矩阵审批）。
+    pub fence_reason: Option<String>,
+}
+
+/// 跨挂起/恢复延续的驱动状态（14 号票：恢复不重发 runStarted、usage 与
+/// 工具计数不回退、callId 映射同源）。
+#[derive(Debug, Clone, Default)]
+pub struct DriveState {
+    pub started_at: Option<Instant>,
+    pub total_usage: UsageTotal,
+    pub tool_count: u32,
+    pub last_turn: u32,
+    /// 模型 call id → 桥接帧面 id（挂起时带出、恢复时播种新 bridge）。
+    pub model_call_ids: HashMap<String, String>,
 }
 
 /// 手动循环的退出态。
@@ -87,8 +122,18 @@ pub enum RunExit {
     /// 取消终态：工具结果已收齐并补标记，runEnded(cancelled) 已发出。
     Cancelled,
     /// 审批挂起：整只 run 已 `serde_json` 序列化（恢复 = [`resume_run`] 后
-    /// 重新 `drive_run`，`next_step` 会重新给出未应答的 calls）。
-    Suspended { run_json: String },
+    /// 重新 `drive_run`，`next_step` 会重新给出未应答的 calls；挂起时批内
+    /// 零执行，恢复重放无重复副作用）。Box 收纳大负载（clippy large_enum_variant）。
+    Suspended(Box<SuspendedInfo>),
+}
+
+/// 挂起信息（[`RunExit::Suspended`] 载体）。
+#[derive(Debug)]
+pub struct SuspendedInfo {
+    pub run_json: String,
+    /// 触发挂起的调用（AskPayload 构造与恢复放行签名）。
+    pub pending: PendingCall,
+    pub state: DriveState,
 }
 
 /// 审批挂起机制层：把整只 run 序列化为 JSON（§5.2/S3 形态）。
@@ -104,11 +149,13 @@ pub fn resume_run(run_json: &str) -> serde_json::Result<AgentRun> {
 
 /// RunLoop 主驱动（§5.2 时序的「每 turn」循环 + §3.4 帧生产）：
 ///
-/// - `runStarted` 起手一帧；
+/// - 首次调用（`resume = None`）发 `runStarted` 起手一帧；恢复调用延续
+///   [`DriveState`]（不重发 runStarted、usage/计数延续）；
 /// - `CallModel`：`stepStarted` → 流式调用（增量经 64ms 节流器出帧）→ 收口
 ///   `usage` 帧（§10.5 累计口径，rate = 本轮输出 tok/s）→ 收尾 flush；
-/// - `CallTools`：门控（Suspend → 序列化挂起）→ 逐个执行 → `toolResult` 帧
-///   （callId 经桥接映射与流式三帧同源）；
+/// - `CallTools`：**批级门控预判**（§5.4 ①–④）——首个 `Suspend` 即把整只
+///   run 序列化挂起（批内零执行）；`Blocked` 回喂错误结果；其余逐个执行 →
+///   `toolResult` 帧（callId 经桥接映射与流式三帧同源）；
 /// - 取消（§5.3）：流中取消即收尾 flush + `runEnded(cancelled)`；工具批内
 ///   任一工具报取消 → 剩余工具补 `E_CANCELLED`、收齐后才发终态帧；
 /// - `Done`：`runEnded(done)` 必为最后一帧。
@@ -122,19 +169,23 @@ pub async fn drive_run(
     executor: Arc<dyn CancellableExecutor>,
     gate: Arc<dyn ToolGate>,
     sink: &mut dyn FrameSink,
+    resume: Option<DriveState>,
 ) -> Result<RunExit, PromptError> {
-    let started_at = Instant::now();
-    let mut throttler = DeltaThrottler::new();
-    let mut total_usage = UsageTotal::default();
-    let mut last_turn = 1u32;
-    let mut tool_count = 0u32;
-    // 当前 turn 的流事件桥（CallModel 每拍重置；CallTools 以其映射反查帧面 callId）
-    let mut bridge = RigEventBridge::new();
+    let mut state = resume.unwrap_or_default();
+    if state.started_at.is_none() {
+        state.started_at = Some(Instant::now());
+        sink.send(ChatFrame::RunStarted {
+            run_id: run_id.to_owned(),
+            model: model_name.to_owned(),
+        });
+    }
+    let started_at = state.started_at.expect("入口已置位");
 
-    sink.send(ChatFrame::RunStarted {
-        run_id: run_id.to_owned(),
-        model: model_name.to_owned(),
-    });
+    let mut throttler = DeltaThrottler::new();
+    // 当前 turn 的流事件桥（CallModel 每拍重置；CallTools 以其映射反查帧面 callId；
+    // 首拍播种挂起前映射——恢复后重放的挂起批 toolResult 与挂起前三帧同源）。
+    let mut bridge = RigEventBridge::new();
+    bridge.seed_model_call_ids(state.model_call_ids.clone());
 
     let mut run = run;
     loop {
@@ -144,9 +195,11 @@ pub async fn drive_run(
                 history,
                 turn,
             } => {
-                last_turn = turn as u32;
+                state.last_turn = turn as u32;
                 sink.send(ChatFrame::StepStarted { turn: turn as u32 });
-                bridge = RigEventBridge::new();
+                let mut turn_bridge = RigEventBridge::new();
+                turn_bridge.seed_model_call_ids(bridge.model_call_ids().clone());
+                bridge = turn_bridge;
                 let mut on_frame = |frame: ChatFrame| ingest_delta(&mut throttler, sink, &frame);
                 let turn_started = Instant::now();
                 let outcome = driver
@@ -165,7 +218,7 @@ pub async fn drive_run(
                 match outcome.exit {
                     StreamExit::Cancelled => {
                         // 模型流已停：无工具进行中，直接取消终结
-                        return Ok(finish_cancelled(sink, started_at, tool_count, last_turn));
+                        return Ok(finish_cancelled(sink, started_at, state));
                     }
                     StreamExit::Completed => {
                         if let Some(usage) = outcome.usage {
@@ -173,9 +226,9 @@ pub async fn drive_run(
                             let elapsed_s = turn_started.elapsed().as_secs_f64();
                             let rate = (total.output > 0 && elapsed_s > 0.0)
                                 .then(|| total.output as f64 / elapsed_s);
-                            total_usage.accumulate(&total);
+                            state.total_usage.accumulate(&total);
                             sink.send(ChatFrame::Usage {
-                                usage: total_usage,
+                                usage: state.total_usage,
                                 rate,
                             });
                         }
@@ -183,16 +236,53 @@ pub async fn drive_run(
                 }
             }
             AgentRunStep::CallTools { calls } => {
+                // —— 批级门控预判（§5.4 ①–④）：先全判后执行 ——
+                // Suspend：批内零执行即挂起（恢复重放整批，无重复副作用）；
+                // Blocked：硬拦结果帧回喂，不中断 run。
+                let verdicts: Vec<GateVerdict> = calls
+                    .iter()
+                    .map(|call| {
+                        let (_model_call_id, name, args_json) = pending_parts(call);
+                        gate.judge(&name, &args_json)
+                    })
+                    .collect();
+                if let Some(idx) = verdicts
+                    .iter()
+                    .position(|v| matches!(v, GateVerdict::Suspend { .. }))
+                {
+                    let (model_call_id, name, args_json) = pending_parts(&calls[idx]);
+                    let GateVerdict::Suspend { fence_reason } = &verdicts[idx] else {
+                        unreachable!("position 已确认 Suspend");
+                    };
+                    state.model_call_ids = bridge.model_call_ids().clone();
+                    let run_json = suspend_run(&run).map_err(serde_json_error_to_prompt)?;
+                    return Ok(RunExit::Suspended(Box::new(SuspendedInfo {
+                        run_json,
+                        pending: PendingCall {
+                            model_call_id,
+                            name,
+                            args_json,
+                            fence_reason: fence_reason.clone(),
+                        },
+                        state,
+                    })));
+                }
+
                 let mut answers = Vec::new();
                 let mut cancel_seen = false;
-                for call in calls {
+                for (call, verdict) in calls.into_iter().zip(verdicts) {
                     let (call_id, name, args_json) = pending_parts(&call);
-                    // 门控挂起点（§5.2）：CallTools 上整只 run 序列化挂起。
-                    // 此时批内所有调用都未执行，与 rig ExecutingTools 状态自洽，
-                    // 恢复后 next_step 重新给出全部 calls。
-                    if gate.judge(&name, &args_json) == GateVerdict::Suspend {
-                        let run_json = suspend_run(&run).map_err(serde_json_error_to_prompt)?;
-                        return Ok(RunExit::Suspended { run_json });
+                    if let GateVerdict::Blocked { code, message } = &verdict {
+                        // 硬拦（§8.7/§8.5/§8.6）：错误结果回喂，run 继续
+                        state.tool_count += 1;
+                        sink.send(ChatFrame::ToolResult {
+                            call_id: bridge.frame_call_id_for_model(&call_id),
+                            ok: false,
+                            ui_summary: format!("已拦截：{name}"),
+                            error: Some(FrameError::new(*code, message.clone())),
+                        });
+                        answers.push(super::turn::answer_one(call, format!("{code} {message}")));
+                        continue;
                     }
                     if cancel_seen || token.is_cancelled() {
                         // 收齐语义：批内未执行的工具也补 E_CANCELLED，不留悬空调用
@@ -201,10 +291,10 @@ pub async fn drive_run(
                             &format!("{E_CANCELLED}: 取消：工具未执行"),
                             false,
                         ));
-                        tool_count += 1;
+                        state.tool_count += 1;
                         continue;
                     }
-                    tool_count += 1;
+                    state.tool_count += 1;
                     match executor.execute(&call_id, &name, &args_json, &token).await {
                         ToolExecution::Completed {
                             ok,
@@ -237,7 +327,7 @@ pub async fn drive_run(
                 }
                 if cancel_seen {
                     // 收齐后才发终态帧（§5.3 不变量：取消中工具收齐 → runEnded(cancelled)）
-                    return Ok(finish_cancelled(sink, started_at, tool_count, last_turn));
+                    return Ok(finish_cancelled(sink, started_at, state));
                 }
                 run.answer_all(answers)?;
             }
@@ -245,8 +335,8 @@ pub async fn drive_run(
                 sink.send(ChatFrame::RunEnded {
                     reason: EndReason::Done,
                     duration_ms: started_at.elapsed().as_millis() as u64,
-                    tool_count,
-                    turn: last_turn,
+                    tool_count: state.tool_count,
+                    turn: state.last_turn,
                     error: None,
                 });
                 return Ok(RunExit::Done(Box::new(response)));
@@ -273,17 +363,12 @@ fn ingest_delta(throttler: &mut DeltaThrottler, sink: &mut dyn FrameSink, frame:
 }
 
 /// 发出取消终态帧并返回取消退出态（runEnded(cancelled) 必为最后一帧）。
-fn finish_cancelled(
-    sink: &mut dyn FrameSink,
-    started_at: Instant,
-    tool_count: u32,
-    turn: u32,
-) -> RunExit {
+fn finish_cancelled(sink: &mut dyn FrameSink, started_at: Instant, state: DriveState) -> RunExit {
     sink.send(ChatFrame::RunEnded {
         reason: EndReason::Cancelled,
         duration_ms: started_at.elapsed().as_millis() as u64,
-        tool_count,
-        turn,
+        tool_count: state.tool_count,
+        turn: state.last_turn,
         error: None,
     });
     RunExit::Cancelled

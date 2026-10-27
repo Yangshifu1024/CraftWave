@@ -2,8 +2,9 @@ import { readdirSync, readFileSync } from "node:fs";
 import path, { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
+import { CW_TOOL_PARAMETERS } from "../chat/toolkit";
 import { entriesToExported, parseSessionJsonl } from "../chat/tree-persistence";
-import { COMMANDS } from "./client";
+import { COMMANDS, EVENT_KEYS } from "./client";
 import type { MessageEntry, StoredEntry } from "./types";
 
 /**
@@ -11,9 +12,11 @@ import type { MessageEntry, StoredEntry } from "./types";
  *
  * 1. manifest 扫描：client.ts（唯一 invoke 出口）注册的命令名全集
  *    （COMMANDS 注册表 + 直接 invoke 字面量）⊆ ipc-manifest.json 的 commands，
- *    storage/provider 两个切片的命令在 client.ts 全部接线（双向）；
+ *    各切片命令在 client.ts 全部接线（双向）；
  * 2. 键面卫生：ui/src 全源码不得出现绕过唯一出口的未知 invoke 字面量；
- * 3. manifest.frames 覆盖 §3.4 P0 全集 9 帧，manifest.tools 覆盖工具注册表 5 工具；
+ * 3. manifest.frames 覆盖 §3.4 P0 全集 9 帧；manifest.tools/toolSpecs 覆盖
+ *    工具注册表 8 工具且与 toolkit 参数表逐字同源（§10.3，14 号票）；
+ *    manifest.events 覆盖 §3.5 实装 5 键且与 EVENT_KEYS 一致；
  * 4. 跨语言 fixture：cargo test 产出的 session-tree-fixture.jsonl（Rust serde 落盘
  *    字节即 storage 分段 JSONL 行格式）——TS 镜像期望值逐条目比对 + 树还原校验。
  *
@@ -29,6 +32,7 @@ let manifest: {
   frames: string[];
   events: string[];
   tools: string[];
+  toolSpecs: { name: string; paramsSchema: unknown }[];
 };
 
 beforeAll(() => {
@@ -90,6 +94,8 @@ describe("§12.3 manifest 双向扫描", () => {
       "delete_provider",
       "start_chat",
       "cancel_run",
+      "resolve_ask",
+      "approve_plan",
     ]) {
       expect(wired, `manifest 命令 ${name} 未在 client.ts 接线（禁止只注册不使用）`).toContain(
         name,
@@ -133,6 +139,15 @@ describe("§12.3 manifest 双向扫描", () => {
       args_type: "CancelRunArgs",
       ret_type: "bool",
     });
+    // ask/计划门命令（14 号票，§3.3 #22/#26c）
+    expect(find("resolve_ask")).toMatchObject({
+      args_type: "ResolveAskArgs",
+      ret_type: "()",
+    });
+    expect(find("approve_plan")).toMatchObject({
+      args_type: "ApprovePlanArgs",
+      ret_type: "()",
+    });
   });
 
   it("ui/src 全源码无绕过唯一出口的未知 invoke 字面量", () => {
@@ -175,8 +190,44 @@ describe("§12.3 manifest 双向扫描", () => {
     }
   });
 
-  it("manifest.tools 覆盖工具注册表五文件类工具", () => {
-    expect(manifest.tools).toEqual(["read", "write", "edit", "list_files", "grep"]);
+  it("manifest.tools 覆盖工具注册表 8 工具（§8.3 M1 模型可见子集）", () => {
+    expect(manifest.tools).toEqual([
+      "read",
+      "write",
+      "edit",
+      "list_files",
+      "grep",
+      "command",
+      "plan",
+      "ask",
+    ]);
+  });
+
+  it("toolkit 参数表与 manifest.toolSpecs 逐字同源（§10.3 镜像声明）", () => {
+    expect(manifest.toolSpecs).toHaveLength(8);
+    for (const spec of manifest.toolSpecs) {
+      const local = (CW_TOOL_PARAMETERS as Record<string, unknown>)[spec.name];
+      expect(local, `toolkit 缺工具 ${spec.name} 的参数声明`).toBeDefined();
+      expect(local, `工具 ${spec.name} 参数 schema 与 Rust ToolSpec 不同源`).toStrictEqual(
+        spec.paramsSchema,
+      );
+    }
+    // 双向：toolkit 声明不超出注册表
+    const manifestNames = new Set(manifest.toolSpecs.map((s) => s.name));
+    for (const name of Object.keys(CW_TOOL_PARAMETERS)) {
+      expect(manifestNames, `toolkit 多出未注册工具 ${name}`).toContain(name);
+    }
+  });
+
+  it("manifest.events 覆盖 §3.5 实装 5 键且与 EVENT_KEYS 一致", () => {
+    expect(manifest.events).toEqual([
+      "ask:opened",
+      "ask:closed",
+      "plan:update",
+      "run:suggestions",
+      "tokens:update",
+    ]);
+    expect(Object.values(EVENT_KEYS).sort()).toEqual([...manifest.events].sort());
   });
 });
 

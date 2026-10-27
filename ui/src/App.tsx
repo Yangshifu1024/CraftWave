@@ -1,10 +1,13 @@
-import { AssistantRuntimeProvider, useLocalRuntime } from "@assistant-ui/react";
+import { AssistantRuntimeProvider, AuiConfig, Tools, useLocalRuntime } from "@assistant-ui/react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect, useState } from "react";
+import { AskPanel } from "@/chat/AskPanel";
+import { useBackendEvents } from "@/chat/event-bridge";
 import { MirrorDemo } from "@/chat/mirror/MirrorDemo";
 import { tauriChatModel } from "@/chat/runtime";
 import { ChatThread } from "@/chat/Thread";
+import { cwToolkit } from "@/chat/toolkit";
 import { SettingsPage } from "@/settings/SettingsPage";
 
 const ACTIVATION_FLAG = "data-tauri-plugin-decoration-active";
@@ -68,12 +71,20 @@ export default function App() {
   return <SkeletonApp />;
 }
 
-/** M1 核心链路聊天（tauriChatModel：start_chat → Channel 帧 → assistant-ui）。 */
+// 正式工具卡装配（S1 实测钉死：Tools 是 resource 工厂，经 AuiConfig 注入；
+// config 为纯数据可提模块级）。
+const cwAuiConfig = AuiConfig({ tools: Tools({ toolkit: cwToolkit }) });
+
+/**
+ * M1 核心链路聊天（tauriChatModel：start_chat → Channel 帧 → assistant-ui）。
+ * 14 号票：注入正式镜像工具卡（§10.3 Tools resource）+ AskPanel + 事件桥。
+ */
 function SkeletonApp() {
   const runtime = useLocalRuntime(tauriChatModel);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  useBackendEvents();
   return (
-    <AssistantRuntimeProvider runtime={runtime}>
+    <AssistantRuntimeProvider runtime={runtime} config={cwAuiConfig}>
       <ChatThread />
       {!settingsOpen && (
         <button
@@ -85,6 +96,7 @@ function SkeletonApp() {
         </button>
       )}
       {settingsOpen && <SettingsPage onClose={() => setSettingsOpen(false)} />}
+      <AskPanel />
     </AssistantRuntimeProvider>
   );
 }

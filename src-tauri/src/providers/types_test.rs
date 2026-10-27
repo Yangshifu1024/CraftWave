@@ -26,7 +26,7 @@ fn sample_provider() -> ProviderConfig {
 }
 
 #[test]
-fn schema_roundtrip_camel_case字段无null满字段() {
+fn schema_roundtrip_camel_no_null_full_fields() {
     let mut config = AppConfig {
         providers: vec![sample_provider()],
         active_model_id: Some("22222222-2222-2222-2222-222222222222".into()),
@@ -58,7 +58,7 @@ fn schema_roundtrip_camel_case字段无null满字段() {
 }
 
 #[test]
-fn 反序列化容忍缺省节并归一化补默认值() {
+fn deserialize_tolerates_missing_fills_defaults() {
     let value = json!({
         "schemaVersion": 2,
         "providers": [{
@@ -84,7 +84,7 @@ fn 反序列化容忍缺省节并归一化补默认值() {
 }
 
 #[test]
-fn schema版本非2拒绝() {
+fn schema_version_not_two_rejected() {
     let mut config = AppConfig {
         schema_version: 1,
         ..AppConfig::default()
@@ -94,7 +94,7 @@ fn schema版本非2拒绝() {
 }
 
 #[test]
-fn api_format三方言枚举全兼容() {
+fn api_format_three_dialects_compatible() {
     for (raw, expected) in [
         ("openai_chat", ApiFormat::OpenaiChat),
         ("anthropic_messages", ApiFormat::AnthropicMessages),
@@ -113,7 +113,7 @@ fn api_format三方言枚举全兼容() {
 }
 
 #[test]
-fn base_url仅接受http_s() {
+fn base_url_only_http_s() {
     let mut config = AppConfig {
         providers: vec![ProviderConfig {
             base_url: Some("ftp://evil".into()),
@@ -126,7 +126,7 @@ fn base_url仅接受http_s() {
 }
 
 #[test]
-fn active_model_id悬空自愈为空() {
+fn active_model_id_dangling_heals_to_none() {
     let mut config = AppConfig {
         providers: vec![sample_provider()],
         active_model_id: Some("ghost-model".into()),
@@ -137,7 +137,7 @@ fn active_model_id悬空自愈为空() {
 }
 
 #[test]
-fn 凭据数量超上限拒绝() {
+fn credential_count_over_limit_rejected() {
     let mut config = AppConfig {
         providers: vec![ProviderConfig {
             credential_count: (MAX_KEYS_PER_PROVIDER + 1) as u32,
@@ -149,7 +149,7 @@ fn 凭据数量超上限拒绝() {
 }
 
 #[test]
-fn 官方缺省地址按方言给出() {
+fn official_base_url_by_dialect() {
     assert_eq!(
         ApiFormat::OpenaiChat.official_base_url(),
         "https://api.openai.com/v1"

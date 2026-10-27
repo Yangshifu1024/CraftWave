@@ -9,8 +9,21 @@ fn registry_names_and_order_are_pinned() {
     let registry = build_registry();
     let names: Vec<&str> = registry.iter().map(|s| s.name).collect();
     assert_eq!(names, TOOL_NAMES.to_vec());
-    // 顺序钉死（追加新工具在尾部，不重排既有顺序）。
-    assert_eq!(names, ["read", "write", "edit", "list_files", "grep"]);
+    // 顺序钉死（追加新工具在尾部，不重排既有顺序；suggest 仅 run 尾调用
+    // 不开放模型，不在注册表——14 号票）。
+    assert_eq!(
+        names,
+        [
+            "read",
+            "write",
+            "edit",
+            "list_files",
+            "grep",
+            "command",
+            "plan",
+            "ask"
+        ]
+    );
 }
 
 #[test]
@@ -67,16 +80,19 @@ fn capabilities_match_design() {
     assert_eq!(cap_of("edit"), Capability::FileWrite);
     assert_eq!(cap_of("list_files"), Capability::ReadOnly);
     assert_eq!(cap_of("grep"), Capability::ReadOnly);
+    assert_eq!(cap_of("command"), Capability::Network);
+    assert_eq!(cap_of("plan"), Capability::Meta);
+    assert_eq!(cap_of("ask"), Capability::Interactive);
 }
 
 #[test]
 fn filter_for_tier_matches_matrix() {
-    // plan 档：FileWrite 过滤，只读工具保留。
+    // plan 档：FileWrite/Network 过滤，只读/交互/Meta 保留（§8.5）。
     let plan: Vec<String> = filter_for_tier(build_registry(), PermissionTier::Plan)
         .iter()
         .map(|s| s.name.to_string())
         .collect();
-    assert_eq!(plan, ["read", "list_files", "grep"]);
+    assert_eq!(plan, ["read", "list_files", "grep", "plan", "ask"]);
 
     // confirm_each / auto_edit / full_access：全保留（审批在门控做）。
     for tier in [
@@ -86,7 +102,7 @@ fn filter_for_tier_matches_matrix() {
     ] {
         assert_eq!(
             filter_for_tier(build_registry(), tier).len(),
-            5,
+            8,
             "{tier:?} 应全保留"
         );
     }
