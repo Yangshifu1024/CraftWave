@@ -173,10 +173,18 @@ export function createTauriChatAdapter(deps: TauriAdapterDeps): ChatModelAdapter
           messages: toWire(messages),
           runConfig: deps.runConfig,
           onFrame: (frame: ChatFrame) => {
+            if (import.meta.env.DEV && frame.type === "runEnded" && frame.reason === "error") {
+              console.error("[run] 错误终态：", frame.error);
+            }
             buffer.push(frame);
             deps.onFrame?.(frame);
           },
         });
+        // 命令面失败在 dev 模式打原始错误（UI 只显示通用错误；排障线索进
+        // webview console + tauri dev 终端，2026-10-28 优化项）
+        if (import.meta.env.DEV) {
+          invokePromise.catch((err) => console.error("[start_chat] 命令失败：", err));
+        }
         // 64ms 节流快照迭代：runEnded 快照 yield 后迭代自然收口（§10.2）
         for await (const snapshot of buffer.snapshots()) {
           if (signal.aborted && !snapshot.ended) {

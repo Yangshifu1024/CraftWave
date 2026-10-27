@@ -37,7 +37,6 @@ function providerFixture(id: string): ProviderConfig {
     name: `供应商-${id}`,
     apiFormat: "openai_chat",
     baseUrl: "https://api.example.com/v1",
-    credentialCount: 0,
     models: [{ id: `m-${id}`, model: "test-model", maxTokens: 8192, contextWindow: 128000 }],
   };
 }
@@ -77,14 +76,13 @@ describe("settings store", () => {
     const providers = useSettingsStore.getState().config?.providers ?? [];
     expect(providers).toHaveLength(1);
     expect(providers[0].name).toBe("DeepSeek");
-    expect(providers[0].credentialCount).toBe(0);
-    expect(providers[0].credentialRef).toBeUndefined();
+    expect(providers[0].apiKey).toBeUndefined();
   });
 
   it("upsertProvider 调 save_provider 并以返回值刷新草稿", async () => {
     const draft = providerFixture("p1");
     useSettingsStore.setState({ config: configFixture([]) });
-    const saved = { ...draft, credentialRef: "craftwave.provider.p1", credentialCount: 1 };
+    const saved = { ...draft, apiKey: "sk-x" };
     saveProvider.mockResolvedValue(saved);
 
     const ok = await useSettingsStore.getState().upsertProvider(draft, "sk-live");

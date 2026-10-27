@@ -65,11 +65,10 @@ pub struct ProviderConfig {
     /// 缺省按 apiFormat 用官方缺省地址（§3.2）；自定义 OpenAI 兼容端点在此覆写。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_url: Option<String>,
-    /// keyring 账户引用（§9.4）；config 永不存明文 Key。
+    /// API Key 明文（用户决策废除 keyring，2026-10-28：Key 存 config.json，
+    /// 文件权限 0600 收紧；§9.4 已改写）。空串归一为 None。
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub credential_ref: Option<String>,
-    /// 展示用 Key 数量（由 keyring 提交协议回填）。
-    pub credential_count: u32,
+    pub api_key: Option<String>,
     pub models: Vec<ProviderModel>,
     /// 追加请求头（M2 per-provider headers 正式启用；字段 M1 就位）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -246,7 +245,7 @@ impl AppConfig {
     /// - provider/model 的 id、name 非空，baseUrl（如有）必须 http(s)；
     /// - model 的 maxTokens/contextWindow 缺省/为 0 → 默认值（32768/128000）；
     /// - activeModelId 悬空（无对应模型）→ 自愈为 None；
-    /// - credentialCount ≤ 10（§11.2 Key 上限）。
+    /// - apiKey 空白归一为 None。
     pub fn normalize(&mut self) -> Result<(), IpcError> {
         if self.schema_version != SCHEMA_VERSION {
             return Err(IpcError::invalid_arg(format!(
@@ -268,12 +267,7 @@ impl AppConfig {
             if let Some(url) = &provider.base_url {
                 ensure_http_url(url)?;
             }
-            if provider.credential_count as usize > MAX_KEYS_PER_PROVIDER {
-                return Err(IpcError::invalid_arg(format!(
-                    "供应商 {} 的 Key 数量超过上限 {MAX_KEYS_PER_PROVIDER}",
-                    provider.id
-                )));
-            }
+            provider.api_key = provider.api_key.take().filter(|k| !k.trim().is_empty());
             for (name, _) in provider.headers.iter().flatten() {
                 if name.trim().is_empty() {
                     return Err(IpcError::invalid_arg(format!(

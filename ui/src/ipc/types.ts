@@ -114,10 +114,8 @@ export interface ProviderConfig {
   apiFormat: ApiFormat;
   /** 缺省按 apiFormat 用官方缺省地址；自定义 OpenAI 兼容端点在此覆写 */
   baseUrl?: string;
-  /** keyring 账户引用；config 永不存明文 Key */
-  credentialRef?: string;
-  /** 展示用 Key 数量 */
-  credentialCount: number;
+  /** API Key 明文（用户决策废除 keyring：存 config.json，文件权限 0600） */
+  apiKey?: string;
   models: ProviderModel[];
   headers?: Record<string, string>;
 }

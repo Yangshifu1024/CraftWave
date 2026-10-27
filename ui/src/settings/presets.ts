@@ -107,7 +107,6 @@ export function newProviderFromPreset(slug: string): ProviderConfig | null {
     name: preset.name,
     apiFormat: preset.apiFormat,
     baseUrl: preset.baseUrl,
-    credentialCount: 0,
     models: preset.models.map((m) => ({
       id: newUuid(),
       model: m.model,
@@ -124,7 +123,6 @@ export function newCustomProvider(): ProviderConfig {
     id: newUuid(),
     name: "",
     apiFormat: "openai_chat",
-    credentialCount: 0,
     models: [],
   };
 }

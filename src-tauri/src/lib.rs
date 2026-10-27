@@ -129,11 +129,16 @@ pub fn run() {
             let home = app.path().home_dir()?;
             let data_dir = home.join(".craftwave");
             std::fs::create_dir_all(&data_dir)?;
-            app.manage(host::AppState::new_in(
+            let state = host::AppState::new_in(
                 data_dir,
-                std::sync::Arc::new(providers::keyring::OsKeyring),
                 std::sync::Arc::new(host::TauriEventSink(app.handle().clone())),
-            ));
+            );
+            // RunManager 以共享句柄单独 manage：start_chat/cancel_run/
+            // resolve_ask/approve_plan 以 State<RunManager> 注入（Clone =
+            // 同一注册表，§5.1）；漏 manage 会报 "state not managed for
+            // field `runs`"（命令面 headless 测试不经 tauri，装配需此处钉死）
+            app.manage(state.runs.clone());
+            app.manage(state);
             Ok(())
         })
         .invoke_handler(invoke_handler())

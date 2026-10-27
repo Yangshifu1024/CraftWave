@@ -3,7 +3,7 @@
 use serde_json::json;
 
 use super::types::*;
-use crate::util::errors::{E_INVALID_ARG, IpcError};
+use crate::util::errors::E_INVALID_ARG;
 
 fn sample_provider() -> ProviderConfig {
     ProviderConfig {
@@ -11,8 +11,7 @@ fn sample_provider() -> ProviderConfig {
         name: "DeepSeek".into(),
         api_format: ApiFormat::OpenaiChat,
         base_url: Some("https://api.deepseek.com".into()),
-        credential_ref: Some("craftwave.provider.1111".into()),
-        credential_count: 1,
+        api_key: Some("sk-test-0123456789".into()),
         models: vec![ProviderModel {
             id: "22222222-2222-2222-2222-222222222222".into(),
             model: "deepseek-chat".into(),
@@ -41,10 +40,7 @@ fn schema_roundtrip_camel_no_null_full_fields() {
         serialized["providers"][0]["baseUrl"],
         "https://api.deepseek.com"
     );
-    assert_eq!(
-        serialized["providers"][0]["credentialRef"],
-        "craftwave.provider.1111"
-    );
+    assert_eq!(serialized["providers"][0]["apiKey"], "sk-test-0123456789");
     assert_eq!(serialized["providers"][0]["models"][0]["maxTokens"], 8192);
     // 可选字段缺省时不出现在 JSON（"无 null 满字段"）
     let minimal: AppConfig = AppConfig::default();
@@ -66,7 +62,6 @@ fn deserialize_tolerates_missing_fills_defaults() {
             "name": "  自定义端点  ",
             "apiFormat": "openai_chat",
             "baseUrl": "https://llm.example.com/v1",
-            "credentialCount": 0,
             "models": [{ "id": "m1", "model": "qwen3", "maxTokens": 0, "contextWindow": 0 }]
         }]
     });
@@ -101,13 +96,13 @@ fn api_format_three_dialects_compatible() {
         ("openai_responses", ApiFormat::OpenaiResponses),
     ] {
         let p: ProviderConfig = serde_json::from_str(&format!(
-            r#"{{ "id": "p", "name": "n", "apiFormat": "{raw}", "credentialCount": 0, "models": [{{"id":"m","model":"x"}}] }}"#
+            r#"{{ "id": "p", "name": "n", "apiFormat": "{raw}", "models": [{{"id":"m","model":"x"}}] }}"#
         ))
         .unwrap();
         assert_eq!(p.api_format, expected);
     }
     let bad = serde_json::from_str::<ProviderConfig>(
-        r#"{ "id": "p", "name": "n", "apiFormat": "gemini", "credentialCount": 0, "models": [] }"#,
+        r#"{ "id": "p", "name": "n", "apiFormat": "gemini", "models": [] }"#,
     );
     assert!(bad.is_err(), "未知 apiFormat 必须拒绝");
 }
@@ -137,15 +132,19 @@ fn active_model_id_dangling_heals_to_none() {
 }
 
 #[test]
-fn credential_count_over_limit_rejected() {
+fn blank_api_key_normalized_to_none() {
     let mut config = AppConfig {
         providers: vec![ProviderConfig {
-            credential_count: (MAX_KEYS_PER_PROVIDER + 1) as u32,
+            api_key: Some("   ".into()),
             ..sample_provider()
         }],
         ..AppConfig::default()
     };
-    assert!(matches!(config.normalize(), Err(IpcError { .. })));
+    config.normalize().unwrap();
+    assert!(
+        config.providers[0].api_key.is_none(),
+        "空白 Key 归一为 None"
+    );
 }
 
 #[test]

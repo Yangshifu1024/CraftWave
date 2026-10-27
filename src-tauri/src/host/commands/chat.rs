@@ -151,14 +151,11 @@ pub(crate) fn resolve_model(
             provider.api_format
         )));
     }
-    let Some(credential_ref) = provider.credential_ref.as_deref() else {
+    let Some(key) = provider.api_key.as_deref() else {
         return Err(IpcError::invalid_arg(format!(
-            "供应商 {} 未配置凭据引用",
+            "供应商 {} 未配置 API Key（设置页填写后保存）",
             provider.id
         )));
-    };
-    let Some(key) = app.keys.get_secret(credential_ref)? else {
-        return Err(IpcError::keyring("钥匙串无此凭据（可能已被删除）"));
     };
     let wire_config = OpenAIConfig::new(key).with_base_url(
         provider
@@ -268,7 +265,10 @@ fn now_ms() -> i64 {
 }
 
 /// 发送错误终态帧（RunLoop 冒出的 PromptError 兜底，保证前端必有终态）。
+/// dev 构建同时打到进程终端（tauri dev 可见），便于排障（2026-10-28 优化项）。
 fn send_error_ended(sink: &mut dyn FrameSink, message: String) {
+    #[cfg(debug_assertions)]
+    eprintln!("[craftwave] run 错误终态：{message}");
     sink.send(ChatFrame::RunEnded {
         reason: EndReason::Error,
         duration_ms: 0,

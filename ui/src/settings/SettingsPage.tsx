@@ -96,7 +96,7 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
               <button type="button" className="text-left" onClick={() => setSelectedId(p.id)}>
                 <span className="font-medium">{p.name || "（未命名）"}</span>
                 <span className="ml-2 text-xs text-neutral-500">
-                  {p.apiFormat} · Key {p.credentialCount} 把 · {p.models.length} 个模型
+                  {p.apiFormat} · {p.apiKey ? "Key 已配置" : "未配 Key"} · {p.models.length} 个模型
                 </span>
               </button>
               <button
@@ -211,11 +211,7 @@ function ProviderEditor({
           id="provider-new-key"
           type="password"
           className="flex-1 rounded border border-neutral-300 px-2 py-1"
-          placeholder={
-            provider.credentialCount > 0
-              ? `已保存 ${provider.credentialCount} 把（输入即覆写）`
-              : "输入后保存写入系统钥匙串"
-          }
+          placeholder={provider.apiKey ? "已保存（输入即覆写）" : "输入后保存（存于 config.json）"}
           value={newKey}
           onChange={(e) => setNewKey(e.target.value)}
         />
