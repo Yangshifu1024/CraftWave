@@ -18,6 +18,7 @@
     "react-dom": "^19.3.1"
   },
   "devDependencies": {
+    "@assistant-ui/core": "^0.3.31",
     "@tailwindcss/vite": "^4.3.3",
     "@testing-library/react": "^16.3.3",
     "@types/node": "^24.0.0",
