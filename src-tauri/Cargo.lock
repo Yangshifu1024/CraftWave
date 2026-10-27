@@ -406,6 +406,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-decoration",
+ "tokio",
 ]
 
 [[package]]

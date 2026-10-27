@@ -17,6 +17,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "2.12", features = [] }
 tauri-plugin-decoration = "3.0"
+# 【S1 spike 原型】mock_chat 的 sleep（time feature）；后续后端模块本就会用到
+tokio = { version = "1", default-features = false, features = ["time"] }
 
 [profile.release]
 codegen-units = 1
