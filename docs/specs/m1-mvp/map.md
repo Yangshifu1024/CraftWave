@@ -24,13 +24,16 @@ CraftWave M1 MVP 出口准则达成：P0 需求全集实现，NFR-01/02/06/09/12
 - [调研：rig 0.45 稳定版 vs 0.46-rc.1 锁版底料（C-6 前置）](tasks/03-research-rig-version-choice.md)：锁 0.45.0 为主底料，0.46.0-rc.1 仅平行验证；两版 API 面签名级一致，大断层在 0.44→0.45，从 0.45 入场即绕过。
 - [S6 最小骨架与三平台构建验证（含 C-7）](tasks/04-spike-s6-scaffold-platform.md)：骨架落地（tauri 2.12.5 × React 19 × assistant-ui 0.15.31 × Rust 1.97.0），三平台 CI 绿；C-7 兼容无需退化；CSP 收紧版实测落地；工具链组件须在 rust-toolchain.toml 显式声明。
 - [修正 AGENTS.md 构建检查段（Go 残留 → Tauri 工具链）](tasks/01-fix-agents-md-buildchain.md)：检查链换为 cargo 三件套（src-tauri/）+ 前端三项（ui/），scope 改 §2.2 九模块，CGO 与旧模板目录清空；骨架落地时若布局有出入需回头同步。
+- [S2+S3 rig 流事件保真与手动工具循环（含 C-6 收口）](tasks/05-spike-s2s3-rig-stream-loop.md)：两者均可行——载体 `rig::run::AgentRun`（sans-IO）+ CallTools 整只 run 序列化审批挂起（含跨重启）；锁 0.45.0（双版本零改动实证）；NFR-02 余量 >35ms；帧协议增 `ts?`/callId 同源/节流语义钉死；**附带发现 rig MSRV=1.97.1，工具链已抬升**。
+- [S1 assistant-ui 镜像工具桥接](tasks/06-spike-s1-mirror-tools.md)：可行，不退 D11；唯一修正：local runtime 无 execute 管线，改为 adapter 直写 result；`makeAssistantToolUI` 已废弃、`Tools` 是 resource 工厂、partial JSON 依赖 assistant-stream 显式声明（§10.3 已重写）。
+- [S4 消息树持久化 roundtrip（含 C-4 钉死）](tasks/07-spike-s4-tree-roundtrip.md)：roundtrip 通过（编辑/重生成/分支切换逐节点一致，vitest 11 例）；C-4 定案（headId/messages 结构钉死，§6.1 增 `status?`）；D12 复核 rig-memory 直接承载不可行，决策维持并增补 redact 复刻点。
 
 ## Not yet specified
 
 - **工程骨架随开发推进的增量维护**——最小骨架与三平台 CI 已随「S6 最小骨架与三平台构建验证（含 C-7）」落地，无独立决策点；后续仅随票增量维护（依赖升级、CI 注解治理等顺手做，不单独立票）。
-- **单会话核心链路**——start_chat → rig 流 → Channel 帧 → assistant-ui 渲染、打字机、思考流、运行过程实时展示、取消 UI。细节依赖「S2+S3 rig 流事件保真与手动工具循环」「S5 取消传播全链路」的结论。
-- **工具系统与安全审批**——9 个 P0 工具（read/write/edit/list_files/grep/command/plan/ask/suggest）、权限四档、审批门、围栏 P0（高危黑名单+只读白名单）、safe_join 路径边界、结果双通道、工具卡片 UI。
-- **持久化与会话树**——append-only 分段 JSONL、原子写、树 roundtrip 工程化、分支/编辑/重生成的完整落地、崩溃恢复。细节依赖「S4 消息树持久化 roundtrip」的结论。
+- **单会话核心链路**——start_chat → rig 流 → Channel 帧 → assistant-ui 渲染、打字机、思考流、运行过程实时展示、取消 UI。backend 形态（AgentRun 步进 + 序列化审批挂起）、帧协议修订（ts/callId 同源/节流语义）已随「S2+S3」钉死、镜像工具渲染路线已随「S1」钉死；剩余未知仅「S5 取消传播全链路」（08 号票，已解锁），其结论落地后即可按关键路径切成实现票。
+- **工具系统与安全审批**——9 个 P0 工具（read/write/edit/list_files/grep/command/plan/ask/suggest）、权限四档、审批门、围栏 P0（高危黑名单+只读白名单）、safe_join 路径边界、结果双通道、工具卡片 UI。工具卡片渲染路线已随「S1」钉死（§10.3），审批挂起/恢复机制已随「S2+S3」钉死。
+- **持久化与会话树**——append-only 分段 JSONL、原子写、树 roundtrip 工程化、分支/编辑/重生成的完整落地、崩溃恢复。roundtrip 与 C-4 结构已随「S4」钉死（§6.1/§6.3/§7.2 定稿），**已无不依赖未知项**，实现切片（storage 读写器 + save/load_session_tree 命令）随时可立票。
 - **多会话与项目**——多 Tab 并行、临时/项目会话双形态、项目注册表、workspace 读写与路径搜索命令。
 - **Provider 管理与设置**——CW schema v2、keyring 提交协议、内置供应商预设、自定义 OpenAI 兼容端点、config 协调器、设置页结构。
 - **桌面体验**——三栏布局、Composer、自绘标题栏、托盘+后台运行+系统通知直达会话、快捷键体系、主题、单实例、滚动跟随。
