@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use axum::body::Body;
 use axum::http::{StatusCode, header};
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures::StreamExt;
@@ -252,6 +252,9 @@ fn turn2_events() -> Vec<ScriptEvent> {
     ]
 }
 
+/// 非流式（stream != true）请求的固定答复（suggest 等单次调用路径）。
+pub const NONSTREAM_TEXT: &str = "试试让我总结配置要点。";
+
 async fn handle_completion(
     body: Value,
     sent: Arc<Mutex<Vec<SentChunk>>>,
@@ -260,6 +263,19 @@ async fn handle_completion(
     turn1: Vec<ScriptEvent>,
 ) -> Response {
     requests.lock().await.push(body.clone());
+    // 非流式请求（rig Model::call 单次调用，如 suggest 后台小调用）：
+    // 返回单个 chat.completion JSON（OpenAI 兼容端点两形态都支持）。
+    if body["stream"] != Value::Bool(true) {
+        return Json(json!({
+            "id": "chatcmpl-mock",
+            "object": "chat.completion",
+            "created": 1,
+            "model": "gpt-4o-mock",
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": NONSTREAM_TEXT}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 120, "completion_tokens": 48, "total_tokens": 168}
+        }))
+        .into_response();
+    }
     let script = if has_tool_result(&body) {
         turn2_events()
     } else {

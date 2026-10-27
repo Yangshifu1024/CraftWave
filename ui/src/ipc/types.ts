@@ -249,3 +249,79 @@ export type IpcError = {
   message: string;
   detail?: unknown;
 };
+
+// ---- 询问/审批（§3.2 AskPayload/AskAnswer，14 号票；镜像 backend/ask.rs）----
+
+export type AskChoice = { id: string; label: string };
+
+export type AskQuestion = {
+  id: string;
+  text: string;
+  options?: AskChoice[];
+  allowFreeText: boolean;
+};
+
+export type DiffLine = { kind: "add" | "del" | "ctx"; text: string };
+
+export type DiffHunk = { header: string; lines: DiffLine[] };
+
+export type ApprovalDiff = { path: string; hunks: DiffHunk[] };
+
+export type AskOption = {
+  id: string;
+  label: string;
+  recommended?: boolean;
+  mode?: "allow_once" | "always_session" | "deny";
+};
+
+/** §3.2 AskPayload（M1 实装 question/approval 两形态） */
+export type AskPayload =
+  | { kind: "question"; title: string; questions: AskQuestion[] }
+  | {
+      kind: "approval";
+      title: string;
+      diff?: ApprovalDiff;
+      command?: string;
+      fenceReason?: string;
+      options: AskOption[];
+    };
+
+/** §3.2 AskAnswer */
+export type AskAnswer =
+  | { kind: "question"; answers: Record<string, string> }
+  | { kind: "approval"; optionId: string; editedCommand?: string };
+
+/** resolve_ask 参数（命令形参平铺，本结构为文档命名锚点） */
+export type ResolveAskArgs = { askId: string; answer: AskAnswer };
+
+/** approve_plan 参数（§3.3 #26c，14 号票增补） */
+export type ApprovePlanArgs = { sessionId: string };
+
+// ---- §3.5 事件载荷（14 号票实装 5 键；镜像 util/events.rs 与 host 发射面）----
+
+export type AskOpenedEvent = {
+  sessionId: string;
+  askId: string;
+  payload: AskPayload;
+};
+
+export type AskClosedEvent = {
+  askId: string;
+  answered: boolean;
+};
+
+export type PlanUpdateEvent = {
+  sessionId: string;
+  items: PlanItem[];
+};
+
+export type RunSuggestionsEvent = {
+  sessionId: string;
+  runId: string;
+  text: string;
+};
+
+export type TokensUpdateEvent = {
+  sessionId: string;
+  usage: UsageTotal;
+};

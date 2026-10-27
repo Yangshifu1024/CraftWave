@@ -89,6 +89,26 @@ impl TurnDriver {
             .await
     }
 
+    /// 一次性非流式小调用（suggest 后台生成等，C-9：不走 AgentRun 步进、
+    /// 无工具表）。返回 (拼接文本, usage)；失败由调用方静默处理。
+    pub async fn complete_once(&self, prompt: &str) -> Result<(String, Usage), PromptError> {
+        let request = CompletionRequest::new(prompt.to_owned());
+        let response =
+            self.model.call(request).await.map_err(|e| {
+                PromptError::from(rig::error::ProviderError::request(e.to_string()))
+            })?;
+        let text = response
+            .choice
+            .iter()
+            .filter_map(|block| match block {
+                rig::message::AssistantContent::Text(t) => Some(t.text.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("");
+        Ok((text, response.usage))
+    }
+
     #[allow(clippy::too_many_arguments)]
     async fn do_stream_turn(
         &self,

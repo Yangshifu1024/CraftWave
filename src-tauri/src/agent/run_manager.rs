@@ -6,10 +6,12 @@
 //! - RunState 快照可读（`session_run_snapshot` 对账命令为后续票，结构先就位）。
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use tokio_util::sync::CancellationToken;
 
+use crate::backend::exec::AskSlotCell;
+use crate::tools::plan::PlanState;
 use crate::util::errors::{E_SESSION_RUNNING, IpcError};
 
 /// run 状态（§5.1 RunState 的 M1 子集）。
@@ -30,13 +32,18 @@ pub struct RunState {
 }
 
 /// 单个活跃 run 的句柄（§5.1 RunHandle 的 M1 子集：帧通道由 run 任务独占，
-/// seq 在帧出口递增；steer 队列与 ask 槽随对应票接入）。
+/// seq 在帧出口递增；steer 队列随对应票接入；ask 槽与计划状态随 14 号票接入——
+/// backend executor 写入、host resolve_ask/approve_plan 读取）。
 #[derive(Debug)]
 pub struct RunHandle {
     pub run_id: String,
     pub session_id: String,
     pub cancel: CancellationToken,
     pub state: Mutex<RunState>,
+    /// 当前未决 ask（oneshot 回执；§5.1 ask 槽）。
+    pub ask: Arc<AskSlotCell>,
+    /// 计划状态（plan 工具写 / approve_plan 冻结 / ApprovalGate 守门读）。
+    pub plan: Arc<Mutex<Option<PlanState>>>,
 }
 
 impl RunHandle {
@@ -90,6 +97,8 @@ impl RunManager {
                 tool_count: 0,
                 last_seq: 0,
             }),
+            ask: Arc::new(Mutex::new(None)),
+            plan: Arc::new(Mutex::new(None)),
         });
         runs.insert(session_id.to_owned(), handle.clone());
         Ok(handle)
@@ -116,6 +125,23 @@ impl RunManager {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(session_id)
+            .cloned()
+    }
+
+    /// 按未决 askId 反查持有它的 run（resolve_ask 路由；M1 单会话规模遍历足够）。
+    pub fn find_by_ask(&self, ask_id: &str) -> Option<std::sync::Arc<RunHandle>> {
+        let runs = self
+            .runs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        runs.values()
+            .find(|h| {
+                h.ask
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .as_ref()
+                    .is_some_and(|s| s.ask_id == ask_id)
+            })
             .cloned()
     }
 

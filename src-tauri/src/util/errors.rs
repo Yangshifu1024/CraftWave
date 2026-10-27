@@ -52,15 +52,25 @@ impl ToolError {
 
     /// E_EDIT_NO_MATCH / E_EDIT_AMBIGUOUS / E_EDIT_VERSION_STALE（§8.4）。
     pub fn edit_no_match(message: impl Into<String>) -> Self {
-        Self::new("E_EDIT_NO_MATCH", message)
+        Self::new("E_EDIT_NO_MATCH", message.into())
     }
 
     pub fn edit_ambiguous(message: impl Into<String>) -> Self {
-        Self::new("E_EDIT_AMBIGUOUS", message)
+        Self::new("E_EDIT_AMBIGUOUS", message.into())
     }
 
     pub fn edit_version_stale(message: impl Into<String>) -> Self {
-        Self::new("E_EDIT_VERSION_STALE", message)
+        Self::new("E_EDIT_VERSION_STALE", message.into())
+    }
+
+    /// E_PLAN_STALE：已批准计划过期仍写（FR-06-02，§8.6）。
+    pub fn plan_stale(message: impl Into<String>) -> Self {
+        Self::new("E_PLAN_STALE", message.into())
+    }
+
+    /// E_COMMAND_TIMEOUT：命令执行超时（§8.3/§8.8，14 号票补录）。
+    pub fn command_timeout(message: impl Into<String>) -> Self {
+        Self::new("E_COMMAND_TIMEOUT", message.into())
     }
 }
 
@@ -92,6 +102,10 @@ pub const E_SESSION_REV: &str = "E_SESSION_REV";
 pub const E_STORAGE_IO: &str = "E_STORAGE_IO";
 pub const E_KEYRING: &str = "E_KEYRING";
 pub const E_INTERNAL: &str = "E_INTERNAL";
+pub const E_COMMAND_TIMEOUT: &str = "E_COMMAND_TIMEOUT";
+pub const E_PLAN_STALE: &str = "E_PLAN_STALE";
+pub const E_FENCE_BLOCKED: &str = "E_FENCE_BLOCKED";
+pub const E_TOOL_BLOCKED: &str = "E_TOOL_BLOCKED";
 
 /// IPC 命令统一错误负载（§3.1/§3.6，D14）：`{ code, message, detail? }`，camelCase。
 ///

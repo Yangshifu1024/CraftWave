@@ -5,8 +5,11 @@ import {
   MessagePartPrimitive,
   MessagePrimitive,
   ThreadPrimitive,
+  useAui,
+  useAuiState,
 } from "@assistant-ui/react";
 import { useRunMetricsStore } from "@/chat/run-metrics";
+import { matchGhost, useAskStore } from "@/stores/ask";
 
 /** S6 最小聊天窗：primitives 手搭（kit copy-paste 属后续 UX 票的增量）。 */
 export function ChatThread() {
@@ -39,6 +42,7 @@ export function ChatThread() {
                 rows={1}
                 placeholder="发一条消息试试骨架回声…"
                 className="max-h-32 flex-1 resize-none bg-transparent px-2 py-1.5 text-sm focus:outline-none"
+                onKeyDown={useGhostTabFill()}
               />
               <AuiIf condition={(s) => !s.thread.isRunning}>
                 <ComposerPrimitive.Send className="rounded-full bg-sky-600 px-3 py-1.5 text-sm text-white" />
@@ -49,6 +53,7 @@ export function ChatThread() {
                 </ComposerPrimitive.Cancel>
               </AuiIf>
             </ComposerPrimitive.Root>
+            <ComposerGhost />
             <RunMetricsBar />
           </ThreadPrimitive.ViewportFooter>
         </ThreadPrimitive.Viewport>
@@ -117,6 +122,57 @@ function RunMetricsBar() {
               : "出错"}
         </span>
       )}
+    </div>
+  );
+}
+
+/** ghost 填入动作（Tab 与按钮共用）：填入整句建议并清除 hint（§10.4）。 */
+function useGhostFill(): (() => void) | null {
+  const hint = useAskStore((s) => s.hint);
+  const clearHint = useAskStore((s) => s.clearHint);
+  const input = useAuiState((s) => s.composer.text);
+  const aui = useAui();
+  if (matchGhost(hint, input) === null) return null;
+  return () => {
+    aui.composer.setText(hint ?? "", { origin: "user" });
+    clearHint();
+  };
+}
+
+/** Composer 输入框的 Tab 接受（hint 激活时 Tab = 填入建议，不移动焦点）。 */
+function useGhostTabFill(): React.KeyboardEventHandler<HTMLTextAreaElement> {
+  const fill = useGhostFill();
+  return (event) => {
+    if (event.key === "Tab" && fill) {
+      event.preventDefault();
+      fill();
+    }
+  };
+}
+
+/** 建议提示词 ghost（§10.4：空输入整句 / 前缀匹配补尾；接受 = 填入不发送）。 */
+function ComposerGhost() {
+  const hint = useAskStore((s) => s.hint);
+  const input = useAuiState((s) => s.composer.text);
+  const ghost = matchGhost(hint, input);
+  const fill = useGhostFill();
+  if (ghost === null || !fill) return null;
+  return (
+    <div
+      data-testid="composer-ghost"
+      className="mt-1 flex items-center gap-2 px-2 text-[11px] text-neutral-500"
+    >
+      <span>
+        <span className="text-neutral-300">{input}</span>
+        {ghost}
+      </span>
+      <button
+        type="button"
+        onClick={fill}
+        className="rounded border border-neutral-700 px-1.5 py-0.5 text-neutral-400 hover:border-neutral-500"
+      >
+        Tab 填入
+      </button>
     </div>
   );
 }

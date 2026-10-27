@@ -11,8 +11,10 @@
 //!
 //! rig 升级只应改到本模块与 `providers/`（§4.1）。
 
+pub mod ask;
 pub mod exec;
 pub mod frames;
+pub mod gate;
 pub mod rig_bridge;
 pub mod run_loop;
 pub mod turn;
@@ -21,6 +23,10 @@ pub mod wire;
 #[cfg(test)]
 #[path = "frames_test.rs"]
 mod frames_test;
+
+#[cfg(test)]
+#[path = "gate_test.rs"]
+mod gate_test;
 
 #[cfg(test)]
 #[path = "rig_bridge_test.rs"]

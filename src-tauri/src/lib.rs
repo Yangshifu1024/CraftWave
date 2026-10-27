@@ -15,7 +15,8 @@ pub mod util;
 // 实际类型面由命令形参承载；这些导入为清单可读性服务，编译器视为未用。
 #[allow(unused_imports)]
 use host::commands::chat::{
-    CancelRunArgs, RunConfig, StartChatArgs, StartChatResult, cancel_run, start_chat,
+    ApprovePlanArgs, CancelRunArgs, ResolveAskArgs, RunConfig, StartChatArgs, StartChatResult,
+    approve_plan, cancel_run, resolve_ask, start_chat,
 };
 #[allow(unused_imports)]
 use host::commands::config::{SaveConfigArgs, get_config, save_config};
@@ -91,6 +92,8 @@ ipc_commands! {
     host::commands::provider::delete_provider => args: DeleteProviderArgs, ret: ();
     host::commands::chat::start_chat => args: StartChatArgs, ret: StartChatResult;
     host::commands::chat::cancel_run => args: CancelRunArgs, ret: bool;
+    host::commands::chat::resolve_ask => args: ResolveAskArgs, ret: ();
+    host::commands::chat::approve_plan => args: ApprovePlanArgs, ret: ();
     #[cfg(debug_assertions)]
     mock_chat::mock_chat_run => args: (), ret: ();
 }
@@ -129,6 +132,7 @@ pub fn run() {
             app.manage(host::AppState::new_in(
                 data_dir,
                 std::sync::Arc::new(providers::keyring::OsKeyring),
+                std::sync::Arc::new(host::TauriEventSink(app.handle().clone())),
             ));
             Ok(())
         })

@@ -7,8 +7,10 @@
  */
 
 import { Channel, invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import type {
   AppConfig,
+  AskAnswer,
   ChatFrame,
   DeleteProviderArgs,
   IpcError,
@@ -34,7 +36,26 @@ export const COMMANDS = {
   deleteProvider: "delete_provider",
   startChat: "start_chat",
   cancelRun: "cancel_run",
+  resolveAsk: "resolve_ask",
+  approvePlan: "approve_plan",
 } as const;
+
+/** 本文件已接线的事件键（§3.5，14 号票实装 5 键）。 */
+export const EVENT_KEYS = {
+  askOpened: "ask:opened",
+  askClosed: "ask:closed",
+  planUpdate: "plan:update",
+  runSuggestions: "run:suggestions",
+  tokensUpdate: "tokens:update",
+} as const;
+
+/**
+ * 订阅一个后端事件（§3.5）：返回取消订阅函数。
+ * 事件监听与 invoke 同为本文件唯一出口——测试注入 fake（见 stores/ask.test.ts）。
+ */
+export function listenEvent<T>(key: string, handler: (payload: T) => void): Promise<() => void> {
+  return listen<T>(key, (event) => handler(event.payload));
+}
 
 /** 激活覆盖式自绘标题栏（§2.1 防闪启动协议，App.tsx 看门狗用）。 */
 export function activateCustomTitlebar(): Promise<void> {
@@ -105,6 +126,19 @@ export function startChat(args: {
 /** §3.3 #19：取消运行（置位即返回；终态以 runEnded 帧为权威）。 */
 export async function cancelRun(sessionId: string): Promise<boolean> {
   return invoke<boolean>(COMMANDS.cancelRun, { sessionId } satisfies { sessionId: string });
+}
+
+/** §3.3 #22：应答询问/审批（AskPanel）。槽不存在或已关闭 reject E_NOT_FOUND。 */
+export function resolveAsk(askId: string, answer: AskAnswer): Promise<void> {
+  return invoke<void>(COMMANDS.resolveAsk, { askId, answer } satisfies {
+    askId: string;
+    answer: AskAnswer;
+  });
+}
+
+/** §3.3 #26c：冻结当前计划为批准快照（计划门 §8.6，plan 卡批准按钮）。 */
+export function approvePlan(sessionId: string): Promise<void> {
+  return invoke<void>(COMMANDS.approvePlan, { sessionId } satisfies { sessionId: string });
 }
 
 /** 把 invoke 的 reject 归一为 §3.1 错误负载（Rust 侧已按 {code,message,detail} 序列化）。 */

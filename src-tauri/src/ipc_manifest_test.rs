@@ -21,7 +21,7 @@ fn target_dir() -> PathBuf {
 }
 
 #[test]
-fn 导出_ipc_manifest与跨语言roundtrip_fixture() {
+fn export_ipc_manifest_and_cross_lang_fixture() {
     // ---- 1. manifest：命令清单 + 契约类型名（§12.3 schema） ----
     let commands = crate::ipc_manifest();
     let find = |name: &str| {
@@ -57,6 +57,12 @@ fn 导出_ipc_manifest与跨语言roundtrip_fixture() {
     assert_eq!(find("save_provider").args_type, "SaveProviderArgs");
     assert_eq!(find("save_provider").ret_type, "ProviderConfig");
     assert_eq!(find("delete_provider").args_type, "DeleteProviderArgs");
+    // 核心链路与 ask/计划门命令锚点（13/14 号票）
+    assert_eq!(find("start_chat").args_type, "StartChatArgs");
+    assert_eq!(find("start_chat").ret_type, "StartChatResult");
+    assert_eq!(find("cancel_run").args_type, "CancelRunArgs");
+    assert_eq!(find("resolve_ask").args_type, "ResolveAskArgs");
+    assert_eq!(find("approve_plan").args_type, "ApprovePlanArgs");
     // 标题栏命令（骨架既有）仍在注册表
     assert!(
         commands
@@ -66,14 +72,25 @@ fn 导出_ipc_manifest与跨语言roundtrip_fixture() {
 
     let manifest = serde_json::json!({
         "commands": commands,
-        // ChatFrame P0 全集 9 帧（§3.4）；事件键（§3.5）占位空集
+        // ChatFrame P0 全集 9 帧（§3.4）
         "frames": crate::host::commands::FRAMES,
+        // 事件键（§3.5）：14 号票实装 5 键
         "events": crate::host::commands::EVENTS,
         // 镜像工具清单（§12.3）：工具注册表单一事实源
         "tools": crate::tools::TOOL_NAMES,
+        // 工具规格（name + paramsSchema）：前端 toolkit 声明同源校验（§10.3，14 号票）
+        "toolSpecs": crate::tools::build_registry()
+            .into_iter()
+            .map(|s| serde_json::json!({
+                "name": s.name,
+                "paramsSchema": s.params_schema,
+            }))
+            .collect::<Vec<_>>(),
     });
     assert_eq!(manifest["frames"].as_array().unwrap().len(), 9);
-    assert_eq!(manifest["tools"].as_array().unwrap().len(), 5);
+    assert_eq!(manifest["events"].as_array().unwrap().len(), 5);
+    assert_eq!(manifest["tools"].as_array().unwrap().len(), 8);
+    assert_eq!(manifest["toolSpecs"].as_array().unwrap().len(), 8);
     fs::create_dir_all(target_dir()).unwrap();
     fs::write(
         target_dir().join("ipc-manifest.json"),
