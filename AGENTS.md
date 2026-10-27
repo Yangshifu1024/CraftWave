@@ -61,3 +61,7 @@ Key patterns:
 - Thread component for full chat interface
 - AssistantModal for floating chat widget
 - useChatRuntime hook with AI SDK transp
+
+
+## 补充指令
+如有 AGETNS.local.md 文件，读取它并合并指令
