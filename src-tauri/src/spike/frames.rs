@@ -16,14 +16,35 @@ pub const THROTTLE_INTERVAL: Duration = Duration::from_millis(64);
 /// usage 帧在本 spike 由 usage 汇总驱动，一并保留字段面）。
 /// variant 名与字段名均按 §3.1 契约：type 是 camelCase，字段也是 camelCase。
 #[derive(Debug, Clone, Serialize, PartialEq)]
-#[serde(rename_all = "camelCase", rename_all_fields = "camelCase", tag = "type")]
+#[serde(
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "type"
+)]
 pub enum ChatFrame {
-    RunStarted { run_id: String, model: String },
-    StepStarted { turn: u32 },
-    TextDelta { turn: u32, delta: String },
-    ReasoningDelta { turn: u32, delta: String },
-    ToolStarted { call_id: String, name: String },
-    ToolArgs { call_id: String, chunk: String },
+    RunStarted {
+        run_id: String,
+        model: String,
+    },
+    StepStarted {
+        turn: u32,
+    },
+    TextDelta {
+        turn: u32,
+        delta: String,
+    },
+    ReasoningDelta {
+        turn: u32,
+        delta: String,
+    },
+    ToolStarted {
+        call_id: String,
+        name: String,
+    },
+    ToolArgs {
+        call_id: String,
+        chunk: String,
+    },
     ToolResult {
         call_id: String,
         ok: bool,

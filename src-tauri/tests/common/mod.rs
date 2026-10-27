@@ -9,14 +9,14 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use craftwave_lib::spike::frames::{ChatFrame, DeltaThrottler, FrameSink, SequencedFrame};
-use craftwave_lib::spike::turn::{drive_manual_tool_loop, ToolExecutor, TurnDriver};
-use rig::completion::request::ToolDefinition;
+use craftwave_lib::spike::turn::{ToolExecutor, TurnDriver, drive_manual_tool_loop};
 use rig::completion::Message;
+use rig::completion::request::ToolDefinition;
 use rig::message::ToolName;
-use rig::providers::openai::wire::OpenAIConfig;
 use rig::providers::openai::OpenAI;
-use rig::run::spec::RunSpec;
+use rig::providers::openai::wire::OpenAIConfig;
 use rig::run::AgentRun;
+use rig::run::spec::RunSpec;
 
 /// mock 服务里声明的工具名。
 pub const TOOL_READ: &str = "read";

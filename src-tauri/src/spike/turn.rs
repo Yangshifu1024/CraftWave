@@ -7,11 +7,11 @@
 use std::sync::Arc;
 
 use futures::StreamExt;
-use rig::completion::request::{CompletionRequest, ToolDefinition};
 use rig::completion::Message;
+use rig::completion::request::{CompletionRequest, ToolDefinition};
 use rig::driver::Model;
 use rig::providers::openai::wire::Chat;
-use rig::run::prepare::{prepare_request, PreparedRequest};
+use rig::run::prepare::{PreparedRequest, prepare_request};
 use rig::run::spec::RunSpec;
 use rig::run::streamed::StreamedTurnAssembler;
 use rig::run::{AgentRun, AgentRunStep, ModelTurnOutcome, PromptError};
@@ -73,12 +73,13 @@ impl TurnDriver {
         let mut assembler = StreamedTurnAssembler::new(policy);
         let mut bridge = RigEventBridge::new();
         while let Some(item) = stream.next().await {
-            let item: Item<rig::streaming::StreamEvent> =
-                item.map_err(|e| PromptError::from(rig::error::ProviderError::request(e.to_string())))?;
+            let item: Item<rig::streaming::StreamEvent> = item.map_err(|e| {
+                PromptError::from(rig::error::ProviderError::request(e.to_string()))
+            })?;
             // 装配器先记账（非法调用拦截等），再桥接出帧
-            let _assembly_event = assembler
-                .ingest(&item)
-                .map_err(|e| PromptError::from(rig::error::ProviderError::request(e.to_string())))?;
+            let _assembly_event = assembler.ingest(&item).map_err(|e| {
+                PromptError::from(rig::error::ProviderError::request(e.to_string()))
+            })?;
             match bridge.bridge(&item, turn_no) {
                 Bridged::Frame(frame) => on_frame(frame),
                 Bridged::None => {}
@@ -115,10 +116,14 @@ pub async fn drive_manual_tool_loop(
     loop {
         match run.next_step()? {
             AgentRunStep::CallModel {
-                prompt, history, turn,
+                prompt,
+                history,
+                turn,
             } => {
                 // 单 turn 流式调用；CallTools 状态可在此前挂起（审批）
-                driver.stream_turn(&mut run, prompt, history, turn as u32, on_frame).await?;
+                driver
+                    .stream_turn(&mut run, prompt, history, turn as u32, on_frame)
+                    .await?;
             }
             AgentRunStep::CallTools { calls } => {
                 // 外部执行（生产：§5.4 门控 → 审批挂起 → 执行）；全部完成后整批回喂
@@ -158,10 +163,7 @@ pub async fn drive_manual_tool_loop(
 }
 
 /// 把一个 pending call 的执行结果打包为 ToolAnswer。
-fn answer_one(
-    call: rig::run::PendingToolCall,
-    output: String,
-) -> rig::run::ToolAnswer {
+fn answer_one(call: rig::run::PendingToolCall, output: String) -> rig::run::ToolAnswer {
     match call {
         rig::run::PendingToolCall::Execute(exec) => exec.answer(rig::tool::ToolResult::success(
             rig::tool::ToolOutput::text(output),

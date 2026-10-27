@@ -35,10 +35,12 @@ fn 不同类型增量各自成帧_文本思考参数有序() {
     let kinds: Vec<String> = sink
         .frames
         .iter()
-        .map(|f| serde_json::to_value(&f.frame).unwrap()["type"]
-            .as_str()
-            .unwrap()
-            .to_string())
+        .map(|f| {
+            serde_json::to_value(&f.frame).unwrap()["type"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
         .collect();
     assert_eq!(kinds, vec!["textDelta", "reasoningDelta", "toolArgs"]);
     let ChatFrame::ToolArgs { call_id, chunk } = &sink.frames[2].frame else {

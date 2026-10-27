@@ -36,7 +36,7 @@ fn joined_args(id: &str) -> (Vec<String>, String) {
 }
 
 #[test]
-fn 半截增量拼回后是完整JSON() {
+fn 半截增量拼回后是完整_json() {
     let (_, args1) = joined_args("call-1");
     let parsed: serde_json::Value =
         serde_json::from_str(&args1).expect("call-1 增量拼接后必须是完整 JSON");
@@ -50,7 +50,7 @@ fn 半截增量拼回后是完整JSON() {
 }
 
 #[test]
-fn call1拆三片且前两片后仍为半截JSON() {
+fn call1拆三片且前两片后仍为半截_json() {
     let (pieces, joined) = joined_args("call-1");
     assert_eq!(pieces.len(), 3, "call-1 应拆成 3 片增量");
     let try_parse = |s: &str| serde_json::from_str::<serde_json::Value>(s).is_ok();

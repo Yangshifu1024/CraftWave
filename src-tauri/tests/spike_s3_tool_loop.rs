@@ -7,10 +7,10 @@ mod common;
 use std::sync::Arc;
 
 use common::mock_openai::{MockOpenAI, TURN1_TOOL_ARG_PARTS, TURN2_TEXT};
-use common::{turn_driver, FakeExecutor, TimedSink, TOOL_READ};
+use common::{FakeExecutor, TOOL_READ, TimedSink, turn_driver};
+use craftwave_lib::spike::frames::ChatFrame;
 use craftwave_lib::spike::frames::FrameSink;
 use craftwave_lib::spike::turn::ToolExecutor;
-use craftwave_lib::spike::frames::ChatFrame;
 use craftwave_lib::spike::turn::drive_manual_tool_loop;
 use rig::run::{AgentRun, AgentRunStep};
 
@@ -29,7 +29,11 @@ async fn s3_手动循环_单turn返回_外部执行_结果回喂() {
 
     // —— 循环两轮：第 1 轮返回工具调用，第 2 轮在工具结果回喂后给出答复 ——
     assert_eq!(response.output(), TURN2_TEXT, "第 2 轮答复");
-    assert_eq!(response.completion_calls.len(), 2, "恰好两次模型调用（单 turn 两次）");
+    assert_eq!(
+        response.completion_calls.len(),
+        2,
+        "恰好两次模型调用（单 turn 两次）"
+    );
 
     let bodies = mock.request_bodies().await;
     assert_eq!(bodies.len(), 2, "mock 收到两轮补全请求");
@@ -45,7 +49,8 @@ async fn s3_手动循环_单turn返回_外部执行_结果回喂() {
     let tool_text = tool_msgs[0]["content"].as_str().unwrap_or_default();
     assert!(tool_text.contains("port = 8087"), "工具输出原文进入回喂");
     // 执行器收到的是装配器解析后的参数（serde 紧凑串），与模型三段流式片段语义一致
-    let expected_args = serde_json::json!({"path": "/etc/app/config.toml", "offset": 0}).to_string();
+    let expected_args =
+        serde_json::json!({"path": "/etc/app/config.toml", "offset": 0}).to_string();
     assert!(
         tool_text.contains(&expected_args),
         "模型流式给出的完整参数（含半截片段拼合）经装配解析后传给执行器并回喂：{tool_text}"
@@ -62,10 +67,19 @@ async fn s3_手动循环_单turn返回_外部执行_结果回喂() {
                 .to_string()
         })
         .collect();
-    let started = kinds.iter().position(|k| k == "toolStarted").expect("有 toolStarted");
-    let first_args = kinds.iter().position(|k| k == "toolArgs").expect("有 toolArgs");
+    let started = kinds
+        .iter()
+        .position(|k| k == "toolStarted")
+        .expect("有 toolStarted");
+    let first_args = kinds
+        .iter()
+        .position(|k| k == "toolArgs")
+        .expect("有 toolArgs");
     let last_args = kinds.iter().rposition(|k| k == "toolArgs").unwrap();
-    let result = kinds.iter().position(|k| k == "toolResult").expect("有 toolResult");
+    let result = kinds
+        .iter()
+        .position(|k| k == "toolResult")
+        .expect("有 toolResult");
     assert!(started < first_args && first_args <= last_args && last_args < result);
     // 装配器产出与帧一致的调用 id
     let started_frame = &frames[started].frame.frame;
@@ -80,7 +94,11 @@ async fn s3_手动循环_单turn返回_外部执行_结果回喂() {
         .iter()
         .map(|c| c.usage.total_tokens.unwrap_or(0))
         .sum();
-    assert_eq!(total, 2 * 168, "两轮 usage 均为 mock 报的 168 tok（记账无丢失）");
+    assert_eq!(
+        total,
+        2 * 168,
+        "两轮 usage 均为 mock 报的 168 tok（记账无丢失）"
+    );
 }
 
 /// 审批挂起形态：CallTools 步骤时把 run 序列化挂起（模拟等待用户审批/进程重启），
@@ -94,7 +112,12 @@ async fn s3_审批挂起_run序列化挂起_恢复后继续() {
     let mut on_frame = |frame| FrameSink::send(&mut sink, frame);
 
     // turn 1：流式调用，模型返回工具调用
-    let AgentRunStep::CallModel { prompt, history, turn } = run.next_step().expect("第一步") else {
+    let AgentRunStep::CallModel {
+        prompt,
+        history,
+        turn,
+    } = run.next_step().expect("第一步")
+    else {
         panic!("期望 CallModel");
     };
     assert_eq!(turn, 1);
@@ -122,7 +145,8 @@ async fn s3_审批挂起_run序列化挂起_恢复后继续() {
     let output = FakeExecutor.execute(TOOL_READ, &TURN1_TOOL_ARG_PARTS.concat());
     //（FakeExecutor::execute 经 ToolExecutor trait，需引入）
     // 恢复后的待执行调用按 id 应答
-    let AgentRunStep::CallTools { calls } = run.next_step().expect("恢复后仍处 CallTools") else {
+    let AgentRunStep::CallTools { calls } = run.next_step().expect("恢复后仍处 CallTools")
+    else {
         panic!("恢复后期望 CallTools");
     };
     assert_eq!(
@@ -141,7 +165,12 @@ async fn s3_审批挂起_run序列化挂起_恢复后继续() {
     run.answer_all(answers).expect("工具结果回喂");
 
     // turn 2：模型在收到工具结果后给出最终答复
-    let AgentRunStep::CallModel { prompt, history, turn } = run.next_step().expect("第三步") else {
+    let AgentRunStep::CallModel {
+        prompt,
+        history,
+        turn,
+    } = run.next_step().expect("第三步")
+    else {
         panic!("期望第 2 次 CallModel");
     };
     assert_eq!(turn, 2);

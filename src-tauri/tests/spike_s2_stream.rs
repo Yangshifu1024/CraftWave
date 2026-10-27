@@ -9,7 +9,9 @@ use std::sync::{Arc, Mutex};
 use common::mock_openai::{
     MockOpenAI, TURN1_REASONING, TURN1_TEXT, TURN1_TOOL_ARG_PARTS, TURN2_TEXT,
 };
-use common::{drive_direct, drive_throttled, turn_driver, FakeExecutor, TimedFrame, TimedSink, TOOL_READ};
+use common::{
+    FakeExecutor, TOOL_READ, TimedFrame, TimedSink, drive_direct, drive_throttled, turn_driver,
+};
 use craftwave_lib::spike::frames::{ChatFrame, DeltaThrottler, EndReason};
 
 /// 抽取某种帧的负载文本。
@@ -55,15 +57,18 @@ async fn s2_直通模式_流事件无丢失无乱序() {
     let text = join_frames(&frames, is_text);
     let reasoning = join_frames(&frames, is_reasoning);
     let args = join_frames(&frames, is_args);
-    assert_eq!(text, format!("{TURN1_TEXT}{TURN2_TEXT}"), "文本 delta 无丢失");
+    assert_eq!(
+        text,
+        format!("{TURN1_TEXT}{TURN2_TEXT}"),
+        "文本 delta 无丢失"
+    );
     assert_eq!(reasoning, TURN1_REASONING, "思考 delta 无丢失");
     assert_eq!(
         args,
         TURN1_TOOL_ARG_PARTS.concat(),
         "工具参数增量（含半截 JSON 片段）无丢失"
     );
-    let parsed: serde_json::Value =
-        serde_json::from_str(&args).expect("拼接后的参数是完整 JSON");
+    let parsed: serde_json::Value = serde_json::from_str(&args).expect("拼接后的参数是完整 JSON");
     assert_eq!(parsed["path"], "/etc/app/config.toml");
 
     // —— 乱序断言：rig 事件顺序 = mock 发送顺序 ——
@@ -77,9 +82,18 @@ async fn s2_直通模式_流事件无丢失无乱序() {
     };
     let kinds: Vec<&str> = frames.iter().map(|t| kind_of(&t.frame.frame)).collect();
     let first_text = kinds.iter().position(|k| *k == "text").expect("有文本帧");
-    let last_reasoning = kinds.iter().rposition(|k| *k == "reasoning").expect("有思考帧");
-    assert!(last_reasoning < first_text, "turn1 思考先于文本（mock 脚本顺序）");
-    let started = kinds.iter().position(|k| *k == "tool_started").expect("有 toolStarted");
+    let last_reasoning = kinds
+        .iter()
+        .rposition(|k| *k == "reasoning")
+        .expect("有思考帧");
+    assert!(
+        last_reasoning < first_text,
+        "turn1 思考先于文本（mock 脚本顺序）"
+    );
+    let started = kinds
+        .iter()
+        .position(|k| *k == "tool_started")
+        .expect("有 toolStarted");
     let first_args = kinds.iter().position(|k| *k == "tool_args").unwrap();
     assert!(started < first_args, "toolStarted 早于 toolArgs");
 
@@ -89,7 +103,10 @@ async fn s2_直通模式_流事件无丢失无乱序() {
     }
     // toolResult 晚于同 callId 的全部 toolArgs
     let last_args = kinds.iter().rposition(|k| *k == "tool_args").unwrap();
-    let result = kinds.iter().position(|k| *k == "tool_result").expect("有 toolResult");
+    let result = kinds
+        .iter()
+        .position(|k| *k == "tool_result")
+        .expect("有 toolResult");
     assert!(last_args < result);
 
     // —— 工具帧内容 ——
@@ -133,10 +150,7 @@ async fn s2_节流模式_64ms合并_帧间隔实测() {
     throttler.lock().unwrap().flush(&mut sink.clone());
 
     let frames = sink.0.lock().unwrap().clone();
-    let text_frames: Vec<&TimedFrame> = frames
-        .iter()
-        .filter(|t| is_text(&t.frame.frame))
-        .collect();
+    let text_frames: Vec<&TimedFrame> = frames.iter().filter(|t| is_text(&t.frame.frame)).collect();
     assert!(
         (2..=4).contains(&text_frames.len()),
         "两轮共 5 段文本 delta 应合并为 2~4 帧（每轮首 delta 立即 + 64ms 窗口合并），实际 {}",
@@ -149,7 +163,11 @@ async fn s2_节流模式_64ms合并_帧间隔实测() {
             _ => String::new(),
         })
         .collect();
-    assert_eq!(joined, format!("{TURN1_TEXT}{TURN2_TEXT}"), "节流合并后拼接仍无损");
+    assert_eq!(
+        joined,
+        format!("{TURN1_TEXT}{TURN2_TEXT}"),
+        "节流合并后拼接仍无损"
+    );
 
     // 帧间隔实测：相邻帧间隔 ≥ 节流窗口（无 30ms 连发）；上限放行两轮间的工具往返
     let gaps: Vec<f64> = text_frames
@@ -223,9 +241,7 @@ async fn report_latency(mock: &MockOpenAI, frames: &[TimedFrame], label: &str) {
     } else {
         let max_p = paired.iter().cloned().fold(0.0, f64::max);
         let avg_p = paired.iter().sum::<f64>() / paired.len() as f64;
-        format!(
-            "，单帧延迟(chunk→帧)平均={avg_p:.2}ms 最大={max_p:.2}ms"
-        )
+        format!("，单帧延迟(chunk→帧)平均={avg_p:.2}ms 最大={max_p:.2}ms")
     };
     println!(
         "S2[{label}] 延迟埋点：TTFT(mock首delta→首帧)={ttft_ms:.2}ms{pairing}；帧时刻分布={frame_times:?}ms",

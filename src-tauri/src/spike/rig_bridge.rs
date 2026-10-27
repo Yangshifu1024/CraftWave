@@ -80,7 +80,10 @@ impl RigEventBridge {
                     .clone();
                 // 参数增量 JSON 片段原样转发（半截 JSON 保留原样，前端以
                 // 「参数准备中」态渲染——§10.2）
-                Bridged::Frame(ChatFrame::ToolArgs { call_id, chunk: json.clone() })
+                Bridged::Frame(ChatFrame::ToolArgs {
+                    call_id,
+                    chunk: json.clone(),
+                })
             }
             StreamEvent::End { part, content } => {
                 // 工具调用的 End 事件不带参数增量，工具名/参数已全部经

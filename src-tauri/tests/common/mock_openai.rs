@@ -10,12 +10,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::body::Body;
-use axum::http::{header, StatusCode};
+use axum::http::{StatusCode, header};
 use axum::response::Response;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures::StreamExt;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
@@ -79,7 +79,9 @@ impl MockOpenAI {
                 }),
             )
             .route("/v1/models", get(get_models));
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind mock");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind mock");
         let addr = listener.local_addr().expect("mock addr");
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
         let server = tokio::spawn(async move {
@@ -158,8 +160,14 @@ fn usage_chunk() -> String {
 /// 第 1 轮脚本：思考 → 文本 → 工具名 → 参数三段（第二段结尾半截 JSON）→ 收尾。
 fn turn1_events() -> Vec<(&'static str, String)> {
     let mut events = Vec::new();
-    events.push(("reasoning", chunk(json!({"reasoning_content": "用户要我看配置，"}), None)));
-    events.push(("reasoning", chunk(json!({"reasoning_content": "先调用 read。"}), None)));
+    events.push((
+        "reasoning",
+        chunk(json!({"reasoning_content": "用户要我看配置，"}), None),
+    ));
+    events.push((
+        "reasoning",
+        chunk(json!({"reasoning_content": "先调用 read。"}), None),
+    ));
     events.push(("content", chunk(json!({"content": "我来读一下"}), None)));
     events.push(("content", chunk(json!({"content": "配置文件。"}), None)));
     events.push((
@@ -189,7 +197,10 @@ fn turn1_events() -> Vec<(&'static str, String)> {
 /// 第 2 轮脚本：纯文本答复。
 fn turn2_events() -> Vec<(&'static str, String)> {
     let mut events = Vec::new();
-    events.push(("content", chunk(json!({"content": "配置文件共 12 行，"}), None)));
+    events.push((
+        "content",
+        chunk(json!({"content": "配置文件共 12 行，"}), None),
+    ));
     events.push(("content", chunk(json!({"content": "端口是"}), None)));
     events.push(("content", chunk(json!({"content": " 8087。"}), None)));
     events.push(("finish", chunk(json!({}), Some("stop"))));
