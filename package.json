@@ -1,0 +1,17 @@
+{
+  "name": "craftwave",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@12.11.2",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "typecheck": "pnpm --filter craftwave-ui typecheck",
+    "test": "pnpm --filter craftwave-ui test",
+    "lint": "biome check ."
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.6.3",
+    "@tauri-apps/cli": "^2.12.4"
+  }
+}

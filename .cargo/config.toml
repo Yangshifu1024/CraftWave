@@ -1,0 +1,4 @@
+# Rust 产物与系统库链接的最低 macOS 部署目标。
+# 此处设置对本地直接执行 cargo 命令同样生效；CI 在 workflow 中另行声明。
+[env]
+MACOSX_DEPLOYMENT_TARGET = "13.0"
