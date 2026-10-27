@@ -1,29 +1,28 @@
 # CraftWave 工作交接（HandOff）
 
-> 生成于 2026-10-28（同日三次更新）。追加：设置界面重写（照抄 CodeWave + shadcn 手写基件，`29d4f90`）与 GLM Coding Plan 端点排障（用户配置修复）。
+> 生成于 2026-10-28（第四次更新）。追加：15 号票（run 生命周期落盘）与 16 号票（多会话与项目）合入 main、多 Tab 启动报错修复。
 > 规则：本文件只做索引与状态快照，细节一律引用票文件/文档/提交，不复述。
 
 ## 一、必读顺序（新会话开场）
 
 1. `AGENTS.md`——提交纪律、检查链、工具链（有本地补充再读 `AGENTS.local.md`）。
 2. `docs/specs/m1-mvp/map.md`——wayfinder 地图：目标、决策索引（Decisions so far）、剩余雾区（Not yet specified）。
-3. `docs/技术设计文档.md`——开发直接依据（P0 字段级）；附录 C 为未决问题清单。
+3. `docs/技术设计文档.md`——开发直接依据（P0 字段级，v2.7）；附录 C 为未决问题清单。
 4. 票目录 `docs/specs/m1-mvp/tasks/`——一票一文件，Answer 节是各票结论。
 
-## 二、当前状态快照（main = `b7ee963`；15 号票工作在分支 `feat/run-persistence` 待用户点头合并）
+## 二、当前状态快照（main = `7787dbf`，含 15/16 号票全部工作；本地领先 origin/main 未 push）
 
-- **地图进度**：01–15 号票全部关闭。四张 spike + 三张实现切片 + 核心链路（13）+ 工具系统接线（14）+ **run 生命周期落盘与历史恢复（15，本次）**。
-- **测试基线**：Rust 210 lib + 集成 25（另 1 例真钥匙串冒烟 `#[ignore]` 已随 keyring 废除清理面）；前端 vitest 89 例；biome/tsc 全绿。
-- **已通的能力**：在 14 号之上，15 号新增——§7.3 时机表全量落盘（RunRecorder 帧观察器：user/turn 文本/工具批/runMarker 逐点 fsync）、sessions/index.json + `list_sessions`（#14）、toolres 边车 + `load_tool_outcomes`（#29）、崩溃恢复读时修复（canonical 形态判定，只认 `{runId}:` 前缀条目）、前端启动收养（load→import）、发送前 save 协议、分支/编辑/重生成 UI（官方原语操作条）、工具卡边车恢复（折叠 detail）。**canonical 双写协议定稿**（文档 v2.6）：条目 id 两侧同源（`{runId}:{turn}`/`.tools`/`:marker`）、运行态节点不进 save 载荷（marker 引用改写）、E_SESSION_REV load 校正重试。SessionStore Arc 化（AppState.store 与命令层/RunRecorder 共锁表）；start_chat 的 ToolsContext/边车根统一 `app.store.root()`（测试不再污染真实 `~/.craftwave`）。
-- **同日追加（v2.5 用户决策）**：① **keyring 已废除**——API Key 明文存 config.json（0600，intent.json 协议移除）；② dev 模式原始错误输出双通道。
-- **设置界面重写**（`29d4f90` 已并回）：shadcn 风格基件 12 件（零新依赖）+ 亮暗令牌；设置页照抄 CodeWave 布局；供应商页完整复刻 ProvidersPanel 交互。未接线：MCP/技能/写入后检查/工作区与智能体四页占位待票；暗色主题仅编辑落盘。
-- **GLM Coding Plan 500 排障**（用户配置修复，无代码改动）：端点已改 `https://open.bigmodel.cn/api/coding/paas/v4` + `glm-5.3-flash`（三协议分流详见五）。
+- **地图进度**：01–16 号票全部关闭。四张 spike + 三张实现切片 + 核心链路（13）+ 工具系统接线（14）+ run 生命周期落盘（15）+ **多会话与项目（16，本次）**。
+- **测试基线**：Rust 232 lib + 25 集成全绿（clippy/build 干净）；前端 vitest 99 例；tsc/Biome 全绿；manifest 双向契约 26 命令。
+- **15 号票**（`e53d9b1` + retro 修复 `d9a87b3`）：§7.3 时机表全量落盘、index.json、toolres 边车、崩溃恢复、前端启动收养/发送前 save/分支编辑 UI；**canonical 双写协议定稿**（文档 v2.6）。
+- **16 号票**（`0d9251c`，修复 `7787dbf`）：项目注册表（一目录一项目）、会话 CRUD（删除项目会话转临时）、workspace 只读（#27/#28）、ui_state 域（#30/#31）、select_dir（#5，rfd）、start_chat roots 按项目泛化、**多 Tab 前端**（keep-mounted 每会话独立 runtime + 左栏会话树 + ui-state 布局恢复）、persist/metrics/ask 按 sessionId 分桶、index 2000 条归档（15 号票 shortcut 收敛）；#15 load_session 不单独注册（文档 v2.7）。
+- **分支记录**：`feat/run-persistence`、`feat/sessions-projects` 均 fast-forward 并入 main，未删除；未 push（用户未要求）。
 
 ## 三、下一步（按地图雾区顺序）
 
-1. **多会话与项目**：create/delete/rename_session、临时/项目会话双形态、项目注册表、workspace 读写与路径搜索命令（#27/#28）；顺带收敛 15 号票 shortcut（index 2000 条归档、崩溃 run 尾条 incomplete 回填）。
-2. **桌面体验**（三栏/托盘/快捷键/折叠分组 §10.4；工具卡专属排版在此票打磨）→ **打包验收**（C-8 安全复判在此毕业成票）。
-3. 小项：rate 的 TextDelta 自算、steer/followUp、错误分类 §11.3、ts-rs 引入（C-2 后半）。
+1. **桌面体验票**：三栏布局、Composer、自绘标题栏、托盘+后台运行+系统通知、快捷键体系、主题、单实例、滚动跟随（§10.4）；16 号票 shortcut 在此收敛——**草稿持久化**（§10.6）、**项目改名入口**、工具卡专属排版、崩溃 run 尾条 incomplete 回填（15 号票 shortcut）。
+2. **三平台打包与 1 周真实使用验收**：打包矩阵（dmg/nsis/AppImage+deb）、验收剧本；**C-8（临时会话 roots 边界）安全复判在此毕业成票**。
+3. 小项：rate 的 TextDelta 自算、steer/followUp、错误分类 §11.3、ts-rs 引入（C-2 后半）、session_prefs 域命令（#24/#25）、pending_intent UI 接线、设置页与预设打磨。
 
 ## 四、工作方式（本图约定）
 
@@ -36,14 +35,20 @@
 - **前端检查从仓库根跑**：`pnpm typecheck/test/lint` 定义在根 package.json（lint 只在根，Biome 在根 devDependencies）；在 `ui/` 下跑 `pnpm lint` 会命中 PATH 上无关同名工具。
 - 检查链：`src-tauri/` 下 `cargo fmt --check && cargo build && cargo clippy --all-targets -- -D warnings && cargo test`；根下前端三项。`MACOSX_DEPLOYMENT_TARGET=13.0` 已在 `.cargo/config.toml [env]`。
 - 工具链：`rust-toolchain.toml` 钉 1.97.1（rig MSRV）；crates 走 rsproxy 镜像；GitHub 抖动时命令前缀 `https_proxy=http://127.0.0.1:7890`。
+- **多 Tab 架构（16 号票定式）**：每 Tab 一个 `SessionTab`（keep-mounted，非活跃 `display:none`）+ 每会话独立 `sessionAdapter(id)` runtime 与 **独立 `AssistantRuntimeProvider`**（config 共用模块级 `cwAuiConfig`）——任何用到 Thread 原语/`useAuiState` 的组件必须在 Provider 内，否则启动即抛「requires an AuiProvider」（本次踩坑）。
+- **会话相关 store 一律按 sessionId 分桶**：persist（`scopes`）、run-metrics（`bySession`，`useSessionMetrics` 返回稳定零值引用防渲染循环）、ask（`bySession`+`hints`）；ask:closed 载荷无 sessionId，按 askId 全桶匹配关闭。组件内取所属会话用 `useSessionScope()`（`chat/session-scope.ts`）。
+- **@ 补全路径口径**：项目主目录下条目返回相对路径（read 工具解析基准），数据目录专属条目绝对路径；macOS `/var` ↔ `/private/var` 符号链接——相对路径判定必须对 canonicalize 后的根做 `strip_prefix`。
+- **rfd select_dir**：同步命令在主线程执行（macOS NSOpenPanel 线程约束），不可改 async。
+- **vitest**：`toBe` 无第二参数（失败消息写注释）；**Biome**：`obj["字面量"]`→`obj.键`；`role="button"` 的 div 会要求改真按钮（button 不嵌 button——操作按钮放行容器做兄弟）。
+- **Rust 测试**：归档类行序勿依赖 HashSet 迭代序（按时间序显式写入）；大索引测试直接构造 JSON 一次落盘再单次 upsert 触发归档（逐条 upsert 是 O(n²)，27s→2s）。
 - **测试方法命名一律英文**（snake_case，2026-10-27 用户指令，全仓已统一）；断言消息保持中文。
-- **rig 非流式坑**：`Model::call`（单次补全，suggest 用）期待 `chat.completion` JSON，mock_openai 已支持流式/非流式两形态——新写后台小调用测试直接复用。
-- **assistant-ui 0.15.31 两个 API 坑**（15 号票实证）：① `BranchPickerPrimitive.Count` 零 props（`Props = Record<string, never>`），样式要套外层 span；② `ThreadMessage` **不带 parentId**（api-surface 查证），活动路径的父子关系只能按传入线性序推导——15 号票 save 协议（payload parentId 线性链）建立在这个前提上。
-- **真实帧序是 Usage 先于工具执行**（run_loop：throttler.flush → usage 帧 → 才进 CallTools）——RunRecorder 落盘顺序依赖它（文本条先落、工具条后落），写帧序测试时别把 ToolResult 放在 Usage 前。
-- **前端 vi.mock("@/ipc/client") 要补全依赖链导出**：session.ts 引 toWire（runtime.ts）→ runtime.ts 又引 startChat/cancelRun 等，mock 缺导出直接整文件报错（不只是缺的那个函数）。
-- 新依赖：`anstream`（ANSI 清洗，Rust）、`@types/json-schema`（ui devDep，toolkit 参数类型）；`sha2` 全仓统一 **0.11**，勿回 0.10。
-- **智谱 GLM Coding Plan 端点三协议分流**（官方 quick-start）：Anthropic 协议 `…/api/anthropic`；OpenAI Chat Completions 协议 `…/api/coding/paas/v4`；OpenAI Responses 协议 `…/api/v1`。rig 的 openai_chat 方言拼 `{baseUrl}/chat/completions`，端点协议不匹配时服务端回 5xx/403 而非明确报错——排障先拿用户 Key curl 三个端点对照。
-- **前端纯浏览器黑屏是既有行为**：主入口与 `?mirror=1` 在无 Tauri IPC 的浏览器里都不渲染（React 挂载后整树卸载）；UI 视觉调试用临时 `preview.html` 入口预置 store 数据绕开 IPC（用完即删，勿提交）。
+- **rig 非流式坑**：`Model::call`（单次补全，suggest 用）期待 `chat.completion` JSON，mock_openai 已支持流式/非流式两形态。
+- **assistant-ui 0.15.31 API 坑**：① `BranchPickerPrimitive.Count` 零 props（样式套外层 span）；② `ThreadMessage` 不带 parentId（活动路径父子关系按传入线性序推导——save 协议建立在此前提上）。
+- **真实帧序是 Usage 先于工具执行**——RunRecorder 落盘顺序依赖它，写帧序测试别把 ToolResult 放 Usage 前。
+- **前端 vi.mock("@/ipc/client") 要补全依赖链导出**（session.ts → runtime.ts → startChat 等），mock 缺导出整文件报错。
+- 新依赖：`anstream`（ANSI 清洗）、`rfd`（select_dir，同步命令）、`@types/json-schema`（ui devDep）；`sha2` 全仓统一 **0.11**。
+- **智谱 GLM Coding Plan 端点三协议分流**：Anthropic `…/api/anthropic`；OpenAI Chat Completions `…/api/coding/paas/v4`；OpenAI Responses `…/api/v1`。rig 的 openai_chat 拼 `{baseUrl}/chat/completions`，协议不匹配时服务端回 5xx/403 而非明确报错。
+- **前端纯浏览器黑屏是既有行为**（无 Tauri IPC 不渲染）；UI 视觉调试用临时 `preview.html` 入口预置 store 数据绕开 IPC（用完即删，勿提交）。
 - 测试不进源码文件：Rust 用 `*_test.rs` / `tests/`，前端用 `*.test.ts(x)`。
 - 提交：Conventional Commits 中文主题、按路径精确 add（禁 `add -A`）、禁 `--no-verify`、重构与功能分开；代码合并需用户点头，tracker/文档记账类提交按既有实践直提 main。
 
@@ -53,7 +58,7 @@
 - `implement` / `implement-spec`——实现票执行。
 - `grilling` + `domain-modeling`——决策票（HITL）。
 - `research`——外部调研票。
-- `handoff`——下次交接（注意：本次仍按用户要求写到仓库根 `HandOff.md`，技能默认是系统临时目录）。
+- `handoff`——下次交接（本次仍按用户要求写到仓库根 `HandOff.md`，技能默认是系统临时目录）。
 
 ## 七、敏感信息
 
