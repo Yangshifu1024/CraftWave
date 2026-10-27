@@ -8,7 +8,13 @@
  *   滚动锚点；非活跃仅隐藏，run 帧照收）。
  */
 
-import { useAuiState, useLocalRuntime } from "@assistant-ui/react";
+import {
+  AssistantRuntimeProvider,
+  AuiConfig,
+  Tools,
+  useAuiState,
+  useLocalRuntime,
+} from "@assistant-ui/react";
 import { useEffect, useMemo, useState } from "react";
 import { AskPanel } from "@/chat/AskPanel";
 import { useBackendEvents } from "@/chat/event-bridge";
@@ -16,6 +22,7 @@ import { useRunMetricsStore } from "@/chat/run-metrics";
 import { sessionAdapter } from "@/chat/runtime";
 import { SessionScopeContext } from "@/chat/session-scope";
 import { ChatThread } from "@/chat/Thread";
+import { cwToolkit } from "@/chat/toolkit";
 import { loadedTreeToExported } from "@/chat/tree-persistence";
 import { ConfirmDialog } from "@/components/ui/confirm";
 import { Input } from "@/components/ui/input";
@@ -31,6 +38,10 @@ import type { ProjectMeta, SessionMeta } from "@/ipc/types";
 import { useAskStore } from "@/stores/ask";
 import { loadHistory, useSessionPersistStore } from "@/stores/session";
 import { useSessionsStore } from "@/stores/sessions";
+
+// 正式工具卡装配（S1 实测钉死：Tools 是 resource 工厂，经 AuiConfig 注入；
+// config 为纯数据可提模块级，各 SessionTab 共用同一份）。
+const cwAuiConfig = AuiConfig({ tools: Tools({ toolkit: cwToolkit }) });
 
 export function SessionWorkspace() {
   useBackendEvents();
@@ -157,11 +168,13 @@ function SessionTab({ sessionId, active }: { sessionId: string; active: boolean 
   }, [runtime, sessionId]);
   return (
     <div className={active ? "absolute inset-0 flex" : "hidden"}>
-      <SessionScopeContext.Provider value={sessionId}>
-        <ChatThread />
-        <AskPanel />
-        <RunningReporter sessionId={sessionId} />
-      </SessionScopeContext.Provider>
+      <AssistantRuntimeProvider runtime={runtime} config={cwAuiConfig}>
+        <SessionScopeContext.Provider value={sessionId}>
+          <ChatThread />
+          <AskPanel />
+          <RunningReporter sessionId={sessionId} />
+        </SessionScopeContext.Provider>
+      </AssistantRuntimeProvider>
     </div>
   );
 }
