@@ -9,22 +9,30 @@ use crate::providers::types::{ApiFormat, ProviderConfig, ProviderModel};
 use crate::util::ids::new_uuid;
 
 /// 预设建议模型（wire id + 建议窗口参数）。
+///
+/// wire id 指模型在 API 请求体 `model` 字段里的取值（如 "deepseek-chat"）。
 pub struct PresetModel {
+    /// 模型的 wire id（API 请求中的标识）。
     pub model: &'static str,
+    /// 建议的上下文窗口大小（模型一次对话能容纳的最大 token 数）。
     pub context_window: u32,
+    /// 建议的单次回复 token 上限。
     pub max_tokens: u32,
+    /// 是否支持图片输入（视觉能力）。
     pub vision: bool,
 }
 
 /// 内置供应商预设。
 pub struct ProviderPreset {
-    /// 前端稳定键（如 "deepseek"）。
+    /// 前端稳定键（如 "deepseek"），前端路由/存储引用它而非展示名。
     pub slug: &'static str,
     /// 展示名。
     pub name: &'static str,
+    /// 该供应商 API 的请求方言，决定请求体如何构造（详见 types.rs 的 ApiFormat）。
     pub api_format: ApiFormat,
     /// 官方 API 地址（用户可改；兼容端点场景建议走"自定义"表单）。
     pub base_url: &'static str,
+    /// 开箱即用的建议模型清单（仅是建议值，用户可增删改）。
     pub models: &'static [PresetModel],
 }
 

@@ -10,6 +10,8 @@ use crate::backend::frames::{ChatFrame, CollectingSink, EndReason, FrameSink, Us
 use crate::host::run_persistence::{PersistingSink, RunRecorder};
 use crate::storage::{SessionStore, WirePart};
 
+/// 测试脚手架：临时数据目录 + SessionStore + 包了收集桩的落盘装饰器
+/// （返回目录句柄是为了借 TempDir 析构清理临时文件）。
 fn recorder() -> (Arc<SessionStore>, PersistingSink, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     let store = Arc::new(SessionStore::with_root(dir.path().to_path_buf()));
@@ -20,6 +22,8 @@ fn recorder() -> (Arc<SessionStore>, PersistingSink, tempfile::TempDir) {
     (store, sink, dir)
 }
 
+/// 灌入一次纯文本 run 的标准帧序（启动 → 一个 turn 的两段文本 →
+/// usage 收口 → 正常结束），供多个用例复用。
 fn send_text_run(sink: &mut PersistingSink) {
     sink.send(ChatFrame::RunStarted {
         run_id: "run-1".to_string(),
@@ -51,6 +55,8 @@ fn send_text_run(sink: &mut PersistingSink) {
     });
 }
 
+/// 纯文本 run：落盘产物为一条文本条目 + runMarker，且 index 建档
+/// （用量为四项之和、条目数与修订号与史册一致）。
 #[test]
 fn text_run_persists_turn_entry_and_marker() {
     let (store, mut sink, _dir) = recorder();
@@ -85,6 +91,8 @@ fn text_run_persists_turn_entry_and_marker() {
     assert_eq!(meta.revision, tree.revision);
 }
 
+/// 纯工具 run：工具条目内 ToolCall 与 ToolResult 相邻配对，args 被
+/// 规范化为紧凑 JSON，marker 挂在工具条目之后（父链完整）。
 #[test]
 fn tool_run_persists_paired_tool_parts() {
     let (store, mut sink, _dir) = recorder();
@@ -141,6 +149,8 @@ fn tool_run_persists_paired_tool_parts() {
     assert_eq!(tree.messages[1].parent_id.as_deref(), Some("run-1:1.tools"));
 }
 
+/// 文本 + 工具混合 turn：真实帧序下 usage 先收口，文本条先落、工具条
+/// 后落，reasoning 段排在文本段之前，父链按落盘顺序串起来。
 #[test]
 fn mixed_turn_persists_text_then_tools_entries() {
     let (store, mut sink, _dir) = recorder();
@@ -196,6 +206,8 @@ fn mixed_turn_persists_text_then_tools_entries() {
     assert_eq!(tree.messages[2].parent_id.as_deref(), Some("run-1:1.tools"));
 }
 
+/// 流中取消（没有 usage 收口帧）：残留文本桶由 runEnded 防御兜底收口，
+/// runMarker 仍然照常落盘，历史不悬空。
 #[test]
 fn cancelled_run_still_closes_with_marker() {
     let (store, mut sink, _dir) = recorder();

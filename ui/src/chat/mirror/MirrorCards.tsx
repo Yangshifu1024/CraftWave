@@ -12,6 +12,7 @@ import { type ToolCallMessagePartProps, useToolArgsStatus } from "@assistant-ui/
 import { useEffect, useRef } from "react";
 import { isArgsTextComplete } from "./frames";
 
+/** 挂载日志单条记录：某工具卡的一次 mount/unmount/render 事件。 */
 export type MountLogEntry = {
   toolCallId: string;
   kind: "mount" | "unmount" | "render";
@@ -24,10 +25,12 @@ declare global {
   }
 }
 
+/** 取挂载日志（未初始化时返回空数组）。 */
 export function mountLog(): MountLogEntry[] {
   return window.__mirrorMountLog ?? [];
 }
 
+/** 清空挂载日志（每条测试用例 / 进入 demo 页前调用）。 */
 export function resetMountLog(): void {
   window.__mirrorMountLog = [];
 }
@@ -62,6 +65,7 @@ type CardProps = ToolCallMessagePartProps<Record<string, unknown>, unknown> & {
   resultLabel?: (result: unknown) => string;
 };
 
+/** 镜像工具卡本体：标题 + 状态徽标 + 参数原文 + 结果区，全程展示渲染计数。 */
 export function MirrorToolCard(props: CardProps) {
   const { title, result, isError, argsText, toolCallId } = props;
   // 0.15.31 实测：useToolArgsStatus().status 是字面量联合（非对象），argsStatus 靠
@@ -127,6 +131,7 @@ export function ReadWorkspaceFileCard(
   return <MirrorToolCard {...props} title="读取文件 read_workspace_file" />;
 }
 
+/** run_command 卡：同壳不同标题。 */
 export function RunCommandCard(props: ToolCallMessagePartProps<Record<string, unknown>, unknown>) {
   return <MirrorToolCard {...props} title="执行命令 run_command" />;
 }

@@ -1,12 +1,17 @@
 /**
- * ask / askHint store（§10.1 状态分界：ask/审批 zustand `ask`（事件驱动）+
- * 建议提示词 `askHint`（run:suggestions 驱动））。
+ * 询问与建议提示词的全局状态（§10.1 状态分界）。
  *
- * 事件桥（App.tsx 的 useBackendEvents）把 §3.5 五键事件分发到本 store 与
- * runMetrics；命令应答走 ipc/client.resolveAsk。
+ * zustand：React 生态的轻量全局状态管理库；一个 store（状态仓库）就是一份
+ * 任意组件都能读写的全局状态。本文件管两个桶：
+ *  - ask：未决的询问/审批（后端事件驱动——模型需要用户确认时弹面板）；
+ *  - askHint：建议提示词（run:suggestions 事件驱动——run 结束后给出的下一步建议）。
  *
- * 16 号票多会话：未决 ask 与 hint 按 sessionId 分桶——AskPanel 只渲染本会话
- * 桶（跨 Tab 并行 run 的审批互不遮挡）。
+ * 事件桥（chat/event-bridge.ts 的 useBackendEvents）把 §3.5 五键后端事件分发
+ * 进本 store 与 runMetrics（用量记账）；用户的应答经 ipc/client.resolveAsk 送回后端。
+ *
+ * 多会话分桶（16 号票）：未决 ask 与 hint 都按 sessionId（会话唯一标识）分桶
+ * ——即各会话各存一格、互不干扰；AskPanel 只渲染当前会话那一桶，多个 Tab
+ * 并行运行时审批互不遮挡。
  */
 
 import { create } from "zustand";
@@ -18,18 +23,26 @@ export interface AskPanelState {
   payload: AskPayload;
 }
 
+/** ask 状态仓库的形状（方法说明见各字段行内注释）。 */
 export interface AskStore {
   /** sessionId → 未决 ask（AskPanel 渲染本会话桶）。 */
   bySession: Record<string, AskPanelState>;
   /** sessionId → 建议提示词（run:suggestions；§10.4 ghost 承载，接受后清除）。 */
   hints: Record<string, string>;
+  /** 收到 ask:opened 事件时登记一个未决询问（后开覆盖先开）。 */
   open: (sessionId: string, askId: string, payload: AskPayload) => void;
+  /** 收到 ask:closed 事件时按 askId 精确清除（askId 不匹配则不动，防误伤新询问）。 */
   close: (sessionId: string, askId: string) => void;
+  /** 写入本会话的建议提示词（run:suggestions）。 */
   setHint: (sessionId: string, text: string) => void;
+  /** 清除本会话的建议提示词（用户已接受或会话切换时）。 */
   clearHint: (sessionId: string) => void;
+  /** 会话被删除时清掉它的全部痕迹（ask 与 hint 两桶）。 */
   forgetSession: (sessionId: string) => void;
 }
 
+/** ask 状态仓库实例：组件用 useAskStore(selector) 订阅渲染，
+ *  事件桥等非 React 场景用 useAskStore.getState().xxx() 命令式读写。 */
 export const useAskStore = create<AskStore>((set) => ({
   bySession: {},
   hints: {},
@@ -80,8 +93,9 @@ export function sessionHint(state: AskStore, sessionId: string): string | null {
 }
 
 /**
- * ghost 提示匹配（§10.4：输入为空时整句 / 前缀匹配时补尾部）。
- * 返回 null = 无可用 ghost（不匹配或已完整输入）。
+ * ghost 提示匹配（§10.4）：ghost 指输入框里以灰色预填的建议文本。
+ * 输入为空时整句可用；已输入内容恰是建议的前缀时，返回建议的剩余尾部（补齐用）。
+ * 返回 null = 无可用 ghost（不匹配，或用户已完整输入了建议本身）。
  */
 export function matchGhost(hint: string | null, input: string): string | null {
   if (!hint) return null;

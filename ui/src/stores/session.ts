@@ -1,17 +1,22 @@
 /**
- * 会话持久化前端侧（15 号票，§6.3/§6.4 双写协议的发送方）。
+ * 会话持久化的前端侧（15 号票，§6.3/§6.4 双写协议的发送方）。
+ *
+ * 双写协议：同一棵消息树由两端共同落盘——前端负责 save 用户操作造成的
+ * 拓扑变化（编辑、分支、重生成），Rust 侧 RunRecorder 按帧落盘 run 产物
+ * （canonical，即权威记录）。两边通过 revision（版本号，乐观并发）对齐：
+ * save 必须带上次拿到的版本，版本不符会被拒绝（E_SESSION_REV）。
  *
  * 协议要点（票 15 Answer 详述）：
  * - **canonical 条目 Rust 权威**：run 产物由 Rust RunRecorder 按帧落盘
  *   （turn 级条目，id 规则 `{runId}:{turn}` / `{runId}:{turn}.tools` /
- *   `{runId}:marker`）；前端树上的运行态节点（assistant-ui 单 run 单消息，
- *   id 由 runtime 分配）**不进 save 载荷**——剔除并把引用改写为
+ *   `{runId}:marker`）；前端树上本次运行的运行态节点（assistant-ui 单 run
+ *   单消息，id 由 runtime 临时分配）不进 save 载荷——剔除并把引用改写为
  *   `{runId}:marker`（canonical 链尾）。
  * - **发送流程**：adapter run() 开头先 save（活动路径线性链 + 新 user 拓扑
  *   正确落盘）再 start_chat；分支操作（编辑/重生成/切换）的拓扑也在下一次
  *   save 自然同步。
- * - **E_SESSION_REV 自愈**：canonical 落盘推进了 revision 而 baseRevision
- *   过期时，load 拿新 revision 重试一次（§6.4 重载重试）。
+ * - **E_SESSION_REV 自愈**：canonical 落盘推进了 revision 而本地基线过期时，
+ *   load 拿新 revision 重试一次（§6.4 重载重试）。
  */
 
 import type { ThreadMessage } from "@assistant-ui/react";
@@ -28,19 +33,25 @@ export interface SessionPersistScope {
   runtimeNodes: Map<string, string>;
 }
 
+/** 会话持久化状态仓库的形状：按 sessionId 分桶的记账（16 号票多会话）。 */
 export interface SessionPersistState {
   /** sessionId → 记账（缺省 = { revision: 0, 空 Map }）。 */
   scopes: Record<string, SessionPersistScope>;
+  /** save 成功后更新该会话的版本基线（下次 save 携带）。 */
   setRevision: (sessionId: string, revision: number) => void;
+  /** 登记一个运行态消息（messageId → runId），save 时据此剔除并改写引用。 */
   noteRuntimeNode: (sessionId: string, messageId: string, runId: string) => void;
+  /** 会话关闭/删除时丢弃其记账。 */
   forgetScope: (sessionId: string) => void;
 }
 
+/** 空记账：revision 0 表示从未同步过，runtimeNodes 为空表示没有运行态节点。 */
 const emptyScope = (): SessionPersistScope => ({
   revision: 0,
   runtimeNodes: new Map(),
 });
 
+/** 会话持久化状态仓库实例（zustand store；用法见 stores/ask.ts 文件头说明）。 */
 export const useSessionPersistStore = create<SessionPersistState>((set) => ({
   scopes: {},
   setRevision: (sessionId, revision) =>
@@ -71,7 +82,8 @@ export function getPersistScope(
   return state.scopes[sessionId] ?? emptyScope();
 }
 
-/** 运行态节点的 canonical 等价 id（链尾 marker）。 */
+/** 运行态消息在 canonical 落盘里的等价 id：同一 run 的链尾标记
+ *  （{runId}:marker）——树上引用运行态节点的地方，save 时改指向它。 */
 function canonicalEquiv(messageId: string, runtimeNodes: Map<string, string>): string | null {
   const runId = runtimeNodes.get(messageId);
   return runId ? `${runId}:marker` : null;

@@ -2,6 +2,7 @@
 
 use super::{Capability, GateDecision, PermissionTier, decide_gate};
 
+// 断言：ReadOnly/Interactive/Meta 三类能力在全部四档都放行。
 #[test]
 fn readonly_interactive_meta_pass_all_tiers() {
     for cap in [
@@ -24,6 +25,7 @@ fn readonly_interactive_meta_pass_all_tiers() {
     }
 }
 
+// 断言：FileWrite 行——plan 过滤、confirm_each 审批、auto_edit/full_access 放行。
 #[test]
 fn file_write_row_matches_matrix() {
     assert_eq!(
@@ -44,6 +46,7 @@ fn file_write_row_matches_matrix() {
     );
 }
 
+// 断言：Network 行——plan 过滤、confirm_each/auto_edit 审批、full_access 放行。
 #[test]
 fn network_row_matches_matrix() {
     assert_eq!(
@@ -64,6 +67,7 @@ fn network_row_matches_matrix() {
     );
 }
 
+// 断言：档位与能力枚举经 JSON（camelCase）往返不丢语义（跨 IPC 传输用）。
 #[test]
 fn tier_and_capability_survive_serde_roundtrip() {
     // 跨 IPC（runConfig.permissionTier）用，camelCase。

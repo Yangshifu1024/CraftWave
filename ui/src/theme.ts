@@ -1,15 +1,22 @@
 /**
- * 主题应用（FR-13-03，17 号票）：light / dark / system 三态 →
- * `documentElement.classList` 的 `dark` 开关（styles.css 的 :root/.dark
- * 两套设计令牌据此翻转）。
+ * 主题应用（FR-13-03，17 号票）：把 light（浅色）/ dark（深色）/ system（跟随系统）
+ * 三种主题模式落到页面上。
  *
- * system 态跟随操作系统外观（matchMedia 监听，变化即时生效）。
- * 调用方：App 启动（读 config）、设置页（草稿即时预览，丢弃回滚）。
+ * 实现方式：在 <html> 根元素上切换 dark 类名。styles.css 里准备了 :root 与
+ * .dark 两套"设计令牌"——设计令牌（design token）指把颜色等视觉常量定义成
+ * CSS 变量（如 --background、--card），切换类名后整套变量随之翻转，界面即换肤。
+ *
+ * system 态跟随操作系统外观：用 matchMedia 监听系统深浅色变化，变化即时生效。
+ * 调用方：App 启动时（读取已保存配置并应用）、设置页（草稿即时预览，丢弃草稿
+ * 时随基线回滚）。
  */
 
+/** 主题三态：浅色 / 深色 / 跟随操作系统外观。 */
 export type ThemeMode = "light" | "dark" | "system";
 
+/** 系统深色偏好媒体查询的缓存（首次 applyTheme 时创建，之后复用同一个监听）。 */
 let mediaQuery: MediaQueryList | null = null;
+/** 当前已应用的模式（系统外观变化时用它重新走一遍 applyTheme 归位）。 */
 let currentMode: ThemeMode = "system";
 
 /** 解析当前模式下是否应启用暗色令牌。 */

@@ -1,3 +1,12 @@
+/**
+ * 聊天主界面（Thread.tsx）：用 assistant-ui 的原语组件手工装配的完整聊天窗。
+ *
+ * 组成：消息列表（用户/助手消息、折叠分组的过程区）+ 输入区（输入框、
+ * 权限档指示、@ 补全菜单浮层）+ ghost 提示词（输入框上方的灰色续写建议）
+ * + 计数条（输出速率/本轮用量/会话用量）。折叠分组指把一次运行的
+ * 思考过程与工具卡收起为一条摘要行，点击可重新展开查看完整过程。
+ * 这里只管单个会话内的呈现，多会话的 Tab 装配在 SessionWorkspace.tsx。
+ */
 import {
   ActionBarPrimitive,
   AuiIf,
@@ -126,6 +135,7 @@ function TierBadge() {
   );
 }
 
+/** 用户消息气泡：右对齐，仅渲染文本 part，附编辑重发操作条。 */
 function UserMessage() {
   return (
     <MessagePrimitive.Root className="flex flex-col items-end py-1">
@@ -182,6 +192,11 @@ function formatDuration(ms: number): string {
   return `${minutes}m${Math.round(seconds - minutes * 60)}s`;
 }
 
+/**
+ * 助手消息：正文 text 常显；思考过程与工具卡（过程 parts）按 useRunCollapse
+ * 的折叠状态决定显示；收起时展示「N 次工具调用 · 时长」摘要行，可点击展开。
+ * 时长与中断态取自 run 收口摘要表（SessionTab 注入，见 tree-persistence）。
+ */
 function AssistantMessage() {
   const parts = useAuiState((s) => s.message.parts);
   const runId = useAuiState((s) => (s.message.metadata as { runId?: string } | undefined)?.runId);

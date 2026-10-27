@@ -1,18 +1,25 @@
-//! 工具执行器适配：tools 注册表 → RunLoop 的
-//! [`CancellableExecutor`](super::run_loop::CancellableExecutor) 契约。
+//! 工具执行器适配：把 tools 模块的工具注册表接到主循环（RunLoop）要求的
+//! [`CancellableExecutor`](super::run_loop::CancellableExecutor) 执行契约上。
 //!
-//! - 模型通道回喂文本 = [`crate::tools::compact_text`]（§8.2 双通道）；
-//! - 帧面 ok/uiSummary/error 直接取 `ToolOutcome`；
-//! - argsJson 解析失败 / 未知工具 → `E_INVALID_ARG` 工具级失败回喂
-//!   （Malformed 调用的宿主决议走「回喂错误促模型纠正」，§5.4 记录见票 Answer）；
-//! - command（14 号票）：取消/超时感知的进程执行（`tools::command` 内部
-//!   select! 收割进程组）；
-//! - plan（14 号票）：更新共享 PlanState 并发 `plan:update` 事件；
-//! - ask（14 号票）：注册 AskSlot → `ask:opened` 事件 → 等 `resolve_ask`
-//!   oneshot（§5.4 审批实现），answers 回喂为工具结果。
+//! 名词解释：主循环即 backend/run_loop.rs 的 run 主循环；契约指它规定的
+//! 执行器接口（可感知取消、返回统一的执行产物）。工具结果走"双通道"
+//! （§8.2）：一条给模型看（回喂文本），一条给界面看（摘要与错误帧）。
 //!
-//! 文件五工具为亚秒级同步操作，M1 RunLoop 串行执行（§5.4 ⑤「文件写全局
-//! 串行队列」的满足面——单 run 内天然串行；批次事务预演为 M2）。
+//! - 模型通道的回喂文本由 [`crate::tools::compact_text`] 压缩生成；
+//! - 帧面的 ok/uiSummary/error 直接取自 `ToolOutcome`（工具执行结果）；
+//! - 参数 JSON 解析失败或未知工具 → 返回 `E_INVALID_ARG` 的工具级失败并
+//!   回喂模型（不中断 run，让模型看到错误后自行纠正；Malformed 调用——
+//!   即模型给出了无法解析的工具调用——也按此"回喂错误促纠正"处理，见
+//!   §5.4 对应工单的决议记录）；
+//! - command：取消/超时感知的进程执行（`tools::command` 内部用 select!
+//!   同时监听执行与取消，结束时回收整个进程组，不留孤儿进程）；
+//! - plan：更新共享的计划状态（PlanState）并发 `plan:update` 事件；
+//! - ask：注册询问槽 → 发 `ask:opened` 事件 → 等 `resolve_ask` 命令经
+//!   oneshot 通道送回答案（§5.4 审批实现），答案回喂为工具结果。
+//!
+//! 五个文件工具（读/写/改/列/搜）都是亚秒级同步操作，当前阶段由主循环
+//! 串行执行（单 run 内天然串行，满足"文件写全局串行队列"的约束；多工具
+//! 批次的事务化预演属后续阶段）。
 
 use std::future::Future;
 use std::pin::Pin;
@@ -31,31 +38,45 @@ use crate::util::errors::{E_INVALID_ARG, ToolError};
 use crate::util::events::EventSink;
 use crate::util::events::keys;
 
-/// ask 槽单元（RunHandle.ask 的本体；agent 构造、backend 写入、host resolve_ask 读）。
+/// ask 槽单元：互斥锁包着的"至多一个未决询问"（agent 模块构造、backend
+/// 执行器写入、宿主命令 resolve_ask 读取后送回应答）。
 pub type AskSlotCell = Mutex<Option<AskSlot>>;
 
-/// 交互类执行依赖（14 号票：ask/plan 需要的运行时挂点；15 号票：边车数据根）。
+/// 交互类工具的执行环境：ask/plan 工具需要的事件出口与共享状态，以及
+/// 工具结果边车文件的数据根目录（边车文件 = 与主存储分开、按需加载的
+/// 附属数据文件，见 §7.5）。
 #[derive(Clone)]
 pub struct ExecutorEnv {
+    /// 事件出口（向前端推送 ask:opened / plan:update 等事件）。
     pub events: Arc<dyn EventSink>,
+    /// 未决询问槽（ask 工具注册、resolve_ask 消费）。
     pub ask: Arc<AskSlotCell>,
+    /// 共享计划状态（plan 工具写、审批门读）。
     pub plan: Arc<Mutex<Option<PlanState>>>,
+    /// 所属会话 id（事件载荷用）。
     pub session_id: String,
+    /// 所属 run id（事件载荷与询问槽登记用）。
     pub run_id: String,
-    /// 数据根（§7.1）：toolres 边车落 `sessions/<sid>.toolres/`（§7.5，15 号票）。
+    /// 数据根目录（§7.1）：工具结果边车落在 `sessions/<会话id>.toolres/`
+    /// 目录下（§7.5）。
     pub data_root: std::path::PathBuf,
 }
 
-/// 注册表全集执行器（§8.3 模型可见 8 工具）。
+/// 工具注册表全集的执行器：模型可见的 8 个工具（§8.3）都经它执行。
 pub struct ToolsetExecutor {
+    /// 工具执行上下文（项目根、权限边界等，tools 模块定义）。
     ctx: ToolsContext,
-    /// 权限档（§8.5）：plan 档过滤后的工具集之外调用一律 E_TOOL_BLOCKED。
+    /// 权限档（§8.5，控制模型可用工具范围的档位）：plan 档已从工具表
+    /// 过滤掉写/联网工具，模型仍点名调用时按权限档排除。
     tier: PermissionTier,
-    /// 交互类挂点；None = 无环境装配（headless 文件工具测试用）。
+    /// 交互类工具的执行环境；None = 未装配环境（无界面的纯文件工具测试用）。
     env: Option<ExecutorEnv>,
 }
 
+/// ToolsetExecutor 的构造与各工具执行路径。
 impl ToolsetExecutor {
+    /// 构造：给定工具上下文与权限档，初始不带交互环境（生产装配需再调
+    /// [`Self::with_env`]）。
     pub fn new(ctx: ToolsContext, tier: PermissionTier) -> Self {
         Self {
             ctx,
@@ -64,16 +85,17 @@ impl ToolsetExecutor {
         }
     }
 
-    /// 装配交互类挂点（ask/plan 事件与状态）。
+    /// 装配交互类工具的运行环境（ask/plan 的事件出口与共享状态）。
     pub fn with_env(mut self, env: ExecutorEnv) -> Self {
         self.env = Some(env);
         self
     }
 
-    /// 同步工具（文件五件）分发。
+    /// 同步工具（五个文件工具）的分发入口。
     fn dispatch(&self, name: &str, args_json: &str) -> ToolOutcome {
-        // §8.1 三处同源过滤的 RunLoop 侧：plan 档 FileWrite/Network 已从工具表
-        // 过滤，模型仍点名调用时按权限档排除（E_TOOL_BLOCKED，不中断 run）。
+        // §8.1 三处同源过滤的主循环侧：plan 档的写/联网工具虽已从广播给
+        // 模型的工具表里过滤，但模型仍可能点名调用——此时按权限档排除
+        // （E_TOOL_BLOCKED，回喂错误但不中断 run）。
         let Some(spec) = crate::tools::build_registry()
             .into_iter()
             .find(|s| s.name == name)
@@ -117,7 +139,7 @@ impl ToolsetExecutor {
         }
     }
 
-    /// plan 工具：更新共享 PlanState + plan:update 事件。
+    /// plan 工具：更新共享计划状态（PlanState），并向前端发 plan:update 事件。
     fn run_plan(&self, args_json: &str) -> ToolOutcome {
         let Some(env) = &self.env else {
             return ToolOutcome::failure(
@@ -159,7 +181,8 @@ impl ToolsetExecutor {
         }
     }
 
-    /// ask 工具：注册槽 → ask:opened → 等 resolve_ask / 取消。
+    /// ask 工具：注册询问槽 → 发 ask:opened 事件 → 等待 resolve_ask 应答
+    /// 或取消令牌触发，二者先到者胜。
     async fn run_ask(&self, args_json: &str, token: &CancellationToken) -> ToolExecution {
         let Some(env) = &self.env else {
             return completed_failure("ask 工具需要执行环境（未装配）");
@@ -175,6 +198,7 @@ impl ToolsetExecutor {
         let (tx, rx) = oneshot::channel::<AskAnswer>();
         let ask_id = uuid::Uuid::new_v4().to_string();
         {
+            // 同一时刻只允许一个未决询问：槽位已被占用则直接以工具级失败回喂。
             let mut slot = env
                 .ask
                 .lock()
@@ -198,6 +222,8 @@ impl ToolsetExecutor {
                 "payload": payload,
             }),
         );
+        // biased：select! 的分支按书写顺序优先判定——先查取消再看应答，
+        // 两者同时就绪时以取消为准（取消优先，避免取消后还处理应答）。
         tokio::select! {
             biased;
             _ = token.cancelled() => {
@@ -230,7 +256,8 @@ impl ToolsetExecutor {
         }
     }
 
-    /// 清空槽位 + ask:closed 事件（§3.5：answered = 是否拿到应答）。
+    /// 清空询问槽并发 ask:closed 事件（§3.5：answered 标记是否真正拿到了
+    /// 用户应答，取消关闭时为 false）。
     fn close_ask(env: &ExecutorEnv, ask_id: &str, answered: bool) {
         let mut slot = env
             .ask
@@ -243,7 +270,8 @@ impl ToolsetExecutor {
         );
     }
 
-    /// 工具结果全量写 toolres 边车（§7.5，15 号票；无环境装配则跳过）。
+    /// 把工具结果全量写入边车文件（§7.5；未装配执行环境则跳过——无界面
+    /// 测试没有数据根目录）。
     fn persist_outcome(&self, call_id: &str, outcome: &ToolOutcome) {
         if let Some(env) = &self.env {
             crate::storage::write_outcome(&env.data_root, &env.session_id, call_id, outcome);
@@ -266,6 +294,7 @@ fn run_typed<A: serde::de::DeserializeOwned>(
     }
 }
 
+/// 权限档的对外展示名（错误提示文案里用）。
 fn tier_label(tier: PermissionTier) -> &'static str {
     match tier {
         PermissionTier::Plan => "plan",
@@ -281,7 +310,8 @@ fn completed_failure(message: &str) -> ToolExecution {
     completed_of(outcome)
 }
 
-/// ToolOutcome → ToolExecution（模型通道先快照，再搬帧面字段）。
+/// ToolOutcome 到 ToolExecution 的转换（模型通道文本先经 compact_text
+/// 压缩快照，再搬运帧面字段）。
 fn completed_of(outcome: ToolOutcome) -> ToolExecution {
     let model_text = compact_text(&outcome);
     ToolExecution::Completed {
@@ -292,7 +322,11 @@ fn completed_of(outcome: ToolOutcome) -> ToolExecution {
     }
 }
 
+/// 主循环执行契约的实现：按工具名分流——command/plan/ask 三个交互型工具
+/// 各有专门路径，其余同步文件工具走 dispatch。
 impl CancellableExecutor for ToolsetExecutor {
+    /// 执行一次工具调用：完成后把结果写边车文件并返回统一产物；
+    /// command 的取消由工具实现内部收割进程组后以 Cancelled 返回。
     fn execute<'a>(
         &'a self,
         call_id: &'a str,
@@ -362,14 +396,15 @@ impl CancellableExecutor for ToolsetExecutor {
     }
 }
 
-/// 供测试/未来复用的取消感知骨架：在闭包外包一层 select!，
-/// token 触发即放弃闭包（由实现自行收割资源后返回 Cancelled）。
+/// 供测试与未来复用的取消感知骨架：在任意异步操作外包一层 select!，
+/// 取消令牌触发即放弃该操作（由实现自行回收资源后返回 Cancelled）。
 pub async fn with_cancel<F: Future<Output = ToolExecution>>(
     token: &CancellationToken,
     fut: F,
     executed_message: impl FnOnce() -> String,
 ) -> ToolExecution {
     tokio::select! {
+        // 取消优先判定（biased）：令牌触发时报告"已执行过"的取消语义。
         biased;
         _ = token.cancelled() => ToolExecution::Cancelled {
             executed: true,
@@ -379,5 +414,6 @@ pub async fn with_cancel<F: Future<Output = ToolExecution>>(
     }
 }
 
-/// Arc 别名（RunLoop 参数签名用）。
+/// 执行器的共享句柄别名（主循环参数签名用；Arc = 线程安全的引用计数指针，
+/// 多处持有同一执行器）。
 pub type SharedExecutor = Arc<dyn CancellableExecutor>;

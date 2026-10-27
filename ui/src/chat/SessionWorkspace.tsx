@@ -52,6 +52,8 @@ import { useSessionsStore } from "@/stores/sessions";
 // config 为纯数据可提模块级，各 SessionTab 共用同一份）。
 const cwAuiConfig = AuiConfig({ tools: Tools({ toolkit: cwToolkit }) });
 
+/** 会话工作区根组件：左栏 + 顶栏 Tab 条 + 每会话 Tab 面 + 右栏用量面板。
+ *  挂载时恢复会话列表，未就绪前显示加载占位。 */
 export function SessionWorkspace() {
   useBackendEvents();
   const { exitDialog } = useHostEvents();
@@ -420,6 +422,7 @@ function Sidebar() {
 
 // ---- 左栏数据操作（ IPC + store 同步；异常只 console——列表仍在） ----
 
+/** 新建会话并打开 Tab（可选挂在某项目下），随后刷新左栏列表。 */
 async function createAndOpen(projectId: string | undefined): Promise<void> {
   try {
     const meta = await createSession(projectId);
@@ -430,6 +433,7 @@ async function createAndOpen(projectId: string | undefined): Promise<void> {
   }
 }
 
+/** 新建项目：弹目录选择器，取目录名作项目名注册。 */
 async function createProject(): Promise<void> {
   try {
     const dir = await selectDir();
@@ -442,6 +446,7 @@ async function createProject(): Promise<void> {
   }
 }
 
+/** 删除会话并收尾：关 Tab + 清各 store 里该会话的分桶（持久化/指标/ask）。 */
 async function deleteSessionAndClose(sessionId: string): Promise<void> {
   try {
     await deleteSession(sessionId);
@@ -456,6 +461,7 @@ async function deleteSessionAndClose(sessionId: string): Promise<void> {
   await useSessionsStore.getState().refresh();
 }
 
+/** 删除项目（仅解除注册，目录不动），随后刷新列表。 */
 async function client_deleteProject(projectId: string): Promise<void> {
   try {
     await deleteProject(projectId);
@@ -467,6 +473,8 @@ async function client_deleteProject(projectId: string): Promise<void> {
 
 // ---- 小件 ----
 
+/** 左栏分组容器：标题 + 计数，项目分组时悬停露出改名/加会话/删项目按钮；
+ *  改名走内联输入框（Enter 提交，Esc 取消）。 */
 function Section({
   title,
   count,
@@ -565,6 +573,7 @@ function Section({
   );
 }
 
+/** 左栏单行会话：点击打开 Tab；悬停露出重命名/删除按钮（重命名内联输入）。 */
 function SessionRow({
   meta,
   active,

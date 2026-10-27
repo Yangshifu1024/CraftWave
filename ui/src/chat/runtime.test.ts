@@ -105,6 +105,7 @@ function runOptions(signal = new AbortController().signal) {
   } as unknown as Parameters<ReturnType<typeof createTauriChatAdapter>["run"]>[0];
 }
 
+/** 帧序号自增分配器：给无 seq 的帧载荷编号（对齐真实后端行为）。 */
 let seq = 0;
 type DistributiveOmit<T, K extends keyof never> = T extends unknown ? Omit<T, K> : never;
 function f(frame: DistributiveOmit<ChatFrame, "seq">): ChatFrame {
@@ -122,6 +123,7 @@ function fakeStartChat(frames: ChatFrame[], sent: ChatFrame[]) {
   });
 }
 
+/** 单条 user 文本消息（runOptions 的 messages 用）。 */
 function assistantMessage(text: string): MinimalMessage {
   return msg("u1", "user", [{ type: "text", text }]);
 }

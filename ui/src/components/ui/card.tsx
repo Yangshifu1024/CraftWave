@@ -1,10 +1,11 @@
 /**
- * shadcn/ui 风格 Card：供应商卡片（标题区 + 内容区 + actions 底栏）。
+ * shadcn/ui 风格 Card：卡片容器（供应商卡片：标题区 + 内容区 + 底部动作区）。
  * 复刻 CodeWave 供应商卡结构：antd Card size=small + title + actions。
  */
 import type { ReactNode } from "react";
 import { cn } from "./cn";
 
+/** Card 的 props：title 标题区内容；actions 底部动作区；children 主体内容；className 追加类名。 */
 export interface CardProps {
   title?: ReactNode;
   /** 底部动作区（一行分隔线 + 等宽按钮槽） */
@@ -13,6 +14,7 @@ export interface CardProps {
   className?: string;
 }
 
+/** 渲染一张卡片：可选标题头 / 自适应主体 / 可选动作底栏。 */
 export function Card({ title, actions, children, className }: CardProps) {
   return (
     <article

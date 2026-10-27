@@ -1,16 +1,20 @@
 /**
- * 会话域 store（16 号票，FR-01-01/02）：多 Tab 状态 + 左栏数据面。
+ * 会话域全局状态（16 号票，FR-01-01/02）：多 Tab 状态 + 左栏数据面。
+ * （zustand store：组件可订阅的全局状态仓库，见 stores/ask.ts 文件头说明）
  *
  * - tabs：打开的 Tab（SessionMeta 快照，标题/计数条显示用）；activeId 当前 Tab；
  * - projects/sessions：左栏列表（list_projects / list_sessions 全量，操作后刷新）；
  * - running：Tab 运行指示（SessionTab 内 useThread 桥进 store）；
- * - ui-state：Tab 布局持久化（{ tabIds, activeId }，§3.3 #30/#31；草稿不落盘）。
+ * - ui-state：界面状态持久化（Tab 布局 { tabIds, activeId }、自动折叠开关、
+ *   Inspector 开合、各会话输入框草稿，§3.3 #30/#31 命令读写），写侧带防抖
+ *   （见 persistUiState）。
  */
 
 import { create } from "zustand";
 import * as client from "@/ipc/client";
 import type { ProjectMeta, SessionMeta } from "@/ipc/types";
 
+/** ui-state 落盘载荷：整份序列化成一个 JSON 存给后端（get/set_ui_state 命令）。 */
 export interface UiStatePayload {
   tabIds: string[];
   activeId: string | null;
@@ -66,9 +70,12 @@ export interface SessionsStore {
   persistUiState: () => void;
 }
 
-/** 落盘防抖句柄（模块级：整份替换，高频切换时只保留最后一次）。 */
+/** 落盘防抖句柄（模块级：整份替换，高频切换时只保留最后一次）。
+ *  防抖（debounce）：短时间内连续触发时只执行最后一次——草稿逐字输入、
+ *  连续点 Tab 都不该每下都写盘。 */
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
 
+/** 会话域状态仓库实例（zustand store；用法见 stores/ask.ts 文件头说明）。 */
 export const useSessionsStore = create<SessionsStore>((set, get) => ({
   tabs: [],
   activeId: null,
@@ -151,6 +158,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
       const idx = s.tabs.findIndex((t) => t.id === sessionId);
       if (idx < 0) return s;
       const tabs = s.tabs.filter((t) => t.id !== sessionId);
+      // 关的是活跃 Tab 时右移左补：优先右邻补位，无右邻回退左邻，全关则置空
       const activeId =
         s.activeId !== sessionId ? s.activeId : (tabs[Math.min(idx, tabs.length - 1)]?.id ?? null);
       return { tabs, activeId };
@@ -187,6 +195,8 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
   },
 
   persistUiState: () => {
+    // 300ms 防抖窗口：连续操作合并为最后一次落盘；落盘失败只记警告不重试
+    // （布局属可丢数据，不值得为它打断用户流程）
     if (persistTimer !== null) clearTimeout(persistTimer);
     persistTimer = setTimeout(() => {
       persistTimer = null;

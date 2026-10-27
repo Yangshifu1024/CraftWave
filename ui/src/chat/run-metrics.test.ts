@@ -10,12 +10,14 @@ import { contextProgress, useRunMetricsStore } from "./run-metrics";
  * - 同 store 多会话桶互不串扰（跨 Tab 并行 run）。
  */
 
+/** 帧序号自增分配器：给无 seq 的帧载荷编号（对齐真实后端行为）。 */
 let seq = 0;
 type DistributiveOmit<T, K extends keyof never> = T extends unknown ? Omit<T, K> : never;
 function f(frame: DistributiveOmit<ChatFrame, "seq">): ChatFrame {
   return { seq: seq++, ...frame } as ChatFrame;
 }
 
+/** 每条用例前把 store 重置回初始空桶（用例间互不影响）。 */
 beforeEach(() => {
   useRunMetricsStore.setState(useRunMetricsStore.getInitialState());
 });

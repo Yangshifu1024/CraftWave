@@ -5,6 +5,7 @@ use serde_json::json;
 use super::{WriteArgs, run};
 use crate::util::test_support::TestWorkspace;
 
+/// 测试辅助：构造 write 参数。
 fn args(path: &str, content: &str) -> WriteArgs {
     WriteArgs {
         path: path.to_string(),
@@ -12,6 +13,7 @@ fn args(path: &str, content: &str) -> WriteArgs {
     }
 }
 
+// 断言：新建文件成功、嵌套父目录自动创建、内容 UTF-8 落盘、字节数正确。
 #[test]
 fn creates_new_file_with_utf8() {
     let ws = TestWorkspace::new();
@@ -26,6 +28,7 @@ fn creates_new_file_with_utf8() {
     assert!(outcome.ui_summary.contains("新建文件"));
 }
 
+// 断言：目标已存在时拒绝并引导用 edit，原文件内容不被破坏。
 #[test]
 fn existing_file_is_rejected() {
     let ws = TestWorkspace::new();
@@ -42,6 +45,7 @@ fn existing_file_is_rejected() {
     );
 }
 
+// 断言：roots 外的绝对路径被拒绝（E_PATH_OUTSIDE_ROOTS）。
 #[test]
 fn outside_roots_is_rejected() {
     let ws = TestWorkspace::new();

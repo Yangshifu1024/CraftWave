@@ -6,6 +6,7 @@ use crate::storage::entries::{MessageEntry, MessageRole, WirePart};
 
 use super::chat::{build_approval_payload, context_tail};
 
+/// 构造一个挂起中的工具调用（PendingCall），call_id 固定、参数按用例传入。
 fn pending(name: &str, args_json: &str) -> PendingCall {
     PendingCall {
         model_call_id: "call_1".to_owned(),
@@ -15,6 +16,8 @@ fn pending(name: &str, args_json: &str) -> PendingCall {
     }
 }
 
+/// write 工具的审批载荷：标题含路径、diff 全为新增行（新文件整体是增量）、
+/// 选项固定「允许（推荐）/ 拒绝」两项。
 #[test]
 fn write_payload_new_file_all_add() {
     let payload = build_approval_payload(&pending(
@@ -47,6 +50,7 @@ fn write_payload_new_file_all_add() {
     assert_eq!(options[1].id, "deny");
 }
 
+/// edit 工具的审批载荷：旧文本逐行标删除、新文本逐行标新增，拼成一个替换块。
 #[test]
 fn edit_payload_replacement_hunk_del_add() {
     let payload = build_approval_payload(&pending(
@@ -65,6 +69,7 @@ fn edit_payload_replacement_hunk_del_add() {
     assert_eq!(diff.hunks[0].lines[2].text, "新一");
 }
 
+/// command 工具的审批载荷：命令行原文随载荷展示、围栏确认原因透传、不带 diff。
 #[test]
 fn command_payload_with_fence_reason() {
     let p = PendingCall {
@@ -89,6 +94,8 @@ fn command_payload_with_fence_reason() {
     assert!(title.contains("命令"));
 }
 
+/// suggest 上下文提取优先取最后一条 assistant 的正文；没有 assistant 时
+/// 退而取最后一条 user；完全为空则返回空串（suggest 静默放弃）。
 #[test]
 fn suggest_context_prefers_last_assistant_text() {
     let entry = |role: MessageRole, text: &str| MessageEntry {

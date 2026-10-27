@@ -1,9 +1,16 @@
-//! 会话索引（§7.1 `sessions/index.json`，§3.2 SessionMeta 契约镜像）。
+//! 会话索引（技术设计文档 §7.1 `sessions/index.json`，§3.2 SessionMeta 契约镜像）。
+//!
+//! 术语解释：「索引」是所有会话的摘要清单文件（每个会话一行元数据：标题、
+//! 修订号、消息数、token 数等），让会话列表页不必打开每个会话的完整日志就能
+//! 展示列表；「upsert」指插入或更新的合称——同一 id 已存在则覆盖，不存在则新增；
+//! 「归档」指索引条目超过上限时把最旧的条目搬到 `sessions/archive.jsonl`
+//! 存放，只是给索引瘦身，会话历史日志文件本身永远不动。
 //!
 //! 读侧：`list_sessions` 命令（§3.3 #14）按 updatedAt 倒序；
-//! 写侧：canonical 落盘点（`append_canonical`）upsert——revision/updatedAt/
-//! messageCount/totalTokens 随每次追加推进；`create/rename/delete_session`
-//! 命令（16 号票）走 get/mutate/remove。整文件原子写（§7.4）；
+//! 写侧：canonical 落盘点（`append_canonical`，指所有追加都必须走的那条唯一
+//! 标准写入路径）upsert——revision/updatedAt/messageCount/totalTokens 随每次
+//! 追加推进；`create/rename/delete_session` 命令（16 号票）走 get/mutate/remove。
+//! 整文件原子写（§7.4：先写临时文件再改名，读者永远看不到半个文件）；
 //! 条目上限 2000，溢出最旧移入 `sessions/archive.jsonl`（§7.1）。
 
 use std::collections::HashSet;
@@ -19,7 +26,9 @@ use crate::util::atomic::write_atomic;
 /// index.json 条目上限（§7.1：≤2000 条，超限归档最旧）。
 const MAX_INDEX_ENTRIES: usize = 2000;
 
-/// §3.2 SessionMeta（index.json 的 sessions 元素与 list_sessions 返回）。
+/// 单条会话元数据（§3.2 SessionMeta）：既是 index.json 里 sessions 数组的元素，
+/// 也是 `list_sessions` 命令返回给前端的条目形状。revision 是只增不减的修订号，
+/// 用来识别同一会话的哪个版本最新。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionMeta {
@@ -43,7 +52,8 @@ struct IndexFile {
     sessions: Vec<SessionMeta>,
 }
 
-/// 索引读写器（数据根托管；进程内 Mutex 串行化，§7.4 单进程口径）。
+/// 索引读写器（数据根托管；进程内 Mutex 串行化，§7.4 单进程口径）：
+/// 同一实例上的读改写操作通过内部互斥量排队执行，避免并发交错写坏文件。
 pub struct SessionIndex {
     path: PathBuf,
     lock: Mutex<()>,
@@ -57,6 +67,8 @@ pub enum IndexError {
     Io(std::io::Error),
 }
 
+/// 索引读写器的实现：upsert/get/mutate/remove/list 全部走「读整文件 → 修改 →
+/// 原子写回」流程，每个方法入口先拿互斥量保证串行。
 impl SessionIndex {
     /// 数据根 → `sessions/index.json`。
     pub fn new(data_root: &Path) -> Self {
@@ -183,6 +195,7 @@ impl SessionIndex {
         sessions
     }
 
+    /// 读整份 index.json；文件不存在视为空索引（首次使用），解析失败报 Corrupt。
     fn read(&self) -> Result<IndexFile, IndexError> {
         let raw = match fs::read_to_string(&self.path) {
             Ok(raw) => raw,
@@ -197,6 +210,7 @@ impl SessionIndex {
         serde_json::from_str(&raw).map_err(|e| IndexError::Corrupt(e.to_string()))
     }
 
+    /// 序列化整份索引并原子写回 index.json（临时文件 + 改名，§7.4）。
     fn write(&self, file: &IndexFile) -> Result<(), IndexError> {
         let bytes = serde_json::to_vec(file).map_err(|e| IndexError::Corrupt(e.to_string()))?;
         write_atomic(&self.path, &bytes).map_err(IndexError::Io)

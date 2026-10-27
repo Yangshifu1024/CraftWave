@@ -5,6 +5,7 @@ use serde_json::json;
 use super::{GrepArgs, run};
 use crate::util::test_support::TestWorkspace;
 
+/// 测试辅助：构造默认参数（全项目搜索、无过滤）的 grep 参数。
 fn args(pattern: &str) -> GrepArgs {
     GrepArgs {
         pattern: pattern.to_string(),
@@ -14,12 +15,14 @@ fn args(pattern: &str) -> GrepArgs {
     }
 }
 
+/// 测试辅助：在工作区写入一个文件（自动建父目录）。
 fn write(ws: &TestWorkspace, rel: &str, content: &str) {
     let p = ws.project_file(rel);
     std::fs::create_dir_all(p.parent().expect("parent")).expect("父目录");
     std::fs::write(p, content).expect("写文件");
 }
 
+// 断言：命中结果带 "文件:行内容" 前缀，count/truncated 字段正确。
 #[test]
 fn finds_matches_with_file_prefix() {
     let ws = TestWorkspace::new();
@@ -39,6 +42,7 @@ fn finds_matches_with_file_prefix() {
     assert_eq!(data["truncated"], json!(false));
 }
 
+// 断言：glob 过滤只搜索匹配文件名的文件。
 #[test]
 fn glob_filter_limits_files() {
     let ws = TestWorkspace::new();
@@ -53,6 +57,7 @@ fn glob_filter_limits_files() {
     assert!(!joined.contains("b.md"), "glob 应过滤 md");
 }
 
+// 断言：显式 maxResults=10 时命中到 10 条即截断并标记 truncated。
 #[test]
 fn max_results_truncates() {
     let ws = TestWorkspace::new();
@@ -67,6 +72,7 @@ fn max_results_truncates() {
     assert!(outcome.ui_summary.contains("截断"));
 }
 
+// 断言：不传 maxResults 时缺省上限 100 生效。
 #[test]
 fn default_cap_applies_without_max_results() {
     let ws = TestWorkspace::new();
@@ -78,6 +84,7 @@ fn default_cap_applies_without_max_results() {
     assert_eq!(data["truncated"], json!(true));
 }
 
+// 断言：非法正则以 E_INVALID_ARG 拒绝。
 #[test]
 fn invalid_regex_is_invalid_arg() {
     let ws = TestWorkspace::new();
@@ -86,6 +93,7 @@ fn invalid_regex_is_invalid_arg() {
     assert_eq!(outcome.error.expect("e").code, "E_INVALID_ARG");
 }
 
+// 断言：.gitignore 忽略的文件与二进制文件（含 NUL）不出现在命中里。
 #[test]
 fn gitignore_and_binary_respected() {
     let ws = TestWorkspace::new();
@@ -103,6 +111,7 @@ fn gitignore_and_binary_respected() {
     assert!(!joined.contains("bin.dat"));
 }
 
+// 断言：搜索起点指向 roots 外（/etc）被拒绝。
 #[test]
 fn outside_roots_rejected() {
     let ws = TestWorkspace::new();

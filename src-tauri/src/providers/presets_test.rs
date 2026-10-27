@@ -3,6 +3,7 @@
 use super::presets::{builtin_presets, find_preset, preset_to_provider};
 use crate::providers::types::{ApiFormat, SCHEMA_VERSION};
 
+// 断言：内置预设 slug 全局唯一、baseUrl 一律 https、每家至少带一个建议模型。
 #[test]
 fn preset_slugs_unique_all_https() {
     let presets = builtin_presets();
@@ -22,6 +23,8 @@ fn preset_slugs_unique_all_https() {
     }
 }
 
+// 断言：从预设实例化出的 ProviderConfig 字段齐全合法（Key 留空、id 为 uuid、
+// 窗口参数为正数），且能通过 schema v2 归一化。
 #[test]
 fn preset_instantiation_valid_provider_config() {
     let preset = find_preset("deepseek").expect("deepseek 预设存在");
@@ -43,6 +46,7 @@ fn preset_instantiation_valid_provider_config() {
     config.normalize().unwrap();
 }
 
+// 断言：按不存在的 slug 查预设返回 None（不报错）。
 #[test]
 fn unknown_slug_returns_empty() {
     assert!(find_preset("nope").is_none());

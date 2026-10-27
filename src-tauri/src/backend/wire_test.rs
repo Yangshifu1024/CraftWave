@@ -1,5 +1,6 @@
-//! wire 重建单元测试（§6.2 M1 子集）：text/reasoning 原样、toolCall+toolResult
-//! 配对拆分、prompt 切分、非法形态拒绝。
+//! wire 重建的单元测试：文本/推理原样映射、toolCall 与 toolResult 按调用
+//! id 配对拆分、prompt 与 history 切分、非法形态（空序列/末条非 user/悬空
+//! toolResult）拒绝。
 
 use rig::completion::Message;
 use rig::message::{ToolResultContent, UserContent};
@@ -7,6 +8,7 @@ use rig::message::{ToolResultContent, UserContent};
 use crate::backend::wire::{WireError, rebuild_message_stream, split_prompt};
 use crate::storage::{MessageEntry, MessageRole, WirePart};
 
+/// 造一条 user 文本消息。
 fn user(id: &str, text: &str) -> MessageEntry {
     MessageEntry {
         id: id.to_owned(),
@@ -21,6 +23,8 @@ fn user(id: &str, text: &str) -> MessageEntry {
     }
 }
 
+/// 造一条含完整工具回合的 assistant 消息（推理 + 文本 + toolCall +
+/// toolResult + 收尾文本）。
 fn assistant_with_tool_round(id: &str, call_id: &str, tool_name: &str) -> MessageEntry {
     MessageEntry {
         id: id.to_owned(),
@@ -53,6 +57,7 @@ fn assistant_with_tool_round(id: &str, call_id: &str, tool_name: &str) -> Messag
     }
 }
 
+/// 提取 user 消息的全部文本（断言辅助）。
 fn user_text(msg: &Message) -> String {
     let Message::User { content } = msg else {
         panic!("应为 user 消息");
@@ -72,6 +77,8 @@ fn as_message(arc: &std::sync::Arc<Message>) -> &Message {
     arc.as_ref()
 }
 
+/// 断言末条 user 消息作为 prompt，其余重建为 history（工具结果拆成一条
+/// 独立的 user 消息）。
 #[test]
 fn last_user_as_prompt_rest_history() {
     let entries = vec![
@@ -91,6 +98,8 @@ fn last_user_as_prompt_rest_history() {
     assert_eq!(content.len(), 1, "toolResult 合并为一条 user 消息");
 }
 
+/// 断言工具结果按调用 id 配对出工具名，ok 标志映射为 is_error 取反，
+/// 摘要作为文本内容。
 #[test]
 fn tool_results_pair_by_call_id_and_error_mapping() {
     let entry = assistant_with_tool_round("a1", "call_9", "grep");
@@ -111,6 +120,7 @@ fn tool_results_pair_by_call_id_and_error_mapping() {
     }
 }
 
+/// 断言失败的工具结果（ok=false）映射为 is_error=true。
 #[test]
 fn failed_tool_result_is_error_true() {
     let mut entry = assistant_with_tool_round("a1", "call_1", "read");
@@ -129,6 +139,7 @@ fn failed_tool_result_is_error_true() {
     assert!(result.is_error);
 }
 
+/// 断言悬空的 toolResult（同条目内没有配对的 toolCall）被拒绝。
 #[test]
 fn tool_result_without_paired_call_rejected() {
     let entry = MessageEntry {
@@ -153,6 +164,7 @@ fn tool_result_without_paired_call_rejected() {
     );
 }
 
+/// 断言空序列与末条不是 user 的序列都被拒绝。
 #[test]
 fn empty_sequence_or_non_user_tail_rejected() {
     assert_eq!(
@@ -163,6 +175,8 @@ fn empty_sequence_or_non_user_tail_rejected() {
     assert!(matches!(split_prompt(&assistant_only), Err(WireError(_))));
 }
 
+/// 断言 runMarker 与 planSnapshot 两类 part 被跳过（不产出消息、不影响
+/// 其余内容）。
 #[test]
 fn run_marker_and_plan_snapshot_skipped() {
     let entry = MessageEntry {

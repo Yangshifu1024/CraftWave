@@ -10,10 +10,13 @@ import type { MirrorPart } from "./frames";
 import { FrameBuffer } from "./frames";
 import { createFrameSource } from "./mockSource";
 
+/** parts 包一层 ChatModelRunResult（assistant-ui run 的产出形态）。 */
 function toRunResult(parts: MirrorPart[]): ChatModelRunResult {
   return { content: parts };
 }
 
+/** 镜像原型 adapter：每收一帧就产出一个全量累计快照（原型按帧节拍直出，
+ *  不做 64ms 节流）；剧本播完后显式产出 complete 终态。 */
 export const mirrorAdapter: ChatModelAdapter = {
   async *run({ abortSignal }) {
     const buffer = new FrameBuffer();

@@ -47,6 +47,7 @@ export type RunEndedFrame = {
   seq: number;
 };
 
+/** 镜像原型帧联合类型（五种帧，seq 为单调递增序号）。 */
 export type MirrorFrame =
   | ToolStartFrame
   | ToolProgressFrame
@@ -69,11 +70,13 @@ export type MirrorToolPart = {
   isError?: boolean;
 };
 
+/** 正文文本 part。 */
 export type MirrorTextPart = {
   type: "text";
   text: string;
 };
 
+/** 镜像原型输出 part 联合（工具 part 或文本 part）。 */
 export type MirrorPart = MirrorToolPart | MirrorTextPart;
 
 /**
@@ -86,6 +89,7 @@ export class FrameBuffer {
   private readonly tools = new Map<string, MirrorToolPart>();
   private readonly order: string[] = [];
 
+  /** 收一帧并入累积态（文本拼接、工具按 toolCallId 归位、参数宽松解析）。 */
   push(frame: MirrorFrame): void {
     switch (frame.type) {
       case "text-delta": {

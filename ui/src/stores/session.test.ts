@@ -1,7 +1,8 @@
 /**
  * 会话持久化前端侧测试（15 号票，§6.3 双写协议）：
  * toSavePayload 剔除/改写纯逻辑 + syncTreeBeforeSend 的 E_SESSION_REV 自愈 +
- * loadHistory 的 NotFound 降级。IPC 经 vi.mock 注入 fake。
+ * loadHistory 的 NotFound 降级。IPC 经 vi.mock 注入 fake（替代真实后端调用，
+ * 测试不依赖 Rust 侧）。
  */
 
 import type { ThreadMessage } from "@assistant-ui/react";
@@ -15,6 +16,8 @@ import {
   useSessionPersistStore,
 } from "@/stores/session";
 
+// 整体替换 IPC 客户端：只提供本测试触达的命令（其余导出是空 mock，
+// 防止经 toWire 依赖链引入真实实现）
 vi.mock("@/ipc/client", () => ({
   toIpcError: (err: unknown) => err as { code: string; message: string },
   saveSessionTree: vi.fn(),
@@ -26,6 +29,7 @@ vi.mock("@/ipc/client", () => ({
   listSessions: vi.fn(),
 }));
 
+/** 造一条最小 ThreadMessage 测试样例（id/角色/文本即可驱动被测逻辑）。 */
 function msg(
   id: string,
   role: "user" | "assistant",
@@ -42,6 +46,7 @@ function msg(
   } as unknown as ThreadMessage;
 }
 
+// 每个用例后清理：清空 mock 调用记录并把持久化 store 重置回初始状态
 afterEach(() => {
   vi.clearAllMocks();
   useSessionPersistStore.setState(useSessionPersistStore.getInitialState());
@@ -71,9 +76,8 @@ describe("toSavePayload（运行态节点剔除与引用改写）", () => {
       ],
       nodes,
     );
-    // a-fe 剔除；u2 的 parent 仍是 u1 的前一条（线性序里 u2 前是 u1？——
-    // 线性序 [u1,a1,u2,a-fe] 剔除 a-fe 后 u2 的 parent 不变（a1），
-    // activeLeafId 改写为 marker
+    // a-fe 是运行态节点，被剔除；u2 排在 a1 之后，parentId 保持 a1 不变；
+    // 末条恰是被剔除的运行态节点，activeLeafId 改写为其 canonical 等价 marker
     expect(messages.map((m) => m.id)).toEqual(["u1", "a1", "u2"]);
     expect(messages[2].parentId).toBe("a1");
     expect(activeLeafId).toBe("run-7:marker");

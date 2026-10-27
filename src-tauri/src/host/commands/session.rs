@@ -24,6 +24,7 @@ pub struct CreateSessionArgs {
     pub project_id: Option<String>,
 }
 
+/// 当前时间的 Unix 毫秒时间戳（取不到时兜底 0）。
 fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

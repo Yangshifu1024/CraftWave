@@ -13,6 +13,7 @@ import { resolveAsk } from "@/ipc/client";
 import type { AskPayload, DiffLine } from "@/ipc/types";
 import { useAskStore } from "@/stores/ask";
 
+/** 询问面板：本会话有未决 ask 时浮层渲染对应表单，否则不渲染任何内容。 */
 export function AskPanel() {
   const sessionId = useSessionScope();
   const current = useAskStore((s) => s.bySession[sessionId]);
@@ -32,6 +33,7 @@ export function AskPanel() {
   );
 }
 
+/** 问卷表单：逐题点选选项 / 填自由文本，全部作答后可提交（resolveAsk）。 */
 function QuestionForm({
   askId,
   payload,
@@ -94,6 +96,7 @@ function QuestionForm({
   );
 }
 
+/** 审批表单：命令行与 diff 预览 + 允许/拒绝按钮（点击即提交所选选项）。 */
 function ApprovalForm({
   askId,
   payload,
@@ -135,12 +138,14 @@ function ApprovalForm({
   );
 }
 
+/** diff 行配色：新增绿底、删除红底、上下文行弱化。 */
 const diffLineClass: Record<DiffLine["kind"], string> = {
   add: "bg-emerald-950/60 text-emerald-300",
   del: "bg-red-950/60 text-red-300",
   ctx: "text-[var(--muted-foreground)]",
 };
 
+/** diff 预览：文件名标题 + 按 hunk（差异块）分组的增删行列表。 */
 function DiffView({
   diff,
 }: {

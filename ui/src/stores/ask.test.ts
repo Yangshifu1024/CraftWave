@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 /**
  * ask/askHint store 与事件桥测试（§10.1/§3.5，14 号票；16 号票改按会话分桶）：
- * store 纯逻辑 + useBackendEvents 事件分发（listen 注入 fake）。
+ * 一部分测 store 纯逻辑（开合/分桶/ghost 匹配），一部分测 useBackendEvents
+ * 事件分发（事件监听用注入的 fake 假实现替代真实 IPC，不依赖 Rust 后端）。
  */
 
 import { act, cleanup, renderHook } from "@testing-library/react";
@@ -11,12 +12,14 @@ import { useRunMetricsStore } from "@/chat/run-metrics";
 import type { AskOpenedEvent, AskPayload, TokensUpdateEvent } from "@/ipc/types";
 import { matchGhost, useAskStore } from "@/stores/ask";
 
+/** 最小可用的审批载荷样例（字段值本身不参与断言）。 */
 const approval: AskPayload = {
   kind: "approval",
   title: "t",
   options: [],
 };
 
+// 每个用例后清理：卸载组件并重置两个全局 store，保证用例互不污染
 afterEach(() => {
   cleanup();
   useAskStore.setState({ bySession: {}, hints: {} });
@@ -66,6 +69,8 @@ describe("matchGhost（§10.4 ghost 匹配）", () => {
 
 describe("useBackendEvents（事件分发，按 sessionId 入桶）", () => {
   it("ask:opened/closed、run:suggestions、tokens:update 各达其 store", async () => {
+    // listen fake：把每个事件键的回调登记进 Map，测试随后手动触发它们，
+    // 即可验证事件桥是否把载荷分发到了正确的 store 桶
     const handlers = new Map<string, (payload: unknown) => void>();
     const deps = {
       listen: vi.fn(async (key: string, handler: (payload: never) => void) => {

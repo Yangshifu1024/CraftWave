@@ -2,13 +2,14 @@
 /**
  * sessions store 测试（16 号票，FR-01-01 多 Tab 状态面）：
  * bootstrap（ui-state 恢复/兜底）、openTab/closeTab/setActive、ui-state 落盘。
- * ipc/client 注入 fake。
+ * ipc/client 经 vi.mock 注入 fake（替代真实后端调用，测试不依赖 Rust 侧）。
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProjectMeta, SessionMeta } from "@/ipc/types";
 import { useSessionsStore } from "./sessions";
 
+/** 造一条 SessionMeta 测试样例（除 id/title 外字段值不参与断言）。 */
 const meta = (id: string, projectId?: string, title = `会话${id}`): SessionMeta => ({
   id,
   projectId,
@@ -20,12 +21,14 @@ const meta = (id: string, projectId?: string, title = `会话${id}`): SessionMet
   totalTokens: 0,
 });
 
+// 各 IPC 命令的测试桩（vi.fn 可按用例指定返回值或抛错）
 const listProjects = vi.fn<() => Promise<ProjectMeta[]>>();
 const listSessions = vi.fn<() => Promise<SessionMeta[]>>();
 const createSession = vi.fn<(projectId?: string) => Promise<SessionMeta>>();
 const setUiState = vi.fn<(state: unknown) => Promise<void>>();
 const getUiState = vi.fn<() => Promise<unknown>>();
 
+// 只替换本测试用到的命令，其余保留 client.ts 真实现
 vi.mock("@/ipc/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/ipc/client")>();
   return {
@@ -38,6 +41,7 @@ vi.mock("@/ipc/client", async (importOriginal) => {
   };
 });
 
+// 每个用例前：重置 mock、给安全的默认返回值、恢复 store 初始状态
 beforeEach(() => {
   vi.resetAllMocks();
   listProjects.mockResolvedValue([]);

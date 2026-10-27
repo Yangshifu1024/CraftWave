@@ -1,9 +1,14 @@
 /**
- * settings store（§10.1 zustand `settings`：设置草稿 → save_config）。
+ * 设置页全局状态（§10.1 zustand `settings`：设置草稿 → save_config 落盘）。
  *
- * 草稿模型：load 拉取 AppConfig 为草稿；供应商新增/Key 录入即时经
- * save_provider 落协调器+keyring（成功后以返回值刷新草稿）；
- * 其余字段经 saveAll 整份提交。dirty 由草稿与上次已保存引用对比派生。
+ * 草稿模型三概念：
+ *  - 草稿（config）：正在编辑、尚未整份保存的配置；
+ *  - 基线（baseline）：最近一次保存成功的配置快照；
+ *  - 脏（dirty）：草稿与基线不一致（JSON 差集）——据此显示"未保存"圆点、
+ *    触发离开拦截，dirty 判定是派生值，不单独存储。
+ *
+ * 保存路径分两类：供应商新增/Key 录入即时经 save_provider 落盘（成功后以
+ * 返回值刷新草稿，基线同步前移、脏判定不受影响）；其余字段经 saveAll 整份提交。
  */
 
 import { create } from "zustand";
@@ -11,6 +16,7 @@ import * as client from "@/ipc/client";
 import type { AppConfig, ProviderConfig } from "@/ipc/types";
 import { newProviderFromPreset } from "@/settings/presets";
 
+/** 兜底默认配置：后端没有任何配置时（全新安装）的草稿起点。 */
 export const DEFAULT_CONFIG: AppConfig = {
   schemaVersion: 2,
   providers: [],
@@ -19,12 +25,15 @@ export const DEFAULT_CONFIG: AppConfig = {
   log: { level: "info" },
 };
 
+/** 设置状态仓库的形状：草稿/基线双份 + 读写动作（说明见各字段行内注释）。 */
 interface SettingsState {
   /** 已加载草稿（null = 尚未加载） */
   config: AppConfig | null;
   /** 已保存基线（脏判定 = config 与 baseline 的 JSON 差集；随 load/save/供应商即时持久化同步前移） */
   baseline: AppConfig | null;
+  /** 配置读取中（设置页顶部提示条用） */
   loading: boolean;
+  /** 整份保存中（保存按钮置灰防重复提交） */
   saving: boolean;
   /** 最近一次操作的 §3.1 错误负载（骨架级：字符串展示） */
   error: string | null;
@@ -45,6 +54,7 @@ interface SettingsState {
   resetDraft: () => Promise<void>;
 }
 
+/** 设置状态仓库实例（zustand store；用法见 stores/ask.ts 文件头说明）。 */
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   config: null,
   baseline: null,
@@ -56,6 +66,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     set({ loading: true, error: null });
     try {
       const config = await client.getConfig();
+      // structuredClone 深拷贝出基线：基线与草稿必须是两份独立对象，
+      // 之后改草稿才不会殃及基线（否则脏判定永远为 false）
       set({ config, baseline: structuredClone(config), loading: false });
     } catch (err) {
       set({ error: client.toIpcError(err).message, loading: false });
@@ -139,6 +151,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   resetDraft: async () => {
+    // 重新 load：等价于把草稿丢掉、回到已保存状态（基线不变）
     set({ error: null });
     await get().load();
   },

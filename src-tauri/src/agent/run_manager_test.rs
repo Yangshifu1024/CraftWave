@@ -1,7 +1,12 @@
-//! RunManager 单元测试：同会话互斥（E_SESSION_RUNNING）、取消置位、终态摘除。
+//! RunManager 单元测试（测试代码独立于源码文件，仅 cargo test 时编译）。
+//!
+//! 覆盖三个核心行为：同会话互斥（第二个 run 被拒，返回 E_SESSION_RUNNING）、
+//! 取消只做置位（命中返回 true、未命中返回 false）、run 终态摘除与摘除后
+//! 允许同会话重启。
 
 use super::RunManager;
 
+/// 断言同会话的第二个 run 被拒（E_SESSION_RUNNING），不同会话不受影响。
 #[test]
 fn second_run_same_session_rejected() {
     let mgr = RunManager::new();
@@ -14,6 +19,7 @@ fn second_run_same_session_rejected() {
         .expect("他会话可注册");
 }
 
+/// 断言 cancel 在无活跃 run 时返回 false；命中活跃 run 时置位令牌并返回 true。
 #[test]
 fn cancel_hits_active_run_true_missing_false() {
     let mgr = RunManager::new();
@@ -24,6 +30,8 @@ fn cancel_hits_active_run_true_missing_false() {
     assert!(handle.cancel.is_cancelled());
 }
 
+/// 断言 remove 会校验 run_id（不匹配不摘除，防止竞态摘掉新 run），
+/// 正确摘除后同会话可以再次启动新 run。
 #[test]
 fn remove_validates_run_id_allows_restart() {
     let mgr = RunManager::new();
@@ -37,6 +45,8 @@ fn remove_validates_run_id_allows_restart() {
         .expect("摘除后同会话可再启动");
 }
 
+/// 断言 has_active 与注册表空/非空一致：空表放行应用退出，任一会话有
+/// 活跃 run 则拦截退出。
 #[test]
 fn has_active_reflects_registry_emptiness() {
     let mgr = RunManager::new();

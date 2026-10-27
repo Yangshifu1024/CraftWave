@@ -29,8 +29,10 @@ vi.mock("@assistant-ui/react", async (importOriginal) => {
 
 afterEach(cleanup);
 
+/** 卡片 props 的类型来源（以 ReadCard 的首参推导）。 */
 type PartProps = Parameters<typeof ReadCard>[0];
 
+/** 构造一份卡片 props：默认工具 read、参数已完整，extra 覆盖 result 等。 */
 function props(args: Record<string, unknown>, extra: Partial<PartProps> = {}): PartProps {
   return {
     toolCallId: "c1",
@@ -43,6 +45,7 @@ function props(args: Record<string, unknown>, extra: Partial<PartProps> = {}): P
   } as PartProps;
 }
 
+/** 构造 result/isError 覆盖项（模拟 result 直写的完成/错误终态）。 */
 function resultOf(summary: string, isError = false): { result: unknown; isError: boolean } {
   return { result: { ok: !isError, summary }, isError };
 }

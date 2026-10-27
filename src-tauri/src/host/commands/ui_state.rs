@@ -11,6 +11,8 @@ use crate::host::AppState;
 use crate::host::IpcError;
 use crate::storage::config_store::ConfigPayload;
 
+/// UI 状态是前端自定义的任意 JSON：没有固定形状可归一化，原样透传即可
+/// （实现该 trait 只是为了复用 ConfigStore 的读写与落盘通道）。
 impl ConfigPayload for Value {
     fn normalize(&mut self) -> Result<(), IpcError> {
         Ok(())

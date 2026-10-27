@@ -1,8 +1,12 @@
 //! 【S1 spike 原型，随时可弃】mock_chat.rs 的独立测试文件（AGENTS.md：测试不进源码）。
+//! 测试面：剧本帧 seq 从 1 连续递增、参数增量可拼回完整 JSON 且拼接完成前保持
+//! 半截、剧本含错误态工具结果、帧序列化形态与前端契约一致（type 为 kebab-case、
+//! 字段为 camelCase）。
 #![cfg(test)]
 
 use crate::mock_chat::{MockFrame, mock_script};
 
+/// 断言剧本全部帧的 seq 从 1 起连续递增（前端按序消费的前提）。
 #[test]
 fn script_frame_seq_strictly_increasing() {
     let steps = mock_script();
@@ -35,6 +39,7 @@ fn joined_args(id: &str) -> (Vec<String>, String) {
     (pieces, joined)
 }
 
+/// 断言两处工具调用的参数分片各自拼接后均为完整 JSON 且字段值正确。
 #[test]
 fn partial_deltas_reassemble_full_json() {
     let (_, args1) = joined_args("call-1");
@@ -49,6 +54,8 @@ fn partial_deltas_reassemble_full_json() {
     assert_eq!(parsed2["command"], "cargo test");
 }
 
+/// 断言 call-1 参数拆成 3 片：前两片拼接仍是半截 JSON（参数准备中态），
+/// 三片拼齐才可解析（运行中态）。
 #[test]
 fn call1_three_parts_partial_json_until_last() {
     let (pieces, joined) = joined_args("call-1");
@@ -66,6 +73,7 @@ fn call1_three_parts_partial_json_until_last() {
     assert!(try_parse(&joined), "三片拼齐后参数应完整（运行中判定）");
 }
 
+/// 断言剧本包含一个 isError=true 的工具结果（覆盖前端错误态渲染判定）。
 #[test]
 fn error_result_frame_has_is_error() {
     let has_error = mock_script().iter().any(|s| {

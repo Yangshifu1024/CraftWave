@@ -1,8 +1,10 @@
 /**
- * shadcn/ui 风格 Switch（手写移植，button[role=switch]，无 radix 依赖）。
+ * shadcn/ui 风格 Switch 开关（手写移植：button[role=switch]，不依赖 radix 库）。
  */
 import { cn } from "./cn";
 
+/** Switch 的 props：checked 开/关；onCheckedChange 切换回调；
+ *  aria-label 无障碍名；disabled 禁用。 */
 export interface SwitchProps {
   checked: boolean;
   onCheckedChange: (checked: boolean) => void;
@@ -10,6 +12,7 @@ export interface SwitchProps {
   disabled?: boolean;
 }
 
+/** 渲染开关：用 button + role="switch" + aria-checked 保证读屏与键盘可达。 */
 export function Switch({ checked, onCheckedChange, disabled, ...aria }: SwitchProps) {
   return (
     <button

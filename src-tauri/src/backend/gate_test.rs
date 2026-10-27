@@ -1,4 +1,5 @@
-//! ApprovalGate 单测（§5.4 × §8.5 × §8.7 × §8.6）：判定顺序与签名放行。
+//! 审批门（ApprovalGate）单元测试：权限矩阵各档判定、围栏黑名单与写信号、
+//! 计划门拦截、已批准签名放行、未知工具透传。
 
 use std::sync::{Arc, Mutex};
 
@@ -8,6 +9,7 @@ use crate::safety::tier::PermissionTier;
 use crate::storage::entries::{PlanItem, PlanItemStatus};
 use crate::tools::plan::PlanState;
 
+/// 造一个计划条目（给定 id 与状态）。
 fn item(id: &str, status: PlanItemStatus) -> PlanItem {
     PlanItem {
         id: id.to_owned(),
@@ -16,15 +18,18 @@ fn item(id: &str, status: PlanItemStatus) -> PlanItem {
     }
 }
 
+/// 造审批门与其共享计划状态（返回同一把锁的句柄，便于测试中修改计划）。
 fn gate_with_plan(tier: PermissionTier) -> (ApprovalGate, Arc<Mutex<Option<PlanState>>>) {
     let plan: Arc<Mutex<Option<PlanState>>> = Arc::new(Mutex::new(None));
     (ApprovalGate::new(tier, plan.clone()), plan)
 }
 
+/// 造 command 工具的参数 JSON。
 fn command_args(command: &str) -> String {
     serde_json::json!({ "command": command }).to_string()
 }
 
+/// 断言权限矩阵在各档位下给出正确判定（放行/挂起/硬拦逐例核对）。
 #[test]
 fn matrix_verdicts_by_tier() {
     // (name, args, tier) → 期望判定形态
@@ -112,6 +117,7 @@ fn matrix_verdicts_by_tier() {
     }
 }
 
+/// 断言围栏黑名单命令在任何权限档位都被 E_FENCE_BLOCKED 硬拦。
 #[test]
 fn fence_blacklist_blocks_all_tiers() {
     for tier in [
@@ -129,6 +135,7 @@ fn fence_blacklist_blocks_all_tiers() {
     }
 }
 
+/// 断言含写信号的命令被挂起，且携带围栏原因（界面卡片展示用）。
 #[test]
 fn fence_write_signal_suspend_with_reason() {
     let (gate, _) = gate_with_plan(PermissionTier::ConfirmEach);
@@ -142,6 +149,8 @@ fn fence_write_signal_suspend_with_reason() {
     );
 }
 
+/// 断言 plan 档下白名单命令虽通过围栏，仍被权限矩阵以 E_TOOL_BLOCKED 拦下
+/// （围栏放行不等于权限档放行）。
 #[test]
 fn fence_plan_whitelist_still_filtered_by_matrix() {
     // plan 档：ls 命中白名单（fence Allow），但 Network 能力被矩阵 Filtered 硬拦
@@ -153,6 +162,8 @@ fn fence_plan_whitelist_still_filtered_by_matrix() {
     assert_eq!(*code, "E_TOOL_BLOCKED");
 }
 
+/// 断言计划门：已批准计划全部完成后再写文件被 E_PLAN_STALE 拦截且提示
+/// 更新计划；只读工具不受计划门约束。
 #[test]
 fn plan_gate_approved_all_completed_blocks_writes() {
     let (gate, plan) = gate_with_plan(PermissionTier::AutoEdit);
@@ -176,6 +187,7 @@ fn plan_gate_approved_all_completed_blocks_writes() {
     ));
 }
 
+/// 断言已批准签名不再重复挂起；不同签名的调用不连带放行。
 #[test]
 fn approved_signature_no_resuspend() {
     let (gate, _) = gate_with_plan(PermissionTier::ConfirmEach);
@@ -194,6 +206,7 @@ fn approved_signature_no_resuspend() {
     ));
 }
 
+/// 断言未知工具放行给执行器（由执行器回喂 E_INVALID_ARG，不在门这里拦截）。
 #[test]
 fn unknown_tool_passes_to_executor() {
     let (gate, _) = gate_with_plan(PermissionTier::Plan);

@@ -20,14 +20,19 @@ pub enum PermissionTier {
     FullAccess,
 }
 
-/// 工具能力五级（§8.1）。
+/// 工具能力五级（§8.1）：权限矩阵按能力分级，不按具体工具逐个配置。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Capability {
+    /// 只读（read/grep/list_files 等），全档放行。
     ReadOnly,
+    /// 写文件（write/edit），plan 档过滤、confirm_each 档审批。
     FileWrite,
+    /// 交互（ask 向用户提问），全档放行。
     Interactive,
+    /// 网络/命令（command），plan 档过滤、非 full_access 档审批。
     Network,
+    /// 元能力（plan 计划维护），全档放行。
     Meta,
 }
 

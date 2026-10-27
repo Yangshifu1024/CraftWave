@@ -10,6 +10,7 @@ use crate::tools::{ToolAnnotations, ToolOutcome, ToolSpec, ToolsContext};
 /// 条目上限（§8.3）。
 pub const MAX_ENTRIES: usize = 500;
 
+/// list_files 工具参数：起点目录 + 可选深度与 gitignore 开关。
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListFilesArgs {
@@ -21,6 +22,8 @@ pub struct ListFilesArgs {
     pub respect_gitignore: Option<bool>,
 }
 
+/// 执行 list_files：解析起点 → 遍历目录树（尊重 .gitignore、跳过隐藏
+/// 文件与 .git）→ 上限 500 截断 → 按路径排序渲染缩进树。
 pub fn run(ctx: &ToolsContext, args: &ListFilesArgs) -> ToolOutcome {
     let root_display = args.path.clone().unwrap_or_else(|| ".".to_string());
     let root = match ctx.guard().and_then(|g| g.resolve(&root_display)) {
@@ -105,6 +108,7 @@ pub fn run(ctx: &ToolsContext, args: &ListFilesArgs) -> ToolOutcome {
     )
 }
 
+/// list_files 工具规格（能力 ReadOnly，全档放行）。
 pub fn spec() -> ToolSpec {
     ToolSpec {
         name: "list_files",

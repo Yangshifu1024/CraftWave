@@ -246,6 +246,7 @@ mod unix_reap {
     }
 }
 
+/// Unix 收割三件套按平台重导出（Windows 目标下不存在，对应面是 JobGuard）。
 #[cfg(unix)]
 pub use unix_reap::{enable_process_group, pid_alive, reap_process_group};
 
@@ -274,6 +275,7 @@ mod win_job {
     }
 
     impl JobGuard {
+        /// 建 Job 并设 KILL_ON_JOB_CLOSE 标志；任一步失败即关句柄返回错误。
         pub fn new() -> Result<Self, String> {
             use windows_sys::Win32::Foundation::CloseHandle;
             use windows_sys::Win32::System::JobObjects::*;
@@ -344,6 +346,7 @@ mod win_job {
         }
     }
 
+    /// 句柄释放兜底：drop 时关闭 Job 句柄。
     impl Drop for JobGuard {
         fn drop(&mut self) {
             use windows_sys::Win32::Foundation::CloseHandle;

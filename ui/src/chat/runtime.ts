@@ -1,3 +1,20 @@
+/**
+ * 聊天模型适配器（runtime.ts）：把 assistant-ui 聊天框架与 Rust 后端对接的中间层。
+ *
+ * 名词解释：
+ * - adapter（适配器）：实现 assistant-ui 的 ChatModelAdapter 接口的对象，
+ *   聊天框架每次发送消息都会调用它的 run 方法，run 逐步产出（yield）回复内容；
+ * - 帧（frame）：Rust 后端通过 Tauri Channel 通道推给前端的一条增量数据，
+ *   例如一段正文文本、一次工具调用的开始/参数片段/结果、运行结束标记；
+ * - 快照（snapshot）：把到目前为止收到的所有帧累积合并成的一份完整数据，
+ *   每次都整体替换上一份（替换语义，不是在旧内容上追加）。
+ *
+ * 本文件提供两类 adapter：
+ * 1. echoAdapter：无后端时的开发回声假后端（把用户输入原样回显）；
+ * 2. tauriChatModel / sessionAdapter：生产适配器——invoke start_chat 命令并
+ *    接收帧流，经 FrameBuffer 累积后按 64 毫秒节流产出快照（打字机效果）。
+ * 本文件还包含 toWire：把 assistant-ui 的消息转成与 Rust 约定的中立格式。
+ */
 import type { ChatModelAdapter, ChatModelRunResult, ThreadMessage } from "@assistant-ui/react";
 import * as client from "@/ipc/client";
 import type { ChatFrame, MessageEntry, RunConfig } from "@/ipc/types";
@@ -22,12 +39,14 @@ export function splitReply(reply: string, parts = 2): string[] {
   return chunks;
 }
 
+/** 取最后一条消息里的纯文本作为提示词（无文本时返回占位符「（空消息）」）。 */
 export function promptFrom(messages: readonly ThreadMessage[]): string {
   const last = messages.at(-1);
   const text = last?.content.map((part) => (part.type === "text" ? part.text : "")).join("") ?? "";
   return text.length > 0 ? text : "（空消息）";
 }
 
+/** 回声流：把提示词拼上回声前缀后分批产出，每批间隔 120ms 模拟流式打字。 */
 export async function* echoStream(
   prompt: string,
   signal: AbortSignal,
@@ -44,6 +63,7 @@ export async function* echoStream(
   }
 }
 
+/** 回声 adapter：把用户输入原样回显的开发假后端（无 Rust 后端时的兜底）。 */
 export const echoAdapter: ChatModelAdapter = {
   async *run({ messages, abortSignal }) {
     yield* echoStream(promptFrom(messages), abortSignal);

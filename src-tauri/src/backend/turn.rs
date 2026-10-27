@@ -1,8 +1,14 @@
-//! 单 turn 流式调用驱动（§4.3）：「AgentRun sans-IO 步进 + StreamedTurnAssembler
-//! 装配 + 流事件桥接出帧」。产品化自 S2/S3 spike 同名原型，增量：
-//! - 桥接器由调用方（RunLoop）持有并传入，流收口后 RunLoop 以其映射发
-//!   同源 `toolResult` 帧（§3.4 callId 同源）；
-//! - 流收口返回该轮 rig `Usage`（RunLoop 发 usage 帧并累计，§10.5 口径）。
+//! 单轮流式调用的驱动（技术设计文档 §4.3）。
+//!
+//! 名词解释：turn（轮）= 一次"向模型发起请求并收到完整回复"的过程。本模块
+//! 驱动一轮：步进 rig 的 AgentRun 状态机（sans-IO 指该库本身不做网络请求，
+//! 由外部驱动）+ 用 StreamedTurnAssembler（流式回合装配器）把流事件装配成
+//! 完整消息 + 经流事件桥接器出帧。
+//!
+//! 由早期验证原型（S2/S3 spike）产品化而来，当前版本要点：
+//! - 桥接器由调用方（主循环）持有并传入，流收口后主循环用它的映射发同源
+//!   的 toolResult 帧（§3.4 调用 id 同源）；
+//! - 流收口返回该轮的 rig `Usage`（主循环发 usage 帧并累计，§10.5 口径）。
 
 use std::sync::Arc;
 
@@ -22,34 +28,43 @@ use tokio_util::sync::CancellationToken;
 use super::frames::ChatFrame;
 use super::rig_bridge::{Bridged, RigEventBridge};
 
-/// 单 turn 流式调用的退出态：自然收尾，或取消中途 drop 流（§5.3 取消传播）。
+/// 单轮流式调用的退出态：自然收尾，或取消中途丢弃流（§5.3 取消传播）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StreamExit {
+    /// 自然收尾（流正常结束）。
     Completed,
+    /// 取消中途退出（流被丢弃，模型侧停止生成）。
     Cancelled,
 }
 
-/// 单 turn 流式调用的驱动：S2 的事件帧化 + S3 的装配回喂。
+/// 单轮流式调用的驱动器：持有模型客户端、运行规格与工具表，完成
+/// "流式请求 → 事件装配 → 出帧 → 回喂 run"的整个过程。
 pub struct TurnDriver {
+    /// 模型客户端（rig 封装的 OpenAI 接口形态）。
     model: Model<Chat>,
+    /// 运行规格（rig 的 RunSpec：采样参数与执行策略）。
     spec: RunSpec,
+    /// 本轮广播给模型的工具定义表。
     tools: Vec<Arc<ToolDefinition>>,
 }
 
-/// 一次流式 turn 的收口产出。
+/// 一次流式调用的收口产出。
 pub struct TurnOutcome {
-    /// 自然收尾 / 取消中途退出。
+    /// 退出形态：自然收尾 / 取消中途退出。
     pub exit: StreamExit,
-    /// 收口 usage（取消路径无收口，None——取消 run 不计费语义，§5.3/S5 票）。
+    /// 收口用量（取消路径没有收口，为 None——取消的 run 不计费的语义，
+    /// §5.3）。
     pub usage: Option<Usage>,
 }
 
+/// TurnDriver 的流式调用与一次性调用。
 impl TurnDriver {
+    /// 构造：给定模型客户端、运行规格与工具表。
     pub fn new(model: Model<Chat>, spec: RunSpec, tools: Vec<Arc<ToolDefinition>>) -> Self {
         Self { model, spec, tools }
     }
 
-    /// 不可取消版（直通语义保留给单测）：内部 token 永不触发。
+    /// 不可取消版本（直通语义保留给单元测试）：内部取消令牌永不触发。
     pub async fn stream_turn(
         &self,
         run: &mut AgentRun,
@@ -72,8 +87,9 @@ impl TurnDriver {
         }
     }
 
-    /// 取消可感知版（§5.3）：token 触发即 drop HTTP 流（模型流停止），返回
-    /// [`StreamExit::Cancelled`]；流事件边收边装配出帧的行为与 [`Self::stream_turn`] 一致。
+    /// 取消可感知版（§5.3）：取消令牌触发即丢弃 HTTP 流（模型侧停止生成），
+    /// 返回 [`StreamExit::Cancelled`]；流事件边收边装配出帧的行为与
+    /// [`Self::stream_turn`] 一致。
     #[allow(clippy::too_many_arguments)]
     pub async fn stream_turn_cancellable(
         &self,
@@ -89,8 +105,9 @@ impl TurnDriver {
             .await
     }
 
-    /// 一次性非流式小调用（suggest 后台生成等，C-9：不走 AgentRun 步进、
-    /// 无工具表）。返回 (拼接文本, usage)；失败由调用方静默处理。
+    /// 一次性非流式小调用（如 suggest 建议的后台生成，需求 C-9：不走
+    /// AgentRun 步进、无工具表）。返回（拼接文本, usage）；失败由调用方
+    /// 静默处理。
     pub async fn complete_once(&self, prompt: &str) -> Result<(String, Usage), PromptError> {
         let request = CompletionRequest::new(prompt.to_owned());
         let response =
@@ -109,6 +126,8 @@ impl TurnDriver {
         Ok((text, response.usage))
     }
 
+    /// 流式一轮的实际实现（上面两个公开方法是它的包装）：构造请求 → 开流 →
+    /// 逐事件"装配记账 + 桥接出帧" → 流收尾把完整回合回喂 run。
     #[allow(clippy::too_many_arguments)]
     async fn do_stream_turn(
         &self,
@@ -189,8 +208,8 @@ impl TurnDriver {
     }
 }
 
-/// 把一个 pending call 的执行结果打包为 ToolAnswer（取消路径也复用：已完成
-/// 的工具在取消后仍以原结果收齐）。
+/// 把一个待执行调用的执行结果打包为工具应答（取消路径也复用：已完成的
+/// 工具在取消后仍以原结果收齐，不留悬空）。
 pub fn answer_one(call: rig::run::PendingToolCall, output: String) -> rig::run::ToolAnswer {
     match call {
         rig::run::PendingToolCall::Execute(exec) => exec.answer(rig::tool::ToolResult::success(

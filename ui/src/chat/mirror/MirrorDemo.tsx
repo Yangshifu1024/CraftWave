@@ -20,6 +20,8 @@ resetMountLog();
 // config 是纯数据，可提模块级（文档明示 provider 不依赖 config 身份）。
 const mirrorAuiConfig = AuiConfig({ tools: Tools({ toolkit: mirrorToolkit }) });
 
+/** 镜像 demo 页：镜像 adapter + 镜像工具注册表包住正式 ChatThread，
+ *  发任意消息即播放 mock 剧本。 */
 export function MirrorDemo() {
   const runtime = useLocalRuntime(mirrorAdapter);
   return (

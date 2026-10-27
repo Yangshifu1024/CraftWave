@@ -1,32 +1,43 @@
-//! ChatFrame P0 全集 9 帧（技术设计文档 §3.4）与 64ms 节流合并器。
+//! 帧协议全集与 64 毫秒节流合并器（技术设计文档 §3.4）。
 //!
-//! 帧基座 `{ seq, type, ts?, ...字段 }`：`seq` 与 `ts` 由 [`FrameSink`] 出口
-//! 统一填写（§3.4「seq 由 Rust 端 RunHandle 递增」；`ts` = 出口 epoch ms，
-//! 供端到端延迟埋点与 §5.6 对账，S2 实证加入）。帧构造侧不感知序号。
+//! 名词解释：帧（frame）是后端推送给前端的一条事件消息，是界面渲染的
+//! 最小数据单元（打字机文本、工具卡片、用量统计都由帧驱动）。本文件
+//! 定义全部 9 种帧（ChatFrame）。
 //!
-//! `UsageTotal` 为 §3.2 共享类型的 Rust 侧镜像（providers/types 不承载帧面，
-//! 帧协议自包含）。
+//! 每帧的公共基座为 `{ seq, type, ts?, ...各帧字段 }`：`seq`（全 run 递增
+//! 的流水号，前端按它排序）与 `ts`（出口时刻的 Unix 毫秒，供端到端延迟
+//! 统计与前后端对账）由 [`FrameSink`] 出口统一填写，构造帧的代码不感知
+//! 序号（§3.4）。
+//!
+//! `UsageTotal` 是 §3.2 共享类型在 Rust 侧的镜像（providers 模块的类型
+//! 不混入帧面，帧协议自包含、不依赖 providers）。
 
 use std::collections::BTreeMap;
 use std::time::Duration;
 
 use serde::Serialize;
 
-/// 生产用的帧节流窗口（FR-01-03：64ms 节流合并）。
+/// 生产用的帧节流窗口时长（需求 FR-01-03：相邻两次增量出帧至少间隔 64 毫秒）。
 pub const THROTTLE_INTERVAL: Duration = Duration::from_millis(64);
 
-/// §3.2 UsageTotal（帧面 usage 载荷；camelCase 由 serde 层统一）。
+/// §3.2 UsageTotal（帧面 usage 载荷，即模型的 token 用量统计；字段名的
+/// camelCase 由 serde 层统一转换）。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageTotal {
+    /// 输入消耗的 token 数（token = 模型处理文本的最小单位）。
     pub input: u64,
+    /// 输出消耗的 token 数。
     pub output: u64,
+    /// 命中缓存读取的输入 token 数（省钱部分）。
     pub cache_read: u64,
+    /// 写入缓存的 token 数。
     pub cache_write: u64,
 }
 
+/// UsageTotal 的累加实现。
 impl UsageTotal {
-    /// 累加（每 turn 收口把该轮 usage 记入运行累计）。
+    /// 累加另一份用量（每轮结束把该轮 usage 记入 run 的累计值）。
     pub fn accumulate(&mut self, other: &UsageTotal) {
         self.input += other.input;
         self.output += other.output;
@@ -35,8 +46,8 @@ impl UsageTotal {
     }
 }
 
-/// ChatFrame：P0 全集 9 帧（§3.4）。variant 名与字段名均按 §3.1 契约：
-/// type 是 camelCase，字段也是 camelCase。
+/// ChatFrame：帧协议全集 9 帧（§3.4）。帧类型名与字段名均按 §3.1 契约：
+/// type 值是 camelCase，字段名也是 camelCase。
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(
     rename_all = "camelCase",
@@ -44,60 +55,58 @@ impl UsageTotal {
     tag = "type"
 )]
 pub enum ChatFrame {
-    RunStarted {
-        run_id: String,
-        model: String,
-    },
-    StepStarted {
-        turn: u32,
-    },
-    TextDelta {
-        turn: u32,
-        delta: String,
-    },
-    ReasoningDelta {
-        turn: u32,
-        delta: String,
-    },
-    ToolStarted {
-        call_id: String,
-        name: String,
-    },
-    ToolArgs {
-        call_id: String,
-        chunk: String,
-    },
+    /// run 开始（起手帧）：告知前端本次 run 的 id 与所用模型。
+    RunStarted { run_id: String, model: String },
+    /// 一轮开始（turn = 一次"请求模型并收到完整回复"的过程）。
+    StepStarted { turn: u32 },
+    /// 正文文本增量（打字机效果的数据源）。
+    TextDelta { turn: u32, delta: String },
+    /// 推理文本增量（模型思维链的流式展示）。
+    ReasoningDelta { turn: u32, delta: String },
+    /// 工具调用开始（界面据此创建工具卡片）。
+    ToolStarted { call_id: String, name: String },
+    /// 工具参数增量（半截 JSON 原样转发，前端先显示"参数准备中"）。
+    ToolArgs { call_id: String, chunk: String },
+    /// 工具执行结果（成功摘要或错误面）。
     ToolResult {
         call_id: String,
         ok: bool,
         ui_summary: String,
-        /// 错误面（§3.4 `error?`）：被取消工具补 E_CANCELLED（§5.3），其余 None。
+        /// 错误面（§3.4 `error?`）：被取消的工具补 E_CANCELLED（§5.3），
+        /// 其余情况为 None。
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<FrameError>,
     },
+    /// 用量统计（本轮收口与 run 累计值，可带输出速度）。
     Usage {
         usage: UsageTotal,
-        /// 输出 tok/s（FR-01-13）；RunLoop 按「本轮输出 tokens / 本轮流时长」计算。
+        /// 输出速度，单位 token/秒（FR-01-13）；主循环按"本轮输出 token 数
+        /// ÷ 本轮流式调用耗时"计算。
         #[serde(skip_serializing_if = "Option::is_none")]
         rate: Option<f64>,
     },
+    /// run 结束（终态帧，必为最后一帧）：正常完成/出错/用户取消三种原因。
     RunEnded {
         reason: EndReason,
         duration_ms: u64,
         tool_count: u32,
         turn: u32,
-        /// 错误终态面（§3.4 `error?`）：reason=error 时承载（§11.3 分类器为
-        /// provider 适配层后续票，本票以 E_INTERNAL 兜底）。
+        /// 错误终态面（§3.4 `error?`）：reason=error 时承载（§11.3 的错误
+        /// 分类器属 provider 适配层的后续工单，本阶段以 E_INTERNAL 兜底）。
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<FrameError>,
     },
 }
 
+/// run 结束原因。
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum EndReason {
+    /// 自然完成（模型给出最终答复）。
     Done,
+    /// 出错终止。
     Error,
+    /// 用户取消。
     Cancelled,
 }
 
@@ -105,11 +114,15 @@ pub enum EndReason {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct FrameError {
+    /// 错误码（如 E_CANCELLED、E_INTERNAL）。
     pub code: String,
+    /// 人类可读的错误说明。
     pub message: String,
 }
 
+/// FrameError 的构造实现。
 impl FrameError {
+    /// 用错误码与消息构造。
     pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             code: code.into(),
@@ -118,20 +131,23 @@ impl FrameError {
     }
 }
 
-/// 帧出口：生产实现发 tauri `ipc::Channel<ChatFrame>`（host 层适配，出口填
-/// seq + ts），测试实现收进 Vec。抽成 trait 让帧管线（节流、RunLoop）不依赖
-/// tauri 运行时。
+/// 帧出口：生产实现发 tauri `ipc::Channel<ChatFrame>`（宿主层适配，出口填
+/// seq + ts），测试实现收进 Vec。抽成 trait 让帧管线（节流、主循环）不
+/// 依赖 tauri 运行时。
 pub trait FrameSink: Send {
+    /// 发出一帧（由实现负责填 seq/ts 并送达目的地）。
     fn send(&mut self, frame: ChatFrame);
 }
 
 /// 带序号与出口时刻的帧（序列化后即 §3.4 的 `{ seq, type, ts?, ...}` 基座）。
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct SequencedFrame {
+    /// 帧序号（出口递增，与发送顺序一致）。
     pub seq: u64,
-    /// Rust 出口 epoch ms（可选；测试注入的 sink 可缺省）。
+    /// Rust 出口时刻的 Unix 毫秒（可选；测试注入的出口可缺省）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ts: Option<i64>,
+    /// 帧本体（序列化时展平到基座上）。
     #[serde(flatten)]
     pub frame: ChatFrame,
 }
@@ -139,12 +155,14 @@ pub struct SequencedFrame {
 /// 收集器实现：按到达顺序保存全部帧（含 seq），供测试断言。
 #[derive(Default)]
 pub struct CollectingSink {
+    /// 按到达顺序收集的帧。
     pub frames: Vec<SequencedFrame>,
 }
 
+/// 收集器对帧出口接口的实现（测试用）。
 impl FrameSink for CollectingSink {
     fn send(&mut self, frame: ChatFrame) {
-        // seq 由 sink 出口递增，保证「seq 严格递增且与发送顺序一致」（§3.4 排序规则）
+        // seq 由出口递增，保证「seq 严格递增且与发送顺序一致」（§3.4 排序规则）
         let seq = self.frames.len() as u64;
         self.frames.push(SequencedFrame {
             seq,
@@ -154,37 +172,46 @@ impl FrameSink for CollectingSink {
     }
 }
 
-/// 64ms 节流合并器（§3.4 节流语义，S2 实证钉死）：
-/// 「首增量立即出帧，其后相邻 flush 间隔 ≥ 窗口」。
+/// 64 毫秒节流合并器（§3.4 节流语义，经早期原型实测确定）：
+/// "首个增量立即出帧，其后相邻两次出帧间隔不小于窗口时长"。
 ///
-/// - 合并语义：窗口（64ms）内到达的同型增量在下次 flush 时各并成一帧；
-/// - 节流语义：`should_flush()` 以真实时钟保证相邻 flush 间隔 ≥ 64ms——
-///   首个增量到达即出帧（TTFT 优先），之后无论事件多密至多 64ms 一帧，
-///   打字机节奏稳定且与驱动方式（外部 tick 或 push 内检查）无关；
-/// - 非增量帧（toolStarted/toolResult/...）不经节流器直通，保证 toolResult
-///   必晚于同 callId 全部 toolArgs（§3.4 排序规则）。
+/// - 合并语义：窗口（64ms）内到达的同型增量，在下次出帧时各自并成一帧；
+/// - 节流语义：`should_flush()` 以真实时钟保证相邻出帧间隔不小于 64ms——
+///   首个增量到达即出帧（优先降低 TTFT，即 Time To First Token，用户从
+///   发问到看见第一个字的延迟），之后无论事件多密集至多 64ms 一帧，
+///   打字机节奏稳定且与驱动方式（外部定时器或推送时检查）无关；
+/// - 非增量帧（toolStarted/toolResult 等）不经节流器直通，保证 toolResult
+///   必晚于同 callId 的全部 toolArgs（§3.4 排序规则）。
 #[derive(Default)]
 pub struct DeltaThrottler {
+    /// 待出帧的正文文本增量（按轮次分组累积）。
     text: BTreeMap<u32, String>,
+    /// 待出帧的推理文本增量（按轮次分组累积）。
     reasoning: BTreeMap<u32, String>,
+    /// 待出帧的工具参数增量（按调用 id 分组累积）。
     tool_args: BTreeMap<String, String>,
-    /// 上次 flush 时刻；None = 从未 flush（首帧立即）。
+    /// 上次出帧时刻；None = 从未出帧（首个增量立即出）。
     last_flush: Option<std::time::Instant>,
 }
 
+/// DeltaThrottler 的累积与出帧操作。
 impl DeltaThrottler {
+    /// 创建空窗口的节流器。
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// 累积一段正文文本增量（turn 为所属轮次）。
     pub fn push_text(&mut self, turn: u32, delta: &str) {
         self.text.entry(turn).or_default().push_str(delta);
     }
 
+    /// 累积一段推理文本增量（turn 为所属轮次）。
     pub fn push_reasoning(&mut self, turn: u32, delta: &str) {
         self.reasoning.entry(turn).or_default().push_str(delta);
     }
 
+    /// 累积一段工具参数增量（call_id 为所属调用）。
     pub fn push_tool_args(&mut self, call_id: &str, chunk: &str) {
         self.tool_args
             .entry(call_id.to_owned())
@@ -192,12 +219,13 @@ impl DeltaThrottler {
             .push_str(chunk);
     }
 
-    /// 是否有未 flush 的 pending 增量。
+    /// 是否有未出帧的待发增量。
     pub fn has_pending(&self) -> bool {
         !self.text.is_empty() || !self.reasoning.is_empty() || !self.tool_args.is_empty()
     }
 
-    /// 距上次 flush 已满节流窗口（或从未出帧且窗口里有 pending，首帧立即）。
+    /// 是否应出帧：距上次出帧已满节流窗口（或从未出帧且窗口里有增量——
+    /// 首帧立即）。
     pub fn should_flush(&self) -> bool {
         match self.last_flush {
             None => self.has_pending(),
@@ -205,8 +233,9 @@ impl DeltaThrottler {
         }
     }
 
-    /// 把窗口内累积的增量合并成帧发给 sink，并清空窗口。
+    /// 把窗口内累积的增量合并成帧发给出口，并清空窗口。
     pub fn flush(&mut self, out: &mut dyn FrameSink) {
+        // std::mem::take 拿走窗口内容（原 map 变空），逐组出帧
         for (turn, delta) in std::mem::take(&mut self.text) {
             if !delta.is_empty() {
                 out.send(ChatFrame::TextDelta { turn, delta });

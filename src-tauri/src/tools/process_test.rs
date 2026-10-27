@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use super::{REAP_GRACE, enable_process_group, reap_process_group};
 
+// 断言：子进程忽略 SIGTERM 时，收割耗满宽限期后用 SIGKILL 兜底终止。
 #[tokio::test]
 async fn reap_sigterm_ignored_sigkill_fallback() {
     let mut cmd = tokio::process::Command::new("sh");
@@ -31,6 +32,7 @@ async fn reap_sigterm_ignored_sigkill_fallback() {
     assert!(elapsed >= REAP_GRACE, "宽限期应被用满（实际 {elapsed:?}）");
 }
 
+// 断言：普通 sleep 进程收到 SIGTERM 即退出，收割耗时远小于宽限上界。
 #[tokio::test]
 async fn reap_sleep_process_within_grace() {
     let mut cmd = tokio::process::Command::new("sleep");

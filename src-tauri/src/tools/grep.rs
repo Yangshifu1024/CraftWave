@@ -13,17 +13,22 @@ pub const DEFAULT_MAX_RESULTS: usize = 100;
 /// maxResults 硬上限。
 pub const MAX_RESULTS_CAP: usize = 1000;
 
+/// grep 工具参数：正则 + 可选的起点/过滤/上限。
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GrepArgs {
+    /// Rust regex 正则表达式。
     pub pattern: String,
     /// 搜索起点，缺省项目主目录。
     pub path: Option<String>,
     /// glob 过滤（如 "*.rs"）。
     pub glob: Option<String>,
+    /// 命中条数上限（缺省 100，硬上限 1000）。
     pub max_results: Option<usize>,
 }
 
+/// 执行 grep：解析起点 → 编译正则 → 遍历文件（尊重 .gitignore）
+/// 逐行搜索，达上限截断。
 pub fn run(ctx: &ToolsContext, args: &GrepArgs) -> ToolOutcome {
     let root_display = args.path.clone().unwrap_or_else(|| ".".to_string());
     let root = match ctx.guard().and_then(|g| g.resolve(&root_display)) {
@@ -88,6 +93,7 @@ pub fn run(ctx: &ToolsContext, args: &GrepArgs) -> ToolOutcome {
             Ok(true)
         });
         let mut searcher = grep_searcher::SearcherBuilder::new()
+            // 遇 NUL 字节即视为二进制文件退出搜索（不把二进制垃圾读进结果）。
             .binary_detection(grep_searcher::BinaryDetection::quit(0u8))
             .build();
         // 单文件失败（权限/IO）跳过，不中断整体。
@@ -117,6 +123,7 @@ pub fn run(ctx: &ToolsContext, args: &GrepArgs) -> ToolOutcome {
     )
 }
 
+/// grep 工具规格（能力 ReadOnly，全档放行）。
 pub fn spec() -> ToolSpec {
     ToolSpec {
         name: "grep",

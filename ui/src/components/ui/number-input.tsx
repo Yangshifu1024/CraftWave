@@ -1,11 +1,13 @@
 /**
- * 数字输入（shadcn Input 的数值变体）：type=number + min/step，
- * 失焦归位越界值；onChange 恒给 number（空输入回退 fallback）。
+ * 数字输入（shadcn Input 的数值变体）：type=number + min/step。
+ * 失焦归位越界值（低于下限抬回下限）；onChange 恒给 number（空输入回退 fallback）。
  */
 import type { ChangeEvent } from "react";
 import { cn } from "./cn";
 import { Input } from "./input";
 
+/** NumberInput 的 props：value 当前数值；onValueChange 数值回调；
+ *  min 下限（失焦校验）；step 步进；fallback 空输入回退值；aria-label 无障碍名。 */
 export interface NumberInputProps {
   value: number;
   onValueChange: (value: number) => void;
@@ -16,6 +18,7 @@ export interface NumberInputProps {
   className?: string;
 }
 
+/** 渲染数字输入框：把原生的字符串事件翻译成稳定的 number 回调。 */
 export function NumberInput({
   value,
   onValueChange,
@@ -25,6 +28,7 @@ export function NumberInput({
   className,
   ...aria
 }: NumberInputProps) {
+  /** 输入变化：空串给 fallback；可解析的数字才上抛（保持回调签名恒为 number）。 */
   function handleChange(e: ChangeEvent<HTMLInputElement>) {
     const raw = e.target.value;
     if (raw === "") {

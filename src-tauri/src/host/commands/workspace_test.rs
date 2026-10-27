@@ -12,10 +12,12 @@ use crate::host::AppState;
 use crate::storage::SessionMeta;
 use crate::util::events::RecordingEventSink;
 
+/// 测试脚手架：在临时数据目录上建一份 AppState（事件汇用录制桩，无真实副作用）。
 fn app(data: &std::path::Path) -> AppState {
     AppState::new_in(data.to_path_buf(), Arc::new(RecordingEventSink::new()))
 }
 
+/// 造一条会话索引（字段值本身无关紧要，只关心 id 与项目归属）。
 fn meta(id: &str, project_id: Option<&str>) -> SessionMeta {
     SessionMeta {
         id: id.to_string(),

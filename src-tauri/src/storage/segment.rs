@@ -1,13 +1,24 @@
-//! append-only 分段 JSONL 读写器（§7.2 分段与封口、§7.3 落盘纪律、§7.4 原子写）。
+//! append-only 分段 JSONL 读写器（技术设计文档 §7.2 分段与封口、§7.3 落盘纪律、§7.4 原子写）。
+//!
+//! 术语解释：「append-only（只追加）」指日志只允许在末尾追加新行，永不改写或
+//! 删除已有内容；「分段」指把一个会话的全部日志切成多个编号递增的小文件
+//! （0001.jsonl、0002.jsonl …），避免单文件无限膨胀；「封口（seal）」指某一段
+//! 写满后永久关闭、不再续写，之后的新内容写到下一段；「指纹」是把全部条目行
+//! 逐行哈希串联得到的校验值（类似文件的 checksum），改动任何一行都会让指纹
+//! 对不上；「segmeta」指段清单文件 `.segmeta.json`，记录每段的统计信息和整条
+//! 追加链的指纹。数据落盘位置：每个会话一个目录，段文件与 segmeta 都在该目录内。
 //!
 //! 纪律（复刻 rig-session/4，D12）：
-//! - 追加序线性排列，永不改写/截断既有段；封口仅在写完一批后的安全点判定。
+//! - 条目按追加顺序线性排列，永不改写/截断既有段；封口仅在写完一批后的安全点判定。
 //! - 封口条件：条目数 ≥200 或字节数 ≥512KB；封口即原子写 `.segmeta.json`
 //!   （段清单 + 每段 head 条目哈希 + 全会话追加链指纹）。
 //! - 指纹 = 追加链 h₀=SHA256("")、hₙ=SHA256(hex(hₙ₋₁)||行字节)；恢复时校验
 //!   segmeta 覆盖前缀的指纹，不匹配只新增新段、绝不截断既有段。
 //! - 损坏尾段容错（§7.3「无半行」）：仅最后一段容忍——无换行收尾的半行与
 //!   首个非法 JSON 行起的内容全部跳过；非最后一段损坏属真实数据损伤，直接报错。
+//!   为什么这么设计：进程随时可能崩溃，崩溃时最后写入的那一行可能只写了一半
+//!   （没有换行符收尾），丢弃它是安全的；但中间某段损坏说明磁盘数据被外部破坏，
+//!   必须立刻报错而不是悄悄吞掉。
 
 use std::collections::HashSet;
 use std::fs::{self, OpenOptions};
@@ -29,7 +40,8 @@ pub const SEGMENT_EXT: &str = "jsonl";
 /// 段清单文件（§7.1：.segmeta.json）。
 pub const SEGMETA_FILE: &str = ".segmeta.json";
 
-/// 段信息（segmeta 元素；§7.1 `{file,count,bytes,headHash}`）。
+/// 段信息（segmeta 的清单元素；§7.1 `{file,count,bytes,headHash}`）：
+/// 一段的文件名、条目数、字节数与末行哈希。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SegmentInfo {
@@ -41,6 +53,7 @@ pub struct SegmentInfo {
 }
 
 /// 段清单与全会话指纹（§7.1：`{segments:[…], headFingerprint}`）。
+/// 「全会话指纹」指把所有条目行串起来算出的链式哈希，用于检测历史行是否被改动。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Segmeta {
@@ -50,7 +63,7 @@ pub struct Segmeta {
     pub head_fingerprint: String,
 }
 
-/// 段状态（含最后一段开放段）。
+/// 段状态（内存中跟踪的一段；含仍在写入的最后一段「开放段」）。
 #[derive(Debug)]
 struct SegmentState {
     name: String,
@@ -59,7 +72,8 @@ struct SegmentState {
     head_hash: String,
 }
 
-/// 已打开的会话日志（只读快照 + 追加原语）。
+/// 已打开的会话日志：打开时把磁盘上全部段读成只读快照，之后提供追加原语。
+/// 同一时刻一个会话目录只有一个 `SessionLog` 实例持有写权限（由上层锁保证）。
 #[derive(Debug)]
 pub struct SessionLog {
     dir: PathBuf,
@@ -77,7 +91,8 @@ pub struct SessionLog {
     revision: Option<u64>,
 }
 
-/// 条目 → JSONL 行（不含换行符）。键序 = 字段声明序，即落盘字节序。
+/// 条目 → JSONL 行（不含换行符）。serde_json 保持结构体字段声明顺序输出，
+/// 因此键序 = 字段声明序 = 落盘字节序（跨语言契约测试依赖这一点比对字节）。
 pub fn entry_line(entry: &StoredEntry) -> serde_json::Result<String> {
     serde_json::to_string(entry)
 }
@@ -90,6 +105,7 @@ fn chain_hash(prev_hex: &str, line: &[u8]) -> String {
     hex(&hasher.finalize())
 }
 
+/// 字节数组 → 小写十六进制字符串（每字节两个字符），用于哈希值的字符串表示。
 fn hex(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
@@ -117,11 +133,14 @@ fn segment_files(dir: &Path) -> io::Result<Vec<PathBuf>> {
     Ok(files.into_iter().map(|(_, p)| p).collect())
 }
 
+/// 读取段清单文件 `.segmeta.json`；文件不存在或内容不合法（解析失败）都返回 None，
+/// 由调用方决定如何处理（open 中会把「存在但解析失败」视为指纹失配）。
 fn read_segmeta(dir: &Path) -> Option<Segmeta> {
     let raw = fs::read_to_string(dir.join(SEGMETA_FILE)).ok()?;
     serde_json::from_str(&raw).ok()
 }
 
+/// `SessionLog` 的实现：打开/重建日志、查询状态、追加与封口。
 impl SessionLog {
     /// 打开（或空建）一个会话日志：扫全部段、重建条目序列并校验指纹。
     pub fn open(dir: PathBuf) -> io::Result<Self> {
@@ -350,6 +369,7 @@ impl SessionLog {
         Ok(())
     }
 
+    /// 取第 index 段的完整磁盘路径。
     fn segment_path(&self, index: usize) -> PathBuf {
         self.dir.join(&self.segments[index].name)
     }

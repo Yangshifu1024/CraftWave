@@ -1,16 +1,20 @@
 /**
- * shadcn/ui 风格 Dialog：设置页离开三选 / 供应商编辑共用的居中模态。
- * 手写实现（无 radix）：遮罩点击与 Esc 都触发 onClose，不拦截按钮区冒泡。
+ * shadcn/ui 风格 Dialog：居中模态弹框（设置页离开三选 / 供应商编辑共用）。
+ * 手写实现（不依赖 radix 组件库）：遮罩点击与 Esc 都触发 onClose，
+ * 不拦截按钮区冒泡。模态（modal）指打开时挡住背后页面、同一时刻只操作弹框。
  */
 import { type ReactNode, useEffect } from "react";
 import { Button } from "./button";
 
+/** 底部动作区的一个按钮描述：label 文案；variant 按钮变体（默认 outline）；onClick 点击回调。 */
 export interface DialogActionItem {
   label: string;
   variant?: "default" | "outline" | "ghost" | "danger";
   onClick: () => void;
 }
 
+/** Dialog 的 props：open 是否显示；title 标题；onClose 关闭回调（Esc/遮罩）；
+ *  children 正文；actions 底部按钮组；width 最大宽度（默认 440）。 */
 export interface DialogProps {
   open: boolean;
   title: string;
@@ -21,7 +25,10 @@ export interface DialogProps {
   width?: number;
 }
 
+/** 渲染居中模态弹框：标题 + 正文 + 可选按钮组。 */
 export function Dialog({ open, title, onClose, children, actions, width = 440 }: DialogProps) {
+  // 打开期间监听 Esc 关闭；isComposing 排除输入法组合键中的 Esc
+  // （用户正在用输入法打字时按 Esc 是取消候选，不应关掉弹框）
   useEffect(() => {
     if (!open) return;
     const onKeydown = (e: KeyboardEvent) => {

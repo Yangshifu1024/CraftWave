@@ -22,29 +22,19 @@ pub const THROTTLE_INTERVAL: Duration = Duration::from_millis(64);
     tag = "type"
 )]
 pub enum ChatFrame {
-    RunStarted {
-        run_id: String,
-        model: String,
-    },
-    StepStarted {
-        turn: u32,
-    },
-    TextDelta {
-        turn: u32,
-        delta: String,
-    },
-    ReasoningDelta {
-        turn: u32,
-        delta: String,
-    },
-    ToolStarted {
-        call_id: String,
-        name: String,
-    },
-    ToolArgs {
-        call_id: String,
-        chunk: String,
-    },
+    /// run 启动：runId + 模型名。
+    RunStarted { run_id: String, model: String },
+    /// 新 turn 开始（第 N 轮模型调用）。
+    StepStarted { turn: u32 },
+    /// 正文文本增量。
+    TextDelta { turn: u32, delta: String },
+    /// 推理/思考文本增量。
+    ReasoningDelta { turn: u32, delta: String },
+    /// 工具调用开始：callId + 工具名。
+    ToolStarted { call_id: String, name: String },
+    /// 工具参数增量（半截 JSON 片段，由前端拼接还原）。
+    ToolArgs { call_id: String, chunk: String },
+    /// 工具结果：ok + 人读摘要 + 可选错误面。
     ToolResult {
         call_id: String,
         ok: bool,
@@ -53,6 +43,7 @@ pub enum ChatFrame {
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<FrameError>,
     },
+    /// run 终态：原因/总时长/工具数/轮数。
     RunEnded {
         reason: EndReason,
         duration_ms: u64,
@@ -61,11 +52,15 @@ pub enum ChatFrame {
     },
 }
 
+/// run 的终止原因：正常完成 / 出错 / 用户取消（取消不是错误）。
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum EndReason {
+    /// 模型自然收尾。
     Done,
+    /// 运行中出错。
     Error,
+    /// 用户主动取消。
     Cancelled,
 }
 
@@ -80,6 +75,7 @@ pub struct FrameError {
 /// 帧出口：生产实现发 tauri `ipc::Channel<ChatFrame>`，测试实现收进 Vec。
 /// 抽成 trait 是为了让帧管线（节流、seq、桥接）不依赖 tauri 运行时。
 pub trait FrameSink: Send {
+    /// 送出一帧（出口处负责打 seq）。
     fn send(&mut self, frame: ChatFrame);
 }
 
@@ -97,7 +93,9 @@ pub struct SequencedFrame {
     pub frame: ChatFrame,
 }
 
+/// 收集器的 sink 实现：每帧在出口处打上递增 seq 再存入列表。
 impl FrameSink for CollectingSink {
+    /// 打上递增 seq 后入列保存。
     fn send(&mut self, frame: ChatFrame) {
         // seq 由 sink 出口递增，保证「seq 严格递增且与发送顺序一致」（§3.4 排序规则）
         let seq = self.frames.len() as u64;
@@ -115,26 +113,33 @@ impl FrameSink for CollectingSink {
 ///   必晚于同 callId 全部 toolArgs（§3.4 排序规则）。
 #[derive(Default)]
 pub struct DeltaThrottler {
+    /// 按 turn 聚合的正文增量窗口（BTreeMap 保证 flush 出帧顺序稳定）。
     text: BTreeMap<u32, String>,
+    /// 按 turn 聚合的推理增量窗口。
     reasoning: BTreeMap<u32, String>,
+    /// 按工具调用 id 聚合的参数增量窗口。
     tool_args: BTreeMap<String, String>,
     /// 上次 flush 时刻；None = 从未 flush（首帧立即）。
     last_flush: Option<std::time::Instant>,
 }
 
 impl DeltaThrottler {
+    /// 构造空窗口的节流器。
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// 累加一轮的正文增量。
     pub fn push_text(&mut self, turn: u32, delta: &str) {
         self.text.entry(turn).or_default().push_str(delta);
     }
 
+    /// 累加一轮的推理增量。
     pub fn push_reasoning(&mut self, turn: u32, delta: &str) {
         self.reasoning.entry(turn).or_default().push_str(delta);
     }
 
+    /// 累加一次工具调用的参数片段。
     pub fn push_tool_args(&mut self, call_id: &str, chunk: &str) {
         self.tool_args
             .entry(call_id.to_owned())

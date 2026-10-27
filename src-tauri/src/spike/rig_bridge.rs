@@ -1,5 +1,9 @@
 //! 【Spike】rig `StreamEvent`（provider 流事件）→ `ChatFrame` 的桥接。
 //!
+//! 防腐层（anticorruption layer）：把第三方库的类型关在一个边界转换层内
+//! 的隔离手法——库的类型只在这一层出现，库升级时只改这里，改动不会扩散
+//! 到整个工程。
+//!
 //! 对应技术设计文档 §4.3 的「MultiTurnStreamItem/流事件 → BackendEvent → 帧」
 //! 映射面：Text/Reasoning/Arguments（工具参数增量，含半截 JSON 原样转发）。
 //! rig 升级只应改到这里（防腐层 §4.1）。
@@ -17,13 +21,16 @@ pub struct RigEventBridge {
     opened_text: std::collections::BTreeSet<usize>,
 }
 
-/// 桥接产物：一帧，或无需出帧。
+/// 桥接产物：需要发出的一帧，或本事件无需出帧。
 pub enum Bridged {
+    /// 转换出的一帧，应发给前端。
     Frame(ChatFrame),
+    /// 不出帧（如登记型事件、未建模的透传负载）。
     None,
 }
 
 impl RigEventBridge {
+    /// 构造空登记表的桥接器。
     pub fn new() -> Self {
         Self::default()
     }

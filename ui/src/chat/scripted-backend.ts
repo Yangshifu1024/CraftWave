@@ -22,6 +22,8 @@ export function splitChunks(text: string, parts = 2): string[] {
   return chunks;
 }
 
+/** 用剧本队列构造一个假 adapter：每次 run 弹出一个剧本按段累积产出，
+ *  剧本耗尽时抛错（提醒测试编排漏了预置剧本）。 */
 export function createScriptedAdapter(scripts: readonly ReplyScript[]): ChatModelAdapter {
   const queue = [...scripts];
   return {

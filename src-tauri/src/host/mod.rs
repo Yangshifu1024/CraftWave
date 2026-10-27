@@ -97,6 +97,8 @@ pub struct TauriEventSink {
 }
 
 impl EventSink for TauriEventSink {
+    /// 双写出口：先照常 emit 给前端，再按事件键旁路系统通知门
+    /// （通知触发判定收在通知门内部，这里只做路由分发）。
     fn emit(&self, key: &str, payload: serde_json::Value) {
         use tauri::Emitter;
         let _ = self.app.emit(key, payload.clone());

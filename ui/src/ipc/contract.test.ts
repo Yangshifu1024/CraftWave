@@ -9,25 +9,35 @@ import { COMMANDS, EVENT_KEYS } from "./client";
 import type { MessageEntry, StoredEntry, StoredMessageEntry } from "./types";
 
 /**
- * §12.3 契约测试（前端侧，NFR-12 双向扫描 + 跨语言 roundtrip）：
+ * §12.3 契约测试（前端侧，NFR-12 双向扫描 + 跨语言 roundtrip）。
  *
- * 1. manifest 扫描：client.ts（唯一 invoke 出口）注册的命令名全集
- *    （COMMANDS 注册表 + 直接 invoke 字面量）⊆ ipc-manifest.json 的 commands，
- *    各切片命令在 client.ts 全部接线（双向）；
+ * 契约测试是什么：前后端对接口（命令名、参数类型、帧、事件、工具）有一份
+ * 共同约定，两侧各自产出一份描述，测试比对两侧必须完全一致——谁改了接口
+ * 没同步另一侧，这里就变红。
+ *
+ * 四个测试面：
+ * 1. manifest 扫描（manifest：清单文件 ipc-manifest.json，Rust 侧 cargo test
+ *    产出，罗列后端全部命令/帧/事件/工具）：client.ts（唯一 invoke 出口）注册
+ *    的命令名全集（COMMANDS 注册表 + 直接 invoke 字面量）必须 ⊆
+ *    manifest.commands，且各切片命令在 client.ts 全部接线（双向都不许缺）；
  * 2. 键面卫生：ui/src 全源码不得出现绕过唯一出口的未知 invoke 字面量；
- * 3. manifest.frames 覆盖 §3.4 P0 全集 9 帧；manifest.tools/toolSpecs 覆盖
- *    工具注册表 8 工具且与 toolkit 参数表逐字同源（§10.3，14 号票）；
- *    manifest.events 覆盖 §3.5 实装 5 键且与 EVENT_KEYS 一致；
- * 4. 跨语言 fixture：cargo test 产出的 session-tree-fixture.jsonl（Rust serde 落盘
- *    字节即 storage 分段 JSONL 行格式）——TS 镜像期望值逐条目比对 + 树还原校验。
+ * 3. 覆盖度：manifest.frames 覆盖 §3.4 P0 全集 9 帧；manifest.tools/toolSpecs
+ *    覆盖工具注册表 8 工具且与 toolkit 参数表逐字同源（§10.3，14 号票）；
+ *    manifest.events 覆盖 §3.5 实装键且与 EVENT_KEYS 一致；
+ * 4. 跨语言 fixture（fixture：测试用的固定样例数据文件）：cargo test 产出的
+ *    session-tree-fixture.jsonl（Rust serde 序列化落盘字节，即 storage 分段
+ *    JSONL 行格式）——TS 镜像期望值逐条目比对 + 树还原校验。
  *
- * 两个产物文件由 `cargo test`（src-tauri/）生成；CI 顺序 = cargo test → vitest（§12.3），
- * 缺文件即红（契约不齐不允许静默跳过）。
+ * 两个产物文件由 `cargo test`（src-tauri/）生成；CI 顺序 = cargo test → vitest
+ * （§12.3），缺文件即红（契约不齐不允许静默跳过）。
  */
 
+/** src-tauri 的 target 目录：cargo test 产出的契约文件都放在这里。 */
 const targetDir = resolve(import.meta.dirname, "../../../src-tauri/target");
+/** ui/src 源码根：键面卫生扫描的起点。 */
 const uiSrcDir = fileURLToPath(new URL("..", import.meta.url));
 
+/** cargo test 产出的 IPC 清单（结构见文件头第 1 条），beforeAll 时读入一次。 */
 let manifest: {
   commands: { name: string; args_type: string; ret_type: string }[];
   frames: string[];
@@ -49,6 +59,8 @@ beforeAll(() => {
   manifest = JSON.parse(raw) as typeof manifest;
 });
 
+/** 读 target 目录下的契约产物文件；缺失时直接报错并提示先跑 cargo test
+ *  （而不是静默跳过——契约不齐必须红）。 */
 function readArtifact(name: string): string {
   const artifactPath = resolve(targetDir, name);
   try {
@@ -60,7 +72,8 @@ function readArtifact(name: string): string {
   }
 }
 
-/** client.ts 注册的命令名全集：COMMANDS 注册表值 + 直接 invoke 字面量（防绕过注册表）。 */
+/** client.ts 注册的命令名全集：COMMANDS 注册表值 + 直接 invoke 字面量
+ *  （后者也要收进来，防止有人绕过注册表硬写字面量而漏检）。 */
 function scannedClientCommandNames(): string[] {
   const source = readFileSync(resolve(import.meta.dirname, "./client.ts"), "utf8");
   const names = new Set<string>(Object.values(COMMANDS));
@@ -78,6 +91,7 @@ const SPIKE_ONLY_INVOKES = new Set<string>([]);
 
 describe("§12.3 manifest 双向扫描", () => {
   it("client.ts 注册的命令名全部存在于 manifest.commands", () => {
+    // 前端用到的每个命令，Rust 清单都必须注册（防止前端调一个后端不存在的命令）
     const commands = new Set(manifest.commands.map((c) => c.name));
     for (const name of scannedClientCommandNames()) {
       expect(commands, `命令 ${name} 未在 manifest 中注册`).toContain(name);
@@ -105,6 +119,7 @@ describe("§12.3 manifest 双向扫描", () => {
   });
 
   it("两切片命令的契约类型名与文档锚点一致", () => {
+    // 不止命令名要对上：参数/返回值两侧的类型名也必须一致（防止只改了形状没改名）
     const find = (name: string) => {
       const command = manifest.commands.find((c) => c.name === name);
       expect(command, `manifest 缺命令 ${name}`).toBeDefined();
@@ -152,6 +167,8 @@ describe("§12.3 manifest 双向扫描", () => {
   });
 
   it("ui/src 全源码无绕过唯一出口的未知 invoke 字面量", () => {
+    // 递归扫描 ui/src 所有 ts/tsx 源码里的 invoke("…") 字面量：
+    // 出现 manifest 未登记的命令名即违规（绕过了唯一出口的约束）
     const manifestNames = new Set(manifest.commands.map((c) => c.name));
     const offenders: string[] = [];
     const walk = (dir: string) => {
@@ -175,6 +192,7 @@ describe("§12.3 manifest 双向扫描", () => {
   });
 
   it("manifest.frames 覆盖 §3.4 P0 全集 9 帧", () => {
+    // 帧清单必须恰好是 P0 全集：9 帧一个不能少（且不允许混入未知帧）
     expect(manifest.frames).toHaveLength(9);
     for (const frame of [
       "runStarted",
@@ -205,6 +223,7 @@ describe("§12.3 manifest 双向扫描", () => {
   });
 
   it("toolkit 参数表与 manifest.toolSpecs 逐字同源（§10.3 镜像声明）", () => {
+    // Rust 工具参数 schema 与前端 toolkit 声明必须逐字一致（模型卡渲染依赖它）
     expect(manifest.toolSpecs).toHaveLength(8);
     for (const spec of manifest.toolSpecs) {
       const local = (CW_TOOL_PARAMETERS as Record<string, unknown>)[spec.name];
@@ -221,6 +240,7 @@ describe("§12.3 manifest 双向扫描", () => {
   });
 
   it("manifest.events 覆盖 §3.5 实装 10 键且与 EVENT_KEYS 一致", () => {
+    // 事件清单双保险：manifest 恰好 10 键，且与前端 EVENT_KEYS 注册表完全一致
     expect(manifest.events).toEqual([
       "ask:opened",
       "ask:closed",
@@ -239,6 +259,7 @@ describe("§12.3 manifest 双向扫描", () => {
 
 // ---- 跨语言 fixture 期望值：与 src-tauri/src/ipc_manifest_test.rs 的 fixture_entries() 逐字段一致 ----
 
+/** TS 侧对 fixture 内容的镜像期望（与 Rust 侧测试里的期望值一字不差，两边同守）。 */
 const EXPECTED_ENTRIES: StoredEntry[] = [
   { kind: "session", v: 1, id: "sess-fixture", createdAt: 1760000000000 },
   {
@@ -378,6 +399,7 @@ describe("§6.1 跨语言 fixture roundtrip（Rust serde 落盘 ↔ TS 镜像）
   });
 
   it("保存载荷形状：messages = 存储条目剥离 kind 后的 MessageEntry（TS→Rust 方向）", () => {
+    // 反方向校验：save 载荷的 messages 恰好是存储条目去掉 kind 判别字段后的形态
     const messages = EXPECTED_ENTRIES.filter((e) => e.kind === "message");
     const payload: MessageEntry[] = messages.map((entry) => {
       const { kind: _kind, ...rest } = entry;

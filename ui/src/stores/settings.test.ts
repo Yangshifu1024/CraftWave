@@ -1,16 +1,19 @@
 /**
  * settings store 单测（§10.1 zustand settings 草稿模型）。
- * mock 唯一 invoke 出口（@/ipc/client），断言草稿流转与调用契约。
+ * mock 唯一 invoke 出口（@/ipc/client，即所有后端调用的收口模块），
+ * 断言草稿流转与调用契约——不依赖真实后端。
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppConfig, ProviderConfig } from "@/ipc/types";
 
+// 各 IPC 命令的测试桩（vi.fn 可按用例指定返回值或抛错）
 const saveConfig = vi.fn();
 const saveProvider = vi.fn();
 const deleteProvider = vi.fn();
 const getConfig = vi.fn();
 
+// 整体替换 IPC 客户端为 fake：store 代码以为在调后端，实际打到上面的桩
 vi.mock("@/ipc/client", () => ({
   COMMANDS: {
     getConfig: "get_config",
@@ -31,6 +34,7 @@ vi.mock("@/ipc/client", () => ({
 import { newProviderFromPreset } from "@/settings/presets";
 import { useSettingsStore } from "@/stores/settings";
 
+/** 造一个供应商配置样例（id 用于区分，其余字段值不参与断言）。 */
 function providerFixture(id: string): ProviderConfig {
   return {
     id,
@@ -41,6 +45,7 @@ function providerFixture(id: string): ProviderConfig {
   };
 }
 
+/** 造一份完整 AppConfig 样例（以传入的供应商列表为准，其余用默认值）。 */
 function configFixture(providers: ProviderConfig[]): AppConfig {
   return {
     schemaVersion: 2,
@@ -51,6 +56,7 @@ function configFixture(providers: ProviderConfig[]): AppConfig {
   };
 }
 
+// 每个用例前：清空 mock 调用记录，并把 store 重置为"草稿未加载"的初始状态
 beforeEach(() => {
   vi.clearAllMocks();
   useSettingsStore.setState({

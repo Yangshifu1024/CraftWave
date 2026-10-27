@@ -26,8 +26,10 @@ export function cardPhase(
   return "running";
 }
 
+/** 卡片读取工具参数用的宽泛类型（args 是 JSON 解析结果）。 */
 type CardArgs = Record<string, unknown>;
 
+/** 卡片通用 props：assistant-ui 传入的工具调用 part 数据 + 卡片标题。 */
 interface CardProps extends ToolCallMessagePartProps<CardArgs, unknown> {
   title: string;
 }
@@ -124,10 +126,13 @@ function ToolCardShell({ title, children, ...props }: CardProps & { children?: R
   );
 }
 
+/** 从 args 取字符串字段的辅助（类型不符返回空串）。 */
 const str = (args: CardArgs, key: string): string =>
   typeof args[key] === "string" ? (args[key] as string) : "";
+/** 从 args 取数字字段的辅助（类型不符返回 undefined）。 */
 const num = (args: CardArgs, key: string): number | undefined =>
   typeof args[key] === "number" ? (args[key] as number) : undefined;
+/** 文本行数计数（空文本算 0 行），用于 +N/−N 徽标。 */
 const lineCount = (text: string): number => (text.length > 0 ? text.split("\n").length : 0);
 
 /** read：路径 + 行区间。 */
@@ -189,6 +194,7 @@ export function ListFilesCard(props: ToolCallMessagePartProps<CardArgs, unknown>
   );
 }
 
+/** grep：正则模式 + glob 过滤 + 搜索起点。 */
 export function GrepCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
   const args = (props.args ?? {}) as CardArgs;
   return (
@@ -252,6 +258,7 @@ export function PlanCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
   );
 }
 
+/** plan 工具 items 参数里单个条目的形状。 */
 interface PlanItemArg {
   id: string;
   text: string;

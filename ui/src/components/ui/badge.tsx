@@ -1,15 +1,18 @@
 /**
- * shadcn/ui 风格 Badge：供应商 API 方言 / 默认模型标记等小标签。
+ * shadcn/ui 风格 Badge：小标签（供应商 API 格式 / 模型能力等场景的辅助标记）。
  */
 import type { ReactNode } from "react";
 import { cn } from "./cn";
 
+/** Badge 的 props：children 标签内容；variant 视觉变体；className 追加类名。 */
 export interface BadgeProps {
   children: ReactNode;
+  /** secondary 实底（默认）/ outline 描边 */
   variant?: "secondary" | "outline";
   className?: string;
 }
 
+/** 渲染一个圆角胶囊小标签。 */
 export function Badge({ children, variant = "secondary", className }: BadgeProps) {
   return (
     <span

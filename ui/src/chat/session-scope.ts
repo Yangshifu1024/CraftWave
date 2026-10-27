@@ -11,8 +11,11 @@
 import { createContext, useContext } from "react";
 import type { RunSummary } from "./tree-persistence";
 
+/** 会话作用域 Context：注入「当前组件属于哪个会话」的 sessionId。
+ *  默认 "local"（未包裹 Provider 时的单会话兜底）。 */
 export const SessionScopeContext = createContext<string>("local");
 
+/** 取当前会话的 sessionId（必须在 SessionScopeContext.Provider 内使用）。 */
 export function useSessionScope(): string {
   return useContext(SessionScopeContext);
 }
@@ -20,6 +23,8 @@ export function useSessionScope(): string {
 /** 本会话 run 收口摘要表（runId → 摘要）；SessionTab 注入，缺省空表。 */
 export const RunSummariesContext = createContext<Map<string, RunSummary>>(new Map());
 
+/** 取本会话的 run 收口摘要表（折叠分组摘要行的数据源，见 tree-persistence
+ *  的 deriveRunSummaries）。 */
 export function useRunSummaries(): Map<string, RunSummary> {
   return useContext(RunSummariesContext);
 }

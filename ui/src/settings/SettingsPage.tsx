@@ -1,11 +1,12 @@
 /**
- * 设置页（布局照抄 CodeWave SettingsPage：全屏覆盖式 dialog）。
+ * 设置页（布局照抄 CodeWave——本项目的交互对标参考项目：全屏覆盖式 dialog）。
  *
  * 容器承担四件事：
- *   1. 左导航列（返回工作区 + 搜索 + 三组 10 页导航，页行带脏圆点）；
+ *   1. 左导航列（返回工作区 + 搜索 + 三组 10 页导航，页行带脏圆点。
+ *      脏（dirty）= 该页草稿与已保存基线不一致；脏圆点即"有未保存改动"提示）；
  *   2. 右内容列（操作条：页标题 + 取消/保存；页体：50% 宽居中）；
- *   3. 逐页脏标记（draft 与已保存基线的字段差集，字段归属由 PAGE_FIELDS 驱动）；
- *   4. 离开拦截（切页 / 返回 / 页内 Esc 共用同一份三选弹框）。
+ *   3. 逐页脏标记（草稿与已保存基线的字段差集，字段归属由 pageSlice 切片）；
+ *   4. 离开拦截（切页 / 返回 / 页内 Esc 共用同一份"保存 / 放弃 / 留下"三选弹框）。
  * 页面 JSX 手写；注册表（settings/registry.ts）只提供页序、页名与分组。
  * M1 数据面：providers / activeModelId / ui / proxy / approval / log 真实接线；
  * MCP / 技能 / 写入后检查 / 工作区与智能体四页保留导航占位，随后续里程碑接线。
@@ -84,6 +85,10 @@ function sameSlice(a: unknown, b: unknown): boolean {
   return JSON.stringify(normalizeForCompare(a)) === JSON.stringify(normalizeForCompare(b));
 }
 
+/** 比较前的归一化，目的是消除"假脏"：
+ *  - null / undefined / 空白字符串统一折叠为 null（"没填"与"填了又删掉"等价）；
+ *  - 数组剔除空项、对象按键名排序后递归（键顺序不同不影响比较）；
+ *  - 全空的对象/数组整体折叠为 null。 */
 function normalizeForCompare(value: unknown): unknown {
   if (value === null || value === undefined) return null;
   if (typeof value === "string") {
@@ -105,6 +110,10 @@ function normalizeForCompare(value: unknown): unknown {
 /** 离开拦截意图：切页（带目标页）或返回工作区 */
 type LeaveIntent = { kind: "tab"; tab: PageKey } | { kind: "leave" };
 
+/**
+ * 设置页容器组件：全屏浮层（onClose 由父层用于退出浮层）。
+ * 内部管理当前页、搜索词、离开拦截三选态；数据面接 settings store 草稿。
+ */
 export function SettingsPage({ onClose }: { onClose: () => void }) {
   const config = useSettingsStore((s) => s.config);
   const baseline = useSettingsStore((s) => s.baseline);
@@ -155,6 +164,7 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
     setLeaveIntent({ kind: "tab", tab: next });
   }
 
+  /** 返回工作区：无脏改动直接关，有则先走三选拦截。 */
   function requestClose() {
     if (!anyDirty) {
       onClose();
@@ -216,6 +226,7 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
     backRef.current?.focus();
   }, []);
 
+  // 全部设置页的装配表：key 对应注册表页键，body 为页面 JSX（数据未加载的页暂空）
   const pages: { key: PageKey; body: ReactNode }[] = [
     { key: "appearance", body: <AppearancePage /> },
     { key: "providers", body: config ? <ProvidersPage /> : null },
@@ -230,6 +241,7 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
   ];
   const activePage = pages.find((p) => p.key === tab) ?? pages[0];
 
+  /** 导航列表方向键移动焦点（上下/左右都算，首尾不循环）。 */
   function onNavArrow(e: ReactKeyboardEvent<HTMLDivElement>) {
     const delta =
       e.key === "ArrowDown" || e.key === "ArrowRight"
@@ -421,6 +433,7 @@ function SettingsRow({
   );
 }
 
+/** 设置分区容器：小节标题 + 卡片底板（页内每块设置的通用外框）。 */
 function SettingsSection({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="settings-section">

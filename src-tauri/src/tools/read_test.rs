@@ -6,6 +6,7 @@ use serde_json::json;
 use crate::tools::read::{ReadArgs, ReadKind, run};
 use crate::util::test_support::TestWorkspace;
 
+/// 测试辅助：构造默认参数（无窗口、text 类型）的读取参数。
 fn text_args(path: &str) -> ReadArgs {
     ReadArgs {
         path: path.to_string(),
@@ -15,6 +16,7 @@ fn text_args(path: &str) -> ReadArgs {
     }
 }
 
+/// 测试辅助：在工作区写入一个文件（自动建父目录）。
 fn write_project_file(ws: &TestWorkspace, rel: &str, content: &str) {
     if let Some(parent) = std::path::Path::new(rel).parent() {
         std::fs::create_dir_all(ws.project_file(parent.to_str().expect("utf8"))).expect("建父目录");
@@ -22,6 +24,7 @@ fn write_project_file(ws: &TestWorkspace, rel: &str, content: &str) {
     std::fs::write(ws.project_file(rel), content).expect("写文件");
 }
 
+// 断言：默认参数读全文（3 行），encoding/totalLines/content 齐全、不截断。
 #[test]
 fn reads_full_window_with_defaults() {
     let ws = TestWorkspace::new();
@@ -37,6 +40,7 @@ fn reads_full_window_with_defaults() {
     assert!(outcome.ui_summary.contains("第 1–3 行"));
 }
 
+// 断言：offset/limit 切出行窗口，窗口后仍有行时 truncated=true。
 #[test]
 fn offset_limit_window_and_truncation_flag() {
     let ws = TestWorkspace::new();
@@ -54,6 +58,7 @@ fn offset_limit_window_and_truncation_flag() {
     assert!(outcome.ui_summary.contains("第 4–6 行"));
 }
 
+// 断言：offset 超过总行数返回空内容且不算截断。
 #[test]
 fn offset_beyond_total_returns_empty_not_truncated() {
     let ws = TestWorkspace::new();
@@ -66,6 +71,7 @@ fn offset_beyond_total_returns_empty_not_truncated() {
     assert_eq!(data["truncated"], json!(false));
 }
 
+// 断言：超 512KB 单响应上限时在整行边界截断（内容以换行结尾）。
 #[test]
 fn oversize_single_response_truncates_at_line_boundary() {
     let ws = TestWorkspace::new();
@@ -81,6 +87,7 @@ fn oversize_single_response_truncates_at_line_boundary() {
     assert!(content.ends_with('\n'), "整行边界截断");
 }
 
+// 断言：GBK 文件经共用解码器正确解码为中文文本（encoding 报 GBK）。
 #[test]
 fn gbk_file_decodes_via_shared_decoder() {
     let ws = TestWorkspace::new();
@@ -92,6 +99,7 @@ fn gbk_file_decodes_via_shared_decoder() {
     assert_eq!(data["content"], json!("第一行：中文\n第二行：GBK\n"));
 }
 
+// 断言：二进制文件（前 8KB 含 NUL）不支持文本读取，报 E_INVALID_ARG。
 #[test]
 fn binary_file_is_rejected() {
     let ws = TestWorkspace::new();
@@ -103,6 +111,7 @@ fn binary_file_is_rejected() {
     assert!(err.message.contains("二进制"));
 }
 
+// 断言：kind=image 返回 base64（可原样解码还原）与正确的 mediaType。
 #[test]
 fn image_returns_base64_within_limit() {
     let ws = TestWorkspace::new();
@@ -124,6 +133,7 @@ fn image_returns_base64_within_limit() {
     assert_eq!(decoded, png);
 }
 
+// 断言：超过 3MiB 的图片被拒绝（E_INVALID_ARG）。
 #[test]
 fn image_over_3mib_is_rejected() {
     let ws = TestWorkspace::new();
@@ -136,6 +146,7 @@ fn image_over_3mib_is_rejected() {
     assert_eq!(outcome.error.expect("e").code, "E_INVALID_ARG");
 }
 
+// 断言：不支持的图片格式（bmp）被拒绝。
 #[test]
 fn unsupported_image_format_is_rejected() {
     let ws = TestWorkspace::new();
@@ -146,6 +157,7 @@ fn unsupported_image_format_is_rejected() {
     assert!(!outcome.ok);
 }
 
+// 断言：roots 外路径拒绝（E_PATH_OUTSIDE_ROOTS），不存在文件报 E_NOT_FOUND。
 #[test]
 fn outside_roots_and_missing_file() {
     let ws = TestWorkspace::new();

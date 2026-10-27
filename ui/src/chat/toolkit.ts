@@ -147,6 +147,11 @@ export const CW_TOOL_PARAMETERS: Record<string, JSONSchema7> = {
   },
 };
 
+/**
+ * 正式镜像工具注册表：8 个 M1 工具各配一张前端渲染卡（镜像工具卡——
+ * 只负责把后端工具调用过程渲染出来，不在前端执行任何工具逻辑）。
+ * 经 SessionWorkspace 的 AuiConfig(tools) 装配进各会话的聊天渲染管线。
+ */
 export const cwToolkit = defineToolkit({
   read: {
     type: "frontend",

@@ -78,6 +78,11 @@ export class FrameBuffer {
 
   constructor(private readonly now: () => number = () => performance.now()) {}
 
+  /**
+   * 收一帧并入累积态。乱序保护：帧序号 seq 必须大于已见最大序号，
+   * 重复或倒退的帧直接丢弃（后端一次只发一个 run 的帧，序号单调递增）。
+   * 每帧同时记录到达时刻埋点（供延迟统计）。
+   */
   push(frame: ChatFrame): void {
     // §5.6：前端持有 runEpoch，seq 必须 > 已见最大，否则丢弃
     if (frame.seq <= this.maxSeq) {
@@ -138,6 +143,7 @@ export class FrameBuffer {
     }
   }
 
+  /** 深拷贝当前累积态为一份完整快照（替换语义：每次都是全量内容）。 */
   snapshot(): FrameSnapshot {
     return {
       text: this.text,

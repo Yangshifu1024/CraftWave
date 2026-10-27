@@ -19,10 +19,12 @@ pub const MAX_ITEMS: usize = 100;
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlanState {
+    /// 当前计划条目（模型通过 plan 工具维护）。
     pub items: Vec<PlanItem>,
     /// 用户批准时冻结的快照（None = 未批准，不阻写）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub approved_snapshot: Option<Vec<PlanItem>>,
+    /// 用户批准的时间戳（毫秒）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub approved_at: Option<i64>,
 }
@@ -56,10 +58,13 @@ pub struct PlanArgs {
     pub items: Vec<PlanItem>,
 }
 
+/// plan 工具的动作类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PlanAction {
+    /// 全量替换计划条目。
     Set,
+    /// 按 id 合并更新（存在则替换、不存在则追加）。
     Update,
 }
 
@@ -113,6 +118,7 @@ fn validate_single_in_progress(items: &[PlanItem]) -> Result<(), ToolError> {
     Ok(())
 }
 
+/// 找出第一处重复的条目 id（无重复返回 None）。
 fn first_duplicate_id(items: &[PlanItem]) -> Option<&str> {
     let mut seen = std::collections::HashSet::new();
     items.iter().find_map(|i| {
@@ -124,6 +130,7 @@ fn first_duplicate_id(items: &[PlanItem]) -> Option<&str> {
     })
 }
 
+/// plan 工具规格（能力 Meta，全档放行）。
 pub fn spec() -> ToolSpec {
     ToolSpec {
         name: "plan",

@@ -32,11 +32,16 @@ use crate::storage::{
 /// 单 turn 的帧聚合缓冲（文本桶 + 工具桶分两次收口）。
 #[derive(Default)]
 struct TurnBuffer {
+    /// 模型输出的正文文本（TextDelta 逐段拼接）。
     text: String,
+    /// 模型的思考/推理文本（ReasoningDelta 逐段拼接）。
     reasoning: String,
+    /// 本 turn 内发起的工具调用缓冲（等结果齐了再整体落盘）。
     calls: Vec<CallBuffer>,
 }
 
+/// 单个工具调用的聚合缓冲：参数分片拼满、结果到达后凑成一对
+/// （ToolCall + ToolResult），随所在 turn 一起落盘。
 #[derive(Default)]
 struct CallBuffer {
     call_id: String,
@@ -67,6 +72,7 @@ pub struct PersistingSink {
 }
 
 impl PersistingSink {
+    /// 包装内层出口：recorder 先记账落盘，inner（Channel 或测试桩）后收帧。
     pub fn new(recorder: RunRecorder, inner: Box<dyn FrameSink>) -> Self {
         Self { recorder, inner }
     }
@@ -100,6 +106,8 @@ impl RunRecorder {
         }
     }
 
+    /// 帧分发：只聚合不落盘，收口时机交给 usage / 工具批齐 / runEnded
+    /// 三个触发点（对应下方三个 flush/finish 方法），即 §7.3 时机表。
     fn record(&mut self, frame: &ChatFrame) {
         match frame {
             ChatFrame::RunStarted { run_id, model: _ } => {
@@ -355,6 +363,7 @@ fn normalize_json(raw: &str) -> String {
         .unwrap_or_else(|_| raw.to_owned())
 }
 
+/// 当前时间的 Unix 毫秒时间戳（取不到时兜底 0，只影响展示字段不参与逻辑）。
 fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

@@ -15,24 +15,34 @@ use super::{ToolAnnotations, ToolSpec};
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AskArgs {
+    /// 问卷标题（展示给用户的总标题）。
     pub title: String,
+    /// 问题列表（至少一个问题）。
     pub questions: Vec<AskQuestionArg>,
 }
 
+/// 单个问题的参数：可带选项列表（用户点选）与自由文本开关。
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AskQuestionArg {
+    /// 问题标识（回答按 id 回填）。
     pub id: String,
+    /// 问题正文。
     pub text: String,
+    /// 选项列表（无选项请省略该字段，不要传空数组）。
     #[serde(default)]
     pub options: Option<Vec<AskChoiceArg>>,
+    /// 是否允许自由文本作答（无选项时必须为 true）。
     pub allow_free_text: bool,
 }
 
+/// 单个选项的参数（点选按钮）。
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AskChoiceArg {
+    /// 选项标识（回答按 id 回填）。
     pub id: String,
+    /// 选项展示文字。
     pub label: String,
 }
 
@@ -100,6 +110,7 @@ pub fn build_payload(args: &AskArgs) -> Result<AskPayload, ToolError> {
     })
 }
 
+/// ask 工具规格（能力 Interactive，全档放行）。
 pub fn spec() -> ToolSpec {
     ToolSpec {
         name: "ask",

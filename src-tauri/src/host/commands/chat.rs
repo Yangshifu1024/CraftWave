@@ -80,6 +80,7 @@ pub struct RunConfig {
     pub steer: bool,
 }
 
+/// maxTurns 缺省值：单次 run 最多跑 24 个来回（防止模型无限循环烧钱）。
 fn default_max_turns() -> u32 {
     24
 }
@@ -222,6 +223,8 @@ struct EventfulSink {
 }
 
 impl EventfulSink {
+    /// 把本轮增量累进共享的会话用量表，并发出全量快照事件
+    /// （前端只认事件里的全量值，不自己加总）。
     fn send_tokens_update(&mut self, delta: &UsageTotal) {
         let mut map = self
             .session_usage
@@ -258,6 +261,7 @@ fn sub_usage(a: &UsageTotal, b: &UsageTotal) -> UsageTotal {
     }
 }
 
+/// 当前时间的 Unix 毫秒时间戳（取不到时兜底 0）。
 fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -419,9 +423,13 @@ async fn wait_approval(
         }),
     );
 
+    // 挂起的三种醒来方式（select 多路等待的结果归一化）
     enum Wait {
+        /// 前端 resolve_ask 送回了应答（None 表示发送端已丢弃）。
         Answer(Option<AskAnswer>),
+        /// 用户点了取消（run 的取消令牌触发）。
         Cancelled,
+        /// autoConfirm 开启且等满 300 秒无人回应。
         AutoConfirm,
     }
     let wait = tokio::select! {

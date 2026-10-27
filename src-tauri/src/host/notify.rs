@@ -35,6 +35,8 @@ pub struct NotifyGate {
 }
 
 impl NotifyGate {
+    /// 构造通知门：三个入参与 AppState 共享同一实例（Arc 克隆），
+    /// 保证焦点判定与配置开关读到的都是最新状态。
     pub fn new(
         app: tauri::AppHandle,
         active_session: Arc<Mutex<Option<String>>>,

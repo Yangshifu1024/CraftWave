@@ -1,6 +1,25 @@
+//! CraftWave 桌面端 Rust 侧（Tauri）crate 根：模块声明、IPC 命令注册与应用装配。
+//!
+//! 模块划分（§2.2）：host（Tauri 命令与窗口/托盘）、agent 与 backend（run 循环）、
+//! providers（模型接入与配置）、tools（工具实现）、safety（路径围栏）、
+//! storage（会话落盘）、spike（早期原型验证代码的保留存档）、util（最底层通用件）。
+//!
+//! 装配流程见 [`run`]：单实例插件最先注册 → 窗口关闭一律拦截为隐藏 →
+//! setup 回调内建数据目录、事件汇、通知门与 AppState → 挂上 IPC 处理器 →
+//! 进入事件循环。每一步的"为什么"在函数体内以行内注释解释。
+//!
+//! IPC 注册的核心设计（单一事实源防漂移）：`invoke_handler`（真正接收前端
+//! invoke 调用的注册表）与 `ipc_manifest`（供前端比对契约的清单）由同一份
+//! `ipc_commands!` 清单宏展开。单一事实源：同一份信息只在一处维护；
+//! 漂移：两份各自手写的清单逐渐不一致。宏展开保证新增命令必然同时出现
+//! 在两处，命令名与契约类型名不可能漂移（§12.3/NFR-12）。清单（manifest）：
+//! 机器可读的契约文件，列出全部命令/帧/事件的名字与类型名，落盘
+//! target/ipc-manifest.json 供前端扫描比对。
+
 use tauri::{Manager, WebviewWindow};
 use tauri_plugin_decoration::WebviewWindowExt;
 
+// 业务模块声明（划分依据见本文件头部说明）
 pub mod agent;
 pub mod backend;
 pub mod host;
@@ -89,6 +108,8 @@ fn command_name(path: &str) -> String {
     path.rsplit("::").next().unwrap_or(path).to_string()
 }
 
+// IPC 命令清单本体：一行一个命令（可带 cfg 属性控制平台/构建）；新增或删除
+// 命令只改这里，注册表与导出清单同时生效——这正是单一事实源的落点。
 ipc_commands! {
     activate_custom_titlebar => args: (), ret: ();
     restore_native_titlebar => args: (), ret: ();
@@ -144,12 +165,16 @@ async fn activate_custom_titlebar(window: WebviewWindow) -> Result<(), String> {
     Ok(())
 }
 
-/// 看门狗超时后的退化路径：恢复系统标题栏。
+/// 看门狗（watchdog：定时检查某操作是否卡死、卡死即走备用路径的机制）
+/// 超时后的退化路径：放弃自绘标题栏，恢复系统原生标题栏。
 #[tauri::command]
 async fn restore_native_titlebar(window: WebviewWindow) -> Result<(), String> {
     window.restore_decoration().await.map_err(|e| e.to_string())
 }
 
+/// Tauri 应用装配与启动入口。装配顺序即语义顺序：单实例 → 装饰/通知插件 →
+/// 关闭拦截 → setup（数据目录、事件汇、通知门、AppState、托盘）→ IPC 处理器。
+/// 各步的"为什么这么做"见函数体内的行内注释。
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()

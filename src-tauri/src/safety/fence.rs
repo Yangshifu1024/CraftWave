@@ -69,7 +69,9 @@ pub struct Fence {
     write_signals: Option<Vec<Regex>>,
 }
 
+// Fence 的构造与判定方法。
 impl Fence {
+    /// 编译黑名单与写信号两套正则（编译失败时对应集合为 None → 判定恒 Confirm）。
     pub fn new() -> Self {
         Self {
             blacklist: compile_all(BLACKLIST),
@@ -110,12 +112,14 @@ impl Fence {
     }
 }
 
+// Default 与 new 等价（正则集在 new 里编译）。
 impl Default for Fence {
     fn default() -> Self {
         Self::new()
     }
 }
 
+/// 批量编译正则：任意一条编译失败则整体返回 None（触发上层 fail-closed）。
 fn compile_all(patterns: &[&str]) -> Option<Vec<Regex>> {
     patterns
         .iter()

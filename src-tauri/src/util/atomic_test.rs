@@ -5,6 +5,7 @@ use std::fs;
 
 use super::{write_atomic, write_json};
 
+/// 断言两次写入均为覆盖生效，且完成后目录里只剩目标文件、无临时文件残留。
 #[test]
 fn atomic_write_overwrites_no_temp_left() {
     let dir = tempfile::tempdir().unwrap();
@@ -22,6 +23,7 @@ fn atomic_write_overwrites_no_temp_left() {
     assert_eq!(leftovers.len(), 1, "目录内只应剩目标文件，无临时残留");
 }
 
+/// 断言目标父目录整段缺失时，会自动逐级创建后写入成功。
 #[test]
 fn atomic_write_missing_target_creates_parent() {
     let dir = tempfile::tempdir().unwrap();
@@ -30,6 +32,7 @@ fn atomic_write_missing_target_creates_parent() {
     assert_eq!(fs::read(&path).unwrap(), b"{}");
 }
 
+/// 断言对没有父目录的根路径写入时返回 InvalidInput 错误，而不是 panic。
 #[test]
 fn atomic_write_invalid_target_errors() {
     // 根路径没有父目录，应返回 InvalidInput 而非 panic
@@ -37,6 +40,7 @@ fn atomic_write_invalid_target_errors() {
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
 }
 
+/// 断言 JSON 写入会先建深层目录，且产物能被原样解析回等值 JSON（人读可用）。
 #[test]
 fn atomic_write_json_creates_dirs_readable() {
     let dir = tempfile::tempdir().unwrap();
@@ -47,6 +51,7 @@ fn atomic_write_json_creates_dirs_readable() {
     assert_eq!(v["schemaVersion"], 2);
 }
 
+/// 断言父目录创建失败（路径被同名文件挡住）时整体报错，且失败路径不留临时文件。
 #[test]
 fn atomic_write_parent_blocked_fails_no_residue() {
     let dir = tempfile::tempdir().unwrap();

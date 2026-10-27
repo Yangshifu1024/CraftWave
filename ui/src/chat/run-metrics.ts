@@ -32,6 +32,7 @@ export interface SessionMetrics {
   };
 }
 
+/** 四项计数全 0 的用量对象。 */
 const zeroUsage = (): UsageTotal => ({
   input: 0,
   output: 0,
@@ -39,6 +40,7 @@ const zeroUsage = (): UsageTotal => ({
   cacheWrite: 0,
 });
 
+/** 新会话桶的初始空指标（无速率、零用量、无运行记录）。 */
 const emptyMetrics = (): SessionMetrics => ({
   rate: null,
   turnUsage: zeroUsage(),
@@ -47,6 +49,7 @@ const emptyMetrics = (): SessionMetrics => ({
   lastRun: null,
 });
 
+/** 两份用量逐项相加（帧累计用）。 */
 function addUsage(a: UsageTotal, b: UsageTotal): UsageTotal {
   return {
     input: a.input + b.input,
@@ -56,7 +59,9 @@ function addUsage(a: UsageTotal, b: UsageTotal): UsageTotal {
   };
 }
 
+/** runMetrics store 的状态与方法面。 */
 export interface RunMetricsStore {
+  /** 按会话分桶的指标表（sessionId → 指标），跨 Tab 并行运行互不串扰。 */
   bySession: Record<string, SessionMetrics>;
   /** 帧入口：adapter 的 channel.onmessage 转发（帧不带 sessionId，入口补） */
   ingest: (sessionId: string, frame: ChatFrame) => void;
@@ -66,6 +71,8 @@ export interface RunMetricsStore {
   forgetSession: (sessionId: string) => void;
 }
 
+/** 桶级更新辅助：读桶（缺桶先补空指标）→ 变换 → 整表浅拷贝替换（保证
+ *  zustand 依赖比较能感知变化，同时不改动其他会话的桶）。 */
 function updateSession(
   bySession: Record<string, SessionMetrics>,
   sessionId: string,
@@ -75,6 +82,7 @@ function updateSession(
   return { ...bySession, [sessionId]: f(current) };
 }
 
+/** runMetrics zustand store：帧与事件两个入口写桶，按会话分桶存指标。 */
 export const useRunMetricsStore = create<RunMetricsStore>((set) => ({
   bySession: {},
 

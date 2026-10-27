@@ -16,9 +16,11 @@ pub const DEFAULT_LINE_LIMIT: u64 = 2000;
 /// 图片单文件上限（§8.3）。
 pub const MAX_IMAGE_BYTES: usize = 3 * 1024 * 1024;
 
+/// read 工具参数：目标路径 + 可选行窗口与读取类型。
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReadArgs {
+    /// 工作区内目标文件路径（相对或绝对，须在 roots 内）。
     pub path: String,
     /// 行窗口起点，1-based（缺省 1；0 容错为 1）。
     pub offset: Option<u64>,
@@ -28,10 +30,13 @@ pub struct ReadArgs {
     pub kind: Option<ReadKind>,
 }
 
+/// 读取类型：文本（按行窗口）或图片（base64 供视觉模型）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ReadKind {
+    /// 文本读取（行窗口 + 编码探测解码）。
     Text,
+    /// 图片读取（base64，≤3MiB）。
     Image,
 }
 
@@ -44,6 +49,7 @@ pub fn run(ctx: &ToolsContext, args: &ReadArgs) -> ToolOutcome {
     }
 }
 
+/// 文本读取：解码 → 行窗口切片 → 512KB 单响应上限截断（整行边界）。
 fn read_text(ctx: &ToolsContext, args: &ReadArgs) -> ToolOutcome {
     let resolved = match ctx.guard().and_then(|g| g.resolve(&args.path)) {
         Ok(p) => p,
@@ -121,6 +127,7 @@ fn read_text(ctx: &ToolsContext, args: &ReadArgs) -> ToolOutcome {
     )
 }
 
+/// 图片读取：格式与大小校验后 base64 编码返回（供视觉模型消费）。
 fn read_image(ctx: &ToolsContext, args: &ReadArgs) -> ToolOutcome {
     let resolved = match ctx.guard().and_then(|g| g.resolve(&args.path)) {
         Ok(p) => p,
@@ -166,6 +173,7 @@ fn read_image(ctx: &ToolsContext, args: &ReadArgs) -> ToolOutcome {
     )
 }
 
+/// 按扩展名推断图片 MIME 类型（仅支持 png/jpeg/gif/webp，其余 None）。
 fn image_mime(path: &str) -> Option<&'static str> {
     let ext = std::path::Path::new(path)
         .extension()?
@@ -180,6 +188,7 @@ fn image_mime(path: &str) -> Option<&'static str> {
     }
 }
 
+/// read 工具规格（能力 ReadOnly，全档放行）。
 pub fn spec() -> ToolSpec {
     ToolSpec {
         name: "read",

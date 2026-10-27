@@ -1,10 +1,15 @@
-//! project_store 测试：注册/更新/重绑/删除与一目录一项目约束。
+//! project_store 测试（独立测试文件）：注册/更新/重绑/删除与一目录一项目约束。
+//!
+//! 测试面覆盖：新建项目同时落注册表与主目录注册清单、重复 homeDir 拒绝、
+//! homeDir 变更时清单重绑（旧目录移除新目录出现）、仅改名不动清单、删除只清
+//! 注册痕迹而保留项目数据文件、home_of 根解析、更新不存在的项目报 NotFound。
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::*;
 
+// 建一个互不冲突的临时根目录（目录名带随机 uuid，支持并行跑测试）。
 fn temp_root(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "craftwave-project-store-{tag}-{}",
@@ -19,11 +24,13 @@ fn manifest_of(home: &str) -> PathBuf {
     Path::new(home).join(".craftwave").join("project.json")
 }
 
+// 建一个临时主目录并返回其路径字符串。
 fn temp_home(tag: &str) -> String {
     let dir = temp_root(tag);
     dir.to_string_lossy().into_owned()
 }
 
+// 断言：新建项目返回非空 id，注册表列出该条目，且主目录写入 rootsSnapshot=[homeDir] 的清单。
 #[test]
 fn save_new_persists_registry_and_manifest() {
     let root = temp_root("new");
@@ -42,6 +49,7 @@ fn save_new_persists_registry_and_manifest() {
     assert_eq!(manifest.roots_snapshot, vec![home]);
 }
 
+// 断言：同一主目录注册第二个项目被拒绝（一目录一项目），报 DuplicateHome。
 #[test]
 fn save_rejects_duplicate_home_dir() {
     let root = temp_root("dup");
@@ -54,6 +62,7 @@ fn save_rejects_duplicate_home_dir() {
     }
 }
 
+// 断言：修改项目主目录触发重绑——旧目录清单消失、新目录清单出现，项目 id 不变。
 #[test]
 fn home_change_rebinds_manifest() {
     let root = temp_root("rebind");
@@ -68,6 +77,7 @@ fn home_change_rebinds_manifest() {
     assert!(manifest_of(&new_home).exists());
 }
 
+// 断言：仅改名（homeDir 未变）时清单原地更新为新名，不触发搬移。
 #[test]
 fn update_without_home_change_keeps_manifest() {
     let root = temp_root("rename");
@@ -81,6 +91,7 @@ fn update_without_home_change_keeps_manifest() {
     assert_eq!(manifest.name, "新名");
 }
 
+// 断言：删除项目清除注册表条目与主目录清单，但项目数据文件原样保留，重复删除返回 None。
 #[test]
 fn delete_removes_registry_and_manifest_but_not_data() {
     let root = temp_root("delete");
@@ -101,6 +112,7 @@ fn delete_removes_registry_and_manifest_but_not_data() {
     assert_eq!(store.delete(&meta.id).unwrap(), None);
 }
 
+// 断言：home_of 按 id 解析出项目主目录，未知 id 返回 None。
 #[test]
 fn home_of_resolves_project_root() {
     let root = temp_root("homeof");
@@ -111,6 +123,7 @@ fn home_of_resolves_project_root() {
     assert_eq!(store.home_of("不存在的项目"), None);
 }
 
+// 断言：更新不存在的项目报 NotFound（带原 id）。
 #[test]
 fn update_missing_project_is_not_found() {
     let root = temp_root("missing");

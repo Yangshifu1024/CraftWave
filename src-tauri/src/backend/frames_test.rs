@@ -1,7 +1,7 @@
-//! 节流合并器与帧协议单元测试（独立测试文件，源码零测试）。
+//! 帧协议与节流合并器的单元测试（测试独立成文件，源码零测试）。
 //!
-//! 底子为 S2 spike 同名测试（原型冻结保留），增量覆盖本票产品化面：
-//! usage / stepStarted / runEnded.error 帧形与 `ts` 出口字段。
+//! 最早版本改编自早期验证原型（S2 spike）的同名测试；此后补充覆盖产品化
+//! 新增面：usage / stepStarted / runEnded.error 帧的形态与 `ts` 出口字段。
 
 use std::thread::sleep;
 use std::time::Duration;
@@ -11,6 +11,7 @@ use super::frames::{
     THROTTLE_INTERVAL, UsageTotal,
 };
 
+/// 断言同一窗口内的多个文本增量合并为一帧，且内容拼接无损。
 #[test]
 fn same_window_text_merged_lossless() {
     let mut t = DeltaThrottler::new();
@@ -28,6 +29,8 @@ fn same_window_text_merged_lossless() {
     assert_eq!(delta, "你好，世界");
 }
 
+/// 断言三类增量各自出帧且顺序固定（text → reasoning → toolArgs），
+/// 半截 JSON 片段能拼接还原。
 #[test]
 fn delta_types_own_frames_ordered() {
     let mut t = DeltaThrottler::new();
@@ -56,6 +59,7 @@ fn delta_types_own_frames_ordered() {
     assert_eq!(chunk, "{\"path\": \"/a\"}", "半截片段拼接还原完整 JSON");
 }
 
+/// 断言出帧会清空窗口：连续第二次 flush 不再产生新帧。
 #[test]
 fn flush_clears_window_second_flush_empty() {
     let mut t = DeltaThrottler::new();
@@ -68,6 +72,7 @@ fn flush_clears_window_second_flush_empty() {
     assert!(!t.has_pending());
 }
 
+/// 断言 seq 从 0 开始严格递增，且与帧的发送顺序一致。
 #[test]
 fn seq_strictly_increasing_matches_order() {
     let mut t = DeltaThrottler::new();
@@ -82,6 +87,8 @@ fn seq_strictly_increasing_matches_order() {
     }
 }
 
+/// 断言节流语义：首帧立即出，其后 64ms 窗口内不出帧，窗口等待期间的
+/// 增量不丢失（满窗口后合并出帧）。
 #[test]
 fn throttle_first_frame_immediate_within_window_quiet() {
     let mut t = DeltaThrottler::new();
@@ -102,6 +109,7 @@ fn throttle_first_frame_immediate_within_window_quiet() {
     assert_eq!(delta, "等窗口", "窗口等待期间增量不丢");
 }
 
+/// 断言帧协议字段名为 camelCase（type 值与字段名均按 §3.1 契约）。
 #[test]
 fn frame_protocol_camel_case_fields() {
     let mut t = DeltaThrottler::new();

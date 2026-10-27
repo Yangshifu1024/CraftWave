@@ -5,6 +5,7 @@ use serde_json::json;
 use super::{ListFilesArgs, MAX_ENTRIES, run};
 use crate::util::test_support::TestWorkspace;
 
+/// 测试辅助：构造默认参数（项目根、不限深、尊重 gitignore）的参数。
 fn args(path: Option<&str>) -> ListFilesArgs {
     ListFilesArgs {
         path: path.map(str::to_string),
@@ -13,6 +14,7 @@ fn args(path: Option<&str>) -> ListFilesArgs {
     }
 }
 
+/// 测试辅助：在工作区建目录（路径以 / 结尾）或文件。
 fn mk(ws: &TestWorkspace, rel: &str) {
     let p = ws.project_file(rel);
     if rel.ends_with('/') {
@@ -23,6 +25,8 @@ fn mk(ws: &TestWorkspace, rel: &str) {
     }
 }
 
+// 断言：默认尊重 .gitignore 与隐藏文件排除；目录带 "/" 后缀、
+// 深层条目按层级两空格缩进。
 #[test]
 fn lists_tree_with_gitignore_respected_by_default() {
     let ws = TestWorkspace::new();
@@ -54,6 +58,7 @@ fn lists_tree_with_gitignore_respected_by_default() {
     );
 }
 
+// 断言：respectGitignore=false 时被忽略的文件也列出。
 #[test]
 fn respect_gitignore_false_includes_ignored() {
     let ws = TestWorkspace::new();
@@ -70,6 +75,7 @@ fn respect_gitignore_false_includes_ignored() {
     );
 }
 
+// 断言：条目数达 500 上限时截断并标记 truncated=true。
 #[test]
 fn entry_cap_at_500_with_truncated_flag() {
     let ws = TestWorkspace::new();
@@ -83,6 +89,7 @@ fn entry_cap_at_500_with_truncated_flag() {
     assert!(outcome.ui_summary.contains("截断"));
 }
 
+// 断言：depth 限制遍历层级（root 不计），超出层级的条目不出现。
 #[test]
 fn depth_limits_levels() {
     let ws = TestWorkspace::new();
@@ -98,6 +105,7 @@ fn depth_limits_levels() {
     assert!(!joined.contains("deep.txt"));
 }
 
+// 断言：子目录作为起点正常列出；起点是文件（非目录）则拒绝。
 #[test]
 fn subdirectory_and_non_directory() {
     let ws = TestWorkspace::new();

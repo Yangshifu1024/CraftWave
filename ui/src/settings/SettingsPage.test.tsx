@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 /**
- * SettingsPage 布局与离开拦截测试（照抄 CodeWave 设置页交互）：
+ * SettingsPage 布局与离开拦截测试（照抄 CodeWave——交互对标项目——的设置页交互）：
  * 三组 10 页导航、切页标题联动、脏改动三选弹框、搜索态替掉导航列表。
+ * IPC 经 vi.mock 替换为 fake（不依赖真实后端）。
  */
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -10,8 +11,10 @@ import type { AppConfig } from "@/ipc/types";
 import { useSettingsStore } from "@/stores/settings";
 import { SettingsPage } from "./SettingsPage";
 
+// IPC 测试桩（vi.fn 可按用例指定返回值）
 const getConfigMock = vi.fn<() => Promise<AppConfig>>();
 const saveConfigMock = vi.fn<(config: AppConfig) => Promise<AppConfig>>();
+// 只替换读/存配置两个命令，其余保留 client.ts 真实现
 vi.mock("@/ipc/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/ipc/client")>();
   return {
@@ -21,6 +24,7 @@ vi.mock("@/ipc/client", async (importOriginal) => {
   };
 });
 
+/** 基准配置样例：草稿与基线都从这里深拷贝，保证两份独立。 */
 const BASE_CONFIG: AppConfig = {
   schemaVersion: 2,
   providers: [],
@@ -29,6 +33,7 @@ const BASE_CONFIG: AppConfig = {
   log: { level: "info" },
 };
 
+// 每个用例前：重置 mock、把 store 置为"草稿=基线"的干净状态（不脏）
 beforeEach(() => {
   getConfigMock.mockReset();
   saveConfigMock.mockReset();
@@ -41,6 +46,7 @@ beforeEach(() => {
     error: null,
   });
 });
+// 每个用例后卸载渲染出的组件，避免 DOM 残留影响下一个用例
 afterEach(cleanup);
 
 /** 把 store 草稿改脏（非供应商字段）并等脏点渲染：click 闭包里的 anyDirty 才是新值 */

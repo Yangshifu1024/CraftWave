@@ -2,6 +2,7 @@
 
 use super::ask::{AskArgs, AskQuestionArg, build_payload};
 
+/// 测试辅助：构造一个问题参数（options 为 (id, label) 列表或 None）。
 fn question(id: &str, options: Option<Vec<(&str, &str)>>, free: bool) -> AskQuestionArg {
     AskQuestionArg {
         id: id.to_owned(),
@@ -18,6 +19,7 @@ fn question(id: &str, options: Option<Vec<(&str, &str)>>, free: bool) -> AskQues
     }
 }
 
+// 断言：合法问卷构造出 Question 形态的 AskPayload，字段与选项完整保留。
 #[test]
 fn builds_question_payload() {
     let args = AskArgs {
@@ -37,6 +39,7 @@ fn builds_question_payload() {
     assert!(questions[1].allow_free_text);
 }
 
+// 断言：空白标题与空问题列表均以 E_INVALID_ARG 拒绝。
 #[test]
 fn empty_title_or_questions_rejected() {
     let err = build_payload(&AskArgs {
@@ -54,6 +57,7 @@ fn empty_title_or_questions_rejected() {
     assert!(err.message.contains("至少一个问题"));
 }
 
+// 断言：既无选项又不允许自由文本的问题被拒绝（用户无从作答）。
 #[test]
 fn no_options_no_free_text_rejected() {
     let err = build_payload(&AskArgs {
@@ -64,6 +68,7 @@ fn no_options_no_free_text_rejected() {
     assert!(err.message.contains("自由文本"), "{}", err.message);
 }
 
+// 断言：空选项列表与重复选项 id 均被拒绝。
 #[test]
 fn empty_or_duplicate_option_ids_rejected() {
     let err = build_payload(&AskArgs {

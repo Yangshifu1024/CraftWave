@@ -20,11 +20,14 @@ import type {
 } from "@/ipc/types";
 import { useAskStore } from "@/stores/ask";
 
+/** 事件桥依赖面：listen 函数可注入（生产用 ipc/client 的 listenEvent，测试换假实现）。
+ *  handler 参数标成 never 是为了让各种带具体类型的事件处理函数都能直接传入
+ *  （TypeScript 函数参数逆变放行，无需再写一次类型断言）。 */
 export interface EventBridgeDeps {
-  /** handler 参数以 never 收宽（各事件的显式类型经逆变放行）。 */
   listen: (key: string, handler: (payload: never) => void) => Promise<() => void>;
 }
 
+/** 生产依赖：用 ipc/client 的 listenEvent 真实订阅 Tauri 事件。 */
 export const defaultEventBridgeDeps: EventBridgeDeps = {
   listen: (key, handler) => listenEvent(key, handler as (payload: never) => void),
 };

@@ -1,13 +1,21 @@
-//! wire 中立消息 → rig Message 重建（§6.2 的 M1 子集）。
+//! wire 中立消息到 rig 消息的重建（技术设计文档 §6.2 的当前阶段子集）。
 //!
-//! - text/reasoning 原样映射；
-//! - toolCall + toolResult 按 callId 配对：toolCall 进 assistant content，
-//!   toolResult 合并为紧随的 user 工具结果消息（§6.2「配对合并为模型工具消息」）；
-//! - planSnapshot（计划注入随工具系统票）、runMarker 跳过；
-//! - start_chat 的消息序列（前端活动路径线性序，§6.3）末条 user 即本轮
-//!   prompt，其余为 history。
+//! 名词解释：wire 中立消息是存储层定义的通用消息格式（MessageEntry/WirePart，
+//! 不依赖任何模型 SDK，便于持久化与迁移）；重建指把历史消息从存储格式
+//! 还原成 rig 库的 Message 对象，供下一轮模型调用使用。
 //!
-//! image part 属 M2，出现即参数错误。
+//! 映射规则：
+//! - 文本与推理内容原样映射；
+//! - toolCall 与 toolResult 按调用 id 配对：toolCall 进 assistant 消息，
+//!   toolResult 合并为紧随其后的 user 工具结果消息（§6.2"配对合并为模型
+//!   工具消息"）；
+//! - planSnapshot（计划快照）与 runMarker（run 边界标记）跳过不映射
+//!   （计划注入随工具系统工单接入）；
+//! - start_chat 传入的消息序列（前端活动路径的线性顺序，§6.3）末条 user
+//!   消息即本轮 prompt（要发给模型的最新输入），其余为 history（历史
+//!   上下文）。
+//!
+//! image part（图片内容）属后续阶段，出现即按参数错误拒绝。
 
 use std::sync::Arc;
 
@@ -19,18 +27,20 @@ use rig::message::{
 
 use crate::storage::{MessageEntry, MessageRole, WirePart};
 
-/// wire 重建错误（E_INVALID_ARG 面，命令层转 IpcError）。
+/// wire 重建错误（错误码面为 E_INVALID_ARG，命令层转为 IpcError 返回前端）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WireError(pub String);
 
+/// WireError 的展示实现：直接输出内部错误文本。
 impl std::fmt::Display for WireError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
     }
 }
 
-/// 重建结果：`(history, prompt)`——末条 user 消息为 prompt（本轮发送），
-/// 其余按序重建为 history（assistant 条目内的工具结果拆为紧随 user 消息）。
+/// 切分 prompt 与 history：末条 user 消息为 prompt（本轮发送给模型），
+/// 其余按序重建为 history；assistant 条目内的工具结果拆为紧随的 user
+/// 消息。空序列或末条不是 user 均拒绝。
 pub fn split_prompt(
     entries: &[MessageEntry],
 ) -> Result<(Vec<Arc<Message>>, Arc<Message>), WireError> {
@@ -48,7 +58,7 @@ pub fn split_prompt(
     Ok((history, prompt))
 }
 
-/// 消息序列重建为 rig 消息流（§6.2）：assistant 条目内 toolCall 后随的
+/// 把消息序列重建为 rig 消息流（§6.2）：assistant 条目内 toolCall 后随的
 /// toolResult 拆为紧随的 user 工具结果消息。
 pub fn rebuild_message_stream(entries: &[MessageEntry]) -> Result<Vec<Arc<Message>>, WireError> {
     let mut out = Vec::new();
@@ -106,6 +116,8 @@ pub fn rebuild_message_stream(entries: &[MessageEntry]) -> Result<Vec<Arc<Messag
     Ok(out)
 }
 
+/// 单条消息 → rig 的 user 消息（user 消息不允许携带 toolCall，遇到即报错；
+/// 空内容时补一个空文本，避免无效消息）。
 fn to_rig_user(entry: &MessageEntry) -> Result<Message, WireError> {
     let mut content = Vec::new();
     for part in &entry.parts {
@@ -164,7 +176,7 @@ fn tool_result_contents(entry: &MessageEntry) -> Result<Vec<UserContent>, WireEr
     Ok(out)
 }
 
-/// 按同条目前置 toolCall part 配对出工具名。
+/// 按同条目内前置的 toolCall 配对出工具名（同调用 id 才算配对成功）。
 fn tool_name_for_result(entry: &MessageEntry, call_id: &str) -> Result<ToolName, WireError> {
     for part in &entry.parts {
         if let WirePart::ToolCall {
@@ -182,6 +194,7 @@ fn tool_name_for_result(entry: &MessageEntry, call_id: &str) -> Result<ToolName,
     )))
 }
 
+/// 拼接条目内的全部文本 part（system 消息降为一整段文本，换行分隔）。
 fn join_text(parts: &[WirePart]) -> String {
     parts
         .iter()

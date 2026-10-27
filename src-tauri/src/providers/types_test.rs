@@ -5,6 +5,7 @@ use serde_json::json;
 use super::types::*;
 use crate::util::errors::E_INVALID_ARG;
 
+/// 测试辅助：构造一个合法的 DeepSeek 供应商配置样本（含 Key 与单模型）。
 fn sample_provider() -> ProviderConfig {
     ProviderConfig {
         id: "11111111-1111-1111-1111-111111111111".into(),
@@ -24,6 +25,8 @@ fn sample_provider() -> ProviderConfig {
     }
 }
 
+// 断言：配置序列化为 camelCase JSON 且可选字段缺省时不出 null；
+// 序列化结果能原样反序列化还原（往返一致）。
 #[test]
 fn schema_roundtrip_camel_no_null_full_fields() {
     let mut config = AppConfig {
@@ -53,6 +56,8 @@ fn schema_roundtrip_camel_no_null_full_fields() {
     assert_eq!(deserialized, config);
 }
 
+// 断言：反序列化容忍字段缺失（各节点取缺省值），归一化后 name 去空白、
+// 窗口参数 0 被填为默认值。
 #[test]
 fn deserialize_tolerates_missing_fills_defaults() {
     let value = json!({
@@ -78,6 +83,7 @@ fn deserialize_tolerates_missing_fills_defaults() {
     );
 }
 
+// 断言：schemaVersion 不是 2 的配置在归一化时被拒绝（E_INVALID_ARG）。
 #[test]
 fn schema_version_not_two_rejected() {
     let mut config = AppConfig {
@@ -88,6 +94,7 @@ fn schema_version_not_two_rejected() {
     assert_eq!(err.code, E_INVALID_ARG);
 }
 
+// 断言：三种 apiFormat 方言字符串都能反序列化，未知值（如 "gemini"）被拒绝。
 #[test]
 fn api_format_three_dialects_compatible() {
     for (raw, expected) in [
@@ -107,6 +114,7 @@ fn api_format_three_dialects_compatible() {
     assert!(bad.is_err(), "未知 apiFormat 必须拒绝");
 }
 
+// 断言：baseUrl 只接受 http(s)，其他协议（ftp://）在归一化时被拒绝。
 #[test]
 fn base_url_only_http_s() {
     let mut config = AppConfig {
@@ -120,6 +128,7 @@ fn base_url_only_http_s() {
     assert_eq!(err.code, E_INVALID_ARG);
 }
 
+// 断言：activeModelId 指向不存在的模型（悬空）时归一化自愈为 None，不报错。
 #[test]
 fn active_model_id_dangling_heals_to_none() {
     let mut config = AppConfig {
@@ -131,6 +140,7 @@ fn active_model_id_dangling_heals_to_none() {
     assert_eq!(config.active_model_id, None);
 }
 
+// 断言：全空白 apiKey 归一化为 None（不留下空串 Key）。
 #[test]
 fn blank_api_key_normalized_to_none() {
     let mut config = AppConfig {
@@ -147,6 +157,7 @@ fn blank_api_key_normalized_to_none() {
     );
 }
 
+// 断言：三种方言的 official_base_url 分别返回正确的官方缺省地址。
 #[test]
 fn official_base_url_by_dialect() {
     assert_eq!(

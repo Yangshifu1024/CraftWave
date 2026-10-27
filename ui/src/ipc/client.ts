@@ -1,9 +1,15 @@
 /**
  * IPC 客户端唯一出口（§2.4 ipc/client.ts）。
  *
- * 命令名字符串集中在本文件的 `COMMANDS` 注册表，供 §12.3 manifest 双向扫描
- * （ui/src/ipc/contract.test.ts 对照 cargo test 产出的 ipc-manifest.json）；
- * 其余代码一律经由本文件的函数发起 IPC，禁止散落携带命令名字面量的 invoke 调用。
+ * IPC（Inter-Process Communication，进程间通信）：前端界面（WebView）与
+ * Rust 后端之间的调用通道，由 Tauri 的 invoke 函数承担——前端以命令名发起
+ * 请求，Rust 侧按命令名执行并返回结果。事件（listenEvent）则是反方向的
+ * 通知：后端主动推送给前端。
+ *
+ * "唯一出口"的含义：所有命令名字符串集中在本文件的 COMMANDS 注册表，其余
+ * 代码一律经由本文件导出的函数发起 IPC，禁止散落携带命令名字面量的 invoke
+ * 调用。好处有二：命令名改动只需改一处；契约测试（contract.test.ts）可扫描
+ * 本文件与 Rust 侧产出的命令清单双向比对，确保前后端接口没有漂移。
  */
 
 import { Channel, invoke } from "@tauri-apps/api/core";
@@ -30,7 +36,11 @@ import type {
   WorkspacePathHit,
 } from "./types";
 
-/** 本文件已接线的命令名（§3.3 键面，snake_case）。 */
+/**
+ * 本文件已接线的命令名注册表（§3.3 键面）。值用 snake_case（单词小写、下划线
+ * 分隔，如 start_chat），与 Rust 侧 #[tauri::command] 的命令名一致；契约测试
+ * 据此与 Rust 产出的 ipc-manifest.json（命令清单文件）双向比对。
+ */
 export const COMMANDS = {
   activateCustomTitlebar: "activate_custom_titlebar",
   restoreNativeTitlebar: "restore_native_titlebar",
@@ -60,7 +70,11 @@ export const COMMANDS = {
   resolveExitRequest: "resolve_exit_request",
 } as const;
 
-/** 本文件已接线的事件键（§3.5：14 号票 5 键 + 17 号票 5 键）。 */
+/**
+ * 本文件已接线的事件键注册表（§3.5：14 号票 5 键 + 17 号票 5 键）。
+ * 事件是后端主动推送给前端的通知（与命令"前端调后端"方向相反），键名按
+ * "域名:动作"命名（如 ask:opened = 询问面板被打开）。
+ */
 export const EVENT_KEYS = {
   askOpened: "ask:opened",
   askClosed: "ask:closed",
@@ -97,7 +111,9 @@ export function restoreNativeTitlebar(): Promise<void> {
   return invoke<void>(COMMANDS.restoreNativeTitlebar);
 }
 
-/** 全树同步（§6.3）：thread.export() 全树 → Rust 校验后仅追加缺失节点，返回新 revision。 */
+/** 全树同步（§6.3）：把 thread.export() 导出的整棵消息树发给 Rust 校验落盘，
+ *  Rust 只追加缺失节点并返回新 revision（版本号，用于乐观并发：保存须带上
+ *  拿到时的版本，不匹配说明有更新先落了盘，会被拒绝并要求重试）。 */
 export function saveSessionTree(args: SaveSessionTreeArgs): Promise<SaveSessionTreeResult> {
   return invoke(COMMANDS.saveSessionTree, {
     sessionId: args.sessionId,
@@ -149,7 +165,9 @@ export async function deleteProvider(providerId: DeleteProviderArgs["providerId"
   return invoke<void>(COMMANDS.deleteProvider, { providerId } satisfies DeleteProviderArgs);
 }
 
-/** §3.3 #18：启动一次 run。channel 由调用方建立（onmessage 收 ChatFrame 帧流）。 */
+/** §3.3 #18：启动一次 run（一轮模型对话）。channel 由调用方建立：Channel 是
+ *  Tauri 提供的流式通道——后端把逐帧产出（文本增量、工具调用等 ChatFrame）
+ *  连续推给 onmessage 回调，Promise 本身只在 run 结束时兑现。 */
 export function startChat(args: {
   sessionId: string;
   messages: StartChatArgs["messages"];
@@ -179,12 +197,15 @@ export function resolveAsk(askId: string, answer: AskAnswer): Promise<void> {
   });
 }
 
-/** §3.3 #26c：冻结当前计划为批准快照（计划门 §8.6，plan 卡批准按钮）。 */
+/** §3.3 #26c：冻结当前计划为批准快照。计划门（§8.6）指"计划需人工批准后
+ *  模型才动手执行"的关卡；对应计划卡片上的批准按钮。 */
 export function approvePlan(sessionId: string): Promise<void> {
   return invoke<void>(COMMANDS.approvePlan, { sessionId } satisfies { sessionId: string });
 }
 
-/** 把 invoke 的 reject 归一为 §3.1 错误负载（Rust 侧已按 {code,message,detail} 序列化）。 */
+/** 把 invoke 失败抛出的错误归一为 §3.1 统一错误负载（{code, message, detail?}）。
+ *  Rust 侧正常失败已按此结构序列化；非 IPC 来源的异常兜底为 E_INTERNAL，
+ *  让调用方拿到稳定的 code 做分支处理（如 E_SESSION_REV 重试）。 */
 export function toIpcError(err: unknown): IpcError {
   if (
     typeof err === "object" &&

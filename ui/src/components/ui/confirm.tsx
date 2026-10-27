@@ -1,9 +1,12 @@
 /**
  * 轻量确认弹框（CodeWave 删除操作的 Popconfirm 对应物）：
  * 居中小卡片 + 危险色确认按钮；Esc / 遮罩点击 = 取消。
+ * 是 Dialog 的定装组合，供"删除供应商/模型"等二次确认场景复用。
  */
 import { Dialog, type DialogActionItem } from "./dialog";
 
+/** ConfirmDialog 的 props：open 是否显示；title 标题；description 补充说明；
+ *  confirmLabel 确认按钮文案；onConfirm/onCancel 两个回调。 */
 export interface ConfirmDialogProps {
   open: boolean;
   title: string;
@@ -13,6 +16,7 @@ export interface ConfirmDialogProps {
   onCancel: () => void;
 }
 
+/** 渲染"取消 + 危险色确认"两按钮的确认弹框（宽 340）。 */
 export function ConfirmDialog({
   open,
   title,

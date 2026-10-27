@@ -46,7 +46,9 @@ pub(crate) enum MockFrame {
 
 /// 剧本步骤：自上一步起等待毫秒数 + 帧。
 pub(crate) struct ScriptStep {
+    /// 发出本帧前先等待的毫秒数（模拟真实流式的节奏间隔）。
     pub delay_ms: u64,
+    /// 要发出的帧。
     pub frame: MockFrame,
 }
 

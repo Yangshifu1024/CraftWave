@@ -41,6 +41,9 @@ function summarizeToolResult(result: unknown): string {
   return JSON.stringify(result);
 }
 
+/** 单个消息 part（消息内容的组成片段，如一段文本/一次工具调用）→
+ *  存储条目 WirePart（协议中立格式）的转换。tool-call 一个 part 会拆出
+ *  toolCall + toolResult 两条；遇到 M1 不认识的 part 类型直接抛错防静默丢数据。 */
 function partToWire(
   part: ThreadMessage["content"][number],
   role: ThreadMessage["role"],
@@ -78,6 +81,7 @@ function partToWire(
   }
 }
 
+/** 单条 assistant-ui 消息 → 一条存储条目（含 parentId 树边与 runMarker 还原）。 */
 export function messageToEntry(
   message: ThreadMessage,
   parentId: string | null,
@@ -137,6 +141,8 @@ export function readRunMarker(
   return out;
 }
 
+/** 整棵导出树 → 存储条目数组：session 条目打头、message 条目居中、
+ *  meta 条目（记录版本号与活动叶子节点）收尾。 */
 export function exportToEntries(
   repo: ExportedMessageRepository,
   sessionId: string,
@@ -155,6 +161,7 @@ export function exportToEntries(
 
 // ---- 存储条目 → 导出（还原） ----
 
+/** 按 callId 在 parts 里找配对的 toolResult（还原合并时取结果用）。 */
 function toolResultText(
   parts: WirePart[],
   callId: string,
@@ -166,6 +173,9 @@ function toolResultText(
   return found ? { ok: found.ok, summary: found.summary } : undefined;
 }
 
+/** 存储条目 → assistant-ui 可导入的消息对象（ThreadMessageLike）。
+ *  runMarker 条目还原为空 system 消息 + custom 载荷；toolCall/toolResult
+ *  两条合并回单一 tool-call part（与导出方向对称）。 */
 function entryToMessageLike(entry: StoredMessageEntry): ThreadMessageLike {
   // runMarker 条目：assistant-ui 无对应 part 类型——空 system 消息 +
   // metadata.custom.runMarker 载荷保真（messageToEntry 侧对称还原）；
@@ -235,6 +245,8 @@ function entryToMessageLike(entry: StoredMessageEntry): ThreadMessageLike {
   };
 }
 
+/** 存储条目数组 → 导出树结构（按 parentId 重建分支树，meta 的 activeLeafId
+ *  作为活动叶子 headId）。 */
 export function entriesToExported(entries: StoredEntry[]): ExportedMessageRepository {
   const meta = entries.find((e): e is StoredMetaEntry => e.kind === "meta");
   const messages = entries.filter((e): e is StoredMessageEntry => e.kind === "message");
@@ -296,15 +308,18 @@ export function deriveRunSummaries(messages: MessageEntryLike[]): Map<string, Ru
 
 // ---- 落盘（spike：单 JSON 文件；生产：逐条 JSONL）----
 
+/** 条目数组 → 单 JSON 文件文本（spike 期落盘形态，带缩进）。 */
 export function serializeSession(entries: StoredEntry[]): string {
   return `${JSON.stringify({ v: 1, entries }, null, 2)}\n`;
 }
 
+/** 条目数组 → JSONL 文本（生产落盘形态：每行一个条目，方便只追加写入）。 */
 export function serializeSessionJsonl(entries: StoredEntry[]): string {
   // 生产形态预演：每行一个条目（append-only 分段的行即条目）
   return `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`;
 }
 
+/** 单 JSON 文件文本 → 条目数组（校验必须有 entries 字段）。 */
 export function parseSession(text: string): StoredEntry[] {
   const parsed: unknown = JSON.parse(text);
   if (typeof parsed !== "object" || parsed === null || !("entries" in parsed)) {
@@ -313,6 +328,7 @@ export function parseSession(text: string): StoredEntry[] {
   return (parsed as { entries: StoredEntry[] }).entries;
 }
 
+/** JSONL 文本 → 条目数组（逐行解析，跳过空行）。 */
 export function parseSessionJsonl(text: string): StoredEntry[] {
   return text
     .split("\n")

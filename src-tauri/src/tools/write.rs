@@ -8,13 +8,18 @@ use crate::safety::tier::Capability;
 use crate::tools::{ToolAnnotations, ToolOutcome, ToolSpec, ToolsContext};
 use crate::util::errors::ToolError;
 
+/// write 工具参数：目标路径 + 完整文件内容。
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WriteArgs {
+    /// 工作区内目标文件路径（仅新建，已存在会拒绝）。
     pub path: String,
+    /// 完整文件内容（一律以 UTF-8 落盘）。
     pub content: String,
 }
 
+/// 执行 write：路径守卫校验 → 已存在拒绝（引导用 edit）→ 建父目录
+/// → 原子写落盘。
 pub fn run(ctx: &ToolsContext, args: &WriteArgs) -> ToolOutcome {
     let resolved = match ctx.guard().and_then(|g| g.resolve(&args.path)) {
         Ok(p) => p,
@@ -86,6 +91,7 @@ pub(crate) fn atomic_write_utf8(target: &std::path::Path, bytes: &[u8]) -> Resul
     }
 }
 
+/// write 工具规格（能力 FileWrite：plan 档过滤、confirm_each 档审批）。
 pub fn spec() -> ToolSpec {
     ToolSpec {
         name: "write",

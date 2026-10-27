@@ -15,6 +15,8 @@
 import { defineToolkit } from "@assistant-ui/react";
 import { ReadWorkspaceFileCard, RunCommandCard } from "./MirrorCards";
 
+/** 镜像工具注册表：read_workspace_file 与 run_command 两个镜像声明条目
+ *  （前端只渲染，不带 execute，见文件头说明）。 */
 export const mirrorToolkit = defineToolkit({
   read_workspace_file: {
     type: "frontend",

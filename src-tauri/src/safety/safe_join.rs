@@ -20,6 +20,7 @@ pub struct PathGuard {
     project_root: PathBuf,
 }
 
+// PathGuard 的构造与路径解析方法。
 impl PathGuard {
     /// roots 必须真实存在（canonicalize 失败即参数错误）。
     pub fn new(roots: Vec<PathBuf>) -> Result<Self, ToolError> {

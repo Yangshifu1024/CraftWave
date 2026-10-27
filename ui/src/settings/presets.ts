@@ -1,6 +1,9 @@
 /**
  * 内置供应商预设（TS 侧镜像 src-tauri/src/providers/presets.rs）。
  *
+ * 预设是"一键新增常用供应商"的静态模板（名称/端点/模型建议，不含凭据）；
+ * slug 是每个预设的稳定标识键（如 "openai"），两侧清单靠它对齐。
+ *
  * 预设集是静态 UX 数据：Rust 侧为权威清单（presets.rs，含测试）；
  * §3.3 命令表无 list_presets 命令，M1 骨架由前端持同源副本，
  * 两侧 slug 对齐，漂移由票 Answer 记录、后续票再收敛。
@@ -8,22 +11,30 @@
 
 import type { ApiFormat, ProviderConfig } from "@/ipc/types";
 
+/** 预设里的单个模型建议（实例化时转成 ProviderModel，id 现生成）。 */
 export interface PresetModelSuggestion {
+  /** 模型 wire id（服务商接口里的模型标识，即显示名） */
   model: string;
+  /** 上下文窗口（token 数） */
   contextWindow: number;
+  /** 单次回复输出上限（token 数） */
   maxTokens: number;
+  /** 是否支持图像输入 */
   vision: boolean;
 }
 
+/** 一个供应商预设的完整模板。 */
 export interface ProviderPreset {
   /** 前端稳定键（与 Rust 侧 slug 一致） */
   slug: string;
+  /** 展示名（实例化后成为供应商名称） */
   name: string;
   apiFormat: ApiFormat;
   baseUrl: string;
   models: PresetModelSuggestion[];
 }
 
+/** 内置供应商预设全集（顺序即设置页"从预设添加"的展示顺序）。 */
 export const BUILTIN_PRESETS: ProviderPreset[] = [
   {
     slug: "openai",
@@ -86,10 +97,12 @@ export const BUILTIN_PRESETS: ProviderPreset[] = [
   },
 ];
 
+/** 按 slug 查找预设（找不到返回 undefined）。 */
 export function findPreset(slug: string): ProviderPreset | undefined {
   return BUILTIN_PRESETS.find((p) => p.slug === slug);
 }
 
+/** 生成随机 uuid：优先用 crypto.randomUUID，老环境回退随机串。 */
 function newUuid(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return crypto.randomUUID();

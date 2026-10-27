@@ -1,4 +1,12 @@
-//! 配置协调器（§7.6，FR-14-03）：config.json 的唯一写入口。
+//! 配置协调器（技术设计文档 §7.6，FR-14-03）：config.json 的唯一写入口。
+//!
+//! 术语解释：「原子写」指先把新内容写进同目录临时文件、强制刷盘（fsync，把
+//! 操作系统缓冲区的数据真正写到磁盘）、再改名为正式文件——这样无论何时崩溃，
+//! 磁盘上的 config.json 要么是旧完整版、要么是新完整版，绝不会是写了一半的
+//! 残缺版；「0600 权限」指 unix 下只有文件主人可读写（其余用户不可见），因为
+//! 配置里可能明文存放 API Key；「缓存热替换」指提交成功后把内存缓存整体换成
+//! 指向新配置的对象，读方立刻看到新值，无需重新读盘；「归一化」指把外部传入
+//! 的配置整理成标准形态（例如去掉空项、补默认值）。
 //!
 //! 写流程：入参校验/归一化 → 临时文件写入 → fsync → rename →（unix 下
 //! 权限收紧 0600，Key 明文承载后的边界，2026-10-28 用户决策）→ 内存缓存
@@ -27,10 +35,15 @@ use crate::util::errors::IpcError;
 pub trait ConfigPayload:
     Serialize + DeserializeOwned + Default + Clone + Send + Sync + 'static
 {
+    /// 校验并整理自身字段（补默认值、去非法值）；不合法时返回错误，
+    /// 调用方据此拒绝整份提交，保证落盘的永远是标准形态。
     fn normalize(&mut self) -> Result<(), IpcError>;
 }
 
+/// 配置协调器实例：管理一个 config.json 的读写、缓存与并发协调。
+/// 同一文件路径应只创建一个实例（由 Tauri `State` 托管为全局单例）。
 pub struct ConfigStore<T: ConfigPayload> {
+    /// 配置文件完整路径。
     path: PathBuf,
     /// 写串行锁（进程内并发写协调，§7.4）。
     write_lock: Mutex<()>,
@@ -38,7 +51,9 @@ pub struct ConfigStore<T: ConfigPayload> {
     cache: Mutex<Option<Arc<T>>>,
 }
 
+/// `ConfigStore` 的实现：load 读（缓存优先）、save 整份提交、update 锁内读改写。
 impl<T: ConfigPayload> ConfigStore<T> {
+    /// 以指定文件路径构造协调器；不读盘、不建文件，首次 load 时才触碰磁盘。
     pub fn new(path: PathBuf) -> Self {
         Self {
             path,
@@ -47,6 +62,7 @@ impl<T: ConfigPayload> ConfigStore<T> {
         }
     }
 
+    /// 配置文件路径（供诊断与测试断言使用）。
     pub fn path(&self) -> &Path {
         &self.path
     }

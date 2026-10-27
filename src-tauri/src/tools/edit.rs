@@ -12,11 +12,15 @@ use crate::tools::{ToolAnnotations, ToolOutcome, ToolSpec, ToolsContext};
 use crate::util::encoding::decode_text;
 use crate::util::errors::ToolError;
 
+/// edit 工具参数：定位用 oldText + 替换用 newText，可选 version 乐观锁。
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EditArgs {
+    /// 工作区内目标文件路径。
     pub path: String,
+    /// 待替换的原文片段（必须在文件中唯一命中，否则拒绝）。
     pub old_text: String,
+    /// 替换后的文本（空串即删除该片段）。
     pub new_text: String,
     /// sha256(原文件字节) 前 16 hex；不匹配 → E_EDIT_VERSION_STALE
     /// （仍可唯一匹配则降级为警告执行）。
@@ -25,19 +29,23 @@ pub struct EditArgs {
 
 /// 匹配结论：字节区间（L1/L2）或行区间（L3），或失败。
 enum EditMatch {
+    /// L1/L2 命中：在归一化文本上的字节区间 [start, start+len)。
     ByteRange {
         start: usize,
         len: usize,
+        /// 命中的匹配级别名（"exact" / "indent-shift"，写入结果的 matchLevel）。
         level: &'static str,
     },
-    LineRange {
-        start: usize,
-        end: usize,
-    },
+    /// L3 命中：行区间 [start, end)（行号从 0 计，含 start 不含 end）。
+    LineRange { start: usize, end: usize },
+    /// 全部级别都 0 命中。
     NoMatch,
+    /// 某级别命中不止一处（绝不猜，直接拒绝）。
     Ambiguous,
 }
 
+/// 执行 edit：读文件 → 校验 version → 三级匹配 → 替换 → 原子落盘，
+/// 返回含 lineChanges 与新 version 的结果。
 pub fn run(ctx: &ToolsContext, args: &EditArgs) -> ToolOutcome {
     if args.old_text.is_empty() {
         return ToolOutcome::failure(
@@ -54,6 +62,8 @@ pub fn run(ctx: &ToolsContext, args: &EditArgs) -> ToolOutcome {
         Err(e) => return ToolOutcome::from(ToolError::from(e)),
     };
     let actual_version = version_hex(&bytes);
+    // version 指纹与当前文件不符 → 记为"过期"；不立即报错，
+    // 若 oldText 仍能唯一匹配则降级为警告继续执行（见下方 warning 分支）。
     let stale = args.version.as_ref().is_some_and(|v| *v != actual_version);
 
     // 共用解码器（C-10）+ EOL 检测。归一为 LF 域做匹配与替换，写回前还原。
@@ -180,6 +190,7 @@ fn match_three_levels(file: &str, old: &str) -> EditMatch {
     line_normalized_match(file, old)
 }
 
+/// 出现次数结论：0 命中 / 唯一命中（带起始字节偏移）/ 多处命中。
 enum UniqueHit {
     None,
     One(usize),
@@ -201,6 +212,7 @@ fn find_unique(haystack: &str, needle: &str) -> UniqueHit {
     UniqueHit::One(first)
 }
 
+/// L2 缩进平移匹配结论：唯一命中（带区间）/ 无命中 / 多处命中。
 enum IndentMatch {
     None,
     One { start: usize, len: usize },
@@ -338,6 +350,7 @@ fn version_hex(bytes: &[u8]) -> String {
         .to_string()
 }
 
+/// edit 工具规格（能力 FileWrite：plan 档过滤、confirm_each 档审批）。
 pub fn spec() -> ToolSpec {
     ToolSpec {
         name: "edit",

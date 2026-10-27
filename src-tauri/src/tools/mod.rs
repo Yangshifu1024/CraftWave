@@ -1,5 +1,9 @@
 //! 工具系统：注册表 + 各工具实现 + 批次调度（§8.1）。
 //!
+//! 工具（tool）是模型可调用的能力单元（读文件、执行命令等）；工具注册表
+//! （registry，即 [`build_registry`] 返回的清单）在启动时集中登记全部工具
+//! 规格供模型选择。
+//!
 //! M1 第二切片（14 号票）：在五文件类工具（11 号票）之上接线
 //! command/plan/ask 三工具与 suggest 后台小调用（非模型工具，不进注册表，
 //! 由 host 在 run 收尾发起）。审批门与工具卡片 UI 接线同票落地。
@@ -35,7 +39,9 @@ pub struct ToolsContext {
     pub data_root: PathBuf,
 }
 
+// ToolsContext 的构造与路径守卫方法。
 impl ToolsContext {
+    /// 构造工具执行上下文（两个根目录应传 canonical 后的绝对路径）。
     pub fn new(project_root: PathBuf, data_root: PathBuf) -> Self {
         Self {
             project_root,
@@ -49,18 +55,23 @@ impl ToolsContext {
     }
 }
 
-/// 工具注解（镜像 MCP annotations 的 P0 子集）。
+/// 工具注解（镜像 MCP annotations 的 P0 子集）：
+/// 给宿主/客户端的行为提示，不影响本端的权限判定。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolAnnotations {
+    /// 提示该工具不修改状态（只读）。
     pub read_only_hint: bool,
+    /// 提示该工具可能破坏性修改数据。
     pub destructive_hint: bool,
+    /// 提示该工具重复执行结果一致（幂等）。
     pub idempotent_hint: bool,
+    /// 提示该工具会与外部世界交互（网络等）。
     pub open_world_hint: bool,
 }
 
-/// 工具规格（§8.1）。`params_schema` 为 JSON Schema 对象，
-/// 约束 `additionalProperties: false`。
+/// 工具规格（§8.1）：注册表里的一个条目，描述工具名、能力分级与参数约束。
+/// `params_schema` 为 JSON Schema 对象，约束 `additionalProperties: false`。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolSpec {
@@ -68,18 +79,25 @@ pub struct ToolSpec {
     pub name: &'static str,
     /// 面向模型，≤800 字符。
     pub description: String,
+    /// 能力分级（决定该工具在权限矩阵中的判定路径）。
     pub capability: Capability,
+    /// 参数的 JSON Schema（模型据此构造调用参数）。
     pub params_schema: serde_json::Value,
+    /// 行为提示注解。
     pub annotations: ToolAnnotations,
 }
 
-/// 工具结果（§3.2 ToolOutcomeJson 镜像）。
+/// 工具结果（§3.2 ToolOutcomeJson 镜像）：一次工具调用的返回，
+/// 同时承载模型通道（data/error）与 UI 通道（ui_summary/detail）。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolOutcome {
+    /// 是否成功（false 时 error 有值）。
     pub ok: bool,
+    /// 成功时的结构化数据（进模型文本与边车）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<serde_json::Value>,
+    /// 失败时的错误（错误码 + 人话消息）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<ToolError>,
     /// 一行人话（UI 通道，不进模型文本）。
@@ -89,7 +107,9 @@ pub struct ToolOutcome {
     pub detail: Option<serde_json::Value>,
 }
 
+// ToolOutcome 的构造方法：成功/失败/附带 detail。
 impl ToolOutcome {
+    /// 构造成功结果（data + UI 摘要）。
     pub fn success(data: serde_json::Value, ui_summary: impl Into<String>) -> Self {
         Self {
             ok: true,
@@ -100,6 +120,7 @@ impl ToolOutcome {
         }
     }
 
+    /// 构造失败结果（错误 + UI 摘要）。
     pub fn failure(err: ToolError, ui_summary: impl Into<String>) -> Self {
         Self {
             ok: false,
@@ -117,6 +138,7 @@ impl ToolOutcome {
     }
 }
 
+// 工具错误到工具结果的兜底转换。
 impl From<ToolError> for ToolOutcome {
     /// 无更具体 UI 话术时的兜底转换（错误码即摘要）。
     fn from(err: ToolError) -> Self {

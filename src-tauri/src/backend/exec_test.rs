@@ -1,4 +1,5 @@
-//! 工具执行器适配单测：五工具分发、参数错误回喂、权限档排除。
+//! 工具执行器适配的单元测试：五个文件工具的分发执行、参数错误以
+//! E_INVALID_ARG 回喂、plan 权限档对写工具的排除。
 
 use std::sync::Arc;
 
@@ -8,6 +9,8 @@ use crate::safety::tier::PermissionTier;
 use crate::tools::ToolsContext;
 use tokio_util::sync::CancellationToken;
 
+/// 构造以临时目录为项目根的测试上下文（临时目录故意不主动清理——
+/// 单测进程生命周期内持有一个临时根即可，避免上下文被提前删掉）。
 fn temp_ctx() -> ToolsContext {
     let dir = tempfile::tempdir().expect("tempdir");
     // leak：单测生命周期内持有一个临时根即可
@@ -16,6 +19,7 @@ fn temp_ctx() -> ToolsContext {
     ToolsContext::new(root.clone(), root)
 }
 
+/// 以全开放权限档执行一次工具，返回（执行产物, 测试上下文）。
 async fn execute(name: &str, args_json: &str) -> (ToolExecution, ToolsContext) {
     let ctx = temp_ctx();
     let token = CancellationToken::new();
@@ -24,6 +28,8 @@ async fn execute(name: &str, args_json: &str) -> (ToolExecution, ToolsContext) {
     (out, ctx)
 }
 
+/// 断言 read 成功时双通道各自正确：界面摘要含文件名、模型通道文本携带
+/// 文件内容。
 #[tokio::test]
 async fn read_success_model_channel_compact_text() {
     let (out, _ctx_guard) = {
@@ -57,6 +63,8 @@ async fn read_success_model_channel_compact_text() {
     );
 }
 
+/// 断言参数不是合法 JSON 时按工具级失败收口：仍是 Completed（失败也是
+/// 收齐的结果），E_INVALID_ARG 回喂模型，run 不中断。
 #[tokio::test]
 async fn invalid_args_tool_level_failure_run_continues() {
     let (out, _ctx) = execute("read", "{oops 半截").await;
@@ -78,6 +86,7 @@ async fn invalid_args_tool_level_failure_run_continues() {
     );
 }
 
+/// 断言未知工具名同样以 E_INVALID_ARG 工具级失败回喂。
 #[tokio::test]
 async fn unknown_tool_feeds_back_invalid_arg() {
     let (out, _) = execute("rm_rf", "{}").await;
@@ -88,6 +97,7 @@ async fn unknown_tool_feeds_back_invalid_arg() {
     assert_eq!(error.expect("错误面").code, "E_INVALID_ARG");
 }
 
+/// 断言 plan 权限档下写工具被 E_TOOL_BLOCKED 排除，且文件不落盘。
 #[tokio::test]
 async fn plan_tier_write_tools_excluded_tool_blocked() {
     let ctx = temp_ctx();

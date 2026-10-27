@@ -8,6 +8,7 @@ use tokio_util::sync::CancellationToken;
 use super::command::{CommandArgs, CommandExit, MAX_TIMEOUT_SEC, SPILL_THRESHOLD, execute};
 use crate::util::test_support::TestWorkspace;
 
+/// 测试辅助：构造默认参数（无超时、无 cwd）的命令参数。
 fn args(command: &str) -> CommandArgs {
     CommandArgs {
         command: command.to_owned(),
@@ -16,6 +17,7 @@ fn args(command: &str) -> CommandArgs {
     }
 }
 
+// 断言：普通命令正常执行，退出码 0、输出可见、timedOut=false。
 #[tokio::test]
 async fn simple_command_exit_code_and_output() {
     let ws = TestWorkspace::new();
@@ -37,6 +39,7 @@ async fn simple_command_exit_code_and_output() {
     assert_eq!(data["timedOut"], false);
 }
 
+// 断言：stdout 与 stderr 合流进同一段输出，非零退出码 ok=false。
 #[tokio::test]
 async fn stdout_stderr_merged_nonzero_exit() {
     let ws = TestWorkspace::new();
@@ -60,6 +63,7 @@ async fn stdout_stderr_merged_nonzero_exit() {
     );
 }
 
+// 断言：ANSI/OSC 转义序列被清洗（正文保留、控制字符不残留）。
 #[tokio::test]
 async fn ansi_escapes_stripped() {
     let ws = TestWorkspace::new();
@@ -78,6 +82,7 @@ async fn ansi_escapes_stripped() {
     assert!(!output.contains('\u{1b}'), "CSI/OSC 全清洗：{output:?}");
 }
 
+// 断言：超时命令被及时收割（E_COMMAND_TIMEOUT），已收集的输出仍保留在 data。
 #[tokio::test]
 async fn timeout_reap_error_code_output_kept() {
     let ws = TestWorkspace::new();
@@ -97,6 +102,7 @@ async fn timeout_reap_error_code_output_kept() {
     assert!(t.elapsed() < Duration::from_secs(5), "1s 超时应及时收割");
 }
 
+// 断言：取消令牌触发后执行返回 Cancelled 且进程组被收割。
 #[tokio::test]
 async fn cancel_reaps_process_group() {
     let ws = TestWorkspace::new();
@@ -111,6 +117,7 @@ async fn cancel_reaps_process_group() {
     assert!(matches!(task.await.unwrap(), CommandExit::Cancelled));
 }
 
+// 断言：超 96KB 的输出全量落盘（spill），工具结果只带尾部 16KB 与落盘路径。
 #[tokio::test]
 async fn large_output_spilled_tail_and_path() {
     let ws = TestWorkspace::new();
@@ -138,6 +145,7 @@ async fn large_output_spilled_tail_and_path() {
     assert!(full.len() > SPILL_THRESHOLD, "全量已落盘：{}", full.len());
 }
 
+// 断言：cwd 在 roots 外被拒（E_PATH_OUTSIDE_ROOTS），roots 内相对路径放行。
 #[tokio::test]
 async fn cwd_boundary_outside_rejected_inside_ok() {
     let ws = TestWorkspace::new();
@@ -162,6 +170,7 @@ async fn cwd_boundary_outside_rejected_inside_ok() {
     assert!(outcome.ok, "cwd 在 roots 内应放行");
 }
 
+// 断言：空命令与超范围 timeoutSec 均以 E_INVALID_ARG 拒绝（参数校验）。
 #[tokio::test]
 async fn validation_empty_command_timeout_range() {
     let ws = TestWorkspace::new();

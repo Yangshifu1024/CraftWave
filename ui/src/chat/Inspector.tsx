@@ -45,6 +45,8 @@ function useContextWindow(): number {
   return window;
 }
 
+/** 右栏用量面板本体：实时速率 / 本轮用量 / 会话累计 / 上下文进度条
+ *  + 最近运行终态；头部开关控制「run 结束自动折叠」。 */
 export function Inspector() {
   const sessionId = useSessionScope();
   const { rate, turnUsage, sessionUsage, lastRun } = useSessionMetrics(sessionId);
@@ -155,6 +157,7 @@ export function Inspector() {
   );
 }
 
+/** 单行指标（标签 + 数值 + tok 单位）。 */
 function MetricRow({ label, value }: { label: string; value: number }) {
   return (
     <div className="flex justify-between">

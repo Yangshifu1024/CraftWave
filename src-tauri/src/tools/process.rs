@@ -72,7 +72,9 @@ mod win_job {
         handle: windows_sys::Win32::Foundation::HANDLE,
     }
 
+    // JobGuard 的创建、指派与收割方法。
     impl JobGuard {
+        /// 创建 Job Object 并设置 KILL_ON_JOB_CLOSE（句柄关闭即整树终止的兜底）。
         pub fn new() -> Result<Self, String> {
             use windows_sys::Win32::Foundation::CloseHandle;
             use windows_sys::Win32::System::JobObjects::*;
@@ -143,6 +145,7 @@ mod win_job {
         }
     }
 
+    // 句柄释放兜底：即便收割路径没走完，句柄关闭也会触发整树终止。
     impl Drop for JobGuard {
         fn drop(&mut self) {
             use windows_sys::Win32::Foundation::CloseHandle;

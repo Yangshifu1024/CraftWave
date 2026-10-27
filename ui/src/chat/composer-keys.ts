@@ -46,6 +46,11 @@ export function insertAtCompletion(text: string, at: number, cursor: number, pat
   return `${text.slice(0, at + 1)}${path} ${text.slice(cursor)}`;
 }
 
+/**
+ * Composer 键盘体系主 hook：返回输入框要挂的 onKeyDown/onCursor 回调、
+ * @ 补全菜单状态（atMenu）与菜单交互方法（pickActive 选中/hoverIndex 悬停）。
+ * 同时内部承担两件记账：@ 菜单的触发检测与防抖搜索、草稿实时写入会话 store。
+ */
 export function useComposerKeys(): {
   onKeyDown: (event: React.KeyboardEvent<HTMLTextAreaElement>) => void;
   onCursor: (cursor: number) => void;
@@ -72,7 +77,8 @@ export function useComposerKeys(): {
   const cycleTier = usePermissionTierStore((s) => s.cycle);
   const setDraft = useSessionsStore((s) => s.setDraft);
 
-  // 光标位置（onKeyDown/onKeyUp/onSelect 汇报；快照即可，不参与渲染）
+  /** 报告当前光标位置（onKeyDown/onKeyUp/onSelect 都会回调；存 ref 快照，
+   *  供 @ 触发检测与补全插入使用，不参与渲染）。 */
   const cursorRef = useRef(0);
   const onCursor = useCallback((cursor: number) => {
     cursorRef.current = cursor;

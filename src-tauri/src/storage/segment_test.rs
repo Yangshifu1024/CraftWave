@@ -1,4 +1,10 @@
 //! 分段 JSONL 读写器单元测试（独立测试文件，源码零测试）。
+//!
+//! 测试面覆盖：①序列化字节形状——条目判别键 `kind`、字段 camelCase、可选字段
+//! 省略规则必须与前端 TypeScript 镜像逐字节一致（跨语言契约）；②打开/追加/封口
+//! 的正常流程与往返一致性；③两个封口阈值（200 条、512KB）触发的段滚动；④崩溃
+//! 容错——半行/非法行只允许出现在最后一段且必须跳过、绝不续写损坏段；⑤指纹
+//! 校验——篡改已封口段后指纹必须失配，且失配后只开新段不截断旧段。
 
 use std::fs;
 
@@ -8,6 +14,7 @@ use super::entries::{
 };
 use super::segment::{SEGMENT_MAX_ENTRIES, Segmeta, SessionLog, entry_line};
 
+// 构造一条 user 消息条目的快捷辅助函数。
 fn user_message(id: &str, parent: Option<&str>, text: &str) -> StoredEntry {
     StoredEntry::Message(MessageEntry {
         id: id.to_string(),
@@ -22,6 +29,7 @@ fn user_message(id: &str, parent: Option<&str>, text: &str) -> StoredEntry {
     })
 }
 
+// 构造一条 meta 条目（含指定修订号 revision 与当前活跃叶子消息 id）的辅助函数。
 fn meta(revision: u64, leaf: Option<&str>) -> StoredEntry {
     StoredEntry::Meta(MetaEntry {
         active_leaf_id: leaf.map(str::to_string),
@@ -30,6 +38,7 @@ fn meta(revision: u64, leaf: Option<&str>) -> StoredEntry {
     })
 }
 
+// 标准样例日志：一条 session 头条目 + 一条 user 消息，多个测试复用。
 fn sample_log() -> Vec<StoredEntry> {
     vec![
         StoredEntry::Session(SessionEntry {
@@ -43,6 +52,7 @@ fn sample_log() -> Vec<StoredEntry> {
 
 // ---- 序列化形状（跨语言契约的字节级口径） ----
 
+// 断言：消息条目序列化后判别键为 `kind`、字段为 camelCase、值为 None 的字段整段省略。
 #[test]
 fn entry_line_kind_tag_camel_fields() {
     let line = entry_line(&sample_log()[1]).unwrap();
@@ -55,6 +65,7 @@ fn entry_line_kind_tag_camel_fields() {
     assert!(line.contains(r#""parentId":"u1""#), "{line}");
 }
 
+// 断言：toolCall/toolResult part 与 complete 状态的序列化形状与 TS 镜像逐字节一致。
 #[test]
 fn tool_part_and_status_shape() {
     let entry = StoredEntry::Message(MessageEntry {
@@ -91,6 +102,7 @@ fn tool_part_and_status_shape() {
     assert!(line.contains(r#""runId":"run-1""#), "{line}");
 }
 
+// 断言：requires-action/incomplete 状态与 planSnapshot part 的判别键为 kebab-case、字段为 camelCase。
 #[test]
 fn requires_action_incomplete_plan_items_shape() {
     let status = MessageStatus::RequiresAction {
@@ -133,6 +145,7 @@ fn requires_action_incomplete_plan_items_shape() {
 
 // ---- 打开/追加/封口 ----
 
+// 断言：追加后重新打开能完整读回同一批条目（干净落盘、无损坏、指纹通过）。
 #[test]
 fn append_read_roundtrip_clean_after_fsync() {
     let dir = tempfile::tempdir().unwrap();
@@ -153,6 +166,8 @@ fn append_read_roundtrip_clean_after_fsync() {
     assert!(reopened.fingerprint_matched());
 }
 
+// 断言：单批追加超过 200 条时第 200 条后滚动到新段，segmeta 只登记已封口的第一段，
+// 且跨段读取顺序无损、指纹仍校验通过。
 #[test]
 fn two_hundred_entries_roll_new_segment() {
     let dir = tempfile::tempdir().unwrap();
@@ -184,6 +199,7 @@ fn two_hundred_entries_roll_new_segment() {
     assert!(reopened.fingerprint_matched());
 }
 
+// 断言：单行超大内容累计超过 512KB 字节阈值时同样触发封口并滚动新段。
 #[test]
 fn large_batch_seal_byte_threshold_rolls() {
     let dir = tempfile::tempdir().unwrap();
@@ -209,6 +225,8 @@ fn large_batch_seal_byte_threshold_rolls() {
 
 // ---- 损坏尾段容错 ----
 
+// 断言：崩溃留下的无换行半行被跳过且不入指纹链；之后追加绝不续写含半行的
+// 既有段（0001 字节不变），而是滚动到新段 0002，重开后条目完整。
 #[test]
 fn crashed_half_line_skipped_new_segment() {
     let dir = tempfile::tempdir().unwrap();
@@ -241,6 +259,7 @@ fn crashed_half_line_skipped_new_segment() {
     assert_eq!(final_log.entries().len(), 3);
 }
 
+// 断言：最后一段内首个非法 JSON 行起的内容全部跳过（损坏尾段容错）。
 #[test]
 fn tail_invalid_line_skips_rest() {
     let dir = tempfile::tempdir().unwrap();
@@ -257,6 +276,7 @@ fn tail_invalid_line_skips_rest() {
     assert_eq!(reopened.entries().len(), 2);
 }
 
+// 断言：非最后一段（已封口段）中部损坏时打开必须直接报错，不做任何容错。
 #[test]
 fn non_tail_segment_corrupt_errors() {
     let dir = tempfile::tempdir().unwrap();
@@ -279,6 +299,8 @@ fn non_tail_segment_corrupt_errors() {
 
 // ---- 指纹 ----
 
+// 断言：篡改已封口段的内容（保持 JSON 合法）后指纹失配；失配时追加只写新段
+// 0002，绝不续写被篡改的既有段。
 #[test]
 fn fingerprint_mismatch_tampered_segment_no_append() {
     let dir = tempfile::tempdir().unwrap();
@@ -310,6 +332,7 @@ fn fingerprint_mismatch_tampered_segment_no_append() {
     );
 }
 
+// 断言：从未封口（无 segmeta）的日志视为可信，开放段可直接续写。
 #[test]
 fn no_segmeta_passes_open_segment_appendable() {
     let dir = tempfile::tempdir().unwrap();

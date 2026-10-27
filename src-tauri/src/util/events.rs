@@ -1,5 +1,8 @@
 //! 事件汇抽象（§3.5 事件定义）：Rust → 前端的单向事件（tauri event）。
 //!
+//! 事件汇（EventSink）：后端向前端界面"推送通知"的出口抽象——后端各处只
+//! 依赖本 trait 发事件，不直接耦合 tauri 运行时，测试可换成录音实现来断言。
+//!
 //! 放 util：backend（executor 的 ask/plan 事件）与 host（审批挂起、
 //! suggest、tokens:update）都要发射，util 是被所有层依赖的最底层；
 //! tauri 侧实现（`TauriEventSink`）在 host 装配，测试用
@@ -35,16 +38,19 @@ pub mod keys {
 
 /// 事件发射抽象：`emit(key, payload)`，payload 为已序列化 JSON。
 pub trait EventSink: Send + Sync {
+    /// 发射一个事件：`key` 取 [`keys`] 模块里的常量，payload 为 JSON 值。
     fn emit(&self, key: &str, payload: serde_json::Value);
 }
 
 /// 测试用事件汇：按序收集 (key, payload) 供断言。
 #[derive(Default)]
 pub struct RecordingEventSink {
+    /// 已收事件列表（(键, 载荷) 按到达序）；Mutex 允许多线程发射。
     events: Mutex<Vec<(String, serde_json::Value)>>,
 }
 
 impl RecordingEventSink {
+    /// 构造一个空的录音汇。
     pub fn new() -> Self {
         Self::default()
     }
@@ -67,7 +73,10 @@ impl RecordingEventSink {
     }
 }
 
+/// 录音实现：emit 即把事件追加进内部列表（另一线程 panic 导致锁中毒时也
+/// 直接恢复使用，不让测试被连带卡死）。
 impl EventSink for RecordingEventSink {
+    /// 收下一个事件并入列。
     fn emit(&self, key: &str, payload: serde_json::Value) {
         self.events
             .lock()

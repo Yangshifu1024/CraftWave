@@ -1,13 +1,16 @@
-//! rig `StreamEvent`（provider 流事件）→ `ChatFrame` 的桥接（§4.3「流事件 →
-//! BackendEvent → 帧」映射面：Text/Reasoning/Arguments（工具参数增量，含半截
-//! JSON 原样转发））。rig 升级只应改到这里（防腐层 §4.1）。
+//! rig 流事件到帧的桥接（技术设计文档 §4.3"流事件 → 帧"的映射面：
+//! 文本/推理/工具参数三类增量，参数增量为半截 JSON 时也原样转发）。
 //!
-//! callId 同源（§3.4，S2 实证约定）：工具参数流式增量阶段，rig 的流事件只携带
-//! part 序号（模型 call id 要到该 part 的 End 事件才定稿），因此 `toolStarted`/
-//! `toolArgs` 帧以桥接派生 id（`call_part_{n}`）承载；End 事件到达时登记
-//! 「模型 call id → 桥接 id」映射，RunLoop 在 CallTools 步骤发 `toolResult` 帧时
-//! 按模型 call id 反查同一桥接 id——帧面三帧同源、且与装配器产出的模型调用
-//! 一一对应，镜像工具卡可按 callId 配对（差异说明见 13 号票 Answer）。
+//! 名词解释：rig 是本项目使用的第三方大模型编排库；流事件（StreamEvent）
+//! 是模型流式回复过程中的原始事件；帧（frame）是后端发给前端的事件消息。
+//! rig 升级只应改到本文件与 `providers/`（防腐层原则，§4.1）。
+//!
+//! callId 同源问题（§3.4）：工具参数还在流式传输时，rig 的事件只携带
+//! part 序号（流内分片序号；模型真正的调用 id 要到该分片的 End 事件才
+//! 确定），因此 toolStarted/toolArgs 帧先用桥接派生 id（`call_part_{轮}_{序号}`）
+//! 承载；End 事件到达时登记"模型调用 id → 桥接 id"映射，主循环发
+//! toolResult 帧时按模型调用 id 反查出同一个桥接 id——三类帧的 id 同源，
+//! 前端工具卡片才能按 callId 把开始/参数/结果配对成一张卡。
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -15,40 +18,47 @@ use rig::streaming::{Item, PartKind, StreamEvent};
 
 use super::frames::ChatFrame;
 
-/// 单 turn 流事件桥：把 rig 流事件转成 turn 内的帧序列。
+/// 单轮流事件的桥接器：把 rig 流事件转换成轮内的帧序列。
 #[derive(Default)]
 pub struct RigEventBridge {
-    /// part 序号 → 桥接 callId（帧面同源 id）。工具调用在 Start 事件命名后登记。
+    /// 分片序号 → 桥接 callId（帧面使用的同源 id）。工具调用的 Start
+    /// 事件带名时登记。
     open_tool_calls: BTreeMap<usize, String>,
-    /// 已见过的 text part（用于在 End 时收敛登记）。
+    /// 已见过的文本分片序号（用于在 End 事件时收敛登记）。
     opened_text: BTreeSet<usize>,
-    /// 模型 call id → 桥接 callId（End 事件定稿时登记；toolResult 反查用）。
+    /// 模型调用 id → 桥接 callId（End 事件定稿时登记；发 toolResult 帧
+    /// 时反查用）。
     model_call_ids: HashMap<String, String>,
 }
 
-/// 桥接产物：一帧，或无需出帧。
+/// 桥接产物：产出一帧，或该事件无需出帧。
 pub enum Bridged {
+    /// 转换得到的一帧。
     Frame(ChatFrame),
+    /// 无需出帧（如 Start/End 事件本身不对应界面增量）。
     None,
 }
 
+/// RigEventBridge 的转换与映射查询。
 impl RigEventBridge {
+    /// 创建空桥接器。
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// 以既有「模型 call id → 桥接 id」映射播种（审批挂起恢复：挂起批的
-    /// toolStarted/toolArgs 帧已按旧映射发出，恢复后的 toolResult 须同源）。
+    /// 用既有的"模型调用 id → 桥接 id"映射播种（审批挂起恢复场景：
+    /// 挂起批的 toolStarted/toolArgs 帧已按旧映射发出，恢复后的
+    /// toolResult 必须沿用同一映射才同源）。
     pub fn seed_model_call_ids(&mut self, map: HashMap<String, String>) {
         self.model_call_ids = map;
     }
 
-    /// 映射快照（挂起时随 DriveState 带出）。
+    /// 取映射快照（挂起时随驱动状态带出，恢复时再播种回来）。
     pub fn model_call_ids(&self) -> &HashMap<String, String> {
         &self.model_call_ids
     }
 
-    /// 转换一个 rig 流事件。`turn` 为帧的 turn 字段（从 1 起）。
+    /// 转换一个 rig 流事件。`turn` 为帧的轮次字段（从 1 起）。
     pub fn bridge(&mut self, item: &Item<StreamEvent>, turn: u32) -> Bridged {
         let Item::Event(event) = item else {
             // 未建模的 provider 透传负载：不出帧（生产应记日志）
@@ -135,8 +145,9 @@ impl RigEventBridge {
         }
     }
 
-    /// 模型 call id → 帧面 callId（§3.4 同源：RunLoop 发 toolResult 帧前反查；
-    /// 映射未命中（如 End 事件尚未到达的异常路径）回退模型 id 本身）。
+    /// 按模型调用 id 反查帧面 callId（§3.4 同源：主循环发 toolResult 帧
+    /// 前调用；映射未命中——如 End 事件尚未到达的异常路径——回退用模型
+    /// id 本身，保证帧仍能发出）。
     pub fn frame_call_id_for_model(&self, model_call_id: &str) -> String {
         self.model_call_ids
             .get(model_call_id)

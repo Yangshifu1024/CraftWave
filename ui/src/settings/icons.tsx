@@ -1,11 +1,13 @@
 /**
- * 设置页图标（lucide 线性风格，24×24 / stroke 2 / round，手绘 SVG）。
+ * 设置页图标（lucide 线性风格，24×24 / 描边宽 2 / 圆角，手绘 SVG——
+ * 不引图标库，保持体积与视觉口径可控）。
  * 照抄 CodeWave 页图标集：appearance=调色板、providers=插头、network=地球、
  * security=盾牌、mcp=积木、skills=闪电、tools=勾选框、agent=机器人、
  * logs=文档、about=信息；外加导航与控件用的箭头类。
  */
 import type { SVGProps } from "react";
 
+/** 图标公共外壳：统一 viewBox / 描边风格；aria-hidden 表示装饰性图形（读屏软件忽略）。 */
 function Svg({ children, ...props }: SVGProps<SVGSVGElement>) {
   return (
     <svg
@@ -23,6 +25,7 @@ function Svg({ children, ...props }: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** 调色板图标（导航「界面」页）。 */
 export function PaletteIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <Svg {...props}>
@@ -35,6 +38,7 @@ export function PaletteIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** 插头图标（导航「模型与供应商」页）。 */
 export function PlugIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <Svg {...props}>
@@ -46,6 +50,7 @@ export function PlugIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** 地球图标（导航「网络与连接」页）。 */
 export function GlobeIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <Svg {...props}>
@@ -56,6 +61,7 @@ export function GlobeIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** 盾牌图标（导航「安全与审批」页）。 */
 export function ShieldIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <Svg {...props}>
@@ -64,6 +70,7 @@ export function ShieldIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** 积木图标（导航「MCP」页）。 */
 export function BlocksIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <Svg {...props}>
@@ -73,6 +80,7 @@ export function BlocksIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** 闪电图标（导航「技能」页）。 */
 export function ZapIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <Svg {...props}>
@@ -81,6 +89,7 @@ export function ZapIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** 勾选框图标（导航「写入后检查与校验」页）。 */
 export function CheckSquareIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <Svg {...props}>
@@ -90,6 +99,7 @@ export function CheckSquareIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** 机器人图标（导航「工作区与智能体」页）。 */
 export function BotIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <Svg {...props}>
@@ -103,6 +113,7 @@ export function BotIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** 文档图标（导航「日志」页）。 */
 export function FileTextIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <Svg {...props}>
@@ -115,6 +126,7 @@ export function FileTextIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** 信息图标（导航「关于」页）。 */
 export function InfoIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <Svg {...props}>
@@ -125,6 +137,7 @@ export function InfoIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** 左箭头图标（设置页「返回工作区」按钮）。 */
 export function ArrowLeftIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <Svg {...props}>
@@ -134,6 +147,7 @@ export function ArrowLeftIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** 下箭头图标（Select 组件右侧下拉指示）。 */
 export function ChevronDownIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <Svg {...props}>
@@ -142,6 +156,7 @@ export function ChevronDownIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** 加号图标（「添加供应商/模型/请求头」等新增按钮）。 */
 export function PlusIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <Svg {...props}>
@@ -151,6 +166,7 @@ export function PlusIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** 放大镜图标（设置页搜索框）。 */
 export function SearchIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <Svg {...props}>
@@ -160,6 +176,7 @@ export function SearchIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** 铅笔图标（「编辑」按钮）。 */
 export function PencilIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <Svg {...props}>
@@ -169,6 +186,7 @@ export function PencilIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** 垃圾桶图标（「删除」按钮）。 */
 export function TrashIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <Svg {...props}>
@@ -181,6 +199,7 @@ export function TrashIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** 眼睛图标（模型「图像」输入能力标签）。 */
 export function EyeIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <Svg {...props}>
@@ -190,6 +209,7 @@ export function EyeIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** 锁图标（不可更改的锁定标签，如「文本」输入类型）。 */
 export function LockIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <Svg {...props}>

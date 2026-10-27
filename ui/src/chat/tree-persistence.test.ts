@@ -1,3 +1,11 @@
+/**
+ * tree-persistence 双向转换测试（S4 spike，15/17 号票增量）。
+ *
+ * 测试面：用无界面（headless）的 LocalRuntime 跑剧本化对话，验证
+ * 「assistant-ui 消息树 ↔ 存储条目 ↔ JSON/JSONL 落盘」三个方向往返后
+ * 树结构逐节点一致（含分支编辑、重生成、分支切换、runMarker 收口摘要），
+ * 并核对存储条目 schema 形状与 0.15.31 导出结构的字段面。
+ */
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,6 +33,7 @@ import {
 
 type Thread = AssistantRuntime["thread"];
 
+/** 建一个无界面的 runtime 线程：适配器用剧本假后端（不渲染、不依赖 React）。 */
 function createRuntime(scripts: readonly ReplyScript[]): Thread {
   const core = new LocalRuntimeCore(
     { adapters: { chatModel: createScriptedAdapter(scripts) } },
@@ -53,6 +62,7 @@ async function waitForIdle(thread: Thread): Promise<void> {
   );
 }
 
+/** 发一条用户消息并等待回复 run 结束。 */
 async function send(thread: Thread, text: string): Promise<void> {
   // parentId 缺省 = 追加到当前活动路径尾部（null 才是"新建根分支"）
   thread.append({ role: "user", content: [{ type: "text", text }], startRun: true });
@@ -70,6 +80,7 @@ async function editUserMessage(thread: Thread, messageId: string, newText: strin
 
 // ---- 树结构语义化归一（roundtrip 逐节点比对口径） ----
 
+/** 归一后用于逐节点比对的树节点形状（只保留要比对的字段）。 */
 type NodeShape = {
   parentId: string | null;
   role: string;
@@ -78,6 +89,8 @@ type NodeShape = {
   createdAt: number;
 };
 
+/** part 归一：只留类型与内容字段，isError 的 undefined/false 归一为布尔，
+ *  避免往返转换中可选字段缺省造成的假差异。 */
 function simplifyPart(part: ThreadMessage["content"][number]): Record<string, unknown> {
   switch (part.type) {
     case "text":
@@ -99,6 +112,7 @@ function simplifyPart(part: ThreadMessage["content"][number]): Record<string, un
   }
 }
 
+/** 导出树 → 可严格比较的普通对象：节点表 + 活动路径（从 head 沿父指针走到根）。 */
 function normalizeRepo(repo: ExportedMessageRepository): {
   headId: string | null;
   nodes: Record<string, NodeShape>;
@@ -124,17 +138,20 @@ function normalizeRepo(repo: ExportedMessageRepository): {
   return { headId: repo.headId ?? null, nodes, activePath };
 }
 
+/** 两棵导出树归一后必须完全一致（roundtrip 断言核心）。 */
 function assertTreeEqual(a: ExportedMessageRepository, b: ExportedMessageRepository): void {
   expect(normalizeRepo(b)).toStrictEqual(normalizeRepo(a));
 }
 
 // ---- roundtrip 主流程：导出 → §6.1 条目 → JSON 落盘 → 读回 → 重载还原 ----
 
+/** 临时目录登记表：用例结束统一清理，避免残留。 */
 const tempDirs: string[] = [];
 afterAll(() => {
   for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
 });
 
+/** roundtrip 全流程辅助：导出 → 条目 → 写临时 JSON 文件 → 读回解析 → 还原树。 */
 function roundtripViaFile(
   repo: ExportedMessageRepository,
   sessionId: string,

@@ -1,5 +1,9 @@
 //! 共用文本解码器（附录 C-10 定案，2026-10-27 grilling）。
 //!
+//! BOM（Byte Order Mark，字节顺序标记）：文件开头的一小段特殊字节，用来
+//! 标明文本的编码与字节序（如 UTF-16LE 以 FF FE 开头）。chardetng：Mozilla
+//! 出品的编码探测库，按字节分布统计"猜"出最可能的编码。
+//!
 //! 判定顺序：BOM（UTF-8/UTF-16LE/BE）→ 严格 UTF-8 校验 → chardetng 探测
 //! → 均不中按最佳猜测渲染（预览宁乱码不报错，无效序列替换 U+FFFD）。
 //!
@@ -17,9 +21,11 @@ pub const MAX_RESPONSE_BYTES: usize = 512 * 1024;
 /// 解码结果：文本 + 实际使用的编码标签 + 是否命中 BOM。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DecodedText {
+    /// 解码出的正文（无效字节已按替换策略转为 U+FFFD，永不报错）。
     pub text: String,
     /// encoding_rs 的编码名（"UTF-8"、"UTF-16LE"、"GBK"、"windows-1252"…）。
     pub encoding: &'static str,
+    /// 输入是否以 BOM 开头（BOM 本身已剥离，不会留在 text 里）。
     pub had_bom: bool,
 }
 

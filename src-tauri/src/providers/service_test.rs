@@ -6,6 +6,7 @@ use crate::providers::types::{ApiFormat, AppConfig, ProviderConfig, ProviderMode
 use crate::storage::config_store::ConfigStore;
 use crate::util::errors::E_NOT_FOUND;
 
+/// 测试辅助：构造一个最小可用的供应商配置（单模型、无 Key）。
 fn demo_provider(id: &str, model: &str) -> ProviderConfig {
     ProviderConfig {
         id: id.into(),
@@ -25,16 +26,20 @@ fn demo_provider(id: &str, model: &str) -> ProviderConfig {
     }
 }
 
+/// 测试辅助：在临时目录下建一个指向 config.json 的配置存储。
 fn fixture(dir: &std::path::Path) -> ConfigStore<AppConfig> {
     ConfigStore::new(dir.join("config.json"))
 }
 
+/// 测试辅助（仅 unix）：取文件权限位（低 9 位，如 0o600）。
 #[cfg(unix)]
 fn mode_of(path: &std::path::Path) -> u32 {
     use std::os::unix::fs::PermissionsExt;
     std::fs::metadata(path).unwrap().permissions().mode() & 0o777
 }
 
+// 断言：save_provider 带 newKey 时 Key 明文写入 config.json，且 unix 下
+// 文件权限收紧为 0600（只有属主可读写）。
 #[test]
 fn save_provider_new_key_written_plaintext_with_tight_permissions() {
     let dir = tempfile::tempdir().unwrap();
@@ -51,6 +56,8 @@ fn save_provider_new_key_written_plaintext_with_tight_permissions() {
     assert_eq!(mode_of(&dir.path().join("config.json")), 0o600);
 }
 
+// 断言：不带 newKey 保存时，入参里的 apiKey 原样承载（整份回传口径）；
+// 新供应商不带 Key 则保存后 apiKey 为空。
 #[test]
 fn save_provider_without_key_keeps_passthrough_api_key() {
     let dir = tempfile::tempdir().unwrap();
@@ -70,6 +77,7 @@ fn save_provider_without_key_keeps_passthrough_api_key() {
     assert!(fresh.api_key.is_none());
 }
 
+// 断言：同 id 再保存是原位替换，不产生重复条目。
 #[test]
 fn save_provider_existing_id_replaced_in_place() {
     let dir = tempfile::tempdir().unwrap();
@@ -81,6 +89,7 @@ fn save_provider_existing_id_replaced_in_place() {
     assert_eq!(saved.models[0].model, "v2");
 }
 
+// 断言：空白 newKey 与空白 provider.id 都以 E_INVALID_ARG 拒绝（参数校验）。
 #[test]
 fn save_provider_rejects_blank_new_key_and_empty_id() {
     let dir = tempfile::tempdir().unwrap();
@@ -94,6 +103,7 @@ fn save_provider_rejects_blank_new_key_and_empty_id() {
     assert_eq!(err.code, "E_INVALID_ARG");
 }
 
+// 断言：删除供应商后配置中不再存在（Key 随之消失）；删除不存在的报 E_NOT_FOUND。
 #[test]
 fn delete_provider_removes_from_config() {
     let dir = tempfile::tempdir().unwrap();
@@ -107,6 +117,8 @@ fn delete_provider_removes_from_config() {
     assert_eq!(err.code, E_NOT_FOUND);
 }
 
+// 断言：save_config 返回归一化后的配置，且 unix 下落盘文件权限为 0600；
+// get_config 能读回。
 #[test]
 fn save_config_returns_normalized_and_config_file_0600() {
     let dir = tempfile::tempdir().unwrap();
@@ -123,6 +135,8 @@ fn save_config_returns_normalized_and_config_file_0600() {
     assert_eq!(loaded.providers.len(), 1);
 }
 
+// 断言：8 线程并发 save_provider 全部落盘成功、无互相覆盖丢失
+// （读-改-写在锁内串行）。
 #[test]
 fn concurrent_save_provider_all_succeed() {
     let dir = tempfile::tempdir().unwrap();

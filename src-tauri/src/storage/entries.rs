@@ -1,8 +1,16 @@
-//! §6.1 存储条目与 §3.2 WirePart 的 Rust 侧定义（serde 序列化即 JSONL 行格式）。
+//! 会话日志「条目」的 Rust 数据定义（技术设计文档 §6.1 条目类型、§3.2 WirePart）。
 //!
-//! 命名纪律（D14 + §3.1）：条目判别键 `kind`，负载字段 camelCase；TS 镜像在
-//! `ui/src/ipc/types.ts`，跨语言一致性由 §12.3 契约测试（fixture 往返）守护。
-//! 条目内容不可变（§6.1 追加规则）：编辑/重生成/分支一律追加新行，本层无改写原语。
+//! 术语解释：「条目」是会话日志（JSONL 文件，每行一个 JSON 对象）中的一行记录；
+//! 「WirePart」是消息里的一个内容片段（一段文字、一次工具调用等），前端与后端
+//! 传输和存储共用同一种结构，所以叫 wire（传输线）中立 part。这些类型加上
+//! serde 派生后，序列化结果就是日志文件的行格式，不需要手写转换代码。
+//!
+//! 命名纪律（D14 + §3.1）：条目判别键用 `kind`（JSON 里靠这个字段区分行类型），
+//! 负载字段用 camelCase（驼峰命名）；前端 TypeScript 侧的同形状定义在
+//! `ui/src/ipc/types.ts`（「TS 镜像」），跨语言一致性由 §12.3 契约测试守护
+//! （「契约测试」指用同一批样例数据在两种语言间往返序列化、比对字节是否一致的测试）。
+//! 条目内容不可变（§6.1 追加规则）：编辑消息、重新生成、切换分支一律追加新行，
+//! 本层不提供任何改写历史行的原语——这是崩溃恢复与多进程安全的基础。
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -27,7 +35,8 @@ pub enum PlanItemStatus {
     Completed,
 }
 
-/// wire 中立 part（§3.2 D8 载体）。camelCase 变体名与字段名对齐 TS 镜像。
+/// wire 中立 part（§3.2 D8 载体）：消息内容的组成片段，前端与后端共用同一形状。
+/// camelCase 变体名与字段名对齐 TS 镜像。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(
     tag = "type",
@@ -67,7 +76,7 @@ pub enum WirePart {
 }
 
 /// assistant 消息状态（assistant-ui 0.15.x `MessageStatus` 判别联合的镜像，§6.1 `status?`）。
-/// M1 只落 complete（S4 实测：import 会把 running/requires-action 改写，complete 稳定）。
+/// M1 只写入 complete（S4 实测：导入 running/requires-action 状态时前端会改写消息，complete 稳定）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(
     tag = "type",
@@ -145,7 +154,8 @@ pub struct MessageEntry {
     pub status: Option<MessageStatus>,
 }
 
-/// meta 条目（§6.1：段尾/事件后追加的轻量元数据行，追加式「最新赢」）。
+/// meta 条目（§6.1）：会话的轻量元数据行，追加在段尾或重要事件之后。
+/// 采用追加式「最新赢」——不删除旧 meta 行，读取时以最后一条 meta 为准。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MetaEntry {

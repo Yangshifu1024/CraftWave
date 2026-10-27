@@ -1,17 +1,23 @@
-//! AgentRun 步进 RunLoop（技术设计文档 §5.2）+ CallTools 审批挂起机制层 +
-//! 取消传播收齐语义（§5.3）。
+//! run 主循环（技术设计文档 §5.2）+ 工具批的审批挂起机制 + 取消传播的
+//! 收齐语义（§5.3）。
 //!
-//! 产品化自 S2/S3/S5 spike（`spike/turn.rs` 的手动循环与 `spike/cancel.rs` 的
-//! 取消版），13 号票落地帧生产/节流/callId 同源/挂起机制层；14 号票增量：
-//! - 门控批级预判（§5.4 ①–④）：CallTools 先对整批判定再执行——首个 Suspend
-//!   即挂起（**挂起时批内零执行**，恢复后 `next_step` 原样重放全部 calls，
-//!   不存在重复副作用）；Blocked 回喂错误结果帧（不中断 run）；
-//! - [`DriveState`]：跨挂起/恢复延续计时、usage 累计、工具计数与 callId 映射
-//!   （恢复不重发 `runStarted`、usage 不回退、toolResult 与挂起前
-//!   toolStarted/toolArgs 帧同源）。
+//! 名词解释：run = 一次模型任务的完整执行；主循环（RunLoop）= 驱动这个
+//! 过程的循环——反复"调模型 → 执行工具批 → 再调模型"，直到模型给出最终
+//! 答复；AgentRun 是 rig 库提供的可步进、可序列化的任务状态机，本模块
+//! 一步步驱动它，同时生产帧（后端发给前端的事件消息）。
 //!
-//! 错误语义：`PromptError`（rig 侧失败）冒泡给调用方（RunManager 的 run 任务），
-//! 由其发 `runEnded(error)` 终态帧——保证任何退出路径前端都有终态。
+//! 本模块由早期验证原型（`spike/turn.rs` 的手动循环与 `spike/cancel.rs` 的
+//! 取消版）产品化而来，当前版本要点：
+//! - 工具批的门控预判（§5.4 ①–④）：先对整批调用做完审批判定再执行——
+//!   首个需挂起项即挂起（**挂起时批内零执行**；恢复后主循环原样重放
+//!   全部调用，因此不存在重复副作用）；硬拦项回喂错误结果帧（不中断 run）；
+//! - [`DriveState`]：跨挂起/恢复延续的驱动状态（计时、用量累计、工具
+//!   计数与调用 id 映射——恢复后不重发 runStarted、用量不回退、
+//!   toolResult 与挂起前的 toolStarted/toolArgs 帧同源）。
+//!
+//! 错误语义：`PromptError`（rig 侧失败）直接冒泡给调用方（RunManager 启动
+//! 的 run 任务），由它发 runEnded(error) 终态帧——保证任何退出路径下前端
+//! 都能收到终态。
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -27,29 +33,36 @@ use super::frames::{ChatFrame, DeltaThrottler, EndReason, FrameError, FrameSink,
 use super::rig_bridge::RigEventBridge;
 use super::turn::{StreamExit, TurnDriver, usage_total};
 
-/// 被取消工具结果补挂的错误码（§3.4 toolResult.error.code / §3.6 错误码注册表）。
+/// 被取消工具的结果帧补挂的错误码（§3.4 toolResult.error.code 与 §3.6
+/// 错误码注册表中的取消错误）。
 pub const E_CANCELLED: &str = "E_CANCELLED";
 
-/// 工具执行产物（帧面 + 模型回喂面的双通道裁剪；§8.2 双通道的 RunLoop 侧形状）。
+/// 工具执行产物：帧面（给界面）与模型回喂面（给模型）的双通道裁剪
+/// （§8.2 双通道在主循环侧的形状）。
 #[derive(Debug, Clone, PartialEq)]
 pub enum ToolExecution {
     /// 执行完毕（成功或工具级失败——失败也是收齐的结果，回喂模型促其纠正）。
     Completed {
+        /// 是否成功。
         ok: bool,
+        /// 界面摘要（一行人类可读说明）。
         ui_summary: String,
+        /// 错误面（失败时携带）。
         error: Option<FrameError>,
-        /// 模型通道 compact 文本（§8.2：成功序列化 data；失败 code+message）。
+        /// 模型通道的压缩文本（§8.2：成功时序列化数据；失败时为
+        /// 错误码 + 消息）。
         model_text: String,
     },
-    /// 取消终止：`executed=false` 为批内未执行（补标记不留悬空调用），
-    /// `executed=true` 为执行中被收割（§5.3：已产生副作用的文件写不回滚）。
+    /// 取消终止：`executed=false` 为批内尚未执行（补标记不留悬空调用）；
+    /// `executed=true` 为执行中途被收割（§5.3：已产生副作用的文件写不回滚）。
     Cancelled { executed: bool, message: String },
 }
 
-/// 取消可感知的工具执行器（§5.4 门控与执行的 backend 侧契约；生产装配见
-/// [`super::exec::ToolsetExecutor`]，command 工具在实现内部以 `token`
-/// select! 收割进程组——原语见 `tools::process`）。
+/// 取消可感知的工具执行器契约（§5.4 门控与执行在 backend 侧的接口；
+/// 生产实现见 [`super::exec::ToolsetExecutor`]，command 工具在实现内部
+/// 以取消令牌 select! 收割进程组——原语见 `tools::process`）。
 pub trait CancellableExecutor: Send + Sync {
+    /// 执行一次工具调用：返回执行产物（完成/取消），实现须响应取消令牌。
     fn execute<'a>(
         &'a self,
         call_id: &'a str,
@@ -59,106 +72,120 @@ pub trait CancellableExecutor: Send + Sync {
     ) -> Pin<Box<dyn Future<Output = ToolExecution> + Send + 'a>>;
 }
 
-/// 工具门控判定（§5.4 步骤①–④）。`Allow` 直执行；`Suspend` 表示需审批/
-/// 围栏确认——RunLoop 把整只 run 序列化挂起并返回 [`RunExit::Suspended`]，
-/// 宿主拿到审批应答后反序列化恢复继续（跨重启恢复由序列化面天然支持，
-/// S3 实证）；`Blocked` 硬拦（围栏黑名单/权限过滤/计划门）——回喂错误
-/// 结果帧，不中断 run。生产策略装配见 [`super::gate::ApprovalGate`]。
+/// 工具门控判定接口（§5.4 步骤①–④）。`Allow` 直接执行；`Suspend` 表示需
+/// 审批/围栏确认——主循环把整只 run 序列化（把内存对象转成 JSON 文本保存
+/// 现场）后挂起并返回 [`RunExit::Suspended`]，宿主拿到审批应答后反序列化
+/// 恢复继续（跨重启恢复天然支持，早期原型已验证）；`Blocked` 硬拦（围栏
+/// 黑名单/权限过滤/计划门）——回喂错误结果帧，不中断 run。生产策略实现
+/// 见 [`super::gate::ApprovalGate`]。
 pub trait ToolGate: Send + Sync {
+    /// 判定一次工具调用能否执行。
     fn judge(&self, name: &str, args_json: &str) -> GateVerdict;
 }
 
+/// 门控判定的三种结论。
 #[derive(Debug, Clone, PartialEq)]
 pub enum GateVerdict {
+    /// 放行：直接执行。
     Allow,
-    /// 挂起等待审批（`fence_reason`：围栏 Confirm 的写信号原因，AskPayload 用）。
-    Suspend {
-        fence_reason: Option<String>,
-    },
-    /// 硬拦：结果帧回喂（code ∈ {E_FENCE_BLOCKED, E_TOOL_BLOCKED, E_PLAN_STALE}）。
-    Blocked {
-        code: &'static str,
-        message: String,
-    },
+    /// 挂起等待审批（`fence_reason`：围栏要求确认的写信号原因，构造询问
+    /// 载荷时用）。
+    Suspend { fence_reason: Option<String> },
+    /// 硬拦：错误结果帧回喂（code 取值为 E_FENCE_BLOCKED / E_TOOL_BLOCKED /
+    /// E_PLAN_STALE 之一）。
+    Blocked { code: &'static str, message: String },
 }
 
-/// 全放行门（测试装配；生产审批门为 [`super::gate::ApprovalGate`]）。
+/// 全放行门（测试装配用；生产审批门为 [`super::gate::ApprovalGate`]）。
 pub struct AllowAllGate;
 
+/// 全放行门的判定实现：任何调用都放行。
 impl ToolGate for AllowAllGate {
     fn judge(&self, _name: &str, _args_json: &str) -> GateVerdict {
         GateVerdict::Allow
     }
 }
 
-/// 挂起点信息：触发挂起的调用（宿主构造 AskPayload / 恢复后按签名放行用）。
+/// 挂起点信息：触发挂起的那次调用（宿主构造询问载荷、恢复后按签名放行
+/// 都要用它）。
 #[derive(Debug, Clone)]
 pub struct PendingCall {
-    /// 模型侧 call id（approve 登记签名与 spill 文件名用）。
+    /// 模型侧调用 id（approve 登记签名与挂起现场文件名用）。
     pub model_call_id: String,
+    /// 工具名。
     pub name: String,
+    /// 工具参数（JSON 文本）。
     pub args_json: String,
-    /// 围栏 Confirm 的写信号原因（None = 纯权限矩阵审批）。
+    /// 围栏要求确认的写信号原因（None = 纯权限矩阵审批）。
     pub fence_reason: Option<String>,
 }
 
-/// 跨挂起/恢复延续的驱动状态（14 号票：恢复不重发 runStarted、usage 与
-/// 工具计数不回退、callId 映射同源）。
+/// 跨挂起/恢复延续的驱动状态（恢复后不重发 runStarted、用量与工具计数
+/// 不回退、调用 id 映射同源）。
 #[derive(Debug, Clone, Default)]
 pub struct DriveState {
+    /// run 的开始时刻（恢复时延续，不重置）。
     pub started_at: Option<Instant>,
+    /// run 的用量累计（各轮相加）。
     pub total_usage: UsageTotal,
+    /// 已执行的工具调用计数。
     pub tool_count: u32,
+    /// 最新轮次编号。
     pub last_turn: u32,
-    /// 模型 call id → 桥接帧面 id（挂起时带出、恢复时播种新 bridge）。
+    /// 模型调用 id → 桥接帧面 id 映射（挂起时带出、恢复时播种新桥接器）。
     pub model_call_ids: HashMap<String, String>,
 }
 
-/// 手动循环的退出态。
+/// 主循环的退出态。
 #[derive(Debug)]
 pub enum RunExit {
     /// 自然终态（§5.3 Streaming → Done）。
     Done(Box<PromptResponse>),
-    /// 取消终态：工具结果已收齐并补标记，runEnded(cancelled) 已发出。
+    /// 取消终态：工具结果已全部收齐并补上标记，runEnded(cancelled) 已发出。
     Cancelled,
-    /// 审批挂起：整只 run 已 `serde_json` 序列化（恢复 = [`resume_run`] 后
-    /// 重新 `drive_run`，`next_step` 会重新给出未应答的 calls；挂起时批内
-    /// 零执行，恢复重放无重复副作用）。Box 收纳大负载（clippy large_enum_variant）。
+    /// 审批挂起：整只 run 已序列化为 JSON（恢复 = [`resume_run`] 后重新
+    /// `drive_run`，主循环会重新给出未应答的调用；挂起时批内零执行，
+    /// 恢复重放无重复副作用）。Box 收纳大负载（避免枚举整体变大，
+    /// clippy large_enum_variant）。
     Suspended(Box<SuspendedInfo>),
 }
 
-/// 挂起信息（[`RunExit::Suspended`] 载体）。
+/// 挂起信息（[`RunExit::Suspended`] 的载体）。
 #[derive(Debug)]
 pub struct SuspendedInfo {
+    /// 序列化后的 run 现场（恢复 = 反序列化后重新驱动）。
     pub run_json: String,
-    /// 触发挂起的调用（AskPayload 构造与恢复放行签名）。
+    /// 触发挂起的调用（构造询问载荷与恢复后按签名放行）。
     pub pending: PendingCall,
+    /// 跨挂起延续的驱动状态。
     pub state: DriveState,
 }
 
-/// 审批挂起机制层：把整只 run 序列化为 JSON（§5.2/S3 形态）。
+/// 审批挂起机制的基础：把整只 run 序列化为 JSON 文本（§5.2）。
 pub fn suspend_run(run: &AgentRun) -> serde_json::Result<String> {
     serde_json::to_string(run)
 }
 
-/// 审批挂起恢复：从 JSON 反序列化回 run（rig 信封含 format 版本校验，
-/// 跨版本拒绝加载）。
+/// 审批挂起的恢复：从 JSON 文本反序列化回 run（rig 的信封带 format 版本
+/// 校验，版本不符拒绝加载）。
 pub fn resume_run(run_json: &str) -> serde_json::Result<AgentRun> {
     serde_json::from_str(run_json)
 }
 
-/// RunLoop 主驱动（§5.2 时序的「每 turn」循环 + §3.4 帧生产）：
+/// 主循环驱动（§5.2 的"每轮"循环 + §3.4 的帧生产）：
 ///
-/// - 首次调用（`resume = None`）发 `runStarted` 起手一帧；恢复调用延续
-///   [`DriveState`]（不重发 runStarted、usage/计数延续）；
-/// - `CallModel`：`stepStarted` → 流式调用（增量经 64ms 节流器出帧）→ 收口
-///   `usage` 帧（§10.5 累计口径，rate = 本轮输出 tok/s）→ 收尾 flush；
-/// - `CallTools`：**批级门控预判**（§5.4 ①–④）——首个 `Suspend` 即把整只
-///   run 序列化挂起（批内零执行）；`Blocked` 回喂错误结果；其余逐个执行 →
-///   `toolResult` 帧（callId 经桥接映射与流式三帧同源）；
-/// - 取消（§5.3）：流中取消即收尾 flush + `runEnded(cancelled)`；工具批内
-///   任一工具报取消 → 剩余工具补 `E_CANCELLED`、收齐后才发终态帧；
-/// - `Done`：`runEnded(done)` 必为最后一帧。
+/// - 首次调用（`resume` 为 None）发 runStarted 起手帧；恢复调用延续
+///   [`DriveState`]（不重发 runStarted、用量与计数延续）；
+/// - CallModel（调模型）：发 stepStarted → 流式调用（增量经 64ms 节流器
+///   出帧）→ 收口发 usage 帧（§10.5 累计口径，rate = 本轮输出速度，
+///   token/秒）→ 收尾 flush；
+/// - CallTools（执行工具批）：**先整批判定再执行**（§5.4 ①–④）——首个
+///   Suspend 即把整只 run 序列化挂起（批内零执行）；Blocked 回喂错误
+///   结果；其余逐个执行 → 发 toolResult 帧（调用 id 经桥接映射与流式
+///   三帧同源）；
+/// - 取消（§5.3）：流中取消即收尾 flush + runEnded(cancelled)；工具批内
+///   任一工具报告取消 → 剩余工具补 E_CANCELLED，全部收齐后才发终态帧；
+/// - Done：runEnded(done) 必为最后一帧。
 #[allow(clippy::too_many_arguments)]
 pub async fn drive_run(
     driver: &TurnDriver,
@@ -172,6 +199,8 @@ pub async fn drive_run(
     resume: Option<DriveState>,
 ) -> Result<RunExit, PromptError> {
     let mut state = resume.unwrap_or_default();
+    // 首次进入（无恢复状态）：记录开始时刻并发起手帧；恢复进入则跳过，
+    // 不重发 runStarted。
     if state.started_at.is_none() {
         state.started_at = Some(Instant::now());
         sink.send(ChatFrame::RunStarted {
@@ -221,6 +250,8 @@ pub async fn drive_run(
                         return Ok(finish_cancelled(sink, started_at, state));
                     }
                     StreamExit::Completed => {
+                        // 本轮自然收口：把本轮用量记入累计并发 usage 帧；
+                        // 输出速度 = 本轮输出 token 数 ÷ 本轮耗时秒数。
                         if let Some(usage) = outcome.usage {
                             let total = usage_total(&usage);
                             let elapsed_s = turn_started.elapsed().as_secs_f64();
@@ -254,6 +285,8 @@ pub async fn drive_run(
                     let GateVerdict::Suspend { fence_reason } = &verdicts[idx] else {
                         unreachable!("position 已确认 Suspend");
                     };
+                    // 挂起前把调用 id 映射带进驱动状态（恢复后的 toolResult
+                    // 才能与挂起前的 toolStarted/toolArgs 帧同源）。
                     state.model_call_ids = bridge.model_call_ids().clone();
                     let run_json = suspend_run(&run).map_err(serde_json_error_to_prompt)?;
                     return Ok(RunExit::Suspended(Box::new(SuspendedInfo {
@@ -329,9 +362,11 @@ pub async fn drive_run(
                     // 收齐后才发终态帧（§5.3 不变量：取消中工具收齐 → runEnded(cancelled)）
                     return Ok(finish_cancelled(sink, started_at, state));
                 }
+                // 整批应答回喂 run，驱动进入下一轮模型调用
                 run.answer_all(answers)?;
             }
             AgentRunStep::Done(response) => {
+                // 自然终态：runEnded(done) 为最后一帧
                 sink.send(ChatFrame::RunEnded {
                     reason: EndReason::Done,
                     duration_ms: started_at.elapsed().as_millis() as u64,
@@ -398,7 +433,7 @@ fn serde_json_error_to_prompt(e: serde_json::Error) -> PromptError {
     )))
 }
 
-/// 从 pending call 提取 (模型 callId, 工具名, argsJson)。
+/// 从待执行的调用中提取（模型调用 id, 工具名, 参数 JSON）三元组。
 fn pending_parts(call: &PendingToolCall) -> (String, String, String) {
     match call {
         PendingToolCall::Execute(exec) => (

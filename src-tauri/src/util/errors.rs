@@ -18,6 +18,7 @@ pub struct ToolError {
 }
 
 impl ToolError {
+    /// 以注册表错误码 + 人读消息直接构造（优先用下面的语义化快捷方法）。
     pub fn new(code: &'static str, message: impl Into<String>) -> Self {
         Self {
             code,
@@ -55,10 +56,12 @@ impl ToolError {
         Self::new("E_EDIT_NO_MATCH", message.into())
     }
 
+    /// E_EDIT_AMBIGUOUS：编辑目标在文件里匹配到多处。
     pub fn edit_ambiguous(message: impl Into<String>) -> Self {
         Self::new("E_EDIT_AMBIGUOUS", message.into())
     }
 
+    /// E_EDIT_VERSION_STALE：编辑所基于的文件版本已过期（他人已改过）。
     pub fn edit_version_stale(message: impl Into<String>) -> Self {
         Self::new("E_EDIT_VERSION_STALE", message.into())
     }
@@ -74,12 +77,14 @@ impl ToolError {
     }
 }
 
+/// 展示为 "code: message"，日志与调试可读。
 impl fmt::Display for ToolError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}: {}", self.code, self.message)
     }
 }
 
+/// 空 impl：Display 已带出全部信息，这里只为让它能当标准错误类型传。
 impl std::error::Error for ToolError {}
 
 impl From<std::io::Error> for ToolError {
@@ -94,16 +99,27 @@ impl From<std::io::Error> for ToolError {
 }
 
 // ---- 错误码常量（§3.6 注册表内已落地的键面）----
+// 命名与字符串字面量同形，供手写 code 的调用处以常量引用、避免拼写漂移。
 
+/// 参数校验失败。
 pub const E_INVALID_ARG: &str = "E_INVALID_ARG";
+/// 目标（文件/会话等）不存在。
 pub const E_NOT_FOUND: &str = "E_NOT_FOUND";
+/// 会话已有活跃 run，拒绝再次启动。
 pub const E_SESSION_RUNNING: &str = "E_SESSION_RUNNING";
+/// 会话树同步基线过期（前端版本落后于落盘版本）。
 pub const E_SESSION_REV: &str = "E_SESSION_REV";
+/// 磁盘 IO 失败。
 pub const E_STORAGE_IO: &str = "E_STORAGE_IO";
+/// 内部状态兜底（未分类的意外错误）。
 pub const E_INTERNAL: &str = "E_INTERNAL";
+/// 命令执行超时。
 pub const E_COMMAND_TIMEOUT: &str = "E_COMMAND_TIMEOUT";
+/// 已批准的计划已过期仍尝试写入。
 pub const E_PLAN_STALE: &str = "E_PLAN_STALE";
+/// 命令围栏拦截（Block 档）。
 pub const E_FENCE_BLOCKED: &str = "E_FENCE_BLOCKED";
+/// 当前权限档排除了该工具。
 pub const E_TOOL_BLOCKED: &str = "E_TOOL_BLOCKED";
 
 /// IPC 命令统一错误负载（§3.1/§3.6，D14）：`{ code, message, detail? }`，camelCase。
@@ -121,6 +137,7 @@ pub struct IpcError {
 }
 
 impl IpcError {
+    /// 以错误码 + 人读消息构造（detail 默认为无）。
     pub fn new(code: &str, message: impl Into<String>) -> Self {
         Self {
             code: code.to_string(),
@@ -129,6 +146,7 @@ impl IpcError {
         }
     }
 
+    /// 附带结构化 detail（如失败原因的 JSON 面板数据），链式调用。
     pub fn with_detail(mut self, detail: Value) -> Self {
         self.detail = Some(detail);
         self
@@ -165,10 +183,12 @@ impl IpcError {
     }
 }
 
+/// 展示为 "[code] message"，日志与调试可读。
 impl fmt::Display for IpcError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "[{}] {}", self.code, self.message)
     }
 }
 
+/// 空 impl：Display 已带出全部信息，这里只为让它能当标准错误类型传。
 impl std::error::Error for IpcError {}

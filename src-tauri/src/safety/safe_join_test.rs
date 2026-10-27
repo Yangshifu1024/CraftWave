@@ -6,16 +6,19 @@ use std::path::PathBuf;
 use super::PathGuard;
 use crate::util::errors::ToolError;
 
+/// 测试辅助：临时目录作为唯一 root 构造 PathGuard（返回临时目录以便保活）。
 fn setup() -> (tempfile::TempDir, PathGuard) {
     let dir = tempfile::tempdir().expect("临时目录");
     let guard = PathGuard::new(vec![dir.path().to_path_buf()]).expect("guard");
     (dir, guard)
 }
 
+/// 测试辅助：取错误的错误码字符串。
 fn code_of(err: &ToolError) -> &'static str {
     err.code
 }
 
+// 断言：相对路径解析到 root 内的绝对路径。
 #[test]
 fn relative_path_resolves_inside_root() {
     let (_dir, guard) = setup();
@@ -23,6 +26,7 @@ fn relative_path_resolves_inside_root() {
     assert!(p.starts_with(guard_roots_first(&guard)));
 }
 
+// 断言：root 内已存在的绝对路径通过，且返回 canonicalize 后的路径。
 #[test]
 fn absolute_path_inside_root_passes() {
     let (dir, guard) = setup();
@@ -36,6 +40,7 @@ fn absolute_path_inside_root_passes() {
     );
 }
 
+// 断言：相对路径里的 `..` 逃出 root（如 a/../../etc/passwd）被拒绝。
 #[test]
 fn parent_escape_is_rejected() {
     let (_dir, guard) = setup();
@@ -43,6 +48,7 @@ fn parent_escape_is_rejected() {
     assert_eq!(code_of(&err), "E_PATH_OUTSIDE_ROOTS");
 }
 
+// 断言：root 之外的绝对路径（/etc/passwd、/usr/local/bin）一律拒绝。
 #[test]
 fn absolute_outside_root_is_rejected() {
     let (_dir, guard) = setup();
@@ -52,6 +58,8 @@ fn absolute_outside_root_is_rejected() {
     assert_eq!(code_of(&err), "E_PATH_OUTSIDE_ROOTS");
 }
 
+// 断言：经 root 内 symlink 指向外部目录的路径逃逸被拒绝
+// （canonicalize 解析真实位置后做前缀检查）。
 #[test]
 fn symlink_escape_is_rejected() {
     let (dir, guard) = setup();
@@ -68,6 +76,8 @@ fn symlink_escape_is_rejected() {
     assert_eq!(code_of(&err), "E_PATH_OUTSIDE_ROOTS");
 }
 
+// 断言：write 场景下文件与父目录都不存在时，仍能解析出 root 内的
+// 绝对路径并通过前缀检查。
 #[test]
 fn nonexistent_path_canonically_resolves_for_write() {
     let (dir, guard) = setup();
@@ -83,6 +93,7 @@ fn nonexistent_path_canonically_resolves_for_write() {
     );
 }
 
+// 断言：空路径与含控制字符（NUL、换行）的路径以 E_INVALID_ARG 拒绝。
 #[test]
 fn empty_and_control_chars_are_rejected() {
     let (_dir, guard) = setup();
@@ -97,6 +108,8 @@ fn empty_and_control_chars_are_rejected() {
     );
 }
 
+// 断言：Windows 保留名（CON/NUL/COM1 等，含带扩展名形态）跨平台拒绝；
+// 仅前缀相似的合法名字（concourse）不受影响。
 #[test]
 fn windows_reserved_names_are_rejected_cross_platform() {
     let (_dir, guard) = setup();
@@ -108,6 +121,8 @@ fn windows_reserved_names_are_rejected_cross_platform() {
     guard.resolve("concourse/data").expect("concourse 合法");
 }
 
+// 断言：多 root 场景——首个 root 是相对路径基准，其余 root 也放行，
+// 两者之外仍拒绝。
 #[test]
 fn multi_root_second_root_is_honored() {
     let proj = tempfile::tempdir().expect("项目目录");

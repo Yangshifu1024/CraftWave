@@ -47,6 +47,8 @@ fn to_ipc_error(err: ProjectError) -> IpcError {
     }
 }
 
+/// 入参校验：名称非空；主目录必须是绝对路径（相对路径无法界定工具的
+/// 读写边界，注册期直接拒绝）。
 fn validate_input(name: &str, home_dir: &str) -> Result<(), IpcError> {
     if name.trim().is_empty() {
         return Err(IpcError::invalid_arg("项目名称不能为空"));

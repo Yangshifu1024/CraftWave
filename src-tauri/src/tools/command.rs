@@ -42,15 +42,19 @@ pub const SPILL_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommandArgs {
+    /// 待执行的命令文本（整行交给 shell 解释）。
     pub command: String,
+    /// 超时秒数（1–600，缺省 120）。
     #[serde(default)]
     pub timeout_sec: Option<u32>,
+    /// 工作目录（roots 内的相对或绝对路径，缺省项目主目录）。
     #[serde(default)]
     pub cwd: Option<String>,
 }
 
 /// 取消可感知的执行退出态（executor 映射 ToolExecution）。
 pub enum CommandExit {
+    /// 正常结束（含超时/启动失败等工具级失败，结果在 ToolOutcome 里）。
     Done(Box<ToolOutcome>),
     /// 取消：executed=true（进程已启动被收割，副作用不回滚）。
     Cancelled,
@@ -81,6 +85,7 @@ pub async fn execute(
     }
 }
 
+/// prepare 的产物：shell 程序名、参数、工作目录（已校验）与超时时长。
 type Prepared = (String, Vec<String>, Option<PathBuf>, Duration);
 
 /// 参数校验 + shell 形态决议。
@@ -137,6 +142,8 @@ async fn run_prepared(
     cleanup_spill(ctx, Instant::now());
 
     let mut cmd = tokio::process::Command::new(&program);
+    // stdin 接 /dev/null：防止命令等待键盘输入把会话挂死；
+    // stdout/stderr 接管为管道，由本循环合流读取。
     cmd.args(&argv)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
@@ -183,6 +190,8 @@ async fn run_prepared(
     let mut timed_out = false;
     let mut cancelled = false;
 
+    // 主循环：同时监听取消信号、超时与两路输出。
+    // biased 保证先查取消再查超时（用户取消优先于超时报错口径）。
     loop {
         tokio::select! {
             biased;
@@ -196,7 +205,8 @@ async fn run_prepared(
             }
             read = stdout.read(&mut out_buf) => match read {
                 Ok(0) | Err(_) => {
-                    // stdout 关闭后只剩 stderr 与计时
+                    // stdout 关闭后只剩 stderr 与计时（内层去掉已关闭的流，
+                    // 避免对同一管道反复读到 EOF 空转）。
                     tokio::select! {
                         biased;
                         _ = token.cancelled() => { cancelled = true; break; }
@@ -211,6 +221,7 @@ async fn run_prepared(
             },
             read = stderr.read(&mut err_buf) => match read {
                 Ok(0) | Err(_) => {
+                    // stderr 关闭后只剩 stdout 与计时（对称处理）。
                     tokio::select! {
                         biased;
                         _ = token.cancelled() => { cancelled = true; break; }
@@ -227,7 +238,9 @@ async fn run_prepared(
     }
 
     if cancelled || timed_out {
-        // 整树收割（超时/取消同路径；Unix SIGTERM→宽限→SIGKILL）
+        // 整树收割（超时/取消同路径；Unix SIGTERM→宽限→SIGKILL）。
+        // 防的是：shell 只是父进程，孙进程不随父退出而残留占资源，
+        // 故对整个进程组/Job 发信号而非只 kill 直接子进程。
         #[cfg(unix)]
         let reaped = crate::tools::process::reap_process_group(&mut child, REAP_GRACE).await;
         #[cfg(windows)]
@@ -351,6 +364,7 @@ fn cleanup_spill(ctx: &ToolsContext, now: Instant) {
     let _ = now; // 保留形参锚点（清理基准=文件 mtime，非当前 Instant）
 }
 
+/// command 工具规格（能力 Network：plan 档过滤、非 full_access 档审批）。
 pub fn spec() -> ToolSpec {
     ToolSpec {
         name: "command",

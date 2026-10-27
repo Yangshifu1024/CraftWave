@@ -1,10 +1,13 @@
 //! 【Spike】节流合并器单元测试（独立测试文件，源码零测试）。
+//! 测试面：同窗口增量无损合并、各类型独立出帧且顺序固定、flush 清空窗口、
+//! seq 严格递增、首帧立即/窗口内安静/满窗再出、帧字段 camelCase 契约。
 
 use std::thread::sleep;
 use std::time::Duration;
 
 use super::frames::{ChatFrame, CollectingSink, DeltaThrottler, THROTTLE_INTERVAL};
 
+/// 断言同窗口内同轮的三段文本增量无损合并为一帧。
 #[test]
 fn same_window_text_merged_lossless() {
     let mut t = DeltaThrottler::new();
@@ -22,6 +25,7 @@ fn same_window_text_merged_lossless() {
     assert_eq!(delta, "你好，世界");
 }
 
+/// 断言文本/推理/参数各自独立成帧、顺序固定，半截参数拼接可还原完整 JSON。
 #[test]
 fn delta_types_own_frames_ordered() {
     let mut t = DeltaThrottler::new();
@@ -50,6 +54,7 @@ fn delta_types_own_frames_ordered() {
     assert_eq!(chunk, "{\"path\": \"/a\"}", "半截片段拼接还原完整 JSON");
 }
 
+/// 断言 flush 会清空窗口：紧接着的第二次 flush 不再出任何帧。
 #[test]
 fn flush_clears_window_second_flush_empty() {
     let mut t = DeltaThrottler::new();
@@ -62,6 +67,7 @@ fn flush_clears_window_second_flush_empty() {
     assert!(!t.has_pending());
 }
 
+/// 断言 seq 从 0 起严格递增，且与帧的实际发送顺序一一对应。
 #[test]
 fn seq_strictly_increasing_matches_order() {
     let mut t = DeltaThrottler::new();
@@ -76,6 +82,7 @@ fn seq_strictly_increasing_matches_order() {
     }
 }
 
+/// 断言节流节奏：首帧立即出、窗口期内安静、满 64ms 再出，期间增量不丢。
 #[test]
 fn throttle_first_frame_immediate_within_window_quiet() {
     let mut t = DeltaThrottler::new();
@@ -96,6 +103,7 @@ fn throttle_first_frame_immediate_within_window_quiet() {
     assert_eq!(delta, "等窗口", "窗口等待期间增量不丢");
 }
 
+/// 断言帧序列化形态与前端契约一致：type 与字段名均为 camelCase。
 #[test]
 fn frame_protocol_camel_case_fields() {
     let mut t = DeltaThrottler::new();

@@ -5,6 +5,7 @@ use crate::util::errors::ToolError;
 
 use super::plan::{MAX_ITEMS, PlanAction, PlanArgs, PlanState, apply};
 
+/// 测试辅助：构造一个计划条目（文本由 id 派生）。
 fn item(id: &str, status: PlanItemStatus) -> PlanItem {
     PlanItem {
         id: id.to_string(),
@@ -13,6 +14,7 @@ fn item(id: &str, status: PlanItemStatus) -> PlanItem {
     }
 }
 
+/// 测试辅助：构造 set 动作的参数。
 fn set_args(items: Vec<PlanItem>) -> PlanArgs {
     PlanArgs {
         action: PlanAction::Set,
@@ -20,6 +22,7 @@ fn set_args(items: Vec<PlanItem>) -> PlanArgs {
     }
 }
 
+/// 测试辅助：用 (id, text, status) 三元组构造条目列表。
 fn json_items(raw: &[(&str, &str, &str)]) -> Vec<PlanItem> {
     raw.iter()
         .map(|(id, text, status)| PlanItem {
@@ -31,6 +34,7 @@ fn json_items(raw: &[(&str, &str, &str)]) -> Vec<PlanItem> {
         .collect()
 }
 
+// 断言：set 动作整表替换而非追加，返回的条目即最新状态。
 #[test]
 fn set_replaces_all() {
     let mut state = PlanState::default();
@@ -52,6 +56,7 @@ fn set_replaces_all() {
     assert_eq!(state.items[1].text, "写文件");
 }
 
+// 断言：set 空条目与重复 id 均以 E_INVALID_ARG 拒绝。
 #[test]
 fn set_empty_items_duplicate_id_rejected() {
     let mut state = PlanState::default();
@@ -68,6 +73,7 @@ fn set_empty_items_duplicate_id_rejected() {
     assert!(err.message.contains("重复"), "{}", err.message);
 }
 
+// 断言：条目数超过 100 上限被拒绝。
 #[test]
 fn limit_100_items() {
     let mut state = PlanState::default();
@@ -78,6 +84,7 @@ fn limit_100_items() {
     assert!(err.message.contains("100"));
 }
 
+// 断言：同时多个 in_progress 条目被拒（最多 1 个）；0 个合法。
 #[test]
 fn single_in_progress_multiple_rejected() {
     let mut state = PlanState::default();
@@ -98,6 +105,7 @@ fn single_in_progress_multiple_rejected() {
     .unwrap();
 }
 
+// 断言：update 按 id 替换已有条目、追加新条目。
 #[test]
 fn update_merges_by_id_append_and_replace() {
     let mut state = PlanState::default();
@@ -126,6 +134,8 @@ fn update_merges_by_id_append_and_replace() {
     assert_eq!(state.items[2].id, "c");
 }
 
+// 断言：计划门守门条件——仅"已批准且条目全部 completed"时为真
+//（未批准/批准但未全完成均不触发），批准会冻结快照。
 #[test]
 fn plan_gate_blocks_only_when_approved_all_completed() {
     let mut state = PlanState::default();
@@ -150,6 +160,7 @@ fn plan_gate_blocks_only_when_approved_all_completed() {
     assert_eq!(state.approved_snapshot.as_ref().unwrap().len(), 1);
 }
 
+// 断言：apply 的错误载体是 ToolError（错误码 E_INVALID_ARG）。
 #[test]
 fn error_carrier_is_tool_error() {
     let mut state = PlanState::default();

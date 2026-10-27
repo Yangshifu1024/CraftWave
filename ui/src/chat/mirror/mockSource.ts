@@ -12,6 +12,7 @@ export type ScriptStep = { delayMs: number; frame: FrameInput };
 
 /** 分配式 Omit：对联合类型逐成员剔除 seq。 */
 type DistributiveOmit<T, K extends keyof never> = T extends unknown ? Omit<T, K> : never;
+/** 剧本里的帧输入：帧去掉自动分配的 seq 字段（由帧源统一编号）。 */
 type FrameInput = DistributiveOmit<MirrorFrame, "seq">;
 
 /**
@@ -99,12 +100,14 @@ export function tauriFrameSource(signal?: AbortSignal): AsyncGenerator<MirrorFra
   let notify: (() => void) | null = null;
   let closed = false;
 
+  /** 唤醒等待中的消费者（有新帧或流结束时调用）。 */
   const wakeup = () => {
     const n = notify;
     notify = null;
     n?.();
   };
 
+  /** 帧入队并唤醒消费者（Channel onmessage 回调）。 */
   const enqueue = (frame: MirrorFrame) => {
     queue.push(frame);
     wakeup();

@@ -1,9 +1,10 @@
 /**
- * 供应商页（交互与排版复刻 CodeWave ProvidersPanel）。
+ * 供应商页（交互与排版复刻 CodeWave——本项目的交互对标参考项目）。
  *
  * 结构与状态机一一对应 CodeWave：
  *  - 列表视图：section 标题右上「添加供应商」主按钮 + 供应商卡片网格
- *    （卡 = 名称 + 方言标签 / API 端点块 / 模型列表块[当前标记] / actions 底栏[编辑|删除确认]）；
+ *    （卡 = 名称 + API 格式标签 / API 端点块 / 模型列表块[当前标记] /
+ *    actions 底栏[编辑|删除确认]）；
  *  - 单一宽弹框（860px）承担新增/编辑，内部两态切换：供应商表单 ↔ 模型编辑器
  *    （同一弹框、footer 与标题随态切换，不嵌套第二层弹框）；
  *  - 字段校验展示时机：新增 = touched（字段改过）或提交尝试后才亮红字；编辑 = 实时
@@ -32,6 +33,7 @@ import type { ApiFormat, ProviderConfig, ProviderModel } from "@/ipc/types";
 import { EyeIcon, LockIcon, PencilIcon, PlusIcon, TrashIcon } from "@/settings/icons";
 import { useSettingsStore } from "@/stores/settings";
 
+/** API 格式下拉的选项表（label 展示 / value 存入配置）。 */
 const API_FORMAT_OPTIONS: { label: string; value: ApiFormat }[] = [
   { label: "OpenAI Chat", value: "openai_chat" },
   { label: "Anthropic Messages", value: "anthropic_messages" },
@@ -45,6 +47,7 @@ const DEFAULT_BASE_URLS: Record<ApiFormat, string> = {
   openai_responses: "https://api.openai.com/v1",
 };
 
+/** API 格式枚举值 → 下拉展示名（卡片标签用）。 */
 function apiFormatLabel(v: ApiFormat): string {
   return API_FORMAT_OPTIONS.find((o) => o.value === v)?.label ?? v;
 }
@@ -59,12 +62,14 @@ type ProviderForm = Omit<ProviderConfig, "baseUrl" | "headers" | "apiKey"> & {
   headerRows: HeaderRow[];
 };
 
+/** 生成草稿层新 id：优先用 crypto.randomUUID，老环境回退随机串。 */
 function newDraftId(): string {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
     : `tmp-${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
 }
 
+/** 配置形态 → 表单形态（baseUrl 转必填字符串、headers 对象摊开成行）。 */
 function toForm(provider: ProviderConfig): ProviderForm {
   return {
     ...provider,
@@ -74,6 +79,7 @@ function toForm(provider: ProviderConfig): ProviderForm {
   };
 }
 
+/** 空白新增表单：默认 OpenAI Chat 格式及其官方端点，无凭据无模型。 */
 function blankProvider(): ProviderForm {
   return {
     id: newDraftId(),
@@ -85,6 +91,7 @@ function blankProvider(): ProviderForm {
   };
 }
 
+/** 新模型的默认值（上下文 128k、输出 32k，纯文本；对应常见模型的保守缺省）。 */
 function providerModelDefaults(): ProviderModel {
   return {
     id: newDraftId(),
@@ -95,6 +102,7 @@ function providerModelDefaults(): ProviderModel {
   };
 }
 
+/** 取供应商列表里第一个模型的 id（activeModelId 悬空时的回退目标）。 */
 function firstModelId(providers: ProviderConfig[]): string | undefined {
   return providers.flatMap((p) => p.models)[0]?.id;
 }
@@ -108,6 +116,7 @@ const RESERVED_HEADER_NAMES = new Set([
   "host",
   "content-length",
 ]);
+/** HTTP 头名的合法字符集（RFC 定义的 token：字母/数字/部分符号，不含空格）。 */
 const HTTP_TOKEN_RE = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 
 /** 校验请求头行：头名合法 token / 非保留名 / 无重名；整行全空视为待填占位跳过 */
@@ -125,8 +134,10 @@ function headersValid(rows: HeaderRow[]): boolean {
   return true;
 }
 
+/** 可校验的五个字段键（名称 / 端点 / 凭据 / 模型 / 请求头）。 */
 type FieldKey = "name" | "baseUrl" | "keys" | "models" | "headers";
 
+/** 凭据策略状态：isNew = 新增（恒录入新 Key）；编辑时 keep（保留）/ replace（替换）两选。 */
 interface CredentialState {
   isNew: boolean;
   mode: "keep" | "replace";
@@ -160,6 +171,7 @@ function fieldIssue(
   return undefined;
 }
 
+/** 全字段校验（提交前的总闸）：五个字段全部通过才允许入草稿。 */
 function allFieldsValid(form: ProviderForm, credential: CredentialState): boolean {
   const keys: FieldKey[] = ["name", "baseUrl", "keys", "models", "headers"];
   return keys.every((key) => fieldIssue(form, key, credential) === undefined);
@@ -176,6 +188,10 @@ type ModelEditorState = {
 /** 视图状态：供应商列表，或在同一弹框中新增 / 编辑供应商 */
 type View = { kind: "list" } | { kind: "add" } | { kind: "edit"; providerId: string };
 
+/**
+ * 供应商页组件：列表视图 + 新增/编辑弹框（内含模型编辑器两态切换）。
+ * 所有改动只写设置草稿（patchConfig），统一由设置页页头「保存」提交。
+ */
 export function ProvidersPage() {
   const config = useSettingsStore((s) => s.config);
   const patchConfig = useSettingsStore((s) => s.patchConfig);
@@ -222,6 +238,7 @@ export function ProvidersPage() {
     return editing ? fieldIssue(editing, key, credential) : undefined;
   }
 
+  /** 从草稿移除供应商；若它持有当前默认模型，则回退到剩余列表的第一个模型。 */
   function removeProvider(provider: ProviderConfig) {
     const providers = activeConfig.providers.filter((x) => x.id !== provider.id);
     const removed = new Set(provider.models.map((m) => m.id));
@@ -234,6 +251,7 @@ export function ProvidersPage() {
     if (view.kind === "edit" && view.providerId === provider.id) setView({ kind: "list" });
   }
 
+  /** 进入新增态：重置全部表单状态后切到 add 视图。 */
   function startAddProvider() {
     setCredentialMode("replace");
     setNewKey("");
@@ -245,6 +263,7 @@ export function ProvidersPage() {
     setView({ kind: "add" });
   }
 
+  /** 进入编辑态：把配置转成表单形态暂存，凭据策略默认"保留现有 Key"。 */
   function startEditProvider(provider: ProviderConfig) {
     setCredentialMode("keep");
     setNewKey("");
@@ -276,6 +295,7 @@ export function ProvidersPage() {
     };
   }
 
+  /** 新增提交：先亮出全部字段错误再校验拦截；通过后并入草稿并关弹框。 */
   function submitAdd() {
     setSubmitTried(true); // 先亮出全部字段错误，再做有效性拦截
     if (!allFieldsValid(addForm, credential)) return;
@@ -287,6 +307,7 @@ export function ProvidersPage() {
     closeProviderModal();
   }
 
+  /** 编辑完成：仅在内容确有变化时写草稿；默认模型被编辑掉时同样回退第一个模型。 */
   function finishEdit() {
     if (!editing) return;
     const provider = formToProvider(editing);
@@ -304,6 +325,7 @@ export function ProvidersPage() {
     closeProviderModal();
   }
 
+  /** 关闭供应商弹框：清空暂存与校验状态，视图回列表。 */
   function closeProviderModal() {
     setNewKey("");
     setCredentialMode("keep");
@@ -314,6 +336,7 @@ export function ProvidersPage() {
     setView({ kind: "list" });
   }
 
+  /** 模型编辑器提交：模型 ID 空则亮红；按新增/编辑写回对应目标表单。 */
   function commitModel() {
     const editor = modelEditor;
     if (!editor) return;
@@ -340,6 +363,7 @@ export function ProvidersPage() {
     setModelEditor(null);
   }
 
+  // 弹框三态推导：新增态或编辑表单就绪时开；表单/模型编辑目标随之取对应值
   const modalOpen = view.kind === "add" || (view.kind === "edit" && editing != null);
   const modalForm = view.kind === "add" ? addForm : editing;
   const modelTarget: ModelEditorState["target"] | null =
@@ -594,7 +618,8 @@ export function ProvidersPage() {
   );
 }
 
-/** 表单行内带错误/说明的控件包装（复刻 Form.Item 的 label + help + extra 结构） */
+/** 表单行内带错误/说明的控件包装（复刻 Form.Item 的 label + help + extra 结构）。
+ *  props：error 错误文案（优先显示）；hint 无错误时的说明文案；wide 占满控件列。 */
 function FieldControl({
   error,
   hint,
@@ -620,7 +645,11 @@ function FieldControl({
   );
 }
 
-/** 供应商字段区（新增/编辑共用，顺序复刻：名称 / API 格式 / Base URL / API Key / 自定义请求头） */
+/**
+ * 供应商字段区（新增/编辑共用，顺序复刻：名称 / API 格式 / Base URL / API Key / 自定义请求头）。
+ * props：form 表单数据；credential 凭据策略；errors 各字段错误文案（undefined = 通过）；
+ * onPatch 表单局部更新；onCredentialMode / onNewKey 凭据交互回调；children 插入模型列表区。
+ */
 function ProviderFields({
   form,
   credential,
@@ -836,7 +865,9 @@ function ProviderFields({
   );
 }
 
-/** 模型列表区：行 = wire id + 类型标签 + 窗口/输出摘要 + 当前标记；空态虚线框 + 添加按钮 */
+/** 模型列表区：行 = wire id + 类型标签 + 窗口/输出摘要 + 当前标记；空态虚线框 + 添加按钮。
+ *  props：models 模型列表；activeModelId 当前默认模型（打"当前"标记）；
+ *  onAdd / onEdit / onRemove 三个操作回调。 */
 function ModelListSection({
   models,
   activeModelId,
@@ -903,7 +934,8 @@ function ModelListSection({
   );
 }
 
-/** 模型编辑区（两列 grid，模型 ID 跨两列；复刻 CodeWave ModelEditor 字段集） */
+/** 模型编辑区（两列 grid，模型 ID 跨两列；复刻 CodeWave ModelEditor 字段集）。
+ *  props：value 编辑中的模型；idError 是否已尝试提交且 ID 为空；onChange 局部更新。 */
 function ModelEditor({
   value,
   idError,

@@ -3,6 +3,7 @@
 
 use super::{BINARY_SNIFF_BYTES, decode_text, is_probably_binary};
 
+/// 断言带 UTF-8 BOM 的输入被识别为 UTF-8，且 BOM 被剥离、正文完整。
 #[test]
 fn utf8_bom_is_detected_and_stripped() {
     let bytes: &[u8] = b"\xEF\xBB\xBFhello \xE4\xB8\xAD\xE6\x96\x87";
@@ -12,6 +13,7 @@ fn utf8_bom_is_detected_and_stripped() {
     assert_eq!(d.text, "hello 中文");
 }
 
+/// 断言带 UTF-16LE BOM 的输入按小端序解码成功。
 #[test]
 fn utf16le_bom_is_detected() {
     // "中文abc" 的 UTF-16LE 字节（含 BOM）。
@@ -25,6 +27,7 @@ fn utf16le_bom_is_detected() {
     assert_eq!(d.text, "中文abc");
 }
 
+/// 断言带 UTF-16BE BOM 的输入按大端序解码成功。
 #[test]
 fn utf16be_bom_is_detected() {
     let mut bytes = vec![0xFE, 0xFF];
@@ -36,6 +39,7 @@ fn utf16be_bom_is_detected() {
     assert_eq!(d.text, "中文");
 }
 
+/// 断言无 BOM 的纯 ASCII 与合法 UTF-8 都走第②步严格校验快速路径。
 #[test]
 fn plain_ascii_and_valid_utf8_take_fast_path() {
     let d = decode_text(b"hello world");
@@ -47,6 +51,7 @@ fn plain_ascii_and_valid_utf8_take_fast_path() {
     assert_eq!(d.text, "无 BOM 的 UTF-8 中文");
 }
 
+/// 断言无 BOM 的 GBK 字节能被第③步 chardetng 探测正确识别并还原。
 #[test]
 fn gbk_bytes_are_detected_by_chardetng() {
     // 用 encoding_rs 的 GBK 编码器构造真实 GBK 字节（无 BOM）。
@@ -56,6 +61,7 @@ fn gbk_bytes_are_detected_by_chardetng() {
     assert_eq!(d.text, "中文内容：配置文件示例 123");
 }
 
+/// 断言真实 GBK 文件（测试资产）端到端解码出正确中文内容。
 #[test]
 fn gbk_fixture_file_decodes_end_to_end() {
     // 端到端 fixture：真实 GBK 编码文件（由 iconv 生成，入库为测试资产）。
@@ -67,6 +73,7 @@ fn gbk_fixture_file_decodes_end_to_end() {
     assert!(d.text.contains("第二行"));
 }
 
+/// 断言无法可靠探测的 latin-1 高位字节兜底到 windows-1252 且解码永不报错。
 #[test]
 fn undetectable_bytes_fall_back_to_best_guess() {
     // 单字节 latin-1 高位文本：chardetng 可能给 windows-1252 或探不出，
@@ -77,6 +84,7 @@ fn undetectable_bytes_fall_back_to_best_guess() {
     assert_eq!(d.encoding, "windows-1252");
 }
 
+/// 断言 NUL 字节判二进制只看前 8KB 窗口：窗口内命中、窗口外不算。
 #[test]
 fn nul_byte_means_binary() {
     assert!(is_probably_binary(b"ok\x00binary"));
@@ -87,6 +95,7 @@ fn nul_byte_means_binary() {
     assert!(!is_probably_binary(&late));
 }
 
+/// 断言空输入解码为空 UTF-8 文本，且不被误判为二进制。
 #[test]
 fn empty_bytes_decode_to_empty_utf8() {
     let d = decode_text(&[]);

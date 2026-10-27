@@ -1,34 +1,48 @@
-//! 询问/审批协议（§3.2 AskPayload/AskAnswer，FR-05-02/03/04）。
+//! 询问与审批协议（技术设计文档 §3.2 的 AskPayload/AskAnswer）。
 //!
-//! 两条使用路径共用同一协议与 [`AskSlot`]：
-//! - **审批门**（§5.4 ④）：ApprovalGate 判挂起 → host 构造 `kind:"approval"`
-//!   载荷（diff 预览 / command + fenceReason）→ 挂起整只 run 等待应答；
-//! - **ask 工具**（§8.3 Interactive）：executor 构造 `kind:"question"` 载荷 →
-//!   注册槽等待应答，answers 回喂为工具结果。
+//! 名词解释：ask（询问）指模型向用户发起的提问，必须等用户回答后 run
+//! 才能继续；审批是询问的一种，特指模型要执行敏感操作（写文件、执行命令）
+//! 时，先暂停整个 run 等用户批准。
 //!
-//! 应答统一经 `resolve_ask` 命令（§3.3 #22）→ oneshot 唤醒。
+//! 两条使用路径共用同一套协议与 [`AskSlot`]（ask 槽 = 存放当前未决询问的
+//! 共享单元）：
+//! - **审批门**（§5.4 第 ④ 步）：ApprovalGate 判定需要挂起 → 宿主命令层
+//!   构造 `kind:"approval"` 载荷（含改动预览 diff，或命令与围栏原因；
+//!   围栏 = 命令工具的硬性安全底线）→ 暂停整个 run 等待应答；
+//! - **ask 工具**（§8.3 交互类工具）：执行器构造 `kind:"question"` 载荷 →
+//!   注册到槽位等待应答，用户的回答作为工具结果回喂给模型。
+//!
+//! 两条路径的应答都经 `resolve_ask` 命令（§3.3 第 22 条）进入，通过
+//! oneshot 通道（只能发送一次消息的异步通道）唤醒等待方。
 
 use tokio::sync::oneshot;
 
-/// 询问/审批载荷（§3.2；M1 实装 question/approval 两形态，
-/// mcpTrust/projectTrust 属 M2）。
+/// 询问/审批载荷（§3.2；当前阶段实装 question/approval 两种形态，
+/// mcpTrust/projectTrust 信任询问属后续阶段）。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum AskPayload {
-    /// ask 工具的问卷。
+    /// ask 工具的问卷（一组带选项的问题）。
     Question {
+        /// 问卷标题（界面卡片展示）。
         title: String,
+        /// 问题列表。
         questions: Vec<AskQuestion>,
     },
-    /// 审批门（confirm_each 写/网络类，或围栏 Confirm）。
+    /// 审批门载荷（confirm_each 档的写/联网类操作，或围栏要求确认的命令）。
     Approval {
+        /// 审批标题（界面卡片展示）。
         title: String,
+        /// 改动预览（diff = 逐行对比的新旧差异；写文件类审批展示）。
         #[serde(skip_serializing_if = "Option::is_none")]
         diff: Option<ApprovalDiff>,
+        /// 待批准的命令（命令类审批展示）。
         #[serde(skip_serializing_if = "Option::is_none")]
         command: Option<String>,
+        /// 围栏要求确认的原因（如"命令含写信号"）。
         #[serde(skip_serializing_if = "Option::is_none")]
         fence_reason: Option<String>,
+        /// 用户可选的操作列表（如仅本次允许/拒绝）。
         options: Vec<AskOption>,
     },
 }
@@ -37,10 +51,14 @@ pub enum AskPayload {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AskQuestion {
+    /// 问题 id（应答按它对号入座）。
     pub id: String,
+    /// 问题正文。
     pub text: String,
+    /// 可选的候选项列表（None = 纯自由文本题）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub options: Option<Vec<AskChoice>>,
+    /// 是否允许在选项之外自由输入文字。
     pub allow_free_text: bool,
 }
 
@@ -48,7 +66,9 @@ pub struct AskQuestion {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AskChoice {
+    /// 选项 id（应答回传它）。
     pub id: String,
+    /// 界面展示的选项文案。
     pub label: String,
 }
 
@@ -56,10 +76,14 @@ pub struct AskChoice {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AskOption {
+    /// 选项 id（应答回传它，如 allow_once/deny）。
     pub id: String,
+    /// 界面展示的选项文案。
     pub label: String,
+    /// 是否为推荐选项（自动确认超时时默认选它）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recommended: Option<bool>,
+    /// 选该项后生效的模式（仅本次放行/本会话总放行/拒绝）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mode: Option<AskMode>,
 }
@@ -68,44 +92,61 @@ pub struct AskOption {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AskMode {
+    /// 仅本次放行。
     AllowOnce,
-    /// M1 不实装会话级记忆（commandAllowlist 接线后续票），键面先钉死。
+    /// 本会话内总是放行（当前阶段不实装会话级记忆，命令白名单的接线为
+    /// 后续工单，协议字段先固定下来）。
     AlwaysSession,
+    /// 拒绝。
     Deny,
 }
 
-/// diff 预览（§3.2 approval.diff；write=新文件全 add，edit=单 hunk 替换）。
+/// 改动预览（§3.2 approval.diff；write = 新文件全部为新增行，edit = 单段替换）。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ApprovalDiff {
+    /// 目标文件路径。
     pub path: String,
+    /// 改动分段列表。
     pub hunks: Vec<DiffHunk>,
 }
 
+/// diff 中的一段连续改动（hunk = 差异对比里带上下文的一小块）。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct DiffHunk {
+    /// 段头（形如 `@@ -1,3 +1,4 @@` 的位置信息）。
     pub header: String,
+    /// 该段内的逐行差异。
     pub lines: Vec<DiffLine>,
 }
 
+/// diff 中的单行。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct DiffLine {
+    /// 行类别（新增/删除/上下文）。
     pub kind: DiffLineKind,
+    /// 行内容。
     pub text: String,
 }
 
+/// diff 行类别。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum DiffLineKind {
+    /// 新增行。
     Add,
+    /// 删除行。
     Del,
+    /// 上下文行（未改动，仅用于定位改动位置）。
     Ctx,
 }
 
+/// AskPayload 的固有方法实现。
 impl AskPayload {
-    /// 推荐选项 id（autoConfirm 超时自动选它，§5.4）。
+    /// 推荐选项的 id（自动确认超时时选它，§5.4）；问卷形态没有推荐选项，
+    /// 返回 None。
     pub fn recommended_option_id(&self) -> Option<&str> {
         match self {
             AskPayload::Question { .. } => None,
@@ -121,11 +162,12 @@ impl AskPayload {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum AskAnswer {
-    /// qid -> 选项 id 或自由文本。
+    /// 问卷应答：问题 id → 选中的选项 id 或自由输入的文本。
     Question {
         answers: std::collections::BTreeMap<String, String>,
     },
-    /// 选项 id（allow_once/deny）+ 可选编辑后的命令（M1 不实装编辑，键面钉死）。
+    /// 审批应答：选中的选项 id（如 allow_once/deny）+ 可选的编辑后命令
+    /// （当前阶段不实装命令编辑，字段先固定在协议里）。
     Approval {
         option_id: String,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -133,13 +175,19 @@ pub enum AskAnswer {
     },
 }
 
-/// 未决 ask 槽（§5.1 RunHandle.ask 的元素）：oneshot 回执。
+/// 未决 ask 槽（§5.1 中 RunHandle.ask 存放的元素）：记录询问的元信息，
+/// 并持有 oneshot 通道的发送端（一次性异步通道的发送侧），应答到达时
+/// 用它唤醒等待中的 run。
 #[derive(Debug)]
 pub struct AskSlot {
+    /// 本次询问的唯一 id（resolve_ask 命令按它路由应答）。
     pub ask_id: String,
+    /// 所属会话 id。
     pub session_id: String,
+    /// 所属 run id。
     pub run_id: String,
-    /// 载荷形态（question/approval），关闭事件与 UI 路由用。
+    /// 载荷形态（question/approval），关闭事件与前端界面路由用。
     pub kind: &'static str,
+    /// oneshot 通道发送端：把用户应答发回等待中的 run。
     pub tx: oneshot::Sender<AskAnswer>,
 }

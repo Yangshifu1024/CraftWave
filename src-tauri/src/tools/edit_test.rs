@@ -6,6 +6,7 @@ use serde_json::json;
 use super::{EditArgs, run};
 use crate::util::test_support::TestWorkspace;
 
+/// 测试辅助：构造 edit 参数（不带 version 乐观锁）。
 fn args(path: &str, old: &str, new: &str) -> EditArgs {
     EditArgs {
         path: path.to_string(),
@@ -15,10 +16,12 @@ fn args(path: &str, old: &str, new: &str) -> EditArgs {
     }
 }
 
+/// 测试辅助：在测试工作区预置一个文件。
 fn write_file(ws: &TestWorkspace, rel: &str, content: &str) {
     std::fs::write(ws.project_file(rel), content).expect("预置文件");
 }
 
+// 断言：L1 精确唯一命中完成替换，matchLevel=exact，lineChanges 统计正确。
 #[test]
 fn l1_exact_unique_replacement() {
     let ws = TestWorkspace::new();
@@ -37,6 +40,8 @@ fn l1_exact_unique_replacement() {
     );
 }
 
+// 断言：L2 缩进平移——oldText 无缩进也能命中深缩进块，
+// 且替换区间含原首行缩进、newText 原样落位。
 #[test]
 fn l2_indent_shift_recovers_nested_block() {
     let ws = TestWorkspace::new();
@@ -65,6 +70,7 @@ fn l2_indent_shift_recovers_nested_block() {
     );
 }
 
+// 断言：L3 逐行空白归一——各行缩进/尾随空白不一致时仍能整块命中替换。
 #[test]
 fn l3_whitespace_normalized_matches() {
     let ws = TestWorkspace::new();
@@ -83,6 +89,7 @@ fn l3_whitespace_normalized_matches() {
     );
 }
 
+// 断言：0 命中报 E_EDIT_NO_MATCH，多处命中报 E_EDIT_AMBIGUOUS（绝不猜）。
 #[test]
 fn no_match_and_ambiguous_are_rejected() {
     let ws = TestWorkspace::new();
@@ -99,6 +106,7 @@ fn no_match_and_ambiguous_are_rejected() {
     assert!(err.message.contains("补充"));
 }
 
+// 断言：空 oldText 以 E_INVALID_ARG 拒绝。
 #[test]
 fn empty_old_text_is_invalid_arg() {
     let ws = TestWorkspace::new();
@@ -108,6 +116,8 @@ fn empty_old_text_is_invalid_arg() {
     assert_eq!(outcome.error.expect("e").code, "E_INVALID_ARG");
 }
 
+// 断言：version 乐观锁三态——匹配正常执行、不匹配但可唯一命中降级警告执行、
+// 不匹配且不可唯一命中报 E_EDIT_VERSION_STALE。
 #[test]
 fn version_match_and_stale_downgrade() {
     let ws = TestWorkspace::new();
@@ -149,6 +159,7 @@ fn version_match_and_stale_downgrade() {
     assert_eq!(outcome.error.expect("e").code, "E_EDIT_VERSION_STALE");
 }
 
+// 断言：CRLF 文件编辑后仍保持 CRLF 行尾风格。
 #[test]
 fn crlf_style_is_preserved() {
     let ws = TestWorkspace::new();
@@ -159,6 +170,7 @@ fn crlf_style_is_preserved() {
     assert_eq!(bytes, b"line1\r\nline-two\r\n", "CRLF 应保持");
 }
 
+// 断言：GBK 编码文件编辑后按 UTF-8 落盘（C-10 接受的转换副作用）。
 #[test]
 fn gbk_file_is_rewritten_as_utf8() {
     let ws = TestWorkspace::new();
@@ -171,6 +183,8 @@ fn gbk_file_is_rewritten_as_utf8() {
     assert_eq!(text, "旧值：beta\n重复行\n");
 }
 
+// 断言：lineChanges 的 add/del 分别按 newText/oldText 行数计
+//（扩行、缩行、整块删除三种口径）。
 #[test]
 fn line_changes_counts_add_and_del() {
     let ws = TestWorkspace::new();
@@ -198,6 +212,7 @@ fn line_changes_counts_add_and_del() {
     assert_eq!(data["lineChanges"], json!({ "add": 0, "del": 2 }));
 }
 
+// 断言：roots 外的绝对路径被拒绝（E_PATH_OUTSIDE_ROOTS）。
 #[test]
 fn outside_roots_rejected() {
     let ws = TestWorkspace::new();

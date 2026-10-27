@@ -1,9 +1,18 @@
-//! 会话树存取引擎（§6.3/§6.4/§7）：`save_session_tree` / `load_session_tree` 的 Rust 侧实现。
+//! 会话树存取引擎（技术设计文档 §6.3/§6.4/§7）：`save_session_tree` /
+//! `load_session_tree` 的 Rust 侧实现。
 //!
-//! 职责（§6.3/§6.4）：revision 乐观并发校验（不符 E_SESSION_REV）、既有节点内容
-//! 校验（同 id 内容变 → E_SESSION_REV）、仅追加缺失节点（父先子后由前端
-//! `thread.export()` 导出序保证，此处再校验父存在性）、追加 meta 行推进 revision。
-//! Tauri 命令层（host）只做校验/转调（§2.2 依赖方向 host → storage）。
+//! 术语解释：「会话树」指一个会话的全部消息按父子关系（parentId）组成的树，
+//! 支持「分支」——同一父节点下的多个回答版本；「修订号 revision」是每次成功
+//! 保存都加一的整数，用于乐观并发控制（「乐观并发」指写前不长期持锁，而是在
+//! 写入时比对版本号，不一致就拒绝并报冲突，让调用方重试）；「run」指模型的一轮
+//! 连续执行（一次从开始到结束的生成过程），「runMarker」是收口一轮 run 的标记
+//! 条目；「幂等」指同一操作重复执行结果不变，不会产生重复数据。
+//!
+//! 职责（§6.3/§6.4）：revision 乐观并发校验（不符报 E_SESSION_REV）、既有节点
+//! 内容校验（同 id 内容变化 → E_SESSION_REV）、仅追加缺失节点（父先子后的顺序
+//! 由前端 `thread.export()` 导出序保证，此处再校验父节点存在性）、追加 meta 行
+//! 推进 revision。数据落盘：数据根 `~/.craftwave` 下的 `histories/<会话id>/`
+//! 分段日志。Tauri 命令层（host）只做校验与转调（§2.2 依赖方向 host → storage）。
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -16,10 +25,13 @@ use super::index_store::SessionIndex;
 use super::locks::LockMap;
 use super::segment::SessionLog;
 
-/// 会话存储器：数据根 + 会话锁表（Tauri `State` 托管）。
+/// 会话存储器：数据根 + 会话锁表 + 会话索引（由 Tauri `State` 托管为全局单例）。
 pub struct SessionStore {
+    /// 数据根目录（生产为 `~/.craftwave`）。
     root: PathBuf,
+    /// 按会话 id 区分的进程内锁，串行化同一会话的读写。
     locks: LockMap,
+    /// 会话索引（`sessions/index.json`）读写器。
     index: SessionIndex,
 }
 
@@ -47,6 +59,7 @@ pub struct SessionTreeData {
     pub revision: u64,
 }
 
+/// `SessionStore` 的实现：全树同步、全量读取、canonical 追加与崩溃恢复、会话删除。
 impl SessionStore {
     /// 以指定数据根构造（测试注入临时目录；生产为 `~/.craftwave`，§7.1）。
     pub fn with_root(root: PathBuf) -> Self {
@@ -335,6 +348,7 @@ impl SessionStore {
         Ok(log.revision().unwrap_or(0))
     }
 
+    /// 只读探测当前消息条目总数（空批次 append_canonical 的返回面）。
     fn probe_message_count(&self, session_id: &str) -> Result<u64, StorageError> {
         let log = SessionLog::open(self.histories_dir().join(session_id))
             .map_err(|e| StorageError::Io(e.to_string()))?;
@@ -369,6 +383,7 @@ impl SessionStore {
         Ok(true)
     }
 
+    /// 会话日志根目录：数据根下的 `histories/`，每个会话占其中一个子目录。
     fn histories_dir(&self) -> PathBuf {
         self.root.join("histories")
     }
@@ -382,6 +397,7 @@ fn latest_active_leaf(log: &SessionLog) -> Option<String> {
     })
 }
 
+/// 史册最新 meta 的标题（无则 None）。「最新赢」：只看最后一条 meta 行。
 fn latest_title(log: &SessionLog) -> Option<String> {
     log.entries().iter().rev().find_map(|e| match e {
         StoredEntry::Meta(meta) => meta.title.clone(),
@@ -409,6 +425,8 @@ fn canonical(message: &MessageEntry) -> serde_json::Result<String> {
     serde_json::to_string(message)
 }
 
+/// 当前 Unix 时间戳（毫秒）。取不到系统时间（早于 1970 年）时返回 0，
+/// 保证时间戳字段总有值、不影响落盘流程。
 fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

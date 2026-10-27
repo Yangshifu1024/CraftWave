@@ -16,10 +16,15 @@ use crate::storage::entries::{
 };
 use crate::storage::segment::entry_line;
 
+/// 测试产物输出目录：crate 的 target/（与前端的比对脚本约定一致）。
 fn target_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target")
 }
 
+/// 契约导出主测试：先校验 manifest 的不变式（命令名唯一且 snake_case）与
+/// 各命令的契约类型名锚点，落盘 ipc-manifest.json；再构造固定样例树做
+/// 行级往返校验（落盘字节即契约），落盘 session-tree-fixture.jsonl。两个
+/// 文件供前端 TS 侧镜像比对（§12.3）。
 #[test]
 fn export_ipc_manifest_and_cross_lang_fixture() {
     // ---- 1. manifest：命令清单 + 契约类型名（§12.3 schema） ----
@@ -119,6 +124,7 @@ fn export_ipc_manifest_and_cross_lang_fixture() {
 /// 样例树：线性两轮 + 工具调用轮 + 重生成兄弟分支（覆盖 status/runId/toolCall 拆分/reasoning）。
 /// 与 `ui/src/ipc/contract.test.ts` 中 EXPECTED_ENTRIES 逐字段一致，改动必须双侧同步。
 fn fixture_entries() -> Vec<StoredEntry> {
+    // 造一条用户消息条目的简写闭包（固定 role=User、单文本 part）。
     let user = |id: &str, parent: Option<&str>, text: &str, at: i64| {
         StoredEntry::Message(MessageEntry {
             id: id.to_string(),

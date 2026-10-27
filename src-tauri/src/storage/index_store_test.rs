@@ -1,13 +1,19 @@
-//! 会话索引单元测试（独立测试文件）：归档上限、get/mutate/remove。
+//! 会话索引单元测试（独立测试文件）。
+//!
+//! 测试面覆盖：get 按 id 精确查找（含找不到返回 None）、mutate 字段级部分更新、
+//! remove 删除条目、超过 2000 条上限后最旧条目按 updatedAt 顺序归档进
+//! archive.jsonl 且索引中不再可见。
 
 use std::fs;
 
 use super::index_store::{SessionIndex, SessionMeta};
 
+// 构造指向临时目录的索引实例的辅助函数。
 fn index(dir: &std::path::Path) -> SessionIndex {
     SessionIndex::new(dir)
 }
 
+// 构造一条会话元数据样例的辅助函数（id 与 updatedAt 可指定）。
 fn meta(id: &str, updated_at: i64) -> SessionMeta {
     SessionMeta {
         id: id.to_string(),
@@ -21,6 +27,7 @@ fn meta(id: &str, updated_at: i64) -> SessionMeta {
     }
 }
 
+// 断言：get 能按 id 找到已登记的会话，不存在的 id 返回 None。
 #[test]
 fn get_finds_entry_by_id() {
     let dir = tempfile::tempdir().unwrap();
@@ -30,6 +37,7 @@ fn get_finds_entry_by_id() {
     assert_eq!(idx.get("缺"), None);
 }
 
+// 断言：mutate 能就地修改指定会话的字段并返回更新后的条目；会话不存在返回 None。
 #[test]
 fn mutate_updates_fields_and_reports_missing() {
     let dir = tempfile::tempdir().unwrap();
@@ -45,6 +53,7 @@ fn mutate_updates_fields_and_reports_missing() {
     assert_eq!(idx.mutate("缺", |_| {}).unwrap(), None);
 }
 
+// 断言：remove 删除指定会话并返回被删条目，删除后列表为空、再次删除返回 None。
 #[test]
 fn remove_drops_entry_and_reports_missing() {
     let dir = tempfile::tempdir().unwrap();
@@ -58,6 +67,8 @@ fn remove_drops_entry_and_reports_missing() {
     assert_eq!(idx.remove("s1").unwrap(), None);
 }
 
+// 断言：索引超过 2000 条上限后再 upsert，最旧条目（按 updatedAt，其次按 id）
+// 被追加进 archive.jsonl 并从索引移除，新条目正常保留。
 #[test]
 fn upsert_beyond_limit_archives_oldest() {
     let dir = tempfile::tempdir().unwrap();

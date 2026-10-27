@@ -3,6 +3,8 @@
 //! 架构对齐技术设计文档 §4.3/§5.2：backend 每次只跑一个 model turn（流式，
 //! 事件边到边转帧），工具循环由外部 RunLoop 驱动——审批挂起需要外部循环。
 //! rig 侧对应「AgentRun（sans-IO 状态机）+ StreamedTurnAssembler 装配」。
+//! sans-IO：状态机本身不做任何网络输入输出，每一步要发什么请求、收到什么
+//! 响应都由外部驱动喂入——因此外部可以精确控制循环在哪一步挂起（审批）。
 
 use std::sync::Arc;
 
@@ -24,7 +26,9 @@ use super::rig_bridge::{Bridged, RigEventBridge};
 /// 单 turn 流式调用的退出态：自然收尾，或取消中途 drop 流（S5 取消传播）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StreamExit {
+    /// 流自然收尾（模型回复完整到达并已回喂 run）。
     Completed,
+    /// 取消令牌触发，流被中途丢弃（HTTP 连接关闭）。
     Cancelled,
 }
 
@@ -36,12 +40,16 @@ pub trait ToolExecutor: Send + Sync {
 
 /// 单 turn 流式调用的驱动：S2 的事件帧化 + S3 的装配回喂。
 pub struct TurnDriver {
+    /// rig 模型驱动（HTTP 客户端 + 模型端点）。
     model: Model<Chat>,
+    /// run 规格（系统提示词等运行配置）。
     spec: RunSpec,
+    /// 本 run 广播给模型的工具定义表。
     tools: Vec<Arc<ToolDefinition>>,
 }
 
 impl TurnDriver {
+    /// 以模型驱动、run 规格与工具表构造。
     pub fn new(model: Model<Chat>, spec: RunSpec, tools: Vec<Arc<ToolDefinition>>) -> Self {
         Self { model, spec, tools }
     }
@@ -84,6 +92,9 @@ impl TurnDriver {
             .await
     }
 
+    /// 单 turn 流式调用的实际执行体（上面两个公开方法都转到这里）：
+    /// 准备请求 → 开流 → 逐事件"装配器先记账、桥接再出帧" → 收尾回喂 run。
+    /// 取消语义：select! 中取消令牌与下一流事件竞争，令牌先到即放弃整条流。
     async fn do_stream_turn(
         &self,
         run: &mut AgentRun,

@@ -11,6 +11,7 @@ import { useAskStore } from "@/stores/ask";
 import { AskPanel } from "./AskPanel";
 import { SessionScopeContext } from "./session-scope";
 
+/** resolveAsk 的 mock：记录面板提交的载荷（真实 IPC 被 vi.mock 替换）。 */
 const resolveAskMock = vi.fn<(askId: string, answer: unknown) => Promise<void>>();
 vi.mock("@/ipc/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/ipc/client")>();
@@ -36,6 +37,7 @@ function renderPanel() {
   );
 }
 
+/** 问卷载荷样例：一题选项单选 + 一题自由文本。 */
 const questionPayload: AskPayload = {
   kind: "question",
   title: "选方案",
@@ -58,6 +60,7 @@ const questionPayload: AskPayload = {
   ],
 };
 
+/** 审批载荷样例：命令行 + 围栏原因 + 允许/拒绝两选项。 */
 const approvalPayload: AskPayload = {
   kind: "approval",
   title: "执行命令",
@@ -69,6 +72,7 @@ const approvalPayload: AskPayload = {
   ],
 };
 
+/** 向 ask store 放入一个未决 ask（模拟后端 ask:opened 事件的效果）。 */
 function openPanel(payload: AskPayload) {
   useAskStore.getState().open("s1", "ask-1", payload);
 }
