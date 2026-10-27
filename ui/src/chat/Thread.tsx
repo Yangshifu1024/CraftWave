@@ -14,6 +14,10 @@ export function ChatThread() {
       <header
         data-tauri-drag-region
         className="flex h-10 shrink-0 cursor-default select-none items-center justify-center bg-neutral-900 text-xs text-neutral-400"
+        style={{
+          paddingLeft: "var(--tauri-plugin-decoration-left-clearance, 76px)",
+          paddingRight: "var(--tauri-plugin-decoration-right-clearance, 8px)",
+        }}
       >
         CraftWave · S6 骨架（顶栏即拖拽区）
       </header>

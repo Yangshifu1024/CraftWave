@@ -28,3 +28,17 @@ Status: resolved
 **文档回写**：§2.1（C-7 结论）、§9.5（收紧版 CSP 实测基线 + devCsp 边界）、§12.3（ts-rs 12 分层决策）、§12.4（实际 CI 形态）、附录 A-S6 勾销、附录 C-7 翻「已定（S6）」。**顺带补上此前 02/03 两张调研票遗漏的回写**：附录 C-2/C-6 翻「已定（调研）」。
 
 **遗留小项**（不阻塞）：assistant-ui 使 bundle 达 745KB（chunk 警告，无碍）；GitHub 注解提示 actions 目标 Node20 弃用（升级 actions 版本择机）；`src-tauri/icons/android|ios` 移动端图标产物已 gitignore。
+
+## Comments
+
+**2026-10-27 缺陷修复：标题栏无法拖动、macOS 无交通灯（用户实测报告）**
+
+S6 合入后用户实测发现两个 GUI 缺陷，根因三个：
+
+1. **窗口配置错**：S6 用了 `decorations:false`——macOS 交通灯随之消失，且 decoration 插件 3.0.5 的正确姿势是 `decorations:true` + `titleBarStyle:"Overlay"` + `hiddenTitle` 启动，再由前端显式调 `activate_decoration()`（3.0.5 已把 README 旧名 `create_overlay_titlebar`/`restore_native_titlebar` 改为 async 的 `activate_decoration`/`restore_decoration`，以 crate 源码为准）。
+2. **拖拽权限缺**：本地 gen/schemas ACL 实证 `core:window:default` 不含 `allow-start-dragging`，拖拽 invoke 被静默拒绝（无崩溃无日志，正是启动级验证漏掉它的原因）。
+3. **CSP 未放行插件样式**：插件样式经 `tauri-plugin-decoration:` 协议注入，`style-src`/`style-src-elem` 需放行其来源。
+
+修复：窗口配置改 Overlay 协议 + `visible:false`；lib.rs 增 `activate_custom_titlebar`/`restore_native_titlebar` 两条命令（激活 + macOS 交通灯 inset(14,20) + 看门狗回退）；前端 App.tsx 实现激活协议（等 `data-tauri-plugin-decoration-active` 标志亮窗，5s 超时退化）——正好落地 §2.1 的防闪 + 亮窗看门狗设计；capabilities 显式补窗口控制权限；CSP 升到 §9.5 目标形态 + 插件来源。
+
+**教训**：C-7 的兼容结论不变（插件本身工作正常），但 S6 的"进程存活 + 零日志"启动级验证覆盖不了 GUI 功能正确性——自绘标题栏的**视觉验收**（交通灯位置、拖拽手感、双击最大化）待用户 `pnpm dev` 确认。

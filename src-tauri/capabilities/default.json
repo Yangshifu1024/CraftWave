@@ -1,6 +1,17 @@
 {
   "identifier": "default",
-  "description": "S6 最小权限基线：Tauri 核心默认集 + 自绘标题栏插件（C-7）",
+  "description": "S6 最小权限基线：核心默认集 + 自绘标题栏插件与窗口控制所需（C-7）",
   "windows": ["main"],
-  "permissions": ["core:default", "decoration:default"]
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-close",
+    "core:window:allow-show",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-is-fullscreen",
+    "core:window:allow-is-maximized",
+    "core:window:allow-set-focus",
+    "decoration:default"
+  ]
 }
