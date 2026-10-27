@@ -326,3 +326,188 @@ fn load_result_serializes_camel_contract() {
         "null→省略字段"
     );
 }
+
+// ---- 15 号票：canonical 追加 + 崩溃恢复 + index + toolres ----
+
+fn canonical_turn(run_id: &str, turn: u32, parent: Option<&str>, text: &str) -> MessageEntry {
+    MessageEntry {
+        id: format!("{run_id}:{turn}"),
+        parent_id: parent.map(str::to_string),
+        role: MessageRole::Assistant,
+        parts: vec![WirePart::Text {
+            text: text.to_string(),
+        }],
+        created_at: 1760000000002,
+        run_id: Some(run_id.to_string()),
+        status: Some(MessageStatus::Complete {
+            reason: CompleteReason::Stop,
+        }),
+    }
+}
+
+#[test]
+fn append_canonical_advances_revision_and_active_leaf() {
+    let (store, _dir) = store();
+    // 首次 canonical 追加：自动写 session 头，revision 1，activeLeaf=批内最后条目
+    let (rev, count) = store
+        .append_canonical("s1", &[StoredEntry::Message(user("u1", None, "你好"))])
+        .unwrap();
+    assert_eq!((rev, count), (1, 1));
+    let (rev2, count2) = store
+        .append_canonical(
+            "s1",
+            &[StoredEntry::Message(canonical_turn(
+                "run-1",
+                1,
+                Some("u1"),
+                "答复",
+            ))],
+        )
+        .unwrap();
+    assert_eq!((rev2, count2), (2, 2));
+    // run 终态 marker（runEnded 落盘点）后 activeLeaf=marker 且不再触发崩溃修复
+    let (rev3, count3) = store
+        .append_canonical("s1", &[StoredEntry::Message(marker_entry("run-1"))])
+        .unwrap();
+    assert_eq!((rev3, count3), (3, 3));
+    let tree = store.load_session_tree("s1").unwrap();
+    assert_eq!(tree.active_leaf_id.as_deref(), Some("run-1:marker"));
+    assert_eq!(tree.messages.len(), 3, "含 marker，无额外修复行");
+    // 头条目存在（首行 session）
+    let raw =
+        fs::read_to_string(_dir.path().join("histories").join("s1").join("0001.jsonl")).unwrap();
+    assert!(raw.contains(r#""kind":"session""#), "首行应为 session 头");
+}
+
+fn marker_entry(run_id: &str) -> MessageEntry {
+    MessageEntry {
+        id: format!("{run_id}:marker"),
+        parent_id: None,
+        role: MessageRole::System,
+        parts: vec![WirePart::RunMarker {
+            run_id: run_id.to_string(),
+            started_at: 1760000000002,
+            ended_at: Some(1760000000003),
+            duration_ms: Some(1),
+            tool_count: Some(0),
+        }],
+        created_at: 1760000000003,
+        run_id: None,
+        status: None,
+    }
+}
+
+#[test]
+fn append_canonical_empty_batch_returns_current_state() {
+    let (store, _dir) = store();
+    store
+        .append_canonical("s1", &[StoredEntry::Message(user("u1", None, "你好"))])
+        .unwrap();
+    let (rev, count) = store.append_canonical("s1", &[]).unwrap();
+    assert_eq!((rev, count), (1, 1));
+}
+
+#[test]
+fn load_repairs_interrupted_run_with_marker_row() {
+    let (store, _dir) = store();
+    // 崩溃现场：canonical turn 条目已落、无 marker（进程在 runEnded 落盘前死）
+    store
+        .append_canonical(
+            "s1",
+            &[
+                StoredEntry::Message(user("u1", None, "你好")),
+                StoredEntry::Message(canonical_turn("run-9", 1, Some("u1"), "部分答复")),
+            ],
+        )
+        .unwrap();
+    let tree = store.load_session_tree("s1").unwrap();
+    // 修复行：endedAt=None（interrupted 语义）
+    let marker = tree
+        .messages
+        .iter()
+        .find(|m| m.id == "run-9:marker")
+        .expect("应补 interrupted marker");
+    assert!(
+        marker
+            .parts
+            .iter()
+            .any(|p| matches!(p, WirePart::RunMarker { ended_at: None, .. }))
+    );
+    // 幂等：再次 load 不再补
+    let tree2 = store.load_session_tree("s1").unwrap();
+    assert_eq!(
+        tree2
+            .messages
+            .iter()
+            .filter(|m| m.id == "run-9:marker")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn load_skips_repair_for_non_canonical_run_entries() {
+    let (store, _dir) = store();
+    // save_session_tree 直接落的条目（前端 id 带 runId）：不触发崩溃修复
+    store
+        .save_session_tree(
+            "s1",
+            &[user("u1", None, "你好"), assistant("a1", "u1", "答复")],
+            Some("a1"),
+            0,
+        )
+        .unwrap();
+    let tree = store.load_session_tree("s1").unwrap();
+    assert!(
+        !tree.messages.iter().any(|m| m.id.ends_with(":marker")),
+        "非 canonical 形态条目不应触发修复"
+    );
+}
+
+#[test]
+fn index_upsert_list_and_toolres_roundtrip() {
+    let (store, dir) = store();
+    let root = dir.path().to_path_buf();
+    // index：首建 → 更新（totalTokens 累加）
+    let now = 1760000000000i64;
+    store
+        .index()
+        .upsert(crate::storage::SessionMeta {
+            id: "s1".to_string(),
+            project_id: None,
+            title: "未命名会话".to_string(),
+            created_at: now,
+            updated_at: now,
+            revision: 1,
+            message_count: 2,
+            total_tokens: 100,
+        })
+        .unwrap();
+    store
+        .index()
+        .upsert(crate::storage::SessionMeta {
+            id: "s2".to_string(),
+            project_id: None,
+            title: "未命名会话".to_string(),
+            created_at: now,
+            updated_at: now + 1,
+            revision: 1,
+            message_count: 1,
+            total_tokens: 50,
+        })
+        .unwrap();
+    let list = store.index().list();
+    assert_eq!(list.len(), 2);
+    assert_eq!(list[0].id, "s2", "updatedAt 倒序");
+    // toolres：写 → 读 roundtrip；缺文件调用不在返回表
+    let outcome = crate::tools::ToolOutcome::success(
+        serde_json::json!({ "lineCount": 3 }),
+        "读取完成".to_string(),
+    );
+    crate::storage::write_outcome(&root, "s1", "t1-c1", &outcome);
+    let loaded =
+        crate::storage::load_outcomes(&root, "s1", &["t1-c1".to_string(), "missing".to_string()]);
+    assert_eq!(loaded.len(), 1);
+    assert_eq!(loaded["t1-c1"]["uiSummary"], "读取完成");
+    assert_eq!(loaded["t1-c1"]["data"]["lineCount"], 3);
+}

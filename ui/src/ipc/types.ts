@@ -88,6 +88,30 @@ export type SessionTreeData = {
   revision: number;
 };
 
+// ---- 会话索引与 toolres 边车（§3.3 #14/#29，15 号票）----
+
+/** §3.2 SessionMeta（index.json 元素与 list_sessions 返回） */
+export interface SessionMeta {
+  id: string;
+  projectId?: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  revision: number;
+  messageCount: number;
+  totalTokens: number;
+}
+
+/** load_tool_outcomes 返回（边车 ToolOutcome 全量 JSON；缺文件调用不在表中） */
+export type ToolOutcomeJson = {
+  ok: boolean;
+  data?: unknown;
+  error?: { code: string; message: string };
+  uiSummary: string;
+  detail?: unknown;
+  truncated?: boolean;
+};
+
 // ---- 供应商（CW schema v2，实现 FR-02-01/06/07）----
 
 export type ApiFormat = "openai_chat" | "anthropic_messages" | "openai_responses";

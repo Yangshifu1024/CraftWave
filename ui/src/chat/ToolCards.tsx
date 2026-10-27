@@ -3,12 +3,16 @@
  *
  * 数据源：part props（args/result/isError）+ useToolArgsStatus（S1 钉死）。
  * 状态机：参数准备中（半截 JSON）→ 运行中 → 完成/错误（result 直写驱动）。
- * M1 结果面 = 帧 uiSummary（一行人话）——详细 data 恢复随 toolres 边车票
- * （load_tool_outcomes #29），故 read 的预览展开 / command 的输出折叠以
- * 票面边界记录不实装，卡片以「参数 + 摘要」承载。
+ * 15 号票：终态卡片按 callId 拉 toolres 边车（§7.5），折叠展示 detail/data
+ * 全量 JSON——历史恢复的数据面；各卡片专属排版（read 预览高亮等）随桌面
+ * 体验票打磨。
  */
 
 import { type ToolCallMessagePartProps, useToolArgsStatus } from "@assistant-ui/react";
+import { useEffect, useState } from "react";
+import { LOCAL_SESSION_ID } from "@/chat/runtime";
+import * as client from "@/ipc/client";
+import type { ToolOutcomeJson } from "@/ipc/types";
 
 /** 卡片通用状态判定（与 mirror 原型同口径，供测试直接断言）。 */
 export function cardPhase(
@@ -28,6 +32,27 @@ interface CardProps extends ToolCallMessagePartProps<CardArgs, unknown> {
   title: string;
 }
 
+/** 终态卡片的边车 detail（§7.5）：按 callId 拉一次，缺文件静默（summary 降级）。 */
+function useToolOutcomeDetail(toolCallId: string, settled: boolean): ToolOutcomeJson | null {
+  const [outcome, setOutcome] = useState<ToolOutcomeJson | null>(null);
+  useEffect(() => {
+    if (!settled) return;
+    let cancelled = false;
+    void client
+      .loadToolOutcomes(LOCAL_SESSION_ID, [toolCallId])
+      .then((map) => {
+        if (!cancelled) setOutcome(map[toolCallId] ?? null);
+      })
+      .catch(() => {
+        // IPC 失败（如纯浏览器预览）：summary 降级，不打扰
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [toolCallId, settled]);
+  return outcome;
+}
+
 /** 通用壳：标题 + 状态徽标 + result 摘要行。 */
 function ToolCardShell({ title, children, ...props }: CardProps & { children?: React.ReactNode }) {
   const { toolCallId, result, isError, argsText } = props;
@@ -41,11 +66,18 @@ function ToolCardShell({ title, children, ...props }: CardProps & { children?: R
     error: "错误",
     done: "完成",
   }[phase];
+  const settled = phase === "done" || phase === "error";
+  const outcome = useToolOutcomeDetail(toolCallId, settled);
+  const detailJson = outcome
+    ? JSON.stringify(outcome.detail ?? outcome.data ?? null, null, 2)
+    : null;
 
   const summary =
-    result !== undefined && typeof result === "object" && result !== null
+    outcome?.uiSummary ||
+    (result !== undefined && typeof result === "object" && result !== null
       ? String((result as { summary?: string }).summary ?? "")
-      : "";
+      : "") ||
+    "";
 
   return (
     <div
@@ -75,6 +107,14 @@ function ToolCardShell({ title, children, ...props }: CardProps & { children?: R
         </pre>
       )}
       {hasResult && <p className={isError ? "text-red-300" : "text-neutral-400"}>{summary}</p>}
+      {detailJson !== null && detailJson !== "null" && (
+        <details className="mt-1 rounded border border-neutral-800 bg-neutral-950/60 px-2 py-1">
+          <summary className="cursor-default select-none text-neutral-500">详细数据</summary>
+          <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all text-neutral-400">
+            {outcome?.truncated ? "（结果超过 5MB，已截断——全量见 spill 文件）" : detailJson}
+          </pre>
+        </details>
+      )}
     </div>
   );
 }

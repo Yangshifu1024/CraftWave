@@ -19,9 +19,11 @@ import type {
   SaveProviderArgs,
   SaveSessionTreeArgs,
   SaveSessionTreeResult,
+  SessionMeta,
   SessionTreeData,
   StartChatArgs,
   StartChatResult,
+  ToolOutcomeJson,
 } from "./types";
 
 /** 本文件已接线的命令名（§3.3 键面，snake_case）。 */
@@ -30,6 +32,8 @@ export const COMMANDS = {
   restoreNativeTitlebar: "restore_native_titlebar",
   saveSessionTree: "save_session_tree",
   loadSessionTree: "load_session_tree",
+  listSessions: "list_sessions",
+  loadToolOutcomes: "load_tool_outcomes",
   getConfig: "get_config",
   saveConfig: "save_config",
   saveProvider: "save_provider",
@@ -80,6 +84,19 @@ export function saveSessionTree(args: SaveSessionTreeArgs): Promise<SaveSessionT
 /** 会话树加载（承载 §6.1 定稿结构：messages 含 status? + activeLeafId + revision）。 */
 export function loadSessionTree(sessionId: string): Promise<SessionTreeData> {
   return invoke(COMMANDS.loadSessionTree, { sessionId });
+}
+
+/** §3.3 #14：会话列表（index.json，updatedAt 倒序）。 */
+export function listSessions(projectId?: string): Promise<SessionMeta[]> {
+  return invoke(COMMANDS.listSessions, { projectId });
+}
+
+/** §3.3 #29：工具卡恢复——按 callId 批量拉边车；缺文件调用不在返回表。 */
+export function loadToolOutcomes(
+  sessionId: string,
+  callIds: string[],
+): Promise<Record<string, ToolOutcomeJson>> {
+  return invoke(COMMANDS.loadToolOutcomes, { sessionId, callIds });
 }
 
 /** §3.3 #6：读取当前配置。 */

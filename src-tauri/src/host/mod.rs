@@ -11,6 +11,11 @@
 
 pub mod commands;
 mod error;
+pub mod run_persistence;
+
+#[cfg(test)]
+#[path = "run_persistence_test.rs"]
+mod run_persistence_test;
 
 pub use crate::util::errors::IpcError;
 
@@ -21,6 +26,7 @@ use std::sync::{Arc, Mutex};
 use crate::agent::RunManager;
 use crate::backend::frames::UsageTotal;
 use crate::providers::types::AppConfig;
+use crate::storage::SessionStore;
 use crate::storage::config_store::ConfigStore;
 use crate::util::events::EventSink;
 
@@ -34,16 +40,20 @@ pub struct AppState {
     pub events: Arc<dyn EventSink>,
     /// 会话累计用量（tokens:update 的全量口径；run 帧增量折算 + suggest 后台小调用）。
     pub session_usage: Mutex<HashMap<String, UsageTotal>>,
+    /// 会话存储器（15 号票：run 落盘器与命令层共享同一锁表/索引）。
+    pub store: Arc<SessionStore>,
 }
 
 impl AppState {
     /// `~/.craftwave` 数据目录（§7.1）下的 config.json。
     pub fn new_in(data_dir: PathBuf, events: Arc<dyn EventSink>) -> Self {
+        let store = Arc::new(SessionStore::with_root(data_dir.clone()));
         Self {
             config: ConfigStore::new(data_dir.join("config.json")),
             runs: RunManager::new(),
             events,
             session_usage: Mutex::new(HashMap::new()),
+            store,
         }
     }
 

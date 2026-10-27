@@ -150,6 +150,7 @@ describe("createTauriChatAdapter：帧消费管线", () => {
       runConfig: { tier: "autoEdit", maxTurns: 4, steer: false },
       startChat: fakeStartChat(frames, sent),
       cancelRun: vi.fn(async () => true),
+      syncTree: async () => {}, // 15 号票：发送前树同步注入 no-op（不触 IPC）
     });
 
     const yields: { content: unknown[]; status?: unknown }[] = [];
@@ -193,6 +194,7 @@ describe("createTauriChatAdapter：帧消费管线", () => {
       runConfig: { tier: "autoEdit", maxTurns: 4, steer: false },
       startChat: fakeStartChat(frames, sent),
       cancelRun,
+      syncTree: async () => {}, // 15 号票：发送前树同步注入 no-op（不触 IPC）
     });
 
     const yields: { status?: unknown }[] = [];

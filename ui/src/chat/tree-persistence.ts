@@ -189,6 +189,22 @@ export function entriesToExported(entries: StoredEntry[]): ExportedMessageReposi
   );
 }
 
+/** load_session_tree 返回 → 导入结构（15 号票历史收养入口）。 */
+export function loadedTreeToExported(tree: {
+  messages: MessageEntryLike[];
+  activeLeafId?: string;
+  revision: number;
+}): ExportedMessageRepository {
+  const entries: StoredEntry[] = tree.messages.map((m) => ({ ...m, kind: "message" }));
+  const meta: StoredMetaEntry = { kind: "meta", revision: tree.revision };
+  if (tree.activeLeafId != null) meta.activeLeafId = tree.activeLeafId;
+  entries.push(meta);
+  return entriesToExported(entries);
+}
+
+/** load_session_tree 的 messages 元素形态（StoredMessageEntry 去掉 kind 判别键）。 */
+type MessageEntryLike = Omit<StoredMessageEntry, "kind">;
+
 // ---- 落盘（spike：单 JSON 文件；生产：逐条 JSONL）----
 
 export function serializeSession(entries: StoredEntry[]): string {

@@ -43,9 +43,10 @@ use crate::backend::gate::ApprovalGate;
 use crate::backend::run_loop::{DriveState, PendingCall, RunExit, drive_run, resume_run};
 use crate::backend::turn::TurnDriver;
 use crate::host::AppState;
+use crate::host::run_persistence::{PersistingSink, RunRecorder};
 use crate::providers::types::{ApiFormat, ProviderConfig, ProviderModel};
 use crate::safety::tier::PermissionTier;
-use crate::storage::{MessageEntry, SessionStore};
+use crate::storage::{MessageEntry, MessageRole, StoredEntry};
 use crate::util::errors::{E_INTERNAL, IpcError};
 use crate::util::events::EventSink;
 use crate::util::events::keys;
@@ -558,6 +559,37 @@ pub(crate) fn context_tail(messages: &[MessageEntry]) -> String {
         .unwrap_or_default()
 }
 
+/// user 条目幂等兜底：末条 user 不在史册时以史册链尾为父追加（一次 canonical
+/// 落盘即 fsync）。正常协议下前端发送前已 save，此处立即跳过。
+fn persist_user_fallback(app: &AppState, session_id: &str, messages: &[MessageEntry]) {
+    let Some(user) = messages.iter().rev().find(|m| m.role == MessageRole::User) else {
+        return;
+    };
+    let known = app
+        .store
+        .load_session_tree(session_id)
+        .ok()
+        .map(|tree| tree.messages.iter().any(|m| m.id == user.id))
+        .unwrap_or(false);
+    if known {
+        return;
+    }
+    let mut entry = user.clone();
+    if entry.parent_id.is_none()
+        && let Ok(tree) = app.store.load_session_tree(session_id)
+        && let Some(leaf) = tree.active_leaf_id
+    {
+        entry.parent_id = Some(leaf);
+    }
+    if let Err(e) = app
+        .store
+        .append_canonical(session_id, &[StoredEntry::Message(entry)])
+    {
+        #[cfg(debug_assertions)]
+        eprintln!("[craftwave] user 条目兜底落盘失败（{session_id}）：{e:?}");
+    }
+}
+
 /// start_chat 主体（命令薄包装转调；公开给集成测试注入内存 keyring + 临时
 /// config 与测试 FrameSink——不经 tauri 运行时）。`auto_confirm` 为
 /// AppConfig.approval.autoConfirm 的入口快照（§5.4：挂起 300s 超时自动
@@ -600,10 +632,9 @@ pub async fn start_chat_core(
     let executor: Arc<dyn crate::backend::run_loop::CancellableExecutor> = Arc::new(
         ToolsetExecutor::new(
             // 临时会话 roots = 全局数据目录（§6.2 注；项目会话随项目票接入）。
-            // 防御性建目录：正常由 lib.rs setup 创建，此处兜底首目录缺失
-            //（command 的 cwd / spill 落盘都以它为基准）。
+            // 数据根统一取 AppState.store（与存储/边车同根；测试注入临时目录）。
             {
-                let root = SessionStore::default_root();
+                let root = app.store.root().to_path_buf();
                 let _ = std::fs::create_dir_all(&root);
                 crate::tools::ToolsContext::new(root.clone(), root)
             },
@@ -615,6 +646,7 @@ pub async fn start_chat_core(
             plan: handle.plan.clone(),
             session_id: session_id.clone(),
             run_id: run_id.clone(),
+            data_root: app.store.root().to_path_buf(),
         }),
     );
     let gate = Arc::new(ApprovalGate::new(run_config.tier, handle.plan.clone()));
@@ -628,10 +660,15 @@ pub async fn start_chat_core(
     let runs_for_task = runs.clone();
     let suggest_tail = context_tail(&messages);
     let run_id_for_result = run_id.clone();
+    // user 条目幂等兜底（§7.3 首行）：正常协议前端发送前已 save_session_tree
+    //（user 拓扑正确）；headless/异常路径未 save 时此处补落（parent=史册链尾）。
+    persist_user_fallback(app, &session_id, &messages);
+    let recorder = RunRecorder::new(app.store.clone(), session_id.clone(), run_id.clone());
     tokio::spawn(async move {
-        // 帧出口 = 事件层（usage → tokens:update 全量校正）包 Channel/测试 sink
+        // 帧出口 = 事件层（usage → tokens:update）包 canonical 落盘器（§7.3）
+        // 包 Channel/测试 sink
         let mut sink = EventfulSink {
-            inner: sink,
+            inner: Box::new(PersistingSink::new(recorder, sink)),
             events: events.clone(),
             session_id: session_id.clone(),
             last_run_total: UsageTotal::default(),

@@ -1,0 +1,77 @@
+//! toolres 边车（§7.5）：`sessions/<sessionId>.toolres/<callId>.json`，
+//! `ToolOutcome` 全量 JSON（含 detail，warnings 仅 UI 通道）。工具卡恢复
+//! （FR-04-07）按 callId 批量拉取（`load_tool_outcomes`，§3.3 #29）。
+
+use std::collections::HashMap;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use serde_json::Value;
+
+use crate::tools::ToolOutcome;
+use crate::util::atomic::write_atomic;
+
+/// 单文件上限（§7.5：超限拒入，占位引用）。
+pub const TOOLRES_MAX_BYTES: usize = 5 * 1024 * 1024;
+
+/// 边车目录（§7.1 布局：数据根/sessions/<sid>.toolres/）。
+pub fn toolres_dir(data_root: &Path, session_id: &str) -> PathBuf {
+    data_root
+        .join("sessions")
+        .join(format!("{session_id}.toolres"))
+}
+
+/// callId → 文件名（防御性：桥接 id 本身为安全字符集，异常字符替换防路径逃逸）。
+fn call_file(dir: &Path, call_id: &str) -> PathBuf {
+    let safe: String = call_id
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    dir.join(format!("{safe}.json"))
+}
+
+/// 写一个工具结果边车（工具执行完成点调用，原子写 = fsync，§7.3 逐结果落）。
+/// 超限写占位（`{ok, uiSummary, truncated:true}`——spill 全量细节已由
+/// command 工具自身落盘，§8.3；其余工具超限时 UI 降级用帧面 summary）。
+pub fn write_outcome(data_root: &Path, session_id: &str, call_id: &str, outcome: &ToolOutcome) {
+    let dir = toolres_dir(data_root, session_id);
+    let path = call_file(&dir, call_id);
+    let payload = match serde_json::to_vec(outcome) {
+        Ok(bytes) if bytes.len() <= TOOLRES_MAX_BYTES => bytes,
+        _ => serde_json::to_vec(&serde_json::json!({
+            "ok": outcome.ok,
+            "uiSummary": outcome.ui_summary,
+            "truncated": true,
+        }))
+        .unwrap_or_default(),
+    };
+    // 边车属尽力而为通道：失败记日志不中断执行（帧面 summary 仍可用）
+    if let Err(e) = write_atomic(&path, &payload) {
+        #[cfg(debug_assertions)]
+        eprintln!("[craftwave] toolres 边车写入失败（{call_id}）：{e}");
+    }
+}
+
+/// 批量读取（`load_tool_outcomes`；缺文件的 callId 不出现在返回表中，前端降级）。
+pub fn load_outcomes(
+    data_root: &Path,
+    session_id: &str,
+    call_ids: &[String],
+) -> HashMap<String, Value> {
+    let dir = toolres_dir(data_root, session_id);
+    let mut out = HashMap::with_capacity(call_ids.len());
+    for call_id in call_ids {
+        if let Ok(raw) = fs::read_to_string(call_file(&dir, call_id))
+            && let Ok(value) = serde_json::from_str(&raw)
+        {
+            out.insert(call_id.clone(), value);
+        }
+    }
+    out
+}

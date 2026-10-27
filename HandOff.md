@@ -10,20 +10,19 @@
 3. `docs/技术设计文档.md`——开发直接依据（P0 字段级）；附录 C 为未决问题清单。
 4. 票目录 `docs/specs/m1-mvp/tasks/`——一票一文件，Answer 节是各票结论。
 
-## 二、当前状态快照（main = `acda953`，本地领先 origin 6 个提交未推送）
+## 二、当前状态快照（main = `b7ee963`；15 号票工作在分支 `feat/run-persistence` 待用户点头合并）
 
-- **地图进度**：01–14 号票全部关闭。四张 spike（S1/S2+S3/S4/S5/S6）+ 三张实现切片（storage/tools/providers）+ 核心链路（13 号）+ 工具系统接线（14 号）均已合并进 main。
-- **测试基线**：Rust 233 单测/集成（lib 209 + 集成 24，另 1 例真钥匙串冒烟 `#[ignore]`）；前端 vitest 81 例；biome/tsc 全绿。测试方法命名已全仓英文化（纪律见五）。
-- **已通的能力**：在 13 号（backend RunLoop + 帧渲染 + 取消全链）之上，14 号新增——注册表 8 工具（command/plan/ask 接入，suggest 为 run 尾后台小调用不开放模型）；审批门生产化（矩阵×围栏×计划门×签名放行，**批级预判零执行挂起** + DriveState 延续恢复 + deny 补帧 + autoConfirm 300s）；ask 协议（AskSlot/resolve_ask，挂起与问卷双路径共用）；事件面 5 键（EventSink 抽象：ask:opened/closed、plan:update、run:suggestions、tokens:update）；`approve_plan` 命令（§3.3 26c）；前端正式 toolkit（参数与 Rust ToolSpec 经 manifest `toolSpecs` 双向锁定）+ 7 卡片 + AskPanel + suggest ghost + sessionUsage 事件校正。
-- **同日追加（v2.5 用户决策）**：① **keyring 已废除**——API Key 明文存 config.json（ProviderConfig.apiKey；credentialRef/credentialCount 已删），config.json 落盘/加载统一收紧 0600，intent.json 协议移除，keyring crate 依赖删除（§9.4 改写）；② dev 模式原始错误输出：前端 DEV 条件 console（start_chat reject + runEnded error 帧）、Rust debug_assertions eprintln（send_error_ended）。另修复：lib.rs 曾漏 manage RunManager 导致 GUI start_chat 报 "state not managed"（headless 测试盲区，已补）。
-- **14 号票顺带修正两处 13 号缺陷**（测试钉死）：挂起重放重复执行（改批级预判）；跨轮桥接 callId 撞车（派生 id 加 turn 前缀）。文档修订 v2.4 六处。
-- **设置界面重写**（用户直派无票，`29d4f90`，分支 `feat/settings-ui-revamp` 已并回）：shadcn 风格基件手写移植（`ui/src/components/ui/*` 12 件，零新依赖）+ 亮暗两套设计令牌（styles.css）；设置页照抄 CodeWave 布局（左导航三组 10 页 + 操作条 + 页体 50% 居中 + 逐页脏标记 + 搜索态 + 离开三选弹框 + 页内 Esc）；**供应商页完整复刻 ProvidersPanel 交互**（860px 单弹框内供应商表单 ↔ 模型编辑器同框切换、API 格式切换同步官方端点、凭据保留/替换、校验红字按 touched/提交时机、删除确认、activeModelId 悬空兜底、纯草稿语义统一页头保存）；settings store 增 baseline/patchConfig。未接线：MCP/技能/写入后检查/工作区与智能体四页占位待票；暗色主题仅编辑落盘、全应用换肤未接线。
-- **GLM Coding Plan 500 排障**（用户配置修复，无代码改动）：用户 config.json 原配 `/api/v1` + `glm-5.3-flash[1m]`——`/api/v1` 是 Responses 协议端点、与 rig 的 Chat Completions 方言不匹配；`[1m]` 后缀无效。已改为 `https://open.bigmodel.cn/api/coding/paas/v4` + `glm-5.3-flash`（curl 实测 200）。
+- **地图进度**：01–15 号票全部关闭。四张 spike + 三张实现切片 + 核心链路（13）+ 工具系统接线（14）+ **run 生命周期落盘与历史恢复（15，本次）**。
+- **测试基线**：Rust 210 lib + 集成 25（另 1 例真钥匙串冒烟 `#[ignore]` 已随 keyring 废除清理面）；前端 vitest 89 例；biome/tsc 全绿。
+- **已通的能力**：在 14 号之上，15 号新增——§7.3 时机表全量落盘（RunRecorder 帧观察器：user/turn 文本/工具批/runMarker 逐点 fsync）、sessions/index.json + `list_sessions`（#14）、toolres 边车 + `load_tool_outcomes`（#29）、崩溃恢复读时修复（canonical 形态判定，只认 `{runId}:` 前缀条目）、前端启动收养（load→import）、发送前 save 协议、分支/编辑/重生成 UI（官方原语操作条）、工具卡边车恢复（折叠 detail）。**canonical 双写协议定稿**（文档 v2.6）：条目 id 两侧同源（`{runId}:{turn}`/`.tools`/`:marker`）、运行态节点不进 save 载荷（marker 引用改写）、E_SESSION_REV load 校正重试。SessionStore Arc 化（AppState.store 与命令层/RunRecorder 共锁表）；start_chat 的 ToolsContext/边车根统一 `app.store.root()`（测试不再污染真实 `~/.craftwave`）。
+- **同日追加（v2.5 用户决策）**：① **keyring 已废除**——API Key 明文存 config.json（0600，intent.json 协议移除）；② dev 模式原始错误输出双通道。
+- **设置界面重写**（`29d4f90` 已并回）：shadcn 风格基件 12 件（零新依赖）+ 亮暗令牌；设置页照抄 CodeWave 布局；供应商页完整复刻 ProvidersPanel 交互。未接线：MCP/技能/写入后检查/工作区与智能体四页占位待票；暗色主题仅编辑落盘。
+- **GLM Coding Plan 500 排障**（用户配置修复，无代码改动）：端点已改 `https://open.bigmodel.cn/api/coding/paas/v4` + `glm-5.3-flash`（三协议分流详见五）。
 
 ## 三、下一步（按地图雾区顺序）
 
-1. **持久化剩余票**：index.json、run 生命周期落盘（§7.3 时机已钉）、toolres 边车与工具卡详细数据（#29）、分支/编辑/重生成 UI、崩溃恢复。
-2. **多会话与项目** → **桌面体验**（三栏/托盘/快捷键/折叠分组 §10.4）→ **打包验收**（C-8 安全复判在此毕业成票）。
+1. **多会话与项目**：create/delete/rename_session、临时/项目会话双形态、项目注册表、workspace 读写与路径搜索命令（#27/#28）；顺带收敛 15 号票 shortcut（index 2000 条归档、崩溃 run 尾条 incomplete 回填）。
+2. **桌面体验**（三栏/托盘/快捷键/折叠分组 §10.4；工具卡专属排版在此票打磨）→ **打包验收**（C-8 安全复判在此毕业成票）。
 3. 小项：rate 的 TextDelta 自算、steer/followUp、错误分类 §11.3、ts-rs 引入（C-2 后半）。
 
 ## 四、工作方式（本图约定）
@@ -39,6 +38,9 @@
 - 工具链：`rust-toolchain.toml` 钉 1.97.1（rig MSRV）；crates 走 rsproxy 镜像；GitHub 抖动时命令前缀 `https_proxy=http://127.0.0.1:7890`。
 - **测试方法命名一律英文**（snake_case，2026-10-27 用户指令，全仓已统一）；断言消息保持中文。
 - **rig 非流式坑**：`Model::call`（单次补全，suggest 用）期待 `chat.completion` JSON，mock_openai 已支持流式/非流式两形态——新写后台小调用测试直接复用。
+- **assistant-ui 0.15.31 两个 API 坑**（15 号票实证）：① `BranchPickerPrimitive.Count` 零 props（`Props = Record<string, never>`），样式要套外层 span；② `ThreadMessage` **不带 parentId**（api-surface 查证），活动路径的父子关系只能按传入线性序推导——15 号票 save 协议（payload parentId 线性链）建立在这个前提上。
+- **真实帧序是 Usage 先于工具执行**（run_loop：throttler.flush → usage 帧 → 才进 CallTools）——RunRecorder 落盘顺序依赖它（文本条先落、工具条后落），写帧序测试时别把 ToolResult 放在 Usage 前。
+- **前端 vi.mock("@/ipc/client") 要补全依赖链导出**：session.ts 引 toWire（runtime.ts）→ runtime.ts 又引 startChat/cancelRun 等，mock 缺导出直接整文件报错（不只是缺的那个函数）。
 - 新依赖：`anstream`（ANSI 清洗，Rust）、`@types/json-schema`（ui devDep，toolkit 参数类型）；`sha2` 全仓统一 **0.11**，勿回 0.10。
 - **智谱 GLM Coding Plan 端点三协议分流**（官方 quick-start）：Anthropic 协议 `…/api/anthropic`；OpenAI Chat Completions 协议 `…/api/coding/paas/v4`；OpenAI Responses 协议 `…/api/v1`。rig 的 openai_chat 方言拼 `{baseUrl}/chat/completions`，端点协议不匹配时服务端回 5xx/403 而非明确报错——排障先拿用户 Key curl 三个端点对照。
 - **前端纯浏览器黑屏是既有行为**：主入口与 `?mirror=1` 在无 Tauri IPC 的浏览器里都不渲染（React 挂载后整树卸载）；UI 视觉调试用临时 `preview.html` 入口预置 store 数据绕开 IPC（用完即删，勿提交）。

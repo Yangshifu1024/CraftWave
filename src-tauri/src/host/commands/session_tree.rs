@@ -1,13 +1,18 @@
-//! 会话树命令（§3.3 #26 `save_session_tree`；本切片按票面补充 `load_session_tree`）。
+//! 会话树与持久化域命令（§3.3 #26/#26b `save/load_session_tree`，10 号票；
+//! #14 `list_sessions`、#29 `load_tool_outcomes`，15 号票）。
 //!
 //! 命令层只做参数平铺与转调（§2.2：host = 校验/转调），逻辑全在 storage 引擎。
 //! 负载字段 camelCase、命令名 snake_case（D14）；Tauri 自动完成 snake_case 形参映射。
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tauri::State;
 
 use crate::host::IpcError;
-use crate::storage::{MessageEntry, SessionStore, SessionTreeData};
+use crate::storage::{MessageEntry, SessionMeta, SessionStore, SessionTreeData, load_outcomes};
 
 /// `save_session_tree` 参数契约（§3.3 #26；文档命名锚点，命令形参按字段平铺展开）。
 #[derive(Debug, Clone, Deserialize)]
@@ -36,7 +41,7 @@ pub struct LoadSessionTreeArgs {
 /// 全树同步（§6.3）：前端 `thread.export()` 全树 → 仅追加缺失节点 → revision+1。
 #[tauri::command]
 pub(crate) async fn save_session_tree(
-    store: State<'_, SessionStore>,
+    store: State<'_, Arc<SessionStore>>,
     session_id: String,
     messages: Vec<MessageEntry>,
     active_leaf_id: Option<String>,
@@ -61,9 +66,62 @@ pub(crate) async fn save_session_tree(
 /// 会话树加载（承载 §6.1 定稿结构：messages 含 `status?` + activeLeafId + revision）。
 #[tauri::command]
 pub(crate) async fn load_session_tree(
-    store: State<'_, SessionStore>,
+    store: State<'_, Arc<SessionStore>>,
     session_id: String,
 ) -> Result<SessionTreeData, IpcError> {
     let args = LoadSessionTreeArgs { session_id };
     Ok(store.load_session_tree(&args.session_id)?)
+}
+
+/// `list_sessions` 参数契约（§3.3 #14）。
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListSessionsArgs {
+    #[serde(default)]
+    pub project_id: Option<String>,
+}
+
+/// 会话列表（§3.3 #14）：index.json 按 updatedAt 倒序；projectId 过滤
+/// （None=临时会话；参数缺省返回全部，M1 单会话前端不传）。
+#[tauri::command]
+pub(crate) async fn list_sessions(
+    store: State<'_, Arc<SessionStore>>,
+    project_id: Option<String>,
+) -> Result<Vec<SessionMeta>, IpcError> {
+    let args = ListSessionsArgs { project_id };
+    let sessions = store.index().list();
+    Ok(match args.project_id {
+        Some(project) => sessions
+            .into_iter()
+            .filter(|m| m.project_id.as_deref() == Some(project.as_str()))
+            .collect(),
+        None => sessions,
+    })
+}
+
+/// `load_tool_outcomes` 参数契约（§3.3 #29）。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoadToolOutcomesArgs {
+    pub session_id: String,
+    pub call_ids: Vec<String>,
+}
+
+/// 工具卡恢复（§3.3 #29/§7.5）：按 callId 批量拉边车；缺文件的调用不在返回表
+/// （前端以帧面 summary 降级渲染）。
+#[tauri::command]
+pub(crate) async fn load_tool_outcomes(
+    store: State<'_, Arc<SessionStore>>,
+    session_id: String,
+    call_ids: Vec<String>,
+) -> Result<HashMap<String, Value>, IpcError> {
+    let args = LoadToolOutcomesArgs {
+        session_id,
+        call_ids,
+    };
+    Ok(load_outcomes(
+        store.root(),
+        &args.session_id,
+        &args.call_ids,
+    ))
 }

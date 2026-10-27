@@ -2,22 +2,26 @@
 //!
 //! 已落地：§6.1 条目类型、append-only 分段 JSONL 读写器（§7.2–7.4）、
 //! 会话树存取引擎（save/load_session_tree 的 storage 层，10 号票）、
-//! 配置协调器（§7.6，12 号票）。索引（sessions/index.json）、toolres 边车、
-//! UI 状态由后续票接入。
+//! 配置协调器（§7.6，12 号票）、canonical 追加原语 + 会话索引 + toolres 边车
+//! + 崩溃恢复（15 号票）。UI 状态由后续票接入。
 
 pub mod config_store;
 pub mod entries;
+pub mod index_store;
 pub mod locks;
 pub mod segment;
 pub mod session_tree;
+pub mod toolres;
 
 pub use entries::{
     CompleteReason, IncompleteReason, MessageEntry, MessageRole, MessageStatus, MetaEntry,
     PlanItem, PlanItemStatus, RequiresActionReason, SessionEntry, StoredEntry, WirePart,
 };
+pub use index_store::{IndexError, SessionIndex, SessionMeta};
 pub use locks::LockMap;
 pub use segment::{SEGMETA_FILE, SegmentInfo, Segmeta, SessionLog};
 pub use session_tree::{SessionStore, SessionTreeData, StorageError};
+pub use toolres::{load_outcomes, write_outcome};
 
 #[cfg(test)]
 #[path = "segment_test.rs"]

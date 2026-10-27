@@ -34,13 +34,14 @@ CraftWave M1 MVP 出口准则达成：P0 需求全集实现，NFR-01/02/06/09/12
 - [实现：Provider 管理与设置切片](tasks/12-impl-providers-settings.md)：CW schema v2 + 配置协调器（storage，锁内 RMW + intent）+ keyring 协议（trait/mock/真钥匙串 #[ignore]）+ P0 命令 #6–9 + manifest 双向契约 + 设置页骨架全绿；ts-rs 按 C-2 留后续票。
 - [实现：单会话核心链路](tasks/13-impl-core-run-loop.md)：spike 产品化为 backend/（帧 9 帧全集 + 64ms 节流内聚 + AgentRun RunLoop + callId 同源映射 + 审批挂起机制层 + 取消收齐）与 agent/ RunManager，start_chat/cancel_run 正式注册，前端 tauriChatModel（64ms 快照打字机 + 思考流 + adapter 直写 result + 取消桥）与 runMetrics 三数；mock SSE 端到端全绿（NFR-02 TTFT 余量 + 取消全链 <1s），合同面收敛 §3.3/§3.6 并修订 §3.2/§3.4/§4.3 三处口径（详见票 Answer）。
 - [实现：工具系统接线（command/plan/ask/suggest + 审批门 + 工具卡片 UI）](tasks/14-impl-tools-approval-ui.md)：注册表 5→8（command/plan/ask 接入，suggest 为 run 尾后台小调用不开放模型）；审批门生产化（矩阵×围栏×计划门×签名放行，批级预判零执行挂起 + DriveState 延续恢复，挂起/ask 双路径共用 AskSlot 与 resolve_ask）；事件面实装 5 键（EventSink 抽象，manifest events/toolSpecs 出口）；approve_plan 命令增补（§3.3 26c）；前端正式 toolkit + 7 卡片 + AskPanel + askHint ghost + sessionUsage tokens:update 校正；含 13 号票挂起重放缺陷与跨轮 callId 撞车两处修正（详见票 Answer）。
+- [实现：run 生命周期落盘与历史恢复](tasks/15-impl-run-persistence.md)：§7.3 时机表全量落地（RunRecorder 帧观察器：turn/工具条目/runMarker 逐点 fsync）+ index.json 与 list_sessions（#14）+ toolres 边车与 load_tool_outcomes（#29）+ 崩溃恢复读时修复 + 前端启动收养/发送前 save/分支编辑重生成 UI（官方原语）/工具卡边车恢复；**canonical 双写协议定稿**——条目 id 两侧同源派生（`{runId}:{turn}`/`.tools`/`:marker`）、运行态节点不进 save 载荷（引用改写 marker）、E_SESSION_REV 自愈（文档 v2.6 回写）。
 
 ## Not yet specified
 
 - **工程骨架随开发推进的增量维护**——最小骨架与三平台 CI 已随「S6 最小骨架与三平台构建验证（含 C-7）」落地，无独立决策点；后续仅随票增量维护（依赖升级、CI 注解治理等顺手做，不单独立票）。
 - **单会话核心链路**——start_chat → rig 流 → Channel 帧 → assistant-ui 渲染、打字机、思考流、运行过程实时展示、取消 UI。backend 形态（AgentRun 步进 + 序列化审批挂起）已随「S2+S3」钉死、镜像工具渲染路线已随「S1」钉死、取消全链已随「S5」（08 号票）实测落地；实现票「13-impl-core-run-loop」已立，不再有未知项。
 - **工具系统与安全审批**——全部落地：五文件工具/safe_join/围栏/权限判定（11 号）、command/plan/ask/suggest + 审批门 + 工具卡片 UI + AskPanel（14 号）。M1 余量（always_session 命令记忆与 commandAllowlist 接线、写后检查、AST 围栏）均属 M2；toolres 边车与工具卡详细数据恢复随持久化票。
-- **持久化与会话树**——append-only 分段 JSONL、原子写、树 roundtrip 工程化、分支/编辑/重生成的完整落地、崩溃恢复。roundtrip 与 C-4 结构已随「S4」钉死；读写器、原子写、save/load_session_tree 与契约测试已随「实现：storage 读写器与会话树命令」（10 号票）落地；剩余：index.json、run 生命周期落盘点、分支/编辑/重生成 UI 落地、崩溃恢复，及两处合同面缺口（§3.3 注册表补 load_session_tree 行、§3.6 补 E_STORAGE_IO，随核心链路票收敛）。
+- **持久化与会话树**——全部落地：读写器与树 roundtrip（S4/10 号）、run 生命周期落盘、index.json、toolres 边车、崩溃恢复、分支/编辑/重生成 UI、canonical 双写协议（均随「实现：run 生命周期落盘与历史恢复」15 号票，文档 v2.6）。剩余小项：index.json 2000 条归档、崩溃 run 尾条 incomplete 状态回填（均记 15 号票 shortcut，随多会话/桌面体验票顺手收敛）。
 - **多会话与项目**——多 Tab 并行、临时/项目会话双形态、项目注册表、workspace 读写与路径搜索命令。
 - **Provider 管理与设置**——CW schema v2、keyring 提交协议、内置供应商预设、自定义 OpenAI 兼容端点、config 协调器、设置页结构。schema v2、keyring 协议、协调器、4 个 P0 命令与设置页骨架已随「实现：Provider 管理与设置切片」（12 号票）落地；剩余：session_prefs/ui_state 域命令、pending_intent UI 接线、设置页与预设打磨。
 - **桌面体验**——三栏布局、Composer、自绘标题栏、托盘+后台运行+系统通知直达会话、快捷键体系、主题、单实例、滚动跟随。

@@ -26,12 +26,18 @@ use host::commands::provider::{
 };
 #[allow(unused_imports)]
 use host::commands::session_tree::{
-    LoadSessionTreeArgs, SaveSessionTreeArgs, SaveSessionTreeResult,
+    ListSessionsArgs, LoadSessionTreeArgs, LoadToolOutcomesArgs, SaveSessionTreeArgs,
+    SaveSessionTreeResult,
 };
 use host::commands::session_tree::{load_session_tree, save_session_tree};
 #[allow(unused_imports)]
 use providers::types::{AppConfig, ProviderConfig};
-use storage::SessionStore;
+#[allow(unused_imports)]
+use serde_json::Value;
+#[allow(unused_imports)]
+use std::collections::HashMap;
+#[allow(unused_imports)]
+use storage::SessionMeta;
 #[allow(unused_imports)]
 use storage::SessionTreeData;
 
@@ -86,6 +92,8 @@ ipc_commands! {
     restore_native_titlebar => args: (), ret: ();
     save_session_tree => args: SaveSessionTreeArgs, ret: SaveSessionTreeResult;
     load_session_tree => args: LoadSessionTreeArgs, ret: SessionTreeData;
+    host::commands::session_tree::list_sessions => args: ListSessionsArgs, ret: Vec<SessionMeta>;
+    host::commands::session_tree::load_tool_outcomes => args: LoadToolOutcomesArgs, ret: HashMap<String, Value>;
     host::commands::config::get_config => args: (), ret: AppConfig;
     host::commands::config::save_config => args: SaveConfigArgs, ret: AppConfig;
     host::commands::provider::save_provider => args: SaveProviderArgs, ret: ProviderConfig;
@@ -123,9 +131,8 @@ async fn restore_native_titlebar(window: WebviewWindow) -> Result<(), String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_decoration::init())
-        .manage(SessionStore::with_root(SessionStore::default_root()))
         .setup(|app| {
-            // §7.1：数据目录 ~/.craftwave（config.json + intent.json）
+            // §7.1：数据目录 ~/.craftwave（config.json + histories + sessions）
             let home = app.path().home_dir()?;
             let data_dir = home.join(".craftwave");
             std::fs::create_dir_all(&data_dir)?;
@@ -136,8 +143,10 @@ pub fn run() {
             // RunManager 以共享句柄单独 manage：start_chat/cancel_run/
             // resolve_ask/approve_plan 以 State<RunManager> 注入（Clone =
             // 同一注册表，§5.1）；漏 manage 会报 "state not managed for
-            // field `runs`"（命令面 headless 测试不经 tauri，装配需此处钉死）
+            // field `runs`"（命令面 headless 测试不经 tauri，装配需此处钉死）。
+            // SessionStore 同理共享 Arc：命令层与 run 落盘器（15 号票）同一锁表。
             app.manage(state.runs.clone());
+            app.manage(state.store.clone());
             app.manage(state);
             Ok(())
         })

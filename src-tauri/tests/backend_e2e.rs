@@ -665,7 +665,6 @@ mod command_face {
     use super::*;
 
     use craftwave_lib::providers::types::{ApiFormat, ProviderConfig, ProviderModel};
-    use craftwave_lib::storage::config_store::ConfigStore;
 
     fn provider_fixture(base_url: &str) -> ProviderConfig {
         ProviderConfig {
@@ -692,26 +691,17 @@ mod command_face {
 
     fn app_fixture_with_events(mock: &MockOpenAI) -> (AppState, Arc<RecordingEventSink>) {
         let dir = tempfile::tempdir().expect("tempdir");
-        let store: ConfigStore<craftwave_lib::providers::types::AppConfig> =
-            ConfigStore::new(dir.path().join("config.json"));
+        let events = Arc::new(RecordingEventSink::new());
+        let app = AppState::new_in(dir.path().to_path_buf(), events.clone());
         let config = craftwave_lib::providers::types::AppConfig {
             providers: vec![provider_fixture(&mock.base_url)],
             active_model_id: Some("model-1".to_owned()),
             ..craftwave_lib::providers::types::AppConfig::default()
         };
-        store.save(config).expect("save config");
+        app.config.save(config).expect("save config");
         // tempdir drop 会删目录——用 leak 保住（测试进程生命周期内可接受）
         std::mem::forget(dir);
-        let events = Arc::new(RecordingEventSink::new());
-        (
-            AppState {
-                config: store,
-                runs: RunManager::new(),
-                events: events.clone(),
-                session_usage: std::sync::Mutex::new(std::collections::HashMap::new()),
-            },
-            events,
-        )
+        (app, events)
     }
 
     fn user_entry(text: &str) -> craftwave_lib::storage::MessageEntry {
@@ -795,6 +785,58 @@ mod command_face {
             assert!(Instant::now() < deadline, "run 任务应收尾摘除");
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
+    }
+
+    /// 15 号票：run 全链后磁盘有 canonical 条目（user 兜底 + turn 文本 + marker）
+    /// 与 index.json 建档——NFR-06「已提交历史零丢失」的端到端锚点。
+    #[tokio::test]
+    async fn run_persists_canonical_entries_and_index() {
+        let mock = MockOpenAI::start().await;
+        let app = app_fixture(&mock);
+        let runs = RunManager::new();
+        let sink = SharedSink::default();
+
+        craftwave_lib::host::commands::chat::start_chat_core(
+            &app,
+            &runs,
+            "sess-p".to_owned(),
+            vec![user_entry("持久化我")],
+            run_config(),
+            Box::new(sink.clone()),
+            false,
+        )
+        .await
+        .expect("start_chat_core 应成功");
+        let ended = wait_ended(&sink, Duration::from_secs(10)).await;
+        assert!(matches!(
+            ended,
+            ChatFrame::RunEnded {
+                reason: EndReason::Done,
+                ..
+            }
+        ));
+
+        let store = app.store.clone();
+        let tree = store.load_session_tree("sess-p").expect("史册应存在");
+        let ids: Vec<&str> = tree.messages.iter().map(|m| m.id.as_str()).collect();
+        // 默认 mock 脚本 = 工具调用 turn + 文本 turn（§mock_openai）：
+        // user 兜底、turn1 文本、turn1 工具、turn2 文本、marker，共 5 条
+        assert_eq!(ids.len(), 5, "实际条目：{ids:?}");
+        assert!(ids[0].starts_with("u-"), "user 兜底条目");
+        assert!(ids[1].ends_with(":1"), "turn1 文本条目");
+        assert!(ids[2].ends_with(":1.tools"), "turn1 工具条目");
+        assert!(ids[3].ends_with(":2"), "turn2 文本条目");
+        assert!(ids[4].ends_with(":marker"), "runMarker 收口");
+        assert_eq!(tree.active_leaf_id.as_deref(), Some(ids[4]));
+
+        let meta = store
+            .index()
+            .list()
+            .into_iter()
+            .find(|m| m.id == "sess-p")
+            .expect("index.json 应建档");
+        assert_eq!(meta.message_count, 5);
+        assert_eq!(meta.revision, tree.revision);
     }
 
     #[tokio::test]

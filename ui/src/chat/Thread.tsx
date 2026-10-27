@@ -1,5 +1,7 @@
 import {
+  ActionBarPrimitive,
   AuiIf,
+  BranchPickerPrimitive,
   ComposerPrimitive,
   ErrorPrimitive,
   MessagePartPrimitive,
@@ -64,19 +66,20 @@ export function ChatThread() {
 
 function UserMessage() {
   return (
-    <MessagePrimitive.Root className="flex justify-end py-1">
+    <MessagePrimitive.Root className="flex flex-col items-end py-1">
       <div className="max-w-[80%] rounded-2xl bg-sky-700/70 px-4 py-2 text-sm">
         <MessagePrimitive.Parts>
           {({ part }) => (part.type === "text" ? <MessagePartPrimitive.Text /> : null)}
         </MessagePrimitive.Parts>
       </div>
+      <BranchBar editOnly />
     </MessagePrimitive.Root>
   );
 }
 
 function AssistantMessage() {
   return (
-    <MessagePrimitive.Root className="flex justify-start py-1">
+    <MessagePrimitive.Root className="flex flex-col items-start py-1">
       <div className="max-w-[80%] rounded-2xl bg-neutral-800 px-4 py-2 text-sm">
         {/* 内联 render props（勿抽组件）：S1 实证 Parts 对 tool-call part 渲染
             null 时才 fallback 到注册的镜像工具卡；抽组件会让 fallback 判定失效。 */}
@@ -100,7 +103,46 @@ function AssistantMessage() {
           </ErrorPrimitive.Root>
         </MessagePrimitive.Error>
       </div>
+      <BranchBar editOnly={false} />
     </MessagePrimitive.Root>
+  );
+}
+
+/** 分支操作条（§6.3 树操作 API 的 UI 接地，15 号票）：上一/下一分支 +
+ * 重生成（assistant）/ 编辑重发（user）/ 复制。官方原语自带禁用态。 */
+function BranchBar({ editOnly }: { editOnly: boolean }) {
+  const btn =
+    "rounded border border-transparent px-1.5 py-0.5 text-[11px] text-neutral-500 hover:border-neutral-700 hover:text-neutral-300 disabled:opacity-30";
+  return (
+    <div className="mt-0.5 flex items-center gap-0.5" data-testid="branch-bar">
+      <BranchPickerPrimitive.Root className="flex items-center gap-0.5">
+        <BranchPickerPrimitive.Previous className={btn} aria-label="上一个分支">
+          ←
+        </BranchPickerPrimitive.Previous>
+        <span className="text-[11px] text-neutral-600">
+          <BranchPickerPrimitive.Count />
+        </span>
+        <BranchPickerPrimitive.Next className={btn} aria-label="下一个分支">
+          →
+        </BranchPickerPrimitive.Next>
+      </BranchPickerPrimitive.Root>
+      <ActionBarPrimitive.Root className="flex items-center gap-0.5">
+        {editOnly ? (
+          <ActionBarPrimitive.Edit className={btn} aria-label="编辑重发">
+            编辑
+          </ActionBarPrimitive.Edit>
+        ) : (
+          <>
+            <ActionBarPrimitive.Reload className={btn} aria-label="重新生成">
+              重新生成
+            </ActionBarPrimitive.Reload>
+            <ActionBarPrimitive.Copy className={btn} aria-label="复制">
+              复制
+            </ActionBarPrimitive.Copy>
+          </>
+        )}
+      </ActionBarPrimitive.Root>
+    </div>
   );
 }
 

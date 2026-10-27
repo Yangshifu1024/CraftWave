@@ -34,7 +34,7 @@ use crate::util::events::keys;
 /// ask 槽单元（RunHandle.ask 的本体；agent 构造、backend 写入、host resolve_ask 读）。
 pub type AskSlotCell = Mutex<Option<AskSlot>>;
 
-/// 交互类执行依赖（14 号票：ask/plan 需要的运行时挂点）。
+/// 交互类执行依赖（14 号票：ask/plan 需要的运行时挂点；15 号票：边车数据根）。
 #[derive(Clone)]
 pub struct ExecutorEnv {
     pub events: Arc<dyn EventSink>,
@@ -42,6 +42,8 @@ pub struct ExecutorEnv {
     pub plan: Arc<Mutex<Option<PlanState>>>,
     pub session_id: String,
     pub run_id: String,
+    /// 数据根（§7.1）：toolres 边车落 `sessions/<sid>.toolres/`（§7.5，15 号票）。
+    pub data_root: std::path::PathBuf,
 }
 
 /// 注册表全集执行器（§8.3 模型可见 8 工具）。
@@ -240,6 +242,13 @@ impl ToolsetExecutor {
             serde_json::json!({ "askId": ask_id, "answered": answered }),
         );
     }
+
+    /// 工具结果全量写 toolres 边车（§7.5，15 号票；无环境装配则跳过）。
+    fn persist_outcome(&self, call_id: &str, outcome: &ToolOutcome) {
+        if let Some(env) = &self.env {
+            crate::storage::write_outcome(&env.data_root, &env.session_id, call_id, outcome);
+        }
+    }
 }
 
 /// 参数解析 + 调用 + 失败兜底的模板（解析失败 → E_INVALID_ARG 结果回喂）。
@@ -309,7 +318,10 @@ impl CancellableExecutor for ToolsetExecutor {
                             )),
                         };
                     match outcome {
-                        crate::tools::command::CommandExit::Done(outcome) => completed_of(*outcome),
+                        crate::tools::command::CommandExit::Done(outcome) => {
+                            self.persist_outcome(call_id, &outcome);
+                            completed_of(*outcome)
+                        }
                         crate::tools::command::CommandExit::Cancelled => ToolExecution::Cancelled {
                             executed: true,
                             message: "命令进程组已收割".to_owned(),
@@ -318,11 +330,31 @@ impl CancellableExecutor for ToolsetExecutor {
                 }
                 "plan" => {
                     let outcome = self.run_plan(args_json);
+                    self.persist_outcome(call_id, &outcome);
                     completed_of(outcome)
                 }
-                "ask" => self.run_ask(args_json, token).await,
+                "ask" => {
+                    let execution = self.run_ask(args_json, token).await;
+                    if let ToolExecution::Completed { ok, ui_summary, .. } = &execution {
+                        // ask 应答即结果，无全量 detail：轻量边车供卡片恢复
+                        let outcome = if *ok {
+                            ToolOutcome::success(
+                                serde_json::json!({ "answered": true }),
+                                ui_summary.clone(),
+                            )
+                        } else {
+                            ToolOutcome::failure(
+                                ToolError::invalid_arg(ui_summary.clone()),
+                                ui_summary.clone(),
+                            )
+                        };
+                        self.persist_outcome(call_id, &outcome);
+                    }
+                    execution
+                }
                 other => {
                     let outcome = self.dispatch(other, args_json);
+                    self.persist_outcome(call_id, &outcome);
                     completed_of(outcome)
                 }
             }

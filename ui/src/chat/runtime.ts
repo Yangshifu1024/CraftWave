@@ -1,6 +1,7 @@
 import type { ChatModelAdapter, ChatModelRunResult, ThreadMessage } from "@assistant-ui/react";
 import * as client from "@/ipc/client";
 import type { ChatFrame, MessageEntry, RunConfig } from "@/ipc/types";
+import { syncTreeBeforeSend, useSessionPersistStore } from "@/stores/session";
 import { bindCancelToRun } from "./cancel-bridge";
 import { type ChatPart, FrameBuffer, toParts } from "./frames";
 import { useRunMetricsStore } from "./run-metrics";
@@ -66,6 +67,8 @@ export const DEFAULT_RUN_CONFIG: RunConfig = {
  * assistant-ui 消息 → wire 中立消息（MessageEntry 形态，§3.2/§6.1）。
  * 取活动路径线性序（assistant-ui 传入序）；工具调用 part 为已合并形态
  * （tool-call 带 result），拆回 toolCall + toolResult 双 part（§6.2 配对面）。
+ * status/runId 原样透传——canonical 条目往返（import → save）字段集一致，
+ * 否则 save_session_tree 内容比对漂移（§6.3，15 号票）。
  */
 export function toWire(messages: readonly ThreadMessage[]): MessageEntry[] {
   return messages.map((message) => {
@@ -105,14 +108,19 @@ export function toWire(messages: readonly ThreadMessage[]): MessageEntry[] {
       }
     }
     if (parts.length === 0) parts.push({ type: "text", text: "" });
-    return {
+    const entry: MessageEntry = {
       // assistant-ui 的 message.id 随树稳定（重生成分支各有 id），直接采用
       id: message.id,
       role:
         message.role === "assistant" ? "assistant" : message.role === "system" ? "system" : "user",
       parts,
       createdAt: message.createdAt.getTime(),
-    } satisfies MessageEntry;
+    };
+    if (message.role === "assistant") {
+      if (message.status !== undefined) entry.status = message.status;
+      if (message.metadata?.runId !== undefined) entry.runId = message.metadata.runId;
+    }
+    return entry;
   });
 }
 
@@ -124,6 +132,8 @@ export interface TauriAdapterDeps {
   cancelRun: (sessionId: string) => Promise<boolean>;
   /** 帧旁路（生产：runMetrics.ingest；§10.2 onmessage 双写） */
   onFrame?: (frame: ChatFrame) => void;
+  /** 发送前树同步（15 号票；测试注入 no-op 绕开 IPC）。 */
+  syncTree?: (messages: readonly ThreadMessage[]) => Promise<void>;
 }
 
 export const defaultDeps: TauriAdapterDeps = {
@@ -155,10 +165,22 @@ export const tauriChatModel: ChatModelAdapter = createTauriChatAdapter({
  * 可注入 adapter 工厂：start_chat 带 channel → FrameBuffer 累积 → 64ms 节流
  * 快照全量 yield（打字机，§10.2）→ runEnded 快照以终态 status 收口；abortSignal
  * 桥 cancel_run（S5：fire-and-forget，终态以 runEnded 帧为权威）。
+ *
+ * 15 号票双写协议：run() 开头先 save（新 user 拓扑先落盘）再 start_chat；
+ * 运行态 assistant 节点 id 记账（save 载荷剔除与引用改写用，§6.3）。
  */
 export function createTauriChatAdapter(deps: TauriAdapterDeps): ChatModelAdapter {
   return {
-    async *run({ messages, abortSignal }) {
+    async *run({ messages, abortSignal, unstable_assistantMessageId }) {
+      // 发送前树同步（失败不阻断发送：Rust 侧 user 兜底 + 下次 save 自愈）
+      const syncTree =
+        deps.syncTree ??
+        ((msgs: readonly ThreadMessage[]) => syncTreeBeforeSend(deps.sessionId, msgs));
+      try {
+        await syncTree(messages);
+      } catch (err) {
+        console.warn("[session] 发送前树同步失败（继续发送）", err);
+      }
       const buffer = new FrameBuffer();
       const signal = abortSignal ?? new AbortController().signal;
       const unbind = bindCancelToRun(signal, deps.sessionId, (cmd, args) => {
@@ -175,6 +197,15 @@ export function createTauriChatAdapter(deps: TauriAdapterDeps): ChatModelAdapter
           onFrame: (frame: ChatFrame) => {
             if (import.meta.env.DEV && frame.type === "runEnded" && frame.reason === "error") {
               console.error("[run] 错误终态：", frame.error);
+            }
+            if (
+              unstable_assistantMessageId !== undefined &&
+              frame.type === "runStarted" &&
+              !useSessionPersistStore.getState().runtimeNodes.has(unstable_assistantMessageId)
+            ) {
+              useSessionPersistStore
+                .getState()
+                .noteRuntimeNode(unstable_assistantMessageId, frame.runId);
             }
             buffer.push(frame);
             deps.onFrame?.(frame);

@@ -5,10 +5,12 @@ import { useEffect, useState } from "react";
 import { AskPanel } from "@/chat/AskPanel";
 import { useBackendEvents } from "@/chat/event-bridge";
 import { MirrorDemo } from "@/chat/mirror/MirrorDemo";
-import { tauriChatModel } from "@/chat/runtime";
+import { LOCAL_SESSION_ID, tauriChatModel } from "@/chat/runtime";
 import { ChatThread } from "@/chat/Thread";
 import { cwToolkit } from "@/chat/toolkit";
+import { loadedTreeToExported } from "@/chat/tree-persistence";
 import { SettingsPage } from "@/settings/SettingsPage";
+import { loadHistory } from "@/stores/session";
 
 const ACTIVATION_FLAG = "data-tauri-plugin-decoration-active";
 const ACTIVATION_TIMEOUT_MS = 5000;
@@ -78,11 +80,27 @@ const cwAuiConfig = AuiConfig({ tools: Tools({ toolkit: cwToolkit }) });
 /**
  * M1 核心链路聊天（tauriChatModel：start_chat → Channel 帧 → assistant-ui）。
  * 14 号票：注入正式镜像工具卡（§10.3 Tools resource）+ AskPanel + 事件桥。
+ * 15 号票：启动收养 canonical 历史（load → import；新会话无史跳过）。
  */
 function SkeletonApp() {
   const runtime = useLocalRuntime(tauriChatModel);
   const [settingsOpen, setSettingsOpen] = useState(false);
   useBackendEvents();
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const tree = await loadHistory(LOCAL_SESSION_ID);
+        if (cancelled || tree === null) return;
+        runtime.thread.import(loadedTreeToExported(tree));
+      } catch (err) {
+        console.warn("[session] 历史收养失败（以空会话继续）", err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [runtime]);
   return (
     <AssistantRuntimeProvider runtime={runtime} config={cwAuiConfig}>
       <ChatThread />
