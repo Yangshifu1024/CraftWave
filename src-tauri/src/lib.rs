@@ -1,7 +1,10 @@
 use tauri::WebviewWindow;
 use tauri_plugin_decoration::WebviewWindowExt;
 
+pub mod safety;
 pub mod spike;
+pub mod tools;
+pub mod util;
 
 // 【S1 spike 原型】dev-only mock 帧源（release 不编译、不注册）
 #[cfg(debug_assertions)]
