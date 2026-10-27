@@ -69,7 +69,11 @@ export const BUILTIN_PRESETS: ProviderPreset[] = [
     name: "智谱 GLM",
     apiFormat: "openai_chat",
     baseUrl: "https://open.bigmodel.cn/api/paas/v4",
-    models: [{ model: "glm-4.6", contextWindow: 200_000, maxTokens: 128_000, vision: true }],
+    models: [
+      { model: "glm-5.3", contextWindow: 200_000, maxTokens: 128_000, vision: true },
+      { model: "glm-5.3-flash", contextWindow: 200_000, maxTokens: 32_768, vision: true },
+      { model: "glm-4.6", contextWindow: 200_000, maxTokens: 128_000, vision: true },
+    ],
   },
   {
     slug: "openrouter",

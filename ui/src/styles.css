@@ -1,1 +1,712 @@
 @import "tailwindcss";
+
+/* ============================================================
+ * 设计令牌（shadcn/ui 风格，亮/暗两套）
+ * 语义变量供手写的 components/ui/* 基础组件消费；
+ * --cw-* 是工作区面板色（设置页左导航 / 卡片底色等，与 CodeWave 同口径）。
+ * ============================================================ */
+:root {
+  --background: #ffffff;
+  --foreground: #1f2328;
+  --card: #ffffff;
+  --card-foreground: #1f2328;
+  --muted: #f4f6f8;
+  --muted-foreground: #57606a;
+  --border: #e2e6ea;
+  --input: #cfd5db;
+  --primary: #1f2328;
+  --primary-foreground: #ffffff;
+  --accent: #eceef1;
+  --accent-foreground: #1f2328;
+  --destructive: #dc2626;
+  --warning: #b45309;
+  --warning-foreground: #ffffff;
+  --ring: #a3aeb9;
+  --cw-bg-main: #ffffff;
+  --cw-bg-nav: #f3f5f7;
+  --cw-highlight: #e7eaee;
+  --cw-text-1: #1f2328;
+  --cw-text-2: #57606a;
+  --cw-dim: #8a939e;
+  --cw-dot: #1677ff;
+  --cw-focus: #1677ff;
+  --cw-err: #d03066;
+}
+
+.dark {
+  --background: #17191c;
+  --foreground: #e8eaed;
+  --card: #1e2126;
+  --card-foreground: #e8eaed;
+  --muted: #24282e;
+  --muted-foreground: #9aa3ad;
+  --border: #33373d;
+  --input: #3d4249;
+  --primary: #e8eaed;
+  --primary-foreground: #17191c;
+  --accent: #2a2f36;
+  --accent-foreground: #e8eaed;
+  --destructive: #ef4444;
+  --warning: #f59e0b;
+  --warning-foreground: #17191c;
+  --ring: #565d66;
+  --cw-bg-main: #1e2126;
+  --cw-bg-nav: #17191c;
+  --cw-highlight: #2a2f36;
+  --cw-text-1: #e8eaed;
+  --cw-text-2: #9aa3ad;
+  --cw-dim: #6e7781;
+  --cw-dot: #3b82f6;
+  --cw-focus: #3b82f6;
+  --cw-err: #f87171;
+}
+
+/* ============================================================
+ * 设置页布局（度量逐条照抄 CodeWave 设置页）
+ *  - 左导航列：280px 基准（180..480 随窗收缩），组标题 11px dim、
+ *    页行高 28px 圆角 6px，选中态只换高亮底色，脏圆点用强调色；
+ *  - 右内容列：操作条（页标题 24px + 取消/保存靠右）+ 页体
+ *    （内容列 50% 宽居中，section 卡片 12px 圆角带 1px 边框）。
+ * ============================================================ */
+.settings-shell {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  min-width: 0;
+  background: var(--cw-bg-main);
+  color: var(--cw-text-1);
+}
+
+.settings-nav {
+  box-sizing: border-box;
+  flex: none;
+  width: 280px;
+  min-width: 180px;
+  max-width: 480px;
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+  border-right: 1px solid var(--border);
+  background: var(--cw-bg-nav);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.settings-nav-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  flex-wrap: wrap;
+  padding: 2px 2px 8px;
+}
+
+.settings-nav-list {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-nav-group {
+  font-size: 11px;
+  color: var(--cw-dim);
+  padding: 10px 8px 4px;
+}
+
+.settings-nav-item {
+  height: 28px;
+  width: 100%;
+  padding: 0 8px;
+  margin: 0 0 2px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-nav-item:hover {
+  background: var(--cw-highlight);
+}
+
+.settings-nav-item-active {
+  background: var(--cw-highlight);
+}
+
+.settings-nav-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  line-height: 28px;
+  font-size: 12.5px;
+  color: var(--cw-text-2);
+}
+
+.settings-nav-item-active .settings-nav-label {
+  color: var(--cw-text-1);
+}
+
+.settings-nav-icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+
+/* 脏圆点：导航项与操作条共用，只换前景色 */
+.settings-dirty-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--cw-dot);
+  flex: none;
+  display: inline-block;
+}
+
+/* 搜索框独占一行（.settings-nav-head 是 flex-wrap） */
+.settings-search {
+  flex: 1 0 100%;
+}
+
+/* 右内容列：操作条常驻可点，页体自己滚 */
+.settings-content {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 76px;
+  box-sizing: border-box;
+  padding: 12px 32px;
+  border-bottom: 1px solid var(--border);
+  background: var(--cw-bg-main);
+}
+
+.settings-actions-title {
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--cw-text-1);
+}
+
+.settings-actions-buttons {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.settings-pane {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  container-type: inline-size;
+  container-name: settings-pane;
+}
+
+.settings-pane-body {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 480px;
+  padding: 36px 32px 72px;
+}
+
+/* 页体内容列：占右栏 50% 宽居中（照抄 CodeWave .settings-pane-inner） */
+.settings-pane-inner {
+  box-sizing: border-box;
+  width: 50%;
+  max-width: 100%;
+  margin-inline: auto;
+}
+
+/* Section：标题在卡片外，一组相关设置项共用一张圆角卡片 */
+.settings-section {
+  margin-bottom: 32px;
+}
+
+.settings-section:last-child {
+  margin-bottom: 0;
+}
+
+.settings-section-title {
+  margin: 0 0 12px;
+  color: var(--cw-text-1);
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.settings-section-card {
+  box-sizing: border-box;
+  padding: 0 20px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--cw-bg-main);
+}
+
+/* 表单行：左说明（标题 + 描述）右侧控件（37.5%），行间 1px 分隔线 */
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  min-width: 0;
+  padding: 10px 0;
+}
+
+.settings-row + .settings-row {
+  border-top: 1px solid var(--border);
+}
+
+.settings-row-copy {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.settings-row-title {
+  color: var(--cw-text-1);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.settings-row-description {
+  color: var(--cw-text-2);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.45;
+}
+
+.settings-row-control {
+  min-width: 0;
+  flex: 0 0 37.5%;
+  max-width: 37.5%;
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* 窄容器（页体 50% 列 < 680px）时行堆叠：说明在上、控件整行 */
+@container settings-pane (max-width: 680px) {
+  .settings-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+  .settings-row-control {
+    flex: 0 0 100%;
+    max-width: 100%;
+    justify-content: flex-start;
+  }
+}
+
+/* 三选一卡片组（主题模式 / 代理模式共用）：三卡等宽 */
+.settings-choice-list {
+  display: grid;
+  width: 100%;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.settings-choice-card {
+  box-sizing: border-box;
+  display: flex;
+  min-width: 0;
+  min-height: 96px;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--cw-bg-main);
+  cursor: pointer;
+  text-align: left;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+
+.settings-choice-card:hover:not(.active) {
+  border-color: var(--cw-text-2);
+}
+
+.settings-choice-card.active {
+  border-color: var(--cw-focus);
+  background: var(--accent);
+}
+
+.settings-choice-card-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--cw-text-1);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.settings-choice-card-desc {
+  margin: 0;
+  color: var(--cw-text-2);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+/* 单选圆点（三选卡右上）：与卡片选中态联动 */
+.settings-choice-dot {
+  margin-inline-start: auto;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1.5px solid var(--input);
+  background: transparent;
+}
+
+.settings-choice-card.active .settings-choice-dot {
+  border-width: 4px;
+  border-color: var(--cw-focus);
+}
+
+/* 供应商卡片网格：自动换行、每卡最小 360px */
+.settings-provider-cards {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
+  gap: 12px;
+}
+
+.settings-provider-endpoint {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--cw-bg-nav);
+}
+
+.settings-provider-block-label {
+  color: var(--cw-text-2);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.settings-provider-endpoint-url {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--cw-text-1);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-provider-model {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+}
+
+.settings-provider-model + .settings-provider-model {
+  border-top: 1px solid var(--border);
+}
+
+.settings-provider-model-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--cw-text-1);
+  font-size: 14px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-provider-model-limits {
+  flex: none;
+  color: var(--cw-text-2);
+  font-size: 12px;
+}
+
+/* 离开三选弹框 */
+.settings-dialog-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgb(0 0 0 / 0.4);
+}
+
+.settings-dialog {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 440px;
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+  color: var(--card-foreground);
+  box-shadow: 0 10px 40px rgb(0 0 0 / 0.18);
+}
+
+/* ============================================================
+ * 供应商页复刻样式（对齐 CodeWave settings-theme.css 的供应商段）
+ * ============================================================ */
+
+/* 供应商 section：视觉外壳由每张供应商卡自己承担，外层卡片容器透明化 */
+.settings-provider-section > .settings-section-card {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+/* 卡片标题行：名称粗体 + 方言标签 */
+.settings-provider-title-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-provider-name {
+  min-width: 0;
+  flex: 1;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--cw-text-1);
+  font-size: 14px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-provider-api-tag {
+  flex: none;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+/* 卡片内容：端点块与模型列表块纵向排布 */
+.settings-provider-card-content {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* 卡片底 actions：顶部分隔线 + 按钮槽等宽平铺 */
+.settings-card-actions {
+  display: flex;
+  border-top: 1px solid var(--border);
+}
+
+.settings-card-actions > * {
+  flex: 1;
+  justify-content: center;
+}
+
+/* 卡片内模型行 */
+.settings-provider-model-tags {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  flex: none;
+  gap: 6px;
+}
+
+.settings-provider-active-tag {
+  border-color: var(--cw-focus);
+  color: var(--cw-focus);
+}
+
+/* 弹框内供应商表单：控件列统一 360px 宽档、右对齐 */
+.settings-provider-form .settings-row-control {
+  justify-content: flex-end;
+}
+
+.settings-provider-form .settings-provider-control-wide {
+  width: 360px;
+  max-width: 100%;
+}
+
+/* 凭据策略（保留/替换）radio 行 */
+.settings-credential-options {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.settings-credential-options label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--cw-text-2);
+  cursor: pointer;
+}
+
+/* 自定义请求头行：名 45% + 值 + 删除按钮 */
+.settings-header-row {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  gap: 6px;
+}
+
+.settings-header-row input:first-child {
+  width: 45%;
+  flex: none;
+}
+
+.settings-header-row input {
+  min-width: 0;
+}
+
+/* 带文字分隔线（模型列表） */
+.settings-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0 8px;
+  color: var(--cw-text-2);
+  font-size: 13px;
+}
+
+.settings-divider::before,
+.settings-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+/* 模型列表行（弹框内）：圆角行卡 + 左信息右操作 */
+.settings-collection-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.settings-collection-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--settings-row-gap, 16px);
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--cw-bg-main);
+}
+
+.settings-collection-row-info {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.settings-collection-row code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  color: var(--cw-text-1);
+  overflow-wrap: anywhere;
+}
+
+/* 虚线添加按钮（模型列表空态 / 底部添加） */
+.settings-dashed-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px dashed var(--input);
+  border-radius: 8px;
+  color: var(--cw-text-2);
+  background: transparent;
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    color 0.15s;
+}
+
+.settings-dashed-button:hover:not(:disabled) {
+  border-color: var(--cw-text-2);
+  color: var(--cw-text-1);
+}
+
+.settings-dashed-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 模型列表空态：虚线框 + 居中 */
+.settings-models-empty {
+  border: 1px dashed var(--input);
+  border-radius: 8px;
+  padding: 18px 0;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+/* 模型编辑器表单：两列 grid，模型 ID 跨两列 */
+.settings-provider-model-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 24px;
+  padding: 4px 0;
+}
+
+.settings-provider-model-form .settings-row {
+  border-top: 0;
+}
+
+.settings-provider-model-field-wide {
+  grid-column: 1 / -1;
+}
+
+/* 弹框体滚动（宽供应商编辑弹框） */
+.settings-provider-modal-body {
+  max-height: calc(100vh - 200px);
+  overflow-y: auto;
+}
+
+/* 字段错误红字（复刻 antd Form.Item help + error 态） */
+.settings-field-error {
+  color: var(--cw-err);
+  font-size: 12px;
+  text-align: end;
+  width: 100%;
+}
+
+.settings-row-control .settings-field-error-input {
+  border-color: var(--cw-err);
+}
+
+/* 字段说明（extra hint） */
+.settings-field-hint {
+  color: var(--cw-text-2);
+  font-size: 12px;
+  width: 100%;
+  text-align: end;
+}
