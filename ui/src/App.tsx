@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect, useState } from "react";
 import { MirrorDemo } from "@/chat/mirror/MirrorDemo";
-import { echoAdapter } from "@/chat/runtime";
+import { tauriChatModel } from "@/chat/runtime";
 import { ChatThread } from "@/chat/Thread";
 import { SettingsPage } from "@/settings/SettingsPage";
 
@@ -68,9 +68,9 @@ export default function App() {
   return <SkeletonApp />;
 }
 
-/** S6 骨架回声聊天（原型期间原样保留）+ 最小设置页入口（本票：供应商/设置切片）。 */
+/** M1 核心链路聊天（tauriChatModel：start_chat → Channel 帧 → assistant-ui）。 */
 function SkeletonApp() {
-  const runtime = useLocalRuntime(echoAdapter);
+  const runtime = useLocalRuntime(tauriChatModel);
   const [settingsOpen, setSettingsOpen] = useState(false);
   return (
     <AssistantRuntimeProvider runtime={runtime}>

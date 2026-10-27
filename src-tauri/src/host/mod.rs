@@ -1,7 +1,8 @@
 //! host 模块（§2.2）：IPC 层——命令实现（校验/转调）、事件汇、通知、托盘、菜单、退出拦截。
 //!
 //! 已落地：会话树两命令（10 号票，commands/session_tree.rs）、provider/config
-//! 域 P0 命令（§3.3 #6–9）、AppState（数据目录 §7.1 + 协调器 + keyring）。
+//! 域 P0 命令（§3.3 #6–9）、start_chat/cancel_run（§3.3 #18/#19，13 号票，
+//! commands/chat.rs）、AppState（数据目录 §7.1 + 协调器 + keyring + RunManager）。
 //! `IpcError` 本体在 `util::errors`（providers 亦依赖，util 为最底层）；
 //! error.rs 仅存 `From<StorageError>` 映射。IPC manifest 单一事实源在
 //! crate 根 lib.rs（`ipc_commands!` 宏，§12.3/NFR-12 防漂移）。
@@ -14,6 +15,7 @@ pub use crate::util::errors::IpcError;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::agent::RunManager;
 use crate::providers::keyring::KeyringStore;
 use crate::providers::types::AppConfig;
 use crate::storage::config_store::ConfigStore;
@@ -24,6 +26,8 @@ pub struct AppState {
     pub config: ConfigStore<AppConfig>,
     /// 钥匙串抽象：生产为系统钥匙串；测试可注入内存 mock。
     pub keys: Arc<dyn KeyringStore>,
+    /// 活跃 run 注册表（§5.1；M1 单会话核心链路，13 号票）。
+    pub runs: RunManager,
 }
 
 impl AppState {
@@ -32,6 +36,7 @@ impl AppState {
         Self {
             config: ConfigStore::new(data_dir.join("config.json"), data_dir.join("intent.json")),
             keys,
+            runs: RunManager::new(),
         }
     }
 }

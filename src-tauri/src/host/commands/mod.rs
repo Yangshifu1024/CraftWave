@@ -3,6 +3,7 @@
 //! 命令注册与 IPC manifest 由 crate 根 lib.rs 的 `ipc_commands!` 宏同源展开
 //! （§12.3/NFR-12 防漂移，全命令统一收编）；本模块只承载 manifest 的事件帧键面。
 
+pub mod chat;
 pub mod config;
 pub mod provider;
 pub mod session_tree;

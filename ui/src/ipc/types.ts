@@ -174,6 +174,74 @@ export type SaveProviderArgs = { provider: ProviderConfig; newKey?: string };
 /** delete_provider 参数 */
 export type DeleteProviderArgs = { providerId: string };
 
+// ---- 运行配置与用量（§3.2；start_chat，13 号票）----
+
+/** 权限四档（§8.5 矩阵；serde camelCase 口径，与 Rust safety/tier.rs 一致） */
+export type PermissionTier = "plan" | "confirmEach" | "autoEdit" | "fullAccess";
+
+/** §3.2 RunConfig */
+export interface RunConfig {
+  /** 会话级覆盖；缺省全局 active */
+  modelId?: string;
+  tier: PermissionTier;
+  /** default 24 */
+  maxTurns: number;
+  /** 本次发送是否为 steer 注入（M1 前端恒 false，§5.5） */
+  steer: boolean;
+}
+
+/** §3.2 UsageTotal（usage 帧载荷） */
+export interface UsageTotal {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
+/** start_chat 参数（命令形参平铺，本结构为文档命名锚点） */
+export type StartChatArgs = {
+  sessionId: string;
+  messages: MessageEntry[];
+  runConfig: RunConfig;
+  /** tauri ipc Channel<ChatFrame>（@tauri-apps/api/core 的 Channel 实例） */
+  channel: unknown;
+};
+
+/** start_chat 返回 */
+export type StartChatResult = { runId: string };
+
+// ---- §3.4 Channel 帧（P0 全集 9 帧；Rust 镜像 src-tauri/src/backend/frames.rs）----
+
+/** 帧基座：所有帧带 Rust 端递增的 seq；ts = Rust 出口 epoch ms（可选，S2 实证）。 */
+type Sequenced = {
+  seq: number;
+  ts?: number;
+};
+
+export type ChatFrame =
+  | (Sequenced & { type: "runStarted"; runId: string; model: string })
+  | (Sequenced & { type: "stepStarted"; turn: number })
+  | (Sequenced & { type: "textDelta"; turn: number; delta: string })
+  | (Sequenced & { type: "reasoningDelta"; turn: number; delta: string })
+  | (Sequenced & { type: "toolStarted"; callId: string; name: string })
+  | (Sequenced & { type: "toolArgs"; callId: string; chunk: string })
+  | (Sequenced & {
+      type: "toolResult";
+      callId: string;
+      ok: boolean;
+      uiSummary: string;
+      error?: { code: string; message: string };
+    })
+  | (Sequenced & { type: "usage"; usage: UsageTotal; rate?: number })
+  | (Sequenced & {
+      type: "runEnded";
+      reason: "done" | "error" | "cancelled";
+      durationMs: number;
+      toolCount: number;
+      turn: number;
+      error?: { code: string; message: string };
+    });
+
 // ---- D14 统一错误形状（§3.1：命令失败统一 reject {code, message, detail?}）----
 
 export type IpcError = {

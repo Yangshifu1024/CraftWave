@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type ChatFrame, FrameBuffer } from "./frames";
+import { type ChatFrame, FrameBuffer, toParts } from "./frames";
 
 /**
  * 【S2 Spike】前端帧管线测试：保真（无丢失无乱序）、半截 JSON「参数准备中」、
@@ -144,5 +144,62 @@ describe("FrameBuffer 快照节流与延迟埋点", () => {
     const [tool] = snap.toolCalls;
     // 卡片渲染判定（§10.2：半截 JSON 由 toolkit 卡片以「参数准备中」渲染）
     expect(FrameBuffer.argsReady(tool!.argsJson)).toBe(false);
+  });
+});
+
+describe("FrameBuffer 本票增量（13 号票）", () => {
+  it("usage 帧记录运行累计与速率；runStarted 记录 run/model 锚点", () => {
+    const buffer = new FrameBuffer();
+    const frames = scriptedFrames();
+    for (const frame of frames) buffer.push(frame);
+    // scriptedFrames 无 usage 帧：补发（Rust 侧每 turn 收口一帧）
+    buffer.push({
+      ...frames[0]!,
+      type: "usage",
+      seq: 99,
+      usage: { input: 120, output: 48, cacheRead: 0, cacheWrite: 0 },
+      rate: 121,
+    } as ChatFrame);
+    buffer.push({
+      ...frames[0]!,
+      type: "usage",
+      seq: 100,
+      usage: { input: 240, output: 96, cacheRead: 4, cacheWrite: 0 },
+      rate: 130,
+    } as ChatFrame);
+    const snap = buffer.snapshot();
+    expect(snap.usage).toEqual({ input: 240, output: 96, cacheRead: 4, cacheWrite: 0 });
+    expect(snap.rate).toBe(130);
+    expect(snap.run).toEqual({ runId: "run-1", model: "gpt-4o-mock" });
+  });
+
+  it("toParts：reasoning/text/tool-call 直写 result（S1 adapter 直写语义）", () => {
+    const buffer = new FrameBuffer();
+    for (const frame of scriptedFrames()) buffer.push(frame);
+    const parts = toParts(buffer.snapshot());
+    expect(parts.map((p) => p.type)).toEqual(["reasoning", "text", "tool-call"]);
+    const tool = parts[2]!;
+    if (tool.type !== "tool-call") throw new Error("应为 tool-call");
+    expect(tool.toolCallId).toBe("call_1");
+    expect(tool.toolName).toBe("read");
+    expect(tool.argsText).toBe('{"path": "/etc/app/config.toml", "offset": 0}');
+    // args 含 partial-parse 元数据 Symbol（assistant-stream 官方解析器，S1 实证）——
+    // 比对数据键值，元数据由 useToolArgsStatus 消费。
+    expect(tool.args).toMatchObject({ path: "/etc/app/config.toml", offset: 0 });
+    // result 直写（local runtime 无 execute 管线，S1 修正）
+    expect(tool.result).toEqual({ ok: true, summary: "[read] 共 12 行：port = 8087" });
+    expect(tool.isError).toBe(false);
+  });
+
+  it("toParts：失败工具 isError=true；半截参数以 argsText 原文保留", () => {
+    const buffer = new FrameBuffer();
+    const frames = scriptedFrames();
+    for (const frame of frames.slice(0, 9)) buffer.push(frame); // 到 toolArgs 为止（无 result）
+    const parts = toParts(buffer.snapshot());
+    const tool = parts.at(-1)!;
+    if (tool.type !== "tool-call") throw new Error("应为 tool-call");
+    expect(tool.result).toBeUndefined();
+    expect(tool.argsText.endsWith("}")).toBe(true);
+    expect(() => JSON.parse(tool.argsText)).not.toThrow();
   });
 });

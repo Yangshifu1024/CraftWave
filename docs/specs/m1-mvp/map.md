@@ -32,6 +32,7 @@ CraftWave M1 MVP 出口准则达成：P0 需求全集实现，NFR-01/02/06/09/12
 - [实现：storage 读写器与会话树命令](tasks/10-impl-storage-session-tree.md)：分段 JSONL 读写器（封口/指纹/尾段容错）+ 原子写 + save/load_session_tree 命令与 manifest 契约测试落地，Rust/前端 roundtrip 全绿，§6/§7 无出入。
 - [实现：工具系统只读/写切片](tasks/11-impl-tools-file-slice.md)：util 共用解码器（encoding_rs 0.8.42+chardetng 1.0.0，BOM→严格 UTF-8→探测→最佳猜测）+ safety（safe_join/围栏 P0 黑白名单/权限四档矩阵）+ tools 五工具（read/write/edit/list_files/grep）与注册表钉死，90 例测试，与 §8 无出入（细化记录见票 Answer）。
 - [实现：Provider 管理与设置切片](tasks/12-impl-providers-settings.md)：CW schema v2 + 配置协调器（storage，锁内 RMW + intent）+ keyring 协议（trait/mock/真钥匙串 #[ignore]）+ P0 命令 #6–9 + manifest 双向契约 + 设置页骨架全绿；ts-rs 按 C-2 留后续票。
+- [实现：单会话核心链路](tasks/13-impl-core-run-loop.md)：spike 产品化为 backend/（帧 9 帧全集 + 64ms 节流内聚 + AgentRun RunLoop + callId 同源映射 + 审批挂起机制层 + 取消收齐）与 agent/ RunManager，start_chat/cancel_run 正式注册，前端 tauriChatModel（64ms 快照打字机 + 思考流 + adapter 直写 result + 取消桥）与 runMetrics 三数；mock SSE 端到端全绿（NFR-02 TTFT 余量 + 取消全链 <1s），合同面收敛 §3.3/§3.6 并修订 §3.2/§3.4/§4.3 三处口径（详见票 Answer）。
 
 ## Not yet specified
 

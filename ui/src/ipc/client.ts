@@ -6,9 +6,10 @@
  * 其余代码一律经由本文件的函数发起 IPC，禁止散落携带命令名字面量的 invoke 调用。
  */
 
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import type {
   AppConfig,
+  ChatFrame,
   DeleteProviderArgs,
   IpcError,
   ProviderConfig,
@@ -17,6 +18,8 @@ import type {
   SaveSessionTreeArgs,
   SaveSessionTreeResult,
   SessionTreeData,
+  StartChatArgs,
+  StartChatResult,
 } from "./types";
 
 /** 本文件已接线的命令名（§3.3 键面，snake_case）。 */
@@ -29,6 +32,8 @@ export const COMMANDS = {
   saveConfig: "save_config",
   saveProvider: "save_provider",
   deleteProvider: "delete_provider",
+  startChat: "start_chat",
+  cancelRun: "cancel_run",
 } as const;
 
 /** 激活覆盖式自绘标题栏（§2.1 防闪启动协议，App.tsx 看门狗用）。 */
@@ -78,6 +83,28 @@ export async function saveProvider(
 /** §3.3 #9：删除供应商并同步删除 keyring 账户。 */
 export async function deleteProvider(providerId: DeleteProviderArgs["providerId"]): Promise<void> {
   return invoke<void>(COMMANDS.deleteProvider, { providerId } satisfies DeleteProviderArgs);
+}
+
+/** §3.3 #18：启动一次 run。channel 由调用方建立（onmessage 收 ChatFrame 帧流）。 */
+export function startChat(args: {
+  sessionId: string;
+  messages: StartChatArgs["messages"];
+  runConfig: StartChatArgs["runConfig"];
+  onFrame: (frame: ChatFrame) => void;
+}): Promise<StartChatResult> {
+  const channel = new Channel<ChatFrame>();
+  channel.onmessage = args.onFrame;
+  return invoke<StartChatResult>(COMMANDS.startChat, {
+    sessionId: args.sessionId,
+    messages: args.messages,
+    runConfig: args.runConfig,
+    channel,
+  });
+}
+
+/** §3.3 #19：取消运行（置位即返回；终态以 runEnded 帧为权威）。 */
+export async function cancelRun(sessionId: string): Promise<boolean> {
+  return invoke<boolean>(COMMANDS.cancelRun, { sessionId } satisfies { sessionId: string });
 }
 
 /** 把 invoke 的 reject 归一为 §3.1 错误负载（Rust 侧已按 {code,message,detail} 序列化）。 */

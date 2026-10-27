@@ -1,4 +1,7 @@
 //! 【S2+S3 Spike】测试公共模块：mock 服务与 rig 测试装配。
+//!
+//! （backend 产品化链路的测试装配在 tests/backend_e2e.rs 内自包含——
+//! spike 原型冻结零回归，不与之共享类型。）
 
 // 各集成测试二进制独立链接本模块，未用到的导出属预期。
 #![allow(dead_code)]
