@@ -35,7 +35,7 @@ fn is_text_delta(f: &ChatFrame) -> bool {
 /// 场景 1（附录 A-S5 模型流停止）：取消打断流中的模型调用。
 /// mock 以长流脚本模拟「答不完」的补全；取消后流 drop、runEnded(cancelled) 收尾。
 #[tokio::test]
-async fn s5_模型流中取消_流停止_run_ended_cancelled_全链时延() {
+async fn s5_cancel_midstream_stop_full_chain_latency() {
     // 长流：150 段 × 30ms ≈ 4.5s，测试在出帧 3 段后取消（~100ms 处）
     let mut script: Vec<(&'static str, String)> = Vec::new();
     for i in 0..150 {
@@ -112,7 +112,7 @@ async fn s5_模型流中取消_流停止_run_ended_cancelled_全链时延() {
 /// （不回滚），command 结果补 E_CANCELLED；收齐后才发 runEnded(cancelled)。
 #[cfg(unix)]
 #[tokio::test]
-async fn s5_命令工具取消_进程组整树收割_cancelled标记收齐() {
+async fn s5_command_cancel_process_group_reap_collected() {
     // 双工具脚本：call_1=read（立即完成），call_2=command（sleep 900 长命令）
     let mock = MockOpenAI::start_with_turn1(vec![
         tool_open(0, "call_1", TOOL_READ),

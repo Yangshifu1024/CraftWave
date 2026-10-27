@@ -12,7 +12,7 @@ use super::frames::{
 };
 
 #[test]
-fn 同窗口文本增量合并为一帧且拼接无损() {
+fn same_window_text_merged_lossless() {
     let mut t = DeltaThrottler::new();
     t.push_text(1, "你好");
     t.push_text(1, "，");
@@ -29,7 +29,7 @@ fn 同窗口文本增量合并为一帧且拼接无损() {
 }
 
 #[test]
-fn 不同类型增量各自成帧_文本思考参数有序() {
+fn delta_types_own_frames_ordered() {
     let mut t = DeltaThrottler::new();
     t.push_reasoning(1, "思考");
     t.push_text(1, "答");
@@ -57,7 +57,7 @@ fn 不同类型增量各自成帧_文本思考参数有序() {
 }
 
 #[test]
-fn flush_后窗口清空_二次flush无帧() {
+fn flush_clears_window_second_flush_empty() {
     let mut t = DeltaThrottler::new();
     t.push_text(1, "x");
     let mut sink = CollectingSink::default();
@@ -69,7 +69,7 @@ fn flush_后窗口清空_二次flush无帧() {
 }
 
 #[test]
-fn seq_严格递增且与帧序一致() {
+fn seq_strictly_increasing_matches_order() {
     let mut t = DeltaThrottler::new();
     t.push_text(1, "a");
     t.push_text(1, "b");
@@ -83,7 +83,7 @@ fn seq_严格递增且与帧序一致() {
 }
 
 #[test]
-fn 节流语义_首帧立即_窗口内不再出帧() {
+fn throttle_first_frame_immediate_within_window_quiet() {
     let mut t = DeltaThrottler::new();
     t.push_text(1, "第一帧立即");
     assert!(t.should_flush(), "从未出帧且有 pending → 立即");
@@ -103,7 +103,7 @@ fn 节流语义_首帧立即_窗口内不再出帧() {
 }
 
 #[test]
-fn 帧协议_camel_case字段命名() {
+fn frame_protocol_camel_case_fields() {
     let mut t = DeltaThrottler::new();
     t.push_tool_args("call_1", "{\"pa");
     let mut sink = CollectingSink::default();
@@ -116,7 +116,7 @@ fn 帧协议_camel_case字段命名() {
 
 /// §3.4 帧基座：`{ seq, type, ts?, ... }`——ts 为可选出口字段。
 #[test]
-fn 帧基座_ts_可选字段序列化形态() {
+fn frame_base_ts_optional_serialization() {
     let frame = SequencedFrame {
         seq: 7,
         ts: Some(1_760_000_000_000),
@@ -140,7 +140,7 @@ fn 帧基座_ts_可选字段序列化形态() {
 
 /// §3.4 usage 帧：`{ seq, type:"usage", usage: UsageTotal, rate? }`。
 #[test]
-fn usage_帧与累计口径() {
+fn usage_frame_and_accumulation() {
     let mut total = UsageTotal::default();
     total.accumulate(&UsageTotal {
         input: 120,
@@ -185,7 +185,7 @@ fn usage_帧与累计口径() {
 
 /// §3.4 runEnded 帧：reason=error 时带 error 面（reason/camelCase 形态）。
 #[test]
-fn run_ended_错误终态帧形态() {
+fn run_ended_error_frame_shape() {
     let mut sink = CollectingSink::default();
     sink.send(ChatFrame::RunEnded {
         reason: EndReason::Error,

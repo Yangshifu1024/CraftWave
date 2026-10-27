@@ -7,7 +7,7 @@ use std::time::Duration;
 use super::{REAP_GRACE, enable_process_group, reap_process_group};
 
 #[tokio::test]
-async fn 收割_忽略sigterm的进程由sigkill兜底() {
+async fn reap_sigterm_ignored_sigkill_fallback() {
     let mut cmd = tokio::process::Command::new("sh");
     cmd.arg("-c")
         .arg("trap '' TERM; echo ready; sleep 30")
@@ -32,7 +32,7 @@ async fn 收割_忽略sigterm的进程由sigkill兜底() {
 }
 
 #[tokio::test]
-async fn 收割_sleep进程宽限内终结() {
+async fn reap_sleep_process_within_grace() {
     let mut cmd = tokio::process::Command::new("sleep");
     cmd.arg("30").stdin(Stdio::null());
     enable_process_group(&mut cmd);

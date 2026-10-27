@@ -6,7 +6,7 @@ use std::time::Duration;
 use super::frames::{ChatFrame, CollectingSink, DeltaThrottler, THROTTLE_INTERVAL};
 
 #[test]
-fn 同窗口文本增量合并为一帧且拼接无损() {
+fn same_window_text_merged_lossless() {
     let mut t = DeltaThrottler::new();
     t.push_text(1, "你好");
     t.push_text(1, "，");
@@ -23,7 +23,7 @@ fn 同窗口文本增量合并为一帧且拼接无损() {
 }
 
 #[test]
-fn 不同类型增量各自成帧_文本思考参数有序() {
+fn delta_types_own_frames_ordered() {
     let mut t = DeltaThrottler::new();
     t.push_reasoning(1, "思考");
     t.push_text(1, "答");
@@ -51,7 +51,7 @@ fn 不同类型增量各自成帧_文本思考参数有序() {
 }
 
 #[test]
-fn flush_后窗口清空_二次flush无帧() {
+fn flush_clears_window_second_flush_empty() {
     let mut t = DeltaThrottler::new();
     t.push_text(1, "x");
     let mut sink = CollectingSink::default();
@@ -63,7 +63,7 @@ fn flush_后窗口清空_二次flush无帧() {
 }
 
 #[test]
-fn seq_严格递增且与帧序一致() {
+fn seq_strictly_increasing_matches_order() {
     let mut t = DeltaThrottler::new();
     t.push_text(1, "a");
     t.push_text(1, "b");
@@ -77,7 +77,7 @@ fn seq_严格递增且与帧序一致() {
 }
 
 #[test]
-fn 节流语义_首帧立即_窗口内不再出帧() {
+fn throttle_first_frame_immediate_within_window_quiet() {
     let mut t = DeltaThrottler::new();
     t.push_text(1, "第一帧立即");
     assert!(t.should_flush(), "从未出帧且有 pending → 立即");
@@ -97,7 +97,7 @@ fn 节流语义_首帧立即_窗口内不再出帧() {
 }
 
 #[test]
-fn 帧协议_camel_case字段命名() {
+fn frame_protocol_camel_case_fields() {
     let mut t = DeltaThrottler::new();
     t.push_tool_args("call_1", "{\"pa");
     let mut sink = CollectingSink::default();

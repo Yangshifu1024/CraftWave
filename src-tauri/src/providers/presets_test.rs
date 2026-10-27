@@ -4,7 +4,7 @@ use super::presets::{builtin_presets, find_preset, preset_to_provider};
 use crate::providers::types::{ApiFormat, SCHEMA_VERSION};
 
 #[test]
-fn 预设slug唯一且全部https() {
+fn preset_slugs_unique_all_https() {
     let presets = builtin_presets();
     assert!(presets.len() >= 5, "M1 至少内置 5 家预设");
     let mut slugs: Vec<_> = presets.iter().map(|p| p.slug).collect();
@@ -23,7 +23,7 @@ fn 预设slug唯一且全部https() {
 }
 
 #[test]
-fn 预设实例化产生合法供应商配置() {
+fn preset_instantiation_valid_provider_config() {
     let preset = find_preset("deepseek").expect("deepseek 预设存在");
     let provider = preset_to_provider(preset);
     assert_eq!(provider.name, "DeepSeek");
@@ -45,6 +45,6 @@ fn 预设实例化产生合法供应商配置() {
 }
 
 #[test]
-fn 未知slug返回空() {
+fn unknown_slug_returns_empty() {
     assert!(find_preset("nope").is_none());
 }

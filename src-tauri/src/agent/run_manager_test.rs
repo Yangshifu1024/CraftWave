@@ -3,7 +3,7 @@
 use super::RunManager;
 
 #[test]
-fn 同会话第二个run被拒绝_会话运行中错误() {
+fn second_run_same_session_rejected() {
     let mgr = RunManager::new();
     mgr.start("s1", "run-1".to_owned(), 1)
         .expect("首 run 应注册");
@@ -15,7 +15,7 @@ fn 同会话第二个run被拒绝_会话运行中错误() {
 }
 
 #[test]
-fn cancel_命中活跃run返回true_无run返回false() {
+fn cancel_hits_active_run_true_missing_false() {
     let mgr = RunManager::new();
     assert!(!mgr.cancel("s1"), "无活跃 run → false");
     let handle = mgr.start("s1", "run-1".to_owned(), 1).unwrap();
@@ -25,7 +25,7 @@ fn cancel_命中活跃run返回true_无run返回false() {
 }
 
 #[test]
-fn remove_按run_id校验_终态摘除后可重启() {
+fn remove_validates_run_id_allows_restart() {
     let mgr = RunManager::new();
     mgr.start("s1", "run-1".to_owned(), 1).unwrap();
     // run_id 不匹配不摘（防竞态摘掉新 run）

@@ -73,7 +73,7 @@ fn as_message(arc: &std::sync::Arc<Message>) -> &Message {
 }
 
 #[test]
-fn 末条user切分为prompt_其余为history() {
+fn last_user_as_prompt_rest_history() {
     let entries = vec![
         user("u1", "第一条"),
         assistant_with_tool_round("a1", "call_1", "read"),
@@ -92,7 +92,7 @@ fn 末条user切分为prompt_其余为history() {
 }
 
 #[test]
-fn 工具结果按call_id配对工具名与错误标记映射() {
+fn tool_results_pair_by_call_id_and_error_mapping() {
     let entry = assistant_with_tool_round("a1", "call_9", "grep");
     let stream = rebuild_message_stream(&[entry]).unwrap();
     assert_eq!(stream.len(), 2, "assistant + 工具结果 user");
@@ -112,7 +112,7 @@ fn 工具结果按call_id配对工具名与错误标记映射() {
 }
 
 #[test]
-fn 失败工具结果is_error为真() {
+fn failed_tool_result_is_error_true() {
     let mut entry = assistant_with_tool_round("a1", "call_1", "read");
     entry.parts[3] = WirePart::ToolResult {
         call_id: "call_1".to_owned(),
@@ -130,7 +130,7 @@ fn 失败工具结果is_error为真() {
 }
 
 #[test]
-fn 缺配对工具调用的工具结果被拒绝() {
+fn tool_result_without_paired_call_rejected() {
     let entry = MessageEntry {
         id: "a1".to_owned(),
         parent_id: None,
@@ -154,7 +154,7 @@ fn 缺配对工具调用的工具结果被拒绝() {
 }
 
 #[test]
-fn 空序列与非user末条拒绝() {
+fn empty_sequence_or_non_user_tail_rejected() {
     assert_eq!(
         split_prompt(&[]),
         Err(WireError("start_chat 消息序列为空".to_owned()))
@@ -164,7 +164,7 @@ fn 空序列与非user末条拒绝() {
 }
 
 #[test]
-fn 运行标记与计划快照跳过() {
+fn run_marker_and_plan_snapshot_skipped() {
     let entry = MessageEntry {
         id: "a1".to_owned(),
         parent_id: None,

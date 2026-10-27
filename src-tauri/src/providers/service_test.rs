@@ -36,7 +36,7 @@ fn fixture(dir: &std::path::Path) -> (ConfigStore<AppConfig>, MemoryKeyring) {
 }
 
 #[test]
-fn save_provider携带新key走协议_落引用不落明文() {
+fn save_provider_new_key_protocol_ref_not_plaintext() {
     let dir = tempfile::tempdir().unwrap();
     let (store, keys) = fixture(dir.path());
 
@@ -62,7 +62,7 @@ fn save_provider携带新key走协议_落引用不落明文() {
 }
 
 #[test]
-fn save_provider已存在同id原位替换且generation递增() {
+fn save_provider_existing_id_replaced_generation_up() {
     let dir = tempfile::tempdir().unwrap();
     let (store, keys) = fixture(dir.path());
     let p = demo_provider("p1", "m1");
@@ -79,7 +79,7 @@ fn save_provider已存在同id原位替换且generation递增() {
 }
 
 #[test]
-fn save_provider无key仅改元数据保留凭据引用() {
+fn save_provider_no_key_keeps_credential_ref() {
     let dir = tempfile::tempdir().unwrap();
     let (store, keys) = fixture(dir.path());
     save_provider(
@@ -106,7 +106,7 @@ fn save_provider无key仅改元数据保留凭据引用() {
 }
 
 #[test]
-fn save_provider_keyring失败时config无该供应商且意向保留() {
+fn save_provider_keyring_failure_keeps_intent() {
     struct FailingStore;
     impl crate::providers::keyring::KeyringStore for FailingStore {
         fn set_secret(&self, _a: &str, _s: &str) -> Result<(), crate::util::errors::IpcError> {
@@ -143,7 +143,7 @@ fn save_provider_keyring失败时config无该供应商且意向保留() {
 }
 
 #[test]
-fn delete_provider同步删keyring账户且config移除() {
+fn delete_provider_removes_keyring_and_config() {
     let dir = tempfile::tempdir().unwrap();
     let (store, keys) = fixture(dir.path());
     save_provider(
@@ -161,7 +161,7 @@ fn delete_provider同步删keyring账户且config移除() {
 }
 
 #[test]
-fn delete_provider不存在报not_found() {
+fn delete_provider_missing_not_found() {
     let dir = tempfile::tempdir().unwrap();
     let (store, keys) = fixture(dir.path());
     let err = delete_provider(&store, &keys, "ghost").unwrap_err();
@@ -169,7 +169,7 @@ fn delete_provider不存在报not_found() {
 }
 
 #[test]
-fn save_config归一化结果回传() {
+fn save_config_returns_normalized() {
     let dir = tempfile::tempdir().unwrap();
     let (store, _keys) = fixture(dir.path());
     let mut config = AppConfig::default();
@@ -179,7 +179,7 @@ fn save_config归一化结果回传() {
 }
 
 #[test]
-fn 并发save_provider全部成功终态完整() {
+fn concurrent_save_provider_all_succeed() {
     let dir = tempfile::tempdir().unwrap();
     let store = Arc::new(ConfigStore::new(
         dir.path().join("config.json"),

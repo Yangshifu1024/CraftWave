@@ -4,7 +4,7 @@ use crate::host::IpcError;
 use crate::storage::StorageError;
 
 #[test]
-fn 错误形状_负载驼峰且详情缺省省略() {
+fn error_shape_camel_case_detail_omitted() {
     let err = IpcError::session_rev("基线过期");
     let json = serde_json::to_value(&err).unwrap();
     assert_eq!(
@@ -14,7 +14,7 @@ fn 错误形状_负载驼峰且详情缺省省略() {
 }
 
 #[test]
-fn storage错误到ipc错误_逐码映射() {
+fn storage_error_to_ipc_error_code_mapping() {
     assert_eq!(
         serde_json::to_value(IpcError::from(StorageError::NotFound("s1".into()))).unwrap()["code"],
         "E_NOT_FOUND"

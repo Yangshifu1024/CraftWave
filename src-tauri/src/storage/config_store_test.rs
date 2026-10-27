@@ -45,7 +45,7 @@ fn store_in(dir: &std::path::Path) -> ConfigStore<DemoConfig> {
 }
 
 #[test]
-fn 全新安装load返回默认值且不落盘() {
+fn fresh_install_load_default_no_write() {
     let dir = tempfile::tempdir().unwrap();
     let store = store_in(dir.path());
     let config = store.load().unwrap();
@@ -54,7 +54,7 @@ fn 全新安装load返回默认值且不落盘() {
 }
 
 #[test]
-fn save归一化并原子落盘_load还原() {
+fn save_normalized_atomic_load_restores() {
     let dir = tempfile::tempdir().unwrap();
     let store = store_in(dir.path());
     let saved = store
@@ -76,7 +76,7 @@ fn save归一化并原子落盘_load还原() {
 }
 
 #[test]
-fn save校验失败config不变更() {
+fn save_validation_failure_config_intact() {
     let dir = tempfile::tempdir().unwrap();
     let store = store_in(dir.path());
     store
@@ -97,7 +97,7 @@ fn save校验失败config不变更() {
 }
 
 #[test]
-fn commit外部落子失败_意向保留_config不变更() {
+fn commit_external_fail_intent_kept_config_intact() {
     let dir = tempfile::tempdir().unwrap();
     let store = store_in(dir.path());
 
@@ -120,7 +120,7 @@ fn commit外部落子失败_意向保留_config不变更() {
 }
 
 #[test]
-fn commit成功后意向删除且缓存热替换() {
+fn commit_success_intent_removed_cache_swapped() {
     let dir = tempfile::tempdir().unwrap();
     let store = store_in(dir.path());
     let arc = store
@@ -146,7 +146,7 @@ fn commit成功后意向删除且缓存热替换() {
 }
 
 #[test]
-fn 并发提交全部成功_终态为合法整文件() {
+fn concurrent_commits_all_succeed_valid_file() {
     let dir = tempfile::tempdir().unwrap();
     let store = Arc::new(store_in(dir.path()));
     let mut handles = Vec::new();

@@ -15,7 +15,7 @@ use craftwave_lib::spike::turn::drive_manual_tool_loop;
 use rig::run::{AgentRun, AgentRunStep};
 
 #[tokio::test]
-async fn s3_手动循环_单turn返回_外部执行_结果回喂() {
+async fn s3_manual_loop_external_exec_result_feedback() {
     let mock = MockOpenAI::start().await;
     let mut sink = TimedSink::default();
     let response = drive_manual_tool_loop(
@@ -104,7 +104,7 @@ async fn s3_手动循环_单turn返回_外部执行_结果回喂() {
 /// 审批挂起形态：CallTools 步骤时把 run 序列化挂起（模拟等待用户审批/进程重启），
 /// 反序列化恢复后继续 answer —— rig 的 sans-IO AgentRun 天然支持外部循环。
 #[tokio::test]
-async fn s3_审批挂起_run序列化挂起_恢复后继续() {
+async fn s3_approval_suspend_run_serialized_resume() {
     let mock = MockOpenAI::start().await;
     let driver = turn_driver(&mock);
     let mut run = common::new_run();
