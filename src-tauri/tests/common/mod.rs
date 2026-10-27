@@ -21,6 +21,9 @@ use rig::run::spec::RunSpec;
 /// mock 服务里声明的工具名。
 pub const TOOL_READ: &str = "read";
 
+/// S5 mock 里声明的慢命令工具名（对齐 §8.3 P0 `command` 工具）。
+pub const TOOL_COMMAND: &str = "command";
+
 /// 构造指向 mock 的 rig OpenAI 客户端与 Chat wire 模型。
 pub fn mock_model(
     mock: &mock_openai::MockOpenAI,
@@ -47,9 +50,31 @@ pub fn read_tool() -> Arc<ToolDefinition> {
     ))
 }
 
+/// S5 用的命令工具定义（长时 sleep 命令载体，参数 {command}）。
+pub fn command_tool() -> Arc<ToolDefinition> {
+    Arc::new(ToolDefinition::new(
+        ToolName::new(TOOL_COMMAND.to_owned()).expect("tool name"),
+        "在工作区执行 shell 命令",
+        serde_json::json!({
+            "type": "object",
+            "properties": {"command": {"type": "string"}},
+            "required": ["command"]
+        }),
+    ))
+}
+
 /// 组装 TurnDriver。
 pub fn turn_driver(mock: &mock_openai::MockOpenAI) -> TurnDriver {
     TurnDriver::new(mock_model(mock), RunSpec::new(), vec![read_tool()])
+}
+
+/// 组装双工具（read 快工具 + command 慢命令）的 TurnDriver（S5 用）。
+pub fn two_tool_driver(mock: &mock_openai::MockOpenAI) -> TurnDriver {
+    TurnDriver::new(
+        mock_model(mock),
+        RunSpec::new(),
+        vec![read_tool(), command_tool()],
+    )
 }
 
 /// 组装一个手动循环的 run（预算 4 个模型调用）。

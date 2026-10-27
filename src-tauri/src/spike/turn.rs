@@ -16,9 +16,17 @@ use rig::run::spec::RunSpec;
 use rig::run::streamed::StreamedTurnAssembler;
 use rig::run::{AgentRun, AgentRunStep, ModelTurnOutcome, PromptError};
 use rig::streaming::Item;
+use tokio_util::sync::CancellationToken;
 
 use super::frames::ChatFrame;
 use super::rig_bridge::{Bridged, RigEventBridge};
+
+/// 单 turn 流式调用的退出态：自然收尾，或取消中途 drop 流（S5 取消传播）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamExit {
+    Completed,
+    Cancelled,
+}
 
 /// 外部工具执行器（对应 RunLoop 的 §5.4 门控与执行；spike 里由测试注入）。
 pub trait ToolExecutor: Send + Sync {
@@ -40,15 +48,51 @@ impl TurnDriver {
 
     /// 跑一个 CallModel 步骤：流式请求 rig，事件经 `on_frame` 逐个出帧
     /// （测试里直接收集；生产里先进 64ms 节流器再进 Channel），完成后把
-    /// 装配好的 streamed turn 回喂 run。
+    /// 装配好的 streamed turn 回喂 run。不可取消版（S2/S3 路径）。
     pub async fn stream_turn(
         &self,
         run: &mut AgentRun,
         prompt: Arc<Message>,
         history: Vec<Arc<Message>>,
         turn_no: u32,
-        on_frame: &mut dyn FnMut(ChatFrame),
+        on_frame: &mut (dyn FnMut(ChatFrame) + Send),
     ) -> Result<ModelTurnOutcome, PromptError> {
+        let no_cancel = CancellationToken::new();
+        self.do_stream_turn(run, prompt, history, turn_no, &no_cancel, on_frame)
+            .await
+            .map(|exit| match exit {
+                StreamExit::Completed => ModelTurnOutcome::Continue {
+                    response_hook_suppressed: false,
+                },
+                // 不可取消版永不出 Cancelled（token 从不触发）
+                StreamExit::Cancelled => unreachable!("未提供取消令牌不应出现取消退出"),
+            })
+    }
+
+    /// 取消可感知版（S5 取消传播）：token 触发即 drop HTTP 流（模型流停止），
+    /// 返回 [`StreamExit::Cancelled`]；流事件边收边装配出帧的行为与 [`Self::stream_turn`] 一致。
+    pub async fn stream_turn_cancellable(
+        &self,
+        run: &mut AgentRun,
+        prompt: Arc<Message>,
+        history: Vec<Arc<Message>>,
+        turn_no: u32,
+        token: &CancellationToken,
+        on_frame: &mut (dyn FnMut(ChatFrame) + Send),
+    ) -> Result<StreamExit, PromptError> {
+        self.do_stream_turn(run, prompt, history, turn_no, token, on_frame)
+            .await
+    }
+
+    async fn do_stream_turn(
+        &self,
+        run: &mut AgentRun,
+        prompt: Arc<Message>,
+        history: Vec<Arc<Message>>,
+        turn_no: u32,
+        token: &CancellationToken,
+        on_frame: &mut (dyn FnMut(ChatFrame) + Send),
+    ) -> Result<StreamExit, PromptError> {
         let capabilities = self.model.capabilities().completion;
         let prepared: PreparedRequest = prepare_request(
             &self.spec,
@@ -72,7 +116,17 @@ impl TurnDriver {
 
         let mut assembler = StreamedTurnAssembler::new(policy);
         let mut bridge = RigEventBridge::new();
-        while let Some(item) = stream.next().await {
+        loop {
+            // §5.3 取消传播核心点：token 触发与下一流事件竞争，胜出即 drop 流
+            //（HTTP 连接关闭，模型侧停止）。cancelled() 本身 cancel-safe，可安全 select。
+            let item = tokio::select! {
+                biased;
+                _ = token.cancelled() => return Ok(StreamExit::Cancelled),
+                next = stream.next() => match next {
+                    Some(item) => item,
+                    None => break,
+                },
+            };
             let item: Item<rig::streaming::StreamEvent> = item.map_err(|e| {
                 PromptError::from(rig::error::ProviderError::request(e.to_string()))
             })?;
@@ -99,9 +153,7 @@ impl TurnDriver {
         )?;
         let streamed_turn = assembler.finish(&response);
         run.streamed_turn(streamed_turn)?;
-        Ok(ModelTurnOutcome::Continue {
-            response_hook_suppressed: false,
-        })
+        Ok(StreamExit::Completed)
     }
 }
 
@@ -111,7 +163,7 @@ pub async fn drive_manual_tool_loop(
     driver: &TurnDriver,
     mut run: AgentRun,
     executor: Arc<dyn ToolExecutor>,
-    on_frame: &mut dyn FnMut(ChatFrame),
+    on_frame: &mut (dyn FnMut(ChatFrame) + Send),
 ) -> Result<rig::run::response::PromptResponse, PromptError> {
     loop {
         match run.next_step()? {
@@ -152,6 +204,7 @@ pub async fn drive_manual_tool_loop(
                         call_id,
                         ok: true,
                         ui_summary: output.clone(),
+                        error: None,
                     });
                     answers.push(answer_one(call, output));
                 }
@@ -162,8 +215,9 @@ pub async fn drive_manual_tool_loop(
     }
 }
 
-/// 把一个 pending call 的执行结果打包为 ToolAnswer。
-fn answer_one(call: rig::run::PendingToolCall, output: String) -> rig::run::ToolAnswer {
+/// 把一个 pending call 的执行结果打包为 ToolAnswer（取消路径也复用：已完成
+/// 的工具在取消后仍以原结果收齐）。
+pub fn answer_one(call: rig::run::PendingToolCall, output: String) -> rig::run::ToolAnswer {
     match call {
         rig::run::PendingToolCall::Execute(exec) => exec.answer(rig::tool::ToolResult::success(
             rig::tool::ToolOutput::text(output),
