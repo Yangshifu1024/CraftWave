@@ -66,8 +66,10 @@ function scannedClientCommandNames(): string[] {
   return [...names];
 }
 
-/** S5 spike 的前端取消桥接为注入式原型，Rust 侧 cancel_run 命令属后续票（invoke 静默失败）。 */
-const SPIKE_ONLY_INVOKES = new Set(["cancel_run"]);
+/** 本测试直接扫描的源文件（client.ts 为唯一 invoke 出口）。 */
+
+/** S5 spike 的前端取消桥接为注入式原型；cancel_run 已随核心链路票正式注册。 */
+const SPIKE_ONLY_INVOKES = new Set<string>([]);
 
 describe("§12.3 manifest 双向扫描", () => {
   it("client.ts 注册的命令名全部存在于 manifest.commands", () => {
@@ -77,7 +79,7 @@ describe("§12.3 manifest 双向扫描", () => {
     }
   });
 
-  it("storage/provider 两切片命令在 client.ts 全部接线（双向）", () => {
+  it("storage/provider/chat 切片命令在 client.ts 全部接线（双向）", () => {
     const wired = new Set(scannedClientCommandNames());
     for (const name of [
       "save_session_tree",
@@ -86,6 +88,8 @@ describe("§12.3 manifest 双向扫描", () => {
       "save_config",
       "save_provider",
       "delete_provider",
+      "start_chat",
+      "cancel_run",
     ]) {
       expect(wired, `manifest 命令 ${name} 未在 client.ts 接线（禁止只注册不使用）`).toContain(
         name,
@@ -119,6 +123,15 @@ describe("§12.3 manifest 双向扫描", () => {
     expect(find("delete_provider")).toMatchObject({
       args_type: "DeleteProviderArgs",
       ret_type: "()",
+    });
+    // 核心链路两命令（13 号票，§3.3 #18/#19）
+    expect(find("start_chat")).toMatchObject({
+      args_type: "StartChatArgs",
+      ret_type: "StartChatResult",
+    });
+    expect(find("cancel_run")).toMatchObject({
+      args_type: "CancelRunArgs",
+      ret_type: "bool",
     });
   });
 

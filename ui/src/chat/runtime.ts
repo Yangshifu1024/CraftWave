@@ -1,9 +1,12 @@
-import type { ChatModelAdapter, ThreadMessage } from "@assistant-ui/react";
+import type { ChatModelAdapter, ChatModelRunResult, ThreadMessage } from "@assistant-ui/react";
+import * as client from "@/ipc/client";
+import type { ChatFrame, MessageEntry, RunConfig } from "@/ipc/types";
+import { bindCancelToRun } from "./cancel-bridge";
+import { type ChatPart, FrameBuffer, toParts } from "./frames";
+import { useRunMetricsStore } from "./run-metrics";
 
-/**
- * S6 骨架用回声适配器：不接真实模型（rig 流式接入属 S2/S3 票），
- * 但以两段累积 yield 模拟流式渲染，验证 assistant-ui 流水线可用。
- */
+// ---- S6 骨架回声适配器（无后端 dev fallback，原样保留） ----
+
 export const REPLY_PREFIX = "【骨架回声】";
 
 /** 把回复切成 n 段（每段非空），供分批累积 yield。 */
@@ -43,3 +46,157 @@ export const echoAdapter: ChatModelAdapter = {
     yield* echoStream(promptFrom(messages), abortSignal);
   },
 };
+
+// ---- tauri 后端适配器（§10.2：start_chat + Channel 帧 → assistant-ui） ----
+
+/**
+ * M1 单会话（多会话 Tab 不在本票）：临时会话 id。会话域（列表/Tab/持久化
+ * 会话）落地后由 sessions store 提供。
+ */
+export const LOCAL_SESSION_ID = "local";
+
+/** M1 默认运行配置（auto_edit 档直写 roots；maxTurns 文档默认 24）。 */
+export const DEFAULT_RUN_CONFIG: RunConfig = {
+  tier: "autoEdit",
+  maxTurns: 24,
+  steer: false,
+};
+
+/**
+ * assistant-ui 消息 → wire 中立消息（MessageEntry 形态，§3.2/§6.1）。
+ * 取活动路径线性序（assistant-ui 传入序）；工具调用 part 为已合并形态
+ * （tool-call 带 result），拆回 toolCall + toolResult 双 part（§6.2 配对面）。
+ */
+export function toWire(messages: readonly ThreadMessage[]): MessageEntry[] {
+  return messages.map((message) => {
+    const parts: MessageEntry["parts"] = [];
+    for (const part of message.content) {
+      switch (part.type) {
+        case "text":
+          if (part.text.length > 0) parts.push({ type: "text", text: part.text });
+          break;
+        case "reasoning":
+          if (part.text.length > 0) parts.push({ type: "reasoning", text: part.text });
+          break;
+        case "tool-call": {
+          const argsJson = JSON.stringify(part.args ?? {});
+          parts.push({
+            type: "toolCall",
+            callId: part.toolCallId,
+            name: part.toolName,
+            argsJson,
+          });
+          if (part.result !== undefined) {
+            const result = part.result as { ok?: boolean; summary?: string };
+            parts.push({
+              type: "toolResult",
+              callId: part.toolCallId,
+              ok: result.ok ?? !part.isError,
+              summary:
+                result.summary ??
+                (typeof part.result === "string" ? part.result : JSON.stringify(part.result)),
+            });
+          }
+          break;
+        }
+        default:
+          // image 等 M2 part 不在 M1 链路面
+          break;
+      }
+    }
+    if (parts.length === 0) parts.push({ type: "text", text: "" });
+    return {
+      // assistant-ui 的 message.id 随树稳定（重生成分支各有 id），直接采用
+      id: message.id,
+      role:
+        message.role === "assistant" ? "assistant" : message.role === "system" ? "system" : "user",
+      parts,
+      createdAt: message.createdAt.getTime(),
+    } satisfies MessageEntry;
+  });
+}
+
+/** adapter 依赖（生产 = ipc/client；测试注入 fake）。 */
+export interface TauriAdapterDeps {
+  sessionId: string;
+  runConfig: RunConfig;
+  startChat: typeof client.startChat;
+  cancelRun: (sessionId: string) => Promise<boolean>;
+  /** 帧旁路（生产：runMetrics.ingest；§10.2 onmessage 双写） */
+  onFrame?: (frame: ChatFrame) => void;
+}
+
+export const defaultDeps: TauriAdapterDeps = {
+  sessionId: LOCAL_SESSION_ID,
+  runConfig: DEFAULT_RUN_CONFIG,
+  startChat: client.startChat,
+  cancelRun: client.cancelRun,
+};
+
+/** runEnded reason → assistant-ui 终态 status（done=complete；cancelled/error=incomplete）。 */
+function endStatus(reason: "done" | "error" | "cancelled"): ChatModelRunResult["status"] {
+  switch (reason) {
+    case "cancelled":
+      return { type: "incomplete", reason: "cancelled" };
+    case "error":
+      return { type: "incomplete", reason: "error" };
+    default:
+      return { type: "complete", reason: "stop" };
+  }
+}
+
+/** 生产 adapter（§10.2 伪代码的产品化落地）。 */
+export const tauriChatModel: ChatModelAdapter = createTauriChatAdapter({
+  ...defaultDeps,
+  onFrame: (frame) => useRunMetricsStore.getState().ingest(frame),
+});
+
+/**
+ * 可注入 adapter 工厂：start_chat 带 channel → FrameBuffer 累积 → 64ms 节流
+ * 快照全量 yield（打字机，§10.2）→ runEnded 快照以终态 status 收口；abortSignal
+ * 桥 cancel_run（S5：fire-and-forget，终态以 runEnded 帧为权威）。
+ */
+export function createTauriChatAdapter(deps: TauriAdapterDeps): ChatModelAdapter {
+  return {
+    async *run({ messages, abortSignal }) {
+      const buffer = new FrameBuffer();
+      const signal = abortSignal ?? new AbortController().signal;
+      const unbind = bindCancelToRun(signal, deps.sessionId, (cmd, args) => {
+        if (cmd === "cancel_run") {
+          return deps.cancelRun((args as { sessionId: string }).sessionId);
+        }
+        return Promise.reject(new Error(`非桥接命令：${cmd}`));
+      });
+      try {
+        const invokePromise = deps.startChat({
+          sessionId: deps.sessionId,
+          messages: toWire(messages),
+          runConfig: deps.runConfig,
+          onFrame: (frame: ChatFrame) => {
+            buffer.push(frame);
+            deps.onFrame?.(frame);
+          },
+        });
+        // 64ms 节流快照迭代：runEnded 快照 yield 后迭代自然收口（§10.2）
+        for await (const snapshot of buffer.snapshots()) {
+          if (signal.aborted && !snapshot.ended) {
+            // 本地 abort 已触发而终态帧未到（命令面异常路径）：停止产出，
+            // 终态仍以 runEnded 帧为权威（S5 语义）。
+            break;
+          }
+          const content = toParts(snapshot);
+          yield {
+            content: content.length > 0 ? content : [{ type: "text", text: "" }],
+            ...(snapshot.ended ? { status: endStatus(snapshot.ended.reason) } : {}),
+          };
+        }
+        await invokePromise;
+      } finally {
+        unbind();
+      }
+    },
+  };
+}
+
+// 保持 ChatPart 类型被导出（测试断言 content 形状用）
+export type { ChatPart };

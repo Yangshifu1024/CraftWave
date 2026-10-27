@@ -6,6 +6,7 @@ import {
   MessagePrimitive,
   ThreadPrimitive,
 } from "@assistant-ui/react";
+import { useRunMetricsStore } from "@/chat/run-metrics";
 
 /** S6 最小聊天窗：primitives 手搭（kit copy-paste 属后续 UX 票的增量）。 */
 export function ChatThread() {
@@ -48,6 +49,7 @@ export function ChatThread() {
                 </ComposerPrimitive.Cancel>
               </AuiIf>
             </ComposerPrimitive.Root>
+            <RunMetricsBar />
           </ThreadPrimitive.ViewportFooter>
         </ThreadPrimitive.Viewport>
       </ThreadPrimitive.Root>
@@ -71,12 +73,19 @@ function AssistantMessage() {
   return (
     <MessagePrimitive.Root className="flex justify-start py-1">
       <div className="max-w-[80%] rounded-2xl bg-neutral-800 px-4 py-2 text-sm">
+        {/* 内联 render props（勿抽组件）：S1 实证 Parts 对 tool-call part 渲染
+            null 时才 fallback 到注册的镜像工具卡；抽组件会让 fallback 判定失效。 */}
         <MessagePrimitive.Parts>
           {({ part }) =>
             part.type === "text" ? (
               <p className="whitespace-pre-wrap">
                 <MessagePartPrimitive.Text />
               </p>
+            ) : part.type === "reasoning" ? (
+              <details className="my-1 rounded border border-neutral-700 bg-neutral-900/60 px-2 py-1 text-xs text-neutral-400">
+                <summary className="cursor-default select-none">思考过程</summary>
+                <p className="mt-1 whitespace-pre-wrap">{part.text}</p>
+              </details>
             ) : null
           }
         </MessagePrimitive.Parts>
@@ -87,5 +96,27 @@ function AssistantMessage() {
         </MessagePrimitive.Error>
       </div>
     </MessagePrimitive.Root>
+  );
+}
+
+/** 计数条三数（§10.5：rate / turnUsage / sessionUsage 常驻 Composer 下方）。 */
+function RunMetricsBar() {
+  const { rate, turnUsage, sessionUsage, lastRun } = useRunMetricsStore();
+  const tokens = (u: { input: number; output: number }) => `${u.input + u.output}`;
+  return (
+    <div className="mt-1 flex items-center gap-3 px-2 text-[11px] text-neutral-500">
+      <span data-testid="metric-rate">{rate === null ? "—" : `${rate.toFixed(0)} tok/s`}</span>
+      <span data-testid="metric-turn">本轮 {tokens(turnUsage)} tok</span>
+      <span data-testid="metric-session">会话 {tokens(sessionUsage)} tok</span>
+      {lastRun && (
+        <span data-testid="metric-run">
+          {lastRun.reason === "done"
+            ? `完成 · ${(lastRun.durationMs / 1000).toFixed(1)}s · ${lastRun.toolCount} 次工具`
+            : lastRun.reason === "cancelled"
+              ? "已取消"
+              : "出错"}
+        </span>
+      )}
+    </div>
   );
 }

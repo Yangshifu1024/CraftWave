@@ -87,6 +87,7 @@ impl From<std::io::Error> for ToolError {
 
 pub const E_INVALID_ARG: &str = "E_INVALID_ARG";
 pub const E_NOT_FOUND: &str = "E_NOT_FOUND";
+pub const E_SESSION_RUNNING: &str = "E_SESSION_RUNNING";
 pub const E_SESSION_REV: &str = "E_SESSION_REV";
 pub const E_STORAGE_IO: &str = "E_STORAGE_IO";
 pub const E_KEYRING: &str = "E_KEYRING";
@@ -135,7 +136,12 @@ impl IpcError {
         Self::new(E_SESSION_REV, message)
     }
 
-    /// E_STORAGE_IO：磁盘 IO 失败（§3.6 暂缺，见 host/error.rs 模块注释）。
+    /// E_SESSION_RUNNING：会话已有活跃 run（§3.3 #18）。
+    pub fn session_running(message: impl Into<String>) -> Self {
+        Self::new(E_SESSION_RUNNING, message)
+    }
+
+    /// E_STORAGE_IO：磁盘 IO 失败（§3.6，13 号票补录）。
     pub fn storage_io(message: impl Into<String>) -> Self {
         Self::new(E_STORAGE_IO, message)
     }

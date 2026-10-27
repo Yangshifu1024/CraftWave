@@ -1,6 +1,8 @@
 use tauri::{Manager, WebviewWindow};
 use tauri_plugin_decoration::WebviewWindowExt;
 
+pub mod agent;
+pub mod backend;
 pub mod host;
 pub mod providers;
 pub mod safety;
@@ -11,6 +13,10 @@ pub mod util;
 
 // 契约类型仅在 `ipc_commands!` 清单中经 stringify! 引用（manifest 的 args_type/ret_type 名），
 // 实际类型面由命令形参承载；这些导入为清单可读性服务，编译器视为未用。
+#[allow(unused_imports)]
+use host::commands::chat::{
+    CancelRunArgs, RunConfig, StartChatArgs, StartChatResult, cancel_run, start_chat,
+};
 #[allow(unused_imports)]
 use host::commands::config::{SaveConfigArgs, get_config, save_config};
 #[allow(unused_imports)]
@@ -83,6 +89,8 @@ ipc_commands! {
     host::commands::config::save_config => args: SaveConfigArgs, ret: AppConfig;
     host::commands::provider::save_provider => args: SaveProviderArgs, ret: ProviderConfig;
     host::commands::provider::delete_provider => args: DeleteProviderArgs, ret: ();
+    host::commands::chat::start_chat => args: StartChatArgs, ret: StartChatResult;
+    host::commands::chat::cancel_run => args: CancelRunArgs, ret: bool;
     #[cfg(debug_assertions)]
     mock_chat::mock_chat_run => args: (), ret: ();
 }
