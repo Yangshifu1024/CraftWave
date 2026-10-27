@@ -36,7 +36,14 @@ export function ChatThread() {
             </div>
           </AuiIf>
           <ThreadPrimitive.Messages>
-            {({ message }) => (message.role === "user" ? <UserMessage /> : <AssistantMessage />)}
+            {({ message }) =>
+              // system = runMarker 等存储标记节点（custom 载荷保真，§6.2 跳过内容）——不渲染
+              message.role === "system" ? null : message.role === "user" ? (
+                <UserMessage />
+              ) : (
+                <AssistantMessage />
+              )
+            }
           </ThreadPrimitive.Messages>
           <ThreadPrimitive.ViewportFooter className="sticky bottom-0 pt-2">
             <ComposerPrimitive.Root className="flex items-end gap-2 rounded-2xl border border-neutral-800 bg-neutral-900 p-2">

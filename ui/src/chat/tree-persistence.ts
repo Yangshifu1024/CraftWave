@@ -82,6 +82,20 @@ export function messageToEntry(
   message: ThreadMessage,
   parentId: string | null,
 ): StoredMessageEntry {
+  // runMarker 条目（system + custom 载荷）：parts 还原为 RunMarker part
+  //（链上节点，wire 重建与渲染均跳过其内容，§6.2）
+  const runMarker = readRunMarker(message);
+  if (runMarker !== null) {
+    const entry: StoredMessageEntry = {
+      kind: "message",
+      id: message.id,
+      role: "system",
+      parts: [{ type: "runMarker", ...runMarker }],
+      createdAt: message.createdAt.getTime(),
+    };
+    if (parentId !== null) entry.parentId = parentId;
+    return entry;
+  }
   const entry: StoredMessageEntry = {
     kind: "message",
     id: message.id,
@@ -95,6 +109,32 @@ export function messageToEntry(
     if (message.metadata.runId !== undefined) entry.runId = message.metadata.runId;
   }
   return entry;
+}
+
+/** 树消息的 runMarker 载荷（entryToMessageLike 写入的 custom metadata；无则 null）。
+ *  toWire（runtime.ts）共用——三点转换（import/export/wire）单一判定口径。 */
+export function readRunMarker(
+  message: Pick<ThreadMessage, "metadata">,
+): Omit<Extract<WirePart, { type: "runMarker" }>, "type"> | null {
+  const raw = (message.metadata as { custom?: Record<string, unknown> } | undefined)?.custom
+    ?.runMarker;
+  if (raw === null || typeof raw !== "object") return null;
+  const m = raw as Record<string, unknown>;
+  if (typeof m.runId !== "string" || typeof m.startedAt !== "number") return null;
+  const out: {
+    runId: string;
+    startedAt: number;
+    endedAt?: number;
+    durationMs?: number;
+    toolCount?: number;
+  } = {
+    runId: m.runId,
+    startedAt: m.startedAt,
+  };
+  if (typeof m.endedAt === "number") out.endedAt = m.endedAt;
+  if (typeof m.durationMs === "number") out.durationMs = m.durationMs;
+  if (typeof m.toolCount === "number") out.toolCount = m.toolCount;
+  return out;
 }
 
 export function exportToEntries(
@@ -127,6 +167,24 @@ function toolResultText(
 }
 
 function entryToMessageLike(entry: StoredMessageEntry): ThreadMessageLike {
+  // runMarker 条目：assistant-ui 无对应 part 类型——空 system 消息 +
+  // metadata.custom.runMarker 载荷保真（messageToEntry 侧对称还原）；
+  // 不保真会在 save 全树同步时同 id 内容漂移 → E_SESSION_REV
+  const marker = entry.parts.find(
+    (p): p is Extract<WirePart, { type: "runMarker" }> => p.type === "runMarker",
+  );
+  if (marker !== undefined) {
+    const { type: _type, ...payload } = marker;
+    return {
+      id: entry.id,
+      role: "system",
+      // assistant-ui 约束 system 消息必须恰好一个 text part；占位符不进
+      // 导出/wire 面（marker 分支优先），Thread 渲染层过滤 system 消息
+      content: [{ type: "text", text: "·" }],
+      createdAt: new Date(entry.createdAt),
+      metadata: { custom: { runMarker: payload } },
+    };
+  }
   // 按 ThreadMessageLike part 形状构造 plain 对象；JSON.parse 的 args 为 unknown，
   // 因此整体出口处一次断言（fromBranchableArray 内部还会再做规范化校验）
   const rawParts: Record<string, unknown>[] = [];

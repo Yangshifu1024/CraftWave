@@ -56,15 +56,14 @@ Single-context layout: root `GLOSSARY.md` plus `docs/adr/`. See `docs/agents/dom
 
 ## assistant-ui
 
-This project uses assistant-ui for chat interfaces.
+This project uses assistant-ui 0.15.x for chat interfaces.
 
-Documentation: https://www.assistant-ui.com/llms-full.txt
+Documentation: https://www.assistant-ui.com/llms-full.txt — the official docs can lag the installed package; when a documented API doesn't match, the installed package's type surface is the truth: `ui/node_modules/@assistant-ui/react/dist` (e.g. `primitives/*.d.ts`). Known traps (zero-props primitives, `ThreadMessage` without `parentId`) are recorded in HandOff.md section 5.
 
-Key patterns:
-- Use AssistantRuntimeProvider at the app root
-- Thread component for full chat interface
-- AssistantModal for floating chat widget
-- useChatRuntime hook with AI SDK transp
+Patterns actually used in this repo (see `ui/src/chat/runtime.ts` and `ui/src/chat/Thread.tsx`):
+- `useLocalRuntime` + self-written `ChatModelAdapter` (`tauriChatModel`: start_chat → Channel frames → 64ms snapshot yield)
+- Primitives hand-assembled UI (`ThreadPrimitive`/`MessagePrimitive`/`ComposerPrimitive`/`ActionBarPrimitive`/`BranchPickerPrimitive`), not kit components
+- `AuiConfig` + `Tools` resource factory mounts the mirror tool cards (`ui/src/chat/toolkit.ts`)
 
 
 ## 补充指令

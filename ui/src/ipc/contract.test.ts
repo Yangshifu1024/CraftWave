@@ -2,10 +2,11 @@ import { readdirSync, readFileSync } from "node:fs";
 import path, { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
+import { toWire } from "../chat/runtime";
 import { CW_TOOL_PARAMETERS } from "../chat/toolkit";
-import { entriesToExported, parseSessionJsonl } from "../chat/tree-persistence";
+import { entriesToExported, messageToEntry, parseSessionJsonl } from "../chat/tree-persistence";
 import { COMMANDS, EVENT_KEYS } from "./client";
-import type { MessageEntry, StoredEntry } from "./types";
+import type { MessageEntry, StoredEntry, StoredMessageEntry } from "./types";
 
 /**
  * §12.3 契约测试（前端侧，NFR-12 双向扫描 + 跨语言 roundtrip）：
@@ -291,7 +292,24 @@ const EXPECTED_ENTRIES: StoredEntry[] = [
     runId: "run-2",
     status: { type: "complete", reason: "unknown" },
   },
-  { kind: "meta", activeLeafId: "a3", revision: 3 },
+  {
+    kind: "message",
+    id: "run-2:marker",
+    parentId: "a3",
+    role: "system",
+    parts: [
+      {
+        type: "runMarker",
+        runId: "run-2",
+        startedAt: 1760000000005,
+        endedAt: 1760000000006,
+        durationMs: 1200,
+        toolCount: 0,
+      },
+    ],
+    createdAt: 1760000000006,
+  },
+  { kind: "meta", activeLeafId: "run-2:marker", revision: 4 },
 ];
 
 describe("§6.1 跨语言 fixture roundtrip（Rust serde 落盘 ↔ TS 镜像）", () => {
@@ -305,8 +323,15 @@ describe("§6.1 跨语言 fixture roundtrip（Rust serde 落盘 ↔ TS 镜像）
     const repo = entriesToExported(parseSessionJsonl(fixtureText));
 
     // 树结构（C-4：headId=activeLeaf，parentId null=根；导出序父先子后）
-    expect(repo.headId).toBe("a3");
-    expect(repo.messages.map((m) => m.message.id)).toStrictEqual(["u1", "a1", "u2", "a2", "a3"]);
+    expect(repo.headId).toBe("run-2:marker");
+    expect(repo.messages.map((m) => m.message.id)).toStrictEqual([
+      "u1",
+      "a1",
+      "u2",
+      "a2",
+      "a3",
+      "run-2:marker",
+    ]);
     const parentOf = (id: string): string | null =>
       repo.messages.find((m) => m.message.id === id)?.parentId ?? null;
     expect(parentOf("u1")).toBeNull();
@@ -314,6 +339,8 @@ describe("§6.1 跨语言 fixture roundtrip（Rust serde 落盘 ↔ TS 镜像）
     expect(parentOf("u2")).toBe("a1");
     expect(parentOf("a2")).toBe("u2");
     expect(parentOf("a3")).toBe("u2");
+    // runMarker 链尾：a3 → marker（canonical 收口行，前端 custom 载荷保真）
+    expect(parentOf("run-2:marker")).toBe("a3");
 
     // 重生成兄弟分支：a2/a3 同父
     expect(parentOf("a2")).toBe(parentOf("a3"));
@@ -351,7 +378,40 @@ describe("§6.1 跨语言 fixture roundtrip（Rust serde 落盘 ↔ TS 镜像）
       const { kind: _kind, ...rest } = entry;
       return rest;
     });
-    expect(payload).toHaveLength(5);
+    expect(payload).toHaveLength(6);
     expect(payload.every((m) => !("kind" in m))).toBe(true);
+  });
+
+  it("往返等价（15 号票防漂移锚点）：条目 → 树还原 → messageToEntry 导出逐字段一致", () => {
+    // Rust canonical 条目经前端 import（entryToMessageLike + assistant-ui 规范化）
+    // 再导出（messageToEntry）必须与原条目逐字段等价——不等价即 save 全树同步时
+    // 同 id 内容漂移 → E_SESSION_REV（保存失败级故障，本断言是唯一自动防线）
+    const entries = parseSessionJsonl(fixtureText);
+    const repo = entriesToExported(entries);
+    const original = entries.filter((e): e is StoredMessageEntry => e.kind === "message");
+    const round = repo.messages.map((m) => messageToEntry(m.message, m.parentId));
+    expect(round).toStrictEqual(original);
+  });
+
+  it("runMarker 节点的 wire 面等价：树上 system 空消息 → toWire 还原 RunMarker part", () => {
+    // 活动路径含 marker 节点时（收养后继续对话），toWire 不得把它变空 parts 条目
+    const entries = parseSessionJsonl(fixtureText);
+    const repo = entriesToExported(entries);
+    const wire = toWire(repo.messages.map((m) => m.message));
+    const markerWire = wire.find((m) => m.id === "run-2:marker");
+    expect(markerWire).toMatchObject({
+      id: "run-2:marker",
+      role: "system",
+      parts: [
+        {
+          type: "runMarker",
+          runId: "run-2",
+          startedAt: 1760000000005,
+          endedAt: 1760000000006,
+          durationMs: 1200,
+          toolCount: 0,
+        },
+      ],
+    });
   });
 });

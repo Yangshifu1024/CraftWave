@@ -195,10 +195,27 @@ fn fixture_entries() -> Vec<StoredEntry> {
                 reason: CompleteReason::Unknown,
             }),
         }),
+        // runMarker 条目（15 号票 canonical 收口行）：role=system、链尾节点，
+        // 前端以 metadata.custom.runMarker 保真往返（漂移即 E_SESSION_REV）
+        StoredEntry::Message(MessageEntry {
+            id: "run-2:marker".to_string(),
+            parent_id: Some("a3".to_string()),
+            role: MessageRole::System,
+            parts: vec![WirePart::RunMarker {
+                run_id: "run-2".to_string(),
+                started_at: 1_760_000_000_005,
+                ended_at: Some(1_760_000_000_006),
+                duration_ms: Some(1200),
+                tool_count: Some(0),
+            }],
+            created_at: 1_760_000_000_006,
+            run_id: None,
+            status: None,
+        }),
         StoredEntry::Meta(MetaEntry {
-            active_leaf_id: Some("a3".to_string()),
+            active_leaf_id: Some("run-2:marker".to_string()),
             title: None,
-            revision: 3,
+            revision: 4,
         }),
     ]
 }

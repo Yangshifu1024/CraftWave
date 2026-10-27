@@ -5,6 +5,7 @@ import { syncTreeBeforeSend, useSessionPersistStore } from "@/stores/session";
 import { bindCancelToRun } from "./cancel-bridge";
 import { type ChatPart, FrameBuffer, toParts } from "./frames";
 import { useRunMetricsStore } from "./run-metrics";
+import { readRunMarker } from "./tree-persistence";
 
 // ---- S6 骨架回声适配器（无后端 dev fallback，原样保留） ----
 
@@ -73,6 +74,17 @@ export const DEFAULT_RUN_CONFIG: RunConfig = {
 export function toWire(messages: readonly ThreadMessage[]): MessageEntry[] {
   return messages.map((message) => {
     const parts: MessageEntry["parts"] = [];
+    // runMarker 节点（收养历史里的 system 空消息，custom 载荷保真）：parts 还原
+    // 为 RunMarker part——否则空 parts 条目与 Rust 侧同 id 条目漂移（E_SESSION_REV）
+    const marker = readRunMarker(message);
+    if (marker !== null) {
+      return {
+        id: message.id,
+        role: "system",
+        parts: [{ type: "runMarker", ...marker }],
+        createdAt: message.createdAt.getTime(),
+      } satisfies MessageEntry;
+    }
     for (const part of message.content) {
       switch (part.type) {
         case "text":
