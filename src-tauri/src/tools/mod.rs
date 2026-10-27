@@ -10,6 +10,7 @@
 pub mod edit;
 pub mod grep;
 pub mod list_files;
+pub mod process;
 pub mod read;
 pub mod write;
 

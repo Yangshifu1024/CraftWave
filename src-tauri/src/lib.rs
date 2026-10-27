@@ -1,6 +1,8 @@
 use tauri::{Manager, WebviewWindow};
 use tauri_plugin_decoration::WebviewWindowExt;
 
+pub mod agent;
+pub mod backend;
 pub mod host;
 pub mod providers;
 pub mod safety;
