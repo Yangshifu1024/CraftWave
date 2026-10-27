@@ -1,59 +1,22 @@
-import type { MessageStatus, ThreadMessage, ThreadMessageLike } from "@assistant-ui/react";
+import type { ThreadMessage, ThreadMessageLike } from "@assistant-ui/react";
 import { ExportedMessageRepository } from "@assistant-ui/react";
+import type { StoredEntry, StoredMessageEntry, StoredMetaEntry, WirePart } from "../ipc/types";
 
 /** ThreadMessageLike 的 content 数组形态（core 未单独导出 part 类型，从此推导） */
 type MessageLikeContent = Exclude<ThreadMessageLike["content"], string>;
 
 /**
- * S4 spike：前端树 ↔ §6.1 存储条目双向转换（D8 载体）。
+ * 前端树 ↔ §6.1 存储条目双向转换（D8 载体，§6.3 单一事实源）。
  *
  * 设计对齐：
- * - 存储条目 schema 见技术设计文档 §6.1（spike 子集：session/message/meta；
- *   compaction、branchSummary 属 M2，本文件留类型位不实现）。
- * - parts 采用 §3.2 的 WirePart 中立格式（camelCase：toolCall/toolResult）。
+ * - 存储条目 schema 见技术设计文档 §6.1（M1 子集：session/message/meta；
+ *   compaction、branchSummary 属 M2，暂不实现）。
+ * - 存储条目与 WirePart 类型是 Rust 契约镜像，单一事实源在 ui/src/ipc/types.ts（§2.4）。
  * - 条目内容不可变：编辑/重生成/分支一律追加新节点，本层是纯函数，无副作用。
  *
- * spike 期落盘为单个 JSON 文件；生产为 append-only 分段 JSONL——
- * 条目数组逐行 `JSON.stringify` 即为 JSONL 行，序列化层不影响本转换层。
+ * 落盘由 Rust storage 模块承载（append-only 分段 JSONL）；
+ * 本层条目数组逐行 `JSON.stringify` 即为 JSONL 行（serializeSessionJsonl，契约测试用）。
  */
-
-// ---- §3.2 WirePart（M1 子集；image 属 M2）----
-
-export type WirePart =
-  | { type: "text"; text: string }
-  | { type: "reasoning"; text: string }
-  | { type: "toolCall"; callId: string; name: string; argsJson: string }
-  | { type: "toolResult"; callId: string; ok: boolean; summary: string };
-
-// ---- §6.1 存储条目（serde tag=kind 的 TS 镜像）----
-
-export type StoredMessageEntry = {
-  kind: "message";
-  id: string;
-  parentId?: string;
-  role: "user" | "assistant" | "system";
-  parts: WirePart[];
-  createdAt: number;
-  runId?: string;
-  /** S4 新增建议（§6.1 回写）：仅 assistant，保留导出时的 MessageStatus（complete/cancelled/error） */
-  status?: MessageStatus;
-};
-
-export type StoredMetaEntry = {
-  kind: "meta";
-  activeLeafId?: string;
-  title?: string;
-  revision: number;
-};
-
-export type StoredSessionEntry = {
-  kind: "session";
-  v: 1;
-  id: string;
-  createdAt: number;
-};
-
-export type StoredEntry = StoredSessionEntry | StoredMessageEntry | StoredMetaEntry;
 
 // ---- 导出 → 存储条目 ----
 

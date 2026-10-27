@@ -9,18 +9,15 @@ import type {
 } from "@assistant-ui/react";
 import { ExportedMessageRepository as ExportedMessageRepositoryFactory } from "@assistant-ui/react";
 import { afterAll, describe, expect, it, vi } from "vitest";
+import type { StoredEntry, StoredMessageEntry, StoredMetaEntry, WirePart } from "../ipc/types";
 import { createScriptedAdapter, type ReplyScript, splitChunks } from "./scripted-backend";
 import {
   entriesToExported,
   exportToEntries,
   parseSession,
   parseSessionJsonl,
-  type StoredEntry,
-  type StoredMessageEntry,
-  type StoredMetaEntry,
   serializeSession,
   serializeSessionJsonl,
-  type WirePart,
 } from "./tree-persistence";
 
 // ---- S4 spike 测试设施：headless LocalRuntime（不走 React 渲染，S6 同款累积假流） ----

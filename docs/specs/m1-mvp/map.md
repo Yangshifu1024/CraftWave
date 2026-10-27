@@ -29,6 +29,7 @@ CraftWave M1 MVP 出口准则达成：P0 需求全集实现，NFR-01/02/06/09/12
 - [S4 消息树持久化 roundtrip（含 C-4 钉死）](tasks/07-spike-s4-tree-roundtrip.md)：roundtrip 通过（编辑/重生成/分支切换逐节点一致，vitest 11 例）；C-4 定案（headId/messages 结构钉死，§6.1 增 `status?`）；D12 复核 rig-memory 直接承载不可行，决策维持并增补 redact 复刻点。
 - [决策：C-9/C-10 默认方案确认](tasks/09-grilling-c9-c10-defaults.md)：C-9 确认默认——后台小调用计入会话累计、不计轮次、失败静默；C-10 推翻默认——M1 即 encoding_rs+chardetng 编码自动判断（与 agent read 共用解码器），512KB 分页读取，write/edit 一律 UTF-8，GBK 不再缓 P1。
 - [S5 取消传播全链路](tasks/08-spike-s5-cancel-propagation.md)：可行——select! 流停 0.03–0.06ms、含进程组收割 6–8ms，全链远低于 1s；标记语义钉死（被收割/未执行补 E_CANCELLED、已完成保留不回滚、runEnded(cancelled) 必为收齐后最后一帧，帧协议零修订）；Windows Job Object 方案 MSVC target 可编译性已验。
+- [实现：storage 读写器与会话树命令](tasks/10-impl-storage-session-tree.md)：分段 JSONL 读写器（封口/指纹/尾段容错）+ 原子写 + save/load_session_tree 命令与 manifest 契约测试落地，Rust/前端 roundtrip 全绿，§6/§7 无出入。
 
 ## Not yet specified
 
