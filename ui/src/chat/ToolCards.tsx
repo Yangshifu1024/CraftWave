@@ -84,10 +84,10 @@ function ToolCardShell({ title, children, ...props }: CardProps & { children?: R
     <div
       data-testid={`tool-card-${toolCallId}`}
       data-phase={phase}
-      className="my-1 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-xs"
+      className="my-1 rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-xs"
     >
       <div className="flex items-center justify-between gap-2">
-        <span className="font-medium text-neutral-200">{title}</span>
+        <span className="font-medium text-[var(--foreground)]">{title}</span>
         <span
           data-phase-label={phaseLabel}
           className={
@@ -95,7 +95,7 @@ function ToolCardShell({ title, children, ...props }: CardProps & { children?: R
               ? "rounded bg-red-900/60 px-1.5 py-0.5 text-red-200"
               : phase === "done"
                 ? "rounded bg-emerald-900/60 px-1.5 py-0.5 text-emerald-200"
-                : "rounded bg-sky-900/60 px-1.5 py-0.5 text-sky-200"
+                : "rounded bg-[var(--accent)] px-1.5 py-0.5 text-[var(--foreground)]"
           }
         >
           {phaseLabel}
@@ -103,15 +103,19 @@ function ToolCardShell({ title, children, ...props }: CardProps & { children?: R
       </div>
       <div className="mt-1 space-y-1">{children}</div>
       {phase === "preparing" && (
-        <pre className="max-h-24 overflow-hidden whitespace-pre-wrap break-all text-neutral-400">
+        <pre className="max-h-24 overflow-hidden whitespace-pre-wrap break-all text-[var(--muted-foreground)]">
           {argsText || "（等待参数…）"}
         </pre>
       )}
-      {hasResult && <p className={isError ? "text-red-300" : "text-neutral-400"}>{summary}</p>}
+      {hasResult && (
+        <p className={isError ? "text-red-300" : "text-[var(--muted-foreground)]"}>{summary}</p>
+      )}
       {detailJson !== null && detailJson !== "null" && (
-        <details className="mt-1 rounded border border-neutral-800 bg-neutral-950/60 px-2 py-1">
-          <summary className="cursor-default select-none text-neutral-500">详细数据</summary>
-          <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all text-neutral-400">
+        <details className="mt-1 rounded border border-[var(--border)] bg-[var(--background)]/60 px-2 py-1">
+          <summary className="cursor-default select-none text-[var(--muted-foreground)]">
+            详细数据
+          </summary>
+          <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all text-[var(--muted-foreground)]">
             {outcome?.truncated ? "（结果超过 5MB，已截断——全量见 spill 文件）" : detailJson}
           </pre>
         </details>
@@ -137,9 +141,9 @@ export function ReadCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
       : "";
   return (
     <ToolCardShell {...props} title="读取文件">
-      <p className="font-mono text-neutral-300">
+      <p className="font-mono text-[var(--foreground)]">
         {str(args, "path")}
-        <span className="text-neutral-500">{range}</span>
+        <span className="text-[var(--muted-foreground)]">{range}</span>
       </p>
     </ToolCardShell>
   );
@@ -151,7 +155,7 @@ export function WriteCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
   const added = lineCount(str(args, "content"));
   return (
     <ToolCardShell {...props} title="写入新文件">
-      <p className="font-mono text-neutral-300">
+      <p className="font-mono text-[var(--foreground)]">
         {str(args, "path")}{" "}
         <span className="rounded bg-emerald-900/60 px-1 text-emerald-200">+{added}</span>
       </p>
@@ -166,7 +170,7 @@ export function EditCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
   const removed = lineCount(str(args, "oldText"));
   return (
     <ToolCardShell {...props} title="编辑文件">
-      <p className="font-mono text-neutral-300">
+      <p className="font-mono text-[var(--foreground)]">
         {str(args, "path")}{" "}
         <span className="rounded bg-emerald-900/60 px-1 text-emerald-200">+{added}</span>{" "}
         <span className="rounded bg-red-900/60 px-1 text-red-200">−{removed}</span>
@@ -180,7 +184,7 @@ export function ListFilesCard(props: ToolCallMessagePartProps<CardArgs, unknown>
   const args = (props.args ?? {}) as CardArgs;
   return (
     <ToolCardShell {...props} title="列目录">
-      <p className="font-mono text-neutral-300">{str(args, "path") || "（项目根）"}</p>
+      <p className="font-mono text-[var(--foreground)]">{str(args, "path") || "（项目根）"}</p>
     </ToolCardShell>
   );
 }
@@ -189,8 +193,9 @@ export function GrepCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
   const args = (props.args ?? {}) as CardArgs;
   return (
     <ToolCardShell {...props} title="搜索">
-      <p className="font-mono text-neutral-300">
-        <span className="text-neutral-500">/{str(args, "pattern")}/</span> {str(args, "glob") || ""}
+      <p className="font-mono text-[var(--foreground)]">
+        <span className="text-[var(--muted-foreground)]">/{str(args, "pattern")}/</span>{" "}
+        {str(args, "glob") || ""}
         {str(args, "path") ? ` @ ${str(args, "path")}` : ""}
       </p>
     </ToolCardShell>
@@ -202,7 +207,7 @@ export function CommandCard(props: ToolCallMessagePartProps<CardArgs, unknown>) 
   const args = (props.args ?? {}) as CardArgs;
   return (
     <ToolCardShell {...props} title="执行命令">
-      <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded bg-neutral-950 px-2 py-1 font-mono text-neutral-300">
+      <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded bg-[var(--background)] px-2 py-1 font-mono text-[var(--foreground)]">
         {str(args, "command") || "（等待参数…）"}
       </pre>
     </ToolCardShell>
@@ -228,15 +233,15 @@ export function PlanCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
                 item.status === "completed"
                   ? "text-emerald-400"
                   : item.status === "in_progress"
-                    ? "text-sky-400"
-                    : "text-neutral-500"
+                    ? "text-[var(--muted-foreground)]"
+                    : "text-[var(--muted-foreground)]"
               }
             >
               {item.status === "completed" ? "●" : item.status === "in_progress" ? "◐" : "○"}
             </span>
-            <span className="text-neutral-300">
+            <span className="text-[var(--foreground)]">
               {item.text}
-              <span className="ml-1 text-neutral-500">
+              <span className="ml-1 text-[var(--muted-foreground)]">
                 {statusLabel[item.status] ?? item.status}
               </span>
             </span>
@@ -258,8 +263,8 @@ export function AskCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
   const args = (props.args ?? {}) as CardArgs;
   return (
     <ToolCardShell {...props} title="向用户询问">
-      <p className="text-neutral-300">{str(args, "title")}</p>
-      <p className="text-neutral-500">回答在下方询问面板中进行</p>
+      <p className="text-[var(--foreground)]">{str(args, "title")}</p>
+      <p className="text-[var(--muted-foreground)]">回答在下方询问面板中进行</p>
     </ToolCardShell>
   );
 }

@@ -88,7 +88,8 @@ fn export_ipc_manifest_and_cross_lang_fixture() {
             .collect::<Vec<_>>(),
     });
     assert_eq!(manifest["frames"].as_array().unwrap().len(), 9);
-    assert_eq!(manifest["events"].as_array().unwrap().len(), 5);
+    // 事件键：14 号票 5 键 + 17 号票 5 键（run 终态三键 + notify/退出两键）
+    assert_eq!(manifest["events"].as_array().unwrap().len(), 10);
     assert_eq!(manifest["tools"].as_array().unwrap().len(), 8);
     assert_eq!(manifest["toolSpecs"].as_array().unwrap().len(), 8);
     fs::create_dir_all(target_dir()).unwrap();

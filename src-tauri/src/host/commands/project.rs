@@ -92,7 +92,11 @@ pub(crate) async fn delete_project(
 ) -> Result<(), IpcError> {
     // 契约命名单一事实源：平铺形参回组为文档契约结构
     let args = DeleteProjectArgs { project_id };
-    let Some(removed) = app.projects.delete(&args.project_id).map_err(to_ipc_error)? else {
+    let Some(removed) = app
+        .projects
+        .delete(&args.project_id)
+        .map_err(to_ipc_error)?
+    else {
         return Err(IpcError::not_found(format!(
             "项目不存在：{}",
             args.project_id

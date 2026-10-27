@@ -14,6 +14,12 @@ import type { ProjectMeta, SessionMeta } from "@/ipc/types";
 export interface UiStatePayload {
   tabIds: string[];
   activeId: string | null;
+  /** run 结束自动折叠开关（§10.4/FR-01-10 可配置；缺省 true）。 */
+  collapseRuns?: boolean;
+  /** 右栏 Inspector 开合（FR-13-01；缺省 false = 收起）。 */
+  inspectorOpen?: boolean;
+  /** 会话草稿（§10.6 按 Tab 存；sessionId → 输入框文本，缺省无）。 */
+  drafts?: Record<string, string>;
 }
 
 export interface SessionsStore {
@@ -29,6 +35,12 @@ export interface SessionsStore {
   running: Record<string, boolean>;
   /** 启动恢复已就绪（首帧渲染前避免闪建 Tab）。 */
   ready: boolean;
+  /** run 结束自动折叠开关（§10.4，ui-state 持久化）。 */
+  collapseRuns: boolean;
+  /** 右栏 Inspector 开合（FR-13-01，ui-state 持久化）。 */
+  inspectorOpen: boolean;
+  /** 会话草稿（§10.6，ui-state 持久化；写侧防抖由 persistUiState 承担）。 */
+  drafts: Record<string, string>;
 
   /** 启动恢复：并行拉项目/会话/ui-state，重建 Tab 布局（空则兜底最新会话或新建）。 */
   bootstrap: () => Promise<void>;
@@ -44,6 +56,12 @@ export interface SessionsStore {
   patchTab: (meta: SessionMeta) => void;
   /** 运行指示桥（SessionTab 内写）。 */
   setRunning: (sessionId: string, running: boolean) => void;
+  /** 自动折叠开关切换（FR-01-10）。 */
+  setCollapseRuns: (on: boolean) => void;
+  /** 右栏开合切换（FR-13-01）。 */
+  setInspectorOpen: (open: boolean) => void;
+  /** 草稿写入（sessionId 维度替换；空串清除该键）。 */
+  setDraft: (sessionId: string, text: string) => void;
   /** Tab 布局落盘（setUiState；失败静默——布局可丢，数据不可）。 */
   persistUiState: () => void;
 }
@@ -58,22 +76,34 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
   sessions: [],
   running: {},
   ready: false,
+  collapseRuns: true,
+  inspectorOpen: false,
+  drafts: {},
 
   bootstrap: async () => {
+    const emptyUiState: UiStatePayload = { tabIds: [], activeId: null };
     const [projects, sessions, uiState] = await Promise.all([
       client.listProjects(),
       client.listSessions(),
       client
         .getUiState()
-        .then((raw) => (raw as UiStatePayload | null) ?? { tabIds: [], activeId: null })
-        .catch(() => ({ tabIds: [], activeId: null as string | null })),
+        .then((raw) => (raw as UiStatePayload | null) ?? emptyUiState)
+        .catch(() => emptyUiState),
     ]);
     // ui-state 里已删除的会话自动剔除
     const byId = new Map(sessions.map((m) => [m.id, m]));
     const tabs = uiState.tabIds
       .map((id) => byId.get(id))
       .filter((m): m is SessionMeta => m !== undefined);
-    set({ projects, sessions, tabs, ready: true });
+    set({
+      projects,
+      sessions,
+      tabs,
+      ready: true,
+      collapseRuns: uiState.collapseRuns ?? true,
+      inspectorOpen: uiState.inspectorOpen ?? false,
+      drafts: uiState.drafts ?? {},
+    });
     if (tabs.length > 0) {
       const active = tabs.find((m) => m.id === uiState.activeId) ?? tabs[0];
       set({ activeId: active.id });
@@ -136,13 +166,39 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
     set((s) => ({ running: { ...s.running, [sessionId]: running } }));
   },
 
+  setCollapseRuns: (on) => {
+    set({ collapseRuns: on });
+    get().persistUiState();
+  },
+
+  setInspectorOpen: (open) => {
+    set({ inspectorOpen: open });
+    get().persistUiState();
+  },
+
+  setDraft: (sessionId, text) => {
+    set((s) => {
+      const drafts = { ...s.drafts };
+      if (text.length === 0) delete drafts[sessionId];
+      else drafts[sessionId] = text;
+      return { drafts };
+    });
+    get().persistUiState();
+  },
+
   persistUiState: () => {
     if (persistTimer !== null) clearTimeout(persistTimer);
     persistTimer = setTimeout(() => {
       persistTimer = null;
-      const { tabs, activeId } = get();
+      const { tabs, activeId, collapseRuns, inspectorOpen, drafts } = get();
       void client
-        .setUiState({ tabIds: tabs.map((t) => t.id), activeId } satisfies UiStatePayload)
+        .setUiState({
+          tabIds: tabs.map((t) => t.id),
+          activeId,
+          collapseRuns,
+          inspectorOpen,
+          drafts,
+        } satisfies UiStatePayload)
         .catch((err) => console.warn("[ui-state] 布局落盘失败（忽略）", err));
     }, 300);
   },

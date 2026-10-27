@@ -4,9 +4,27 @@ import { useEffect, useState } from "react";
 import { MirrorDemo } from "@/chat/mirror/MirrorDemo";
 import { SessionWorkspace } from "@/chat/SessionWorkspace";
 import { SettingsPage } from "@/settings/SettingsPage";
+import { applyTheme } from "@/theme";
 
 const ACTIVATION_FLAG = "data-tauri-plugin-decoration-active";
 const ACTIVATION_TIMEOUT_MS = 5000;
+
+/** 启动主题应用（FR-13-03）：读 config.ui.theme（IPC 失败时保持 system）。 */
+function useThemeBoot() {
+  useEffect(() => {
+    let cancelled = false;
+    void invoke<{ ui?: { theme?: "light" | "dark" | "system" } }>("get_config")
+      .then((config) => {
+        if (!cancelled) applyTheme(config.ui?.theme ?? "system");
+      })
+      .catch(() => {
+        // 纯浏览器/IPC 异常：维持默认 system
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+}
 
 /**
  * 标题栏激活协议（decoration 插件要求，兼作 §2.1 防闪启动 + 亮窗看门狗）：
@@ -59,6 +77,7 @@ function useTitlebarActivation() {
 
 export default function App() {
   useTitlebarActivation();
+  useThemeBoot();
   // 【S1 spike 原型入口】?mirror=1 切到镜像工具桥接 demo，随时可弃
   if (new URLSearchParams(window.location.search).has("mirror")) {
     return <MirrorDemo />;
@@ -78,7 +97,7 @@ function SkeletonApp() {
       {!settingsOpen && (
         <button
           type="button"
-          className="fixed top-3 right-3 z-40 rounded border border-neutral-700 bg-neutral-900 px-3 py-1 text-sm text-neutral-300"
+          className="fixed top-3 right-3 z-40 rounded border border-[var(--border)] bg-[var(--card)] px-3 py-1 text-sm text-[var(--foreground)]"
           onClick={() => setSettingsOpen(true)}
         >
           设置

@@ -9,6 +9,7 @@ pub mod project;
 pub mod provider;
 pub mod session;
 pub mod session_tree;
+pub mod system;
 pub mod ui_state;
 pub mod workspace;
 
@@ -34,12 +35,18 @@ pub const FRAMES: &[&str] = &[
 ];
 
 /// 事件键（§3.5 P0 子集）：14 号票实装 5 键（ask 协议 / plan / suggest /
-/// 会话用量）；其余键（run:* / tool:* / session:title / notify / menu /
-/// app:exit_requested）随对应票填充。
+/// 会话用量）；17 号票补 run 终态三键与 notify/app 退出两键；其余键
+/// （run:start / run:retry / run:inject / tool:* / session:title / menu:action）
+/// 随对应票填充。
 pub const EVENTS: &[&str] = &[
     "ask:opened",
     "ask:closed",
     "plan:update",
     "run:suggestions",
     "tokens:update",
+    "run:done",
+    "run:error",
+    "run:cancelled",
+    "notify:activate",
+    "app:exit_requested",
 ];

@@ -128,6 +128,15 @@ impl RunManager {
             .cloned()
     }
 
+    /// 是否存在任一活跃 run（退出拦截判定，§9.6）。
+    pub fn has_active(&self) -> bool {
+        !self
+            .runs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_empty()
+    }
+
     /// 按未决 askId 反查持有它的 run（resolve_ask 路由；M1 单会话规模遍历足够）。
     pub fn find_by_ask(&self, ask_id: &str) -> Option<std::sync::Arc<RunHandle>> {
         let runs = self

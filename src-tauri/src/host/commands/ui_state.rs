@@ -38,8 +38,13 @@ pub struct SetUiStateArgs {
 }
 
 /// 保存 UI 状态（§3.3 #31：整份替换；防抖由前端负责）。
+/// 顺带提取 `activeId` 更新活跃会话标识（17 号票：系统通知防打扰精判）。
 #[tauri::command]
 pub(crate) async fn set_ui_state(app: State<'_, AppState>, state: Value) -> Result<(), IpcError> {
     let args = SetUiStateArgs { state };
+    let active = args.state.get("activeId").and_then(|v| v.as_str());
+    *app.active_session
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = active.map(str::to_owned);
     app.ui_state.save(args.state).map(|_| ())
 }

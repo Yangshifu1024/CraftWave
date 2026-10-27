@@ -11,7 +11,9 @@
 
 pub mod commands;
 mod error;
+pub mod notify;
 pub mod run_persistence;
+pub mod shell;
 
 #[cfg(test)]
 #[path = "run_persistence_test.rs"]
@@ -31,12 +33,13 @@ use crate::providers::types::AppConfig;
 use crate::storage::SessionStore;
 use crate::storage::config_store::ConfigStore;
 use crate::storage::project_store::ProjectStore;
-use crate::util::events::EventSink;
+use crate::util::events::{EventSink, keys};
 
 /// 应用级共享状态（tauri manage）。
 pub struct AppState {
     /// 配置协调器（§7.6）：config.json 唯一写入口（API Key 明文承载，0600）。
-    pub config: ConfigStore<AppConfig>,
+    /// Arc 共享：17 号票起通知门（notify.rs）读同一份缓存，避免双实例缓存漂移。
+    pub config: Arc<ConfigStore<AppConfig>>,
     /// 活跃 run 注册表（§5.1；M1 单会话核心链路，13 号票）。
     pub runs: RunManager,
     /// 事件汇（§3.5）：生产 tauri emit；测试 RecordingEventSink（14 号票）。
@@ -49,6 +52,12 @@ pub struct AppState {
     pub projects: ProjectStore,
     /// UI 状态（§3.3 #30/31，16 号票：Tab 布局等前端自管 Json）。
     pub ui_state: ConfigStore<Value>,
+    /// 活跃会话标识（前端 set_ui_state 顺带写入；通知防打扰精判共享，
+    /// 17 号票）。headless 测试下无写入方，保持 None。
+    pub active_session: Arc<Mutex<Option<String>>>,
+    /// 退出确认挂起标志（§9.6 退出拦截：true = 已发 app:exit_requested
+    /// 等待 resolve_exit_request 回执；false = 无挂起）。
+    pub exit_pending: Mutex<bool>,
 }
 
 impl AppState {
@@ -56,13 +65,15 @@ impl AppState {
     pub fn new_in(data_dir: PathBuf, events: Arc<dyn EventSink>) -> Self {
         let store = Arc::new(SessionStore::with_root(data_dir.clone()));
         Self {
-            config: ConfigStore::new(data_dir.join("config.json")),
+            config: Arc::new(ConfigStore::new(data_dir.join("config.json"))),
             runs: RunManager::new(),
             events,
             session_usage: Mutex::new(HashMap::new()),
             store,
             projects: ProjectStore::new(&data_dir),
             ui_state: ConfigStore::new(data_dir.join("ui-state.json")),
+            active_session: Arc::new(Mutex::new(None)),
+            exit_pending: Mutex::new(false),
         }
     }
 
@@ -78,12 +89,44 @@ impl AppState {
     }
 }
 
-/// 生产事件汇：tauri `Emitter::emit`（尽力而为，失败不影响 run 主链路）。
-pub struct TauriEventSink(pub tauri::AppHandle);
+/// 生产事件汇：tauri `Emitter::emit`（尽力而为，失败不影响 run 主链路）；
+/// 对通知触发键（run 终态三键 + ask:opened）旁路系统通知门（§9.6，17 号票）。
+pub struct TauriEventSink {
+    pub app: tauri::AppHandle,
+    pub notify: Arc<notify::NotifyGate>,
+}
 
 impl EventSink for TauriEventSink {
     fn emit(&self, key: &str, payload: serde_json::Value) {
         use tauri::Emitter;
-        let _ = self.0.emit(key, payload);
+        let _ = self.app.emit(key, payload.clone());
+        // 通知旁路：只认四个触发键，payload 字段缺失时静默跳过
+        let session_id = payload.get("sessionId").and_then(|v| v.as_str());
+        let run_id = payload.get("runId").and_then(|v| v.as_str());
+        match key {
+            keys::ASK_OPENED => {
+                if let (Some(session_id), Some(ask_id)) =
+                    (session_id, payload.get("askId").and_then(|v| v.as_str()))
+                {
+                    self.notify.ask_opened(session_id, ask_id);
+                }
+            }
+            keys::RUN_DONE | keys::RUN_ERROR | keys::RUN_CANCELLED => {
+                if let (Some(session_id), Some(run_id)) = (session_id, run_id) {
+                    let reason = match key {
+                        keys::RUN_DONE => "done",
+                        keys::RUN_ERROR => "error",
+                        _ => "cancelled",
+                    };
+                    let duration_ms = payload
+                        .get("durationMs")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    self.notify
+                        .run_ended(session_id, run_id, reason, duration_ms);
+                }
+            }
+            _ => {}
+        }
     }
 }

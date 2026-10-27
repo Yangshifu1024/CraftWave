@@ -21,8 +21,15 @@ export interface SessionMetrics {
   turnUsage: UsageTotal;
   /** 会话累计（帧累计兜底；tokens:update 事件到达时权威校正，§10.5/14 号票） */
   sessionUsage: UsageTotal;
+  /** 进行中 run 的标识（runStarted 写入；runEnded 摘要回填用，17 号票） */
+  currentRunId: string | null;
   /** runEnded 的终态摘要（计数条定格用；null = 无运行） */
-  lastRun: null | { reason: "done" | "error" | "cancelled"; durationMs: number; toolCount: number };
+  lastRun: null | {
+    runId: string;
+    reason: "done" | "error" | "cancelled";
+    durationMs: number;
+    toolCount: number;
+  };
 }
 
 const zeroUsage = (): UsageTotal => ({
@@ -36,6 +43,7 @@ const emptyMetrics = (): SessionMetrics => ({
   rate: null,
   turnUsage: zeroUsage(),
   sessionUsage: zeroUsage(),
+  currentRunId: null,
   lastRun: null,
 });
 
@@ -78,6 +86,7 @@ export const useRunMetricsStore = create<RunMetricsStore>((set) => ({
           bySession: updateSession(s.bySession, sessionId, (m) => ({
             ...m,
             turnUsage: zeroUsage(),
+            currentRunId: frame.runId,
             lastRun: null,
           })),
         }));
@@ -96,7 +105,9 @@ export const useRunMetricsStore = create<RunMetricsStore>((set) => ({
         set((s) => ({
           bySession: updateSession(s.bySession, sessionId, (m) => ({
             ...m,
+            currentRunId: null,
             lastRun: {
+              runId: m.currentRunId ?? "",
               reason: frame.reason,
               durationMs: frame.durationMs,
               toolCount: frame.toolCount,

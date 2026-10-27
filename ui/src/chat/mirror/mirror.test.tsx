@@ -45,8 +45,8 @@ function sendFromComposer(text: string) {
   fireEvent.change(screen.getByPlaceholderText("发一条消息试试骨架回声…"), {
     target: { value: text },
   });
-  // 空闲态下 Thread 里唯一的按钮就是 ComposerPrimitive.Send
-  fireEvent.click(screen.getByRole("button"));
+  // Send 带 aria-label「发送」（17 号票起 Composer 区还有回底按钮等，按名取）
+  fireEvent.click(screen.getByRole("button", { name: "发送" }));
 }
 
 describe("FrameBuffer 帧累积（纯逻辑）", () => {

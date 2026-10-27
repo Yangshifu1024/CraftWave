@@ -36,3 +36,13 @@ fn remove_validates_run_id_allows_restart() {
     mgr.start("s1", "run-2".to_owned(), 2)
         .expect("摘除后同会话可再启动");
 }
+
+#[test]
+fn has_active_reflects_registry_emptiness() {
+    let mgr = RunManager::new();
+    assert!(!mgr.has_active(), "空注册表 → 无活跃 run（退出拦截放行）");
+    mgr.start("s1", "run-1".to_owned(), 1).unwrap();
+    assert!(mgr.has_active(), "任一会话有活跃 run → 拦截退出（§9.6）");
+    mgr.remove("s1", "run-1");
+    assert!(!mgr.has_active());
+}

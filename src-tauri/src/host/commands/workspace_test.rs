@@ -5,16 +5,15 @@
 use std::fs;
 use std::sync::Arc;
 
-use super::workspace::{read_workspace_file_core, resolve_session_roots, search_workspace_paths_core};
+use super::workspace::{
+    read_workspace_file_core, resolve_session_roots, search_workspace_paths_core,
+};
 use crate::host::AppState;
 use crate::storage::SessionMeta;
 use crate::util::events::RecordingEventSink;
 
 fn app(data: &std::path::Path) -> AppState {
-    AppState::new_in(
-        data.to_path_buf(),
-        Arc::new(RecordingEventSink::new()),
-    )
+    AppState::new_in(data.to_path_buf(), Arc::new(RecordingEventSink::new()))
 }
 
 fn meta(id: &str, project_id: Option<&str>) -> SessionMeta {
@@ -110,7 +109,11 @@ fn search_paths_matches_basename_and_skips_noise() {
     // 项目主目录内 → 相对路径；noise 目录不进；数据目录命中 → 绝对路径
     assert!(paths.contains(&"src/Button.tsx"), "实际 {paths:?}");
     assert!(paths.contains(&"src/components/IconButton.tsx"));
-    assert!(paths.iter().all(|p| !p.contains(".git") && !p.contains("node_modules")));
+    assert!(
+        paths
+            .iter()
+            .all(|p| !p.contains(".git") && !p.contains("node_modules"))
+    );
     assert_eq!(
         paths.iter().filter(|p| p.ends_with(".md")).count(),
         1,
@@ -133,9 +136,11 @@ fn search_paths_dirs_limit_and_empty_query() {
     let capped = search_workspace_paths_core(&state, "任意会话", "comp", Some(1)).unwrap();
     assert_eq!(capped.len(), 1);
 
-    assert!(search_workspace_paths_core(&state, "任意会话", "  ", None)
-        .unwrap()
-        .is_empty());
+    assert!(
+        search_workspace_paths_core(&state, "任意会话", "  ", None)
+            .unwrap()
+            .is_empty()
+    );
 }
 
 /// 预览读取：全文、range 按行翻页、truncated 口径。
@@ -149,14 +154,7 @@ fn read_preview_full_and_paged() {
     assert_eq!(full.content, "一\n二\n三\n四\n五");
     assert!(!full.truncated);
 
-    let paged = read_workspace_file_core(
-        &state,
-        "任意会话",
-        "note.txt",
-        Some(1),
-        Some(2),
-    )
-    .unwrap();
+    let paged = read_workspace_file_core(&state, "任意会话", "note.txt", Some(1), Some(2)).unwrap();
     assert_eq!(paged.content, "二\n三");
     assert!(paged.truncated, "未读到尾即 truncated");
 }
@@ -188,6 +186,7 @@ fn read_preview_rejects_binary_missing_and_outside() {
     let err = read_workspace_file_core(&state, "任意会话", "missing.txt", None, None).unwrap_err();
     assert_eq!(err.code, "E_NOT_FOUND");
 
-    let err = read_workspace_file_core(&state, "任意会话", "../escape.txt", None, None).unwrap_err();
+    let err =
+        read_workspace_file_core(&state, "任意会话", "../escape.txt", None, None).unwrap_err();
     assert_eq!(err.code, "E_PATH_OUTSIDE_ROOTS");
 }

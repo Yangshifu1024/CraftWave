@@ -173,7 +173,8 @@ impl ProjectStore {
     }
 
     fn write(&self, file: &ProjectFile) -> Result<(), ProjectError> {
-        let bytes = serde_json::to_vec_pretty(file).map_err(|e| ProjectError::Corrupt(e.to_string()))?;
+        let bytes =
+            serde_json::to_vec_pretty(file).map_err(|e| ProjectError::Corrupt(e.to_string()))?;
         write_atomic(&self.path, &bytes).map_err(ProjectError::Io)
     }
 }
@@ -196,8 +197,8 @@ fn write_manifest(meta: &ProjectMeta) -> Result<(), ProjectError> {
         roots_snapshot: vec![meta.home_dir.clone()],
         created_at: meta.created_at,
     };
-    let bytes = serde_json::to_vec_pretty(&manifest)
-        .map_err(|e| ProjectError::Corrupt(e.to_string()))?;
+    let bytes =
+        serde_json::to_vec_pretty(&manifest).map_err(|e| ProjectError::Corrupt(e.to_string()))?;
     write_atomic(&path, &bytes).map_err(ProjectError::Io)
 }
 

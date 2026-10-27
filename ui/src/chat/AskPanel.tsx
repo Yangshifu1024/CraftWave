@@ -21,7 +21,7 @@ export function AskPanel() {
     <div
       data-testid="ask-panel"
       data-kind={current.payload.kind}
-      className="fixed inset-x-4 bottom-4 z-50 mx-auto max-w-xl rounded-xl border border-neutral-700 bg-neutral-900 p-4 shadow-2xl"
+      className="fixed inset-x-4 bottom-4 z-50 mx-auto max-w-xl rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 shadow-2xl"
     >
       {current.payload.kind === "question" ? (
         <QuestionForm askId={current.askId} payload={current.payload} />
@@ -50,10 +50,10 @@ function QuestionForm({
 
   return (
     <div className="space-y-3">
-      <h3 className="text-sm font-medium text-neutral-100">{payload.title}</h3>
+      <h3 className="text-sm font-medium text-[var(--foreground)]">{payload.title}</h3>
       {payload.questions.map((q) => (
         <div key={q.id} data-testid={`ask-question-${q.id}`} className="space-y-1">
-          <p className="text-xs text-neutral-300">{q.text}</p>
+          <p className="text-xs text-[var(--foreground)]">{q.text}</p>
           <div className="flex flex-wrap gap-1.5">
             {q.options?.map((opt) => (
               <button
@@ -63,8 +63,8 @@ function QuestionForm({
                 onClick={() => setAnswers((prev) => ({ ...prev, [q.id]: opt.id }))}
                 className={`rounded-full border px-2.5 py-1 text-xs ${
                   answers[q.id] === opt.id
-                    ? "border-sky-500 bg-sky-800/60 text-sky-100"
-                    : "border-neutral-600 text-neutral-300 hover:border-neutral-400"
+                    ? "border-[var(--ring)] bg-[var(--accent)] text-[var(--foreground)]"
+                    : "border-[var(--border)] text-[var(--foreground)] hover:border-[var(--border)]"
                 }`}
               >
                 {opt.label}
@@ -76,7 +76,7 @@ function QuestionForm({
                 placeholder="自由输入…"
                 value={answers[q.id] ?? ""}
                 onChange={(e) => setAnswers((prev) => ({ ...prev, [q.id]: e.target.value }))}
-                className="min-w-32 flex-1 rounded border border-neutral-600 bg-neutral-950 px-2 py-1 text-xs text-neutral-200"
+                className="min-w-32 flex-1 rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1 text-xs text-[var(--foreground)]"
               />
             )}
           </div>
@@ -86,7 +86,7 @@ function QuestionForm({
         type="button"
         disabled={!complete}
         onClick={submit}
-        className="rounded-full bg-sky-600 px-4 py-1.5 text-xs text-white disabled:opacity-40"
+        className="rounded-full bg-[var(--primary)] px-4 py-1.5 text-xs text-[var(--primary-foreground)] disabled:opacity-40"
       >
         提交回答
       </button>
@@ -106,9 +106,9 @@ function ApprovalForm({
   };
   return (
     <div className="space-y-3">
-      <h3 className="text-sm font-medium text-neutral-100">{payload.title}</h3>
+      <h3 className="text-sm font-medium text-[var(--foreground)]">{payload.title}</h3>
       {payload.command && (
-        <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded bg-neutral-950 px-2 py-1 font-mono text-xs text-neutral-200">
+        <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded bg-[var(--background)] px-2 py-1 font-mono text-xs text-[var(--foreground)]">
           {payload.command}
         </pre>
       )}
@@ -123,8 +123,8 @@ function ApprovalForm({
             onClick={() => submit(opt.id)}
             className={`rounded-full px-4 py-1.5 text-xs ${
               opt.mode === "deny"
-                ? "border border-neutral-600 text-neutral-300 hover:border-red-500"
-                : "bg-sky-600 text-white"
+                ? "border border-[var(--border)] text-[var(--foreground)] hover:border-red-500"
+                : "bg-[var(--primary)] text-[var(--primary-foreground)]"
             }`}
           >
             {opt.label}
@@ -138,7 +138,7 @@ function ApprovalForm({
 const diffLineClass: Record<DiffLine["kind"], string> = {
   add: "bg-emerald-950/60 text-emerald-300",
   del: "bg-red-950/60 text-red-300",
-  ctx: "text-neutral-400",
+  ctx: "text-[var(--muted-foreground)]",
 };
 
 function DiffView({
@@ -147,14 +147,16 @@ function DiffView({
   diff: { path: string; hunks: { header: string; lines: DiffLine[] }[] };
 }) {
   return (
-    <div data-testid="ask-diff" className="rounded border border-neutral-700">
-      <p className="border-b border-neutral-700 px-2 py-1 font-mono text-xs text-neutral-300">
+    <div data-testid="ask-diff" className="rounded border border-[var(--border)]">
+      <p className="border-b border-[var(--border)] px-2 py-1 font-mono text-xs text-[var(--foreground)]">
         {diff.path}
       </p>
       <div className="max-h-64 overflow-auto">
         {diff.hunks.map((hunk) => (
           <div key={hunk.header}>
-            <p className="px-2 py-0.5 font-mono text-[10px] text-neutral-500">{hunk.header}</p>
+            <p className="px-2 py-0.5 font-mono text-[10px] text-[var(--muted-foreground)]">
+              {hunk.header}
+            </p>
             {hunk.lines.map((line) => (
               <pre
                 key={`${line.kind}:${line.text}`}

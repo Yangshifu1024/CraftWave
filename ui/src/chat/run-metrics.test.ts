@@ -57,7 +57,12 @@ describe("runMetrics ingest（单会话桶）", () => {
       f({ type: "runEnded", reason: "done", durationMs: 800, toolCount: 1, turn: 2 }),
     );
     const after = useRunMetricsStore.getState().bySession.s;
-    expect(after?.lastRun).toEqual({ reason: "done", durationMs: 800, toolCount: 1 });
+    expect(after?.lastRun).toEqual({
+      runId: "run-1",
+      reason: "done",
+      durationMs: 800,
+      toolCount: 1,
+    });
     expect(after?.turnUsage.input).toBe(10);
 
     store.ingest("s", f({ type: "runStarted", runId: "run-2", model: "m" }));

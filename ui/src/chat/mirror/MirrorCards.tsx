@@ -85,11 +85,11 @@ export function MirrorToolCard(props: CardProps) {
     <div
       data-testid={`tool-card-${toolCallId}`}
       data-phase={phase}
-      className="my-1 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-xs"
+      className="my-1 rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-xs"
     >
       <div className="flex items-center justify-between gap-2">
-        <span className="font-medium text-neutral-200">
-          {title} <span className="text-neutral-500">#{toolCallId}</span>
+        <span className="font-medium text-[var(--foreground)]">
+          {title} <span className="text-[var(--muted-foreground)]">#{toolCallId}</span>
         </span>
         <span
           className={
@@ -97,7 +97,7 @@ export function MirrorToolCard(props: CardProps) {
               ? "rounded bg-red-900/60 px-1.5 py-0.5 text-red-200"
               : phase === "done"
                 ? "rounded bg-emerald-900/60 px-1.5 py-0.5 text-emerald-200"
-                : "rounded bg-sky-900/60 px-1.5 py-0.5 text-sky-200"
+                : "rounded bg-[var(--accent)] px-1.5 py-0.5 text-[var(--foreground)]"
           }
           data-phase-label={phaseLabel}
         >
@@ -105,12 +105,12 @@ export function MirrorToolCard(props: CardProps) {
         </span>
       </div>
       {/* 参数准备中：半截 JSON 原文照显（票面要求：半截参数增量可见） */}
-      <pre className="mt-1 max-h-24 overflow-hidden whitespace-pre-wrap break-all text-neutral-400">
+      <pre className="mt-1 max-h-24 overflow-hidden whitespace-pre-wrap break-all text-[var(--muted-foreground)]">
         {argsText || "（等待参数…）"}
       </pre>
       {result !== undefined && (
         <pre
-          className={`mt-1 whitespace-pre-wrap break-all ${isError ? "text-red-300" : "text-neutral-300"}`}
+          className={`mt-1 whitespace-pre-wrap break-all ${isError ? "text-red-300" : "text-[var(--foreground)]"}`}
         >
           {typeof result === "string" ? result : JSON.stringify(result)}
         </pre>

@@ -65,7 +65,13 @@ const SEARCH_MAX_ENTRIES: usize = 20_000;
 const SEARCH_DEFAULT_LIMIT: usize = 20;
 /// 搜索跳过的目录名（依赖目录/构建产物/宿主状态——无索引的暴力遍历不进这些树）。
 const SEARCH_SKIP_DIRS: &[&str] = &[
-    ".git", "node_modules", "target", "dist", "build", ".venv", ".craftwave",
+    ".git",
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    ".venv",
+    ".craftwave",
 ];
 
 /// @ 引用补全主体（公开给测试；命令层只解 tauri State）。

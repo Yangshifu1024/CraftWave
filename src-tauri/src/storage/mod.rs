@@ -31,11 +31,11 @@ pub use session_tree::{SessionStore, SessionTreeData, StorageError};
 pub use toolres::{load_outcomes, write_outcome};
 
 #[cfg(test)]
-#[path = "segment_test.rs"]
-mod segment_test;
-#[cfg(test)]
 #[path = "project_store_test.rs"]
 mod project_store_test;
+#[cfg(test)]
+#[path = "segment_test.rs"]
+mod segment_test;
 #[cfg(test)]
 #[path = "session_tree_test.rs"]
 mod session_tree_test;

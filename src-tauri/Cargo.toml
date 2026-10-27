@@ -15,7 +15,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tauri = { version = "2.12", features = [] }
+tauri = { version = "2.12", features = ["tray-icon"] }
 tauri-plugin-decoration = "3.0"
 # S2/S3 spike（C-6 双版本验证）：0.45.0 主底料；=0.46.0-rc.1 已平行重验通过（零改动）
 rig = "0.45.0"
@@ -44,6 +44,8 @@ base64 = "0.23.1"
 anstream = "0.6"
 # host（§3.3 #5）：select_dir 原生目录选择（同步命令主线程模态；tauri-plugin-dialog 的同款内核，免 JS 插件与 capability）
 rfd = "0.15"
+tauri-plugin-single-instance = "2.5.4"
+tauri-plugin-notification = "2.7.0"
 
 # 【S5 spike，cfg(unix)】进程组收割：kill(-pgid, SIGTERM/SIGKILL)
 [target.'cfg(unix)'.dependencies]

@@ -197,6 +197,12 @@ export interface LogConfig {
   level: LogLevel;
 }
 
+/** 系统通知偏好（FR-13-06 设置项，17 号票；Rust 侧 NotificationConfig 镜像）。 */
+export interface NotificationConfig {
+  enabled: boolean;
+  interventionOnly: boolean;
+}
+
 export interface AppConfig {
   schemaVersion: 2;
   providers: ProviderConfig[];
@@ -205,6 +211,7 @@ export interface AppConfig {
   approval: ApprovalConfig;
   ui: UiConfig;
   log: LogConfig;
+  notifications?: NotificationConfig;
 }
 
 // ---- provider/config 命令锚点（§3.3 #6–9，镜像 host/commands/{config,provider}.rs）----

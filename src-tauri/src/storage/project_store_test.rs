@@ -37,8 +37,7 @@ fn save_new_persists_registry_and_manifest() {
 
     // 主目录注册清单：rootsSnapshot=[homeDir]
     let manifest: ProjectManifest =
-        serde_json::from_str(&fs::read_to_string(manifest_of(&home)).unwrap())
-            .unwrap();
+        serde_json::from_str(&fs::read_to_string(manifest_of(&home)).unwrap()).unwrap();
     assert_eq!(manifest.id, meta.id);
     assert_eq!(manifest.roots_snapshot, vec![home]);
 }
@@ -63,9 +62,7 @@ fn home_change_rebinds_manifest() {
     let new_home = temp_home("rebind-new");
     let meta = store.save(None, "迁移项目", &old_home).unwrap();
 
-    let updated = store
-        .save(Some(&meta.id), "迁移项目", &new_home)
-        .unwrap();
+    let updated = store.save(Some(&meta.id), "迁移项目", &new_home).unwrap();
     assert_eq!(updated.id, meta.id);
     assert!(!manifest_of(&old_home).exists());
     assert!(manifest_of(&new_home).exists());
@@ -80,8 +77,7 @@ fn update_without_home_change_keeps_manifest() {
     let updated = store.save(Some(&meta.id), "新名", &home).unwrap();
     assert_eq!(updated.name, "新名");
     let manifest: ProjectManifest =
-        serde_json::from_str(&fs::read_to_string(manifest_of(&home)).unwrap())
-            .unwrap();
+        serde_json::from_str(&fs::read_to_string(manifest_of(&home)).unwrap()).unwrap();
     assert_eq!(manifest.name, "新名");
 }
 
@@ -95,7 +91,10 @@ fn delete_removes_registry_and_manifest_but_not_data() {
     let meta = store.save(None, "待删项目", &home).unwrap();
 
     let removed = store.delete(&meta.id).unwrap();
-    assert_eq!(removed.as_ref().map(|m| m.id.as_str()), Some(meta.id.as_str()));
+    assert_eq!(
+        removed.as_ref().map(|m| m.id.as_str()),
+        Some(meta.id.as_str())
+    );
     assert!(store.list().unwrap().is_empty());
     assert!(!manifest_of(&home).exists());
     assert!(marker.exists(), "绝不触碰项目数据目录");
@@ -108,10 +107,7 @@ fn home_of_resolves_project_root() {
     let store = ProjectStore::new(&root);
     let home = temp_home("homeof-home");
     let meta = store.save(None, "根解析", &home).unwrap();
-    assert_eq!(
-        store.home_of(&meta.id),
-        Some(PathBuf::from(home.as_str()))
-    );
+    assert_eq!(store.home_of(&meta.id), Some(PathBuf::from(home.as_str())));
     assert_eq!(store.home_of("不存在的项目"), None);
 }
 

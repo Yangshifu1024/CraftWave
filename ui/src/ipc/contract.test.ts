@@ -220,13 +220,18 @@ describe("§12.3 manifest 双向扫描", () => {
     }
   });
 
-  it("manifest.events 覆盖 §3.5 实装 5 键且与 EVENT_KEYS 一致", () => {
+  it("manifest.events 覆盖 §3.5 实装 10 键且与 EVENT_KEYS 一致", () => {
     expect(manifest.events).toEqual([
       "ask:opened",
       "ask:closed",
       "plan:update",
       "run:suggestions",
       "tokens:update",
+      "run:done",
+      "run:error",
+      "run:cancelled",
+      "notify:activate",
+      "app:exit_requested",
     ]);
     expect(Object.values(EVENT_KEYS).sort()).toEqual([...manifest.events].sort());
   });

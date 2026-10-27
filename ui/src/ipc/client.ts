@@ -57,15 +57,21 @@ export const COMMANDS = {
   readWorkspaceFile: "read_workspace_file",
   getUiState: "get_ui_state",
   setUiState: "set_ui_state",
+  resolveExitRequest: "resolve_exit_request",
 } as const;
 
-/** 本文件已接线的事件键（§3.5，14 号票实装 5 键）。 */
+/** 本文件已接线的事件键（§3.5：14 号票 5 键 + 17 号票 5 键）。 */
 export const EVENT_KEYS = {
   askOpened: "ask:opened",
   askClosed: "ask:closed",
   planUpdate: "plan:update",
   runSuggestions: "run:suggestions",
   tokensUpdate: "tokens:update",
+  runDone: "run:done",
+  runError: "run:error",
+  runCancelled: "run:cancelled",
+  notifyActivate: "notify:activate",
+  appExitRequested: "app:exit_requested",
 } as const;
 
 /**
@@ -255,4 +261,11 @@ export function getUiState(): Promise<unknown> {
 /** §3.3 #31：整份替换 UI 状态（防抖由前端负责）。 */
 export function setUiState(state: unknown): Promise<void> {
   return invoke(COMMANDS.setUiState, { state });
+}
+
+// ---- 系统域（§9.6 退出拦截，17 号票）----
+
+/** 退出确认回执（§9.6）：accepted=true 放行退出；false 取消回到托盘常驻。 */
+export function resolveExitRequest(accepted: boolean): Promise<void> {
+  return invoke<void>(COMMANDS.resolveExitRequest, { accepted });
 }

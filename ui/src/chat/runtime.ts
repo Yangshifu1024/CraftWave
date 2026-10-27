@@ -4,6 +4,7 @@ import type { ChatFrame, MessageEntry, RunConfig } from "@/ipc/types";
 import { syncTreeBeforeSend, useSessionPersistStore } from "@/stores/session";
 import { bindCancelToRun } from "./cancel-bridge";
 import { type ChatPart, FrameBuffer, toParts } from "./frames";
+import { tierOf } from "./permission-tier";
 import { useRunMetricsStore } from "./run-metrics";
 import { readRunMarker } from "./tree-persistence";
 
@@ -136,10 +137,11 @@ export function toWire(messages: readonly ThreadMessage[]): MessageEntry[] {
   });
 }
 
-/** adapter 依赖（生产 = ipc/client；测试注入 fake）。 */
+/** adapter 依赖（生产 = ipc/client；测试注入 fake）。17 号票起 runConfig
+ *  支持惰性取值（发送时读会话权限档，Shift+Tab 循环的内存态）。 */
 export interface TauriAdapterDeps {
   sessionId: string;
-  runConfig: RunConfig;
+  runConfig: RunConfig | (() => RunConfig);
   startChat: typeof client.startChat;
   cancelRun: (sessionId: string) => Promise<boolean>;
   /** 帧旁路（生产：runMetrics.ingest；§10.2 onmessage 双写） */
@@ -175,12 +177,14 @@ export const tauriChatModel: ChatModelAdapter = createTauriChatAdapter({
 
 /**
  * 按会话产出生产 adapter（16 号票多会话）：每 Tab 一个实例——帧入本会话的
- * metrics 桶，运行态节点记账记到本会话的 persist 分桶。
+ * metrics 桶，运行态节点记账记到本会话的 persist 分桶；runConfig 惰性取值
+ * （17 号票：发送时读会话权限档，Shift+Tab 循环的内存态）。
  */
 export function sessionAdapter(sessionId: string): ChatModelAdapter {
   return createTauriChatAdapter({
     ...defaultDeps,
     sessionId,
+    runConfig: () => ({ ...DEFAULT_RUN_CONFIG, tier: tierOf(sessionId) }),
     onFrame: (frame) => useRunMetricsStore.getState().ingest(sessionId, frame),
   });
 }
@@ -196,6 +200,8 @@ export function sessionAdapter(sessionId: string): ChatModelAdapter {
 export function createTauriChatAdapter(deps: TauriAdapterDeps): ChatModelAdapter {
   return {
     async *run({ messages, abortSignal, unstable_assistantMessageId }) {
+      // 发送时解析 runConfig（值或惰性函数——权限档内存态，17 号票）
+      const runConfig = typeof deps.runConfig === "function" ? deps.runConfig() : deps.runConfig;
       // 发送前树同步（失败不阻断发送：Rust 侧 user 兜底 + 下次 save 自愈）
       const syncTree =
         deps.syncTree ??
@@ -217,7 +223,7 @@ export function createTauriChatAdapter(deps: TauriAdapterDeps): ChatModelAdapter
         const invokePromise = deps.startChat({
           sessionId: deps.sessionId,
           messages: toWire(messages),
-          runConfig: deps.runConfig,
+          runConfig,
           onFrame: (frame: ChatFrame) => {
             if (import.meta.env.DEV && frame.type === "runEnded" && frame.reason === "error") {
               console.error("[run] 错误终态：", frame.error);

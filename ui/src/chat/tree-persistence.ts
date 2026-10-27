@@ -263,6 +263,37 @@ export function loadedTreeToExported(tree: {
 /** load_session_tree 的 messages 元素形态（StoredMessageEntry 去掉 kind 判别键）。 */
 type MessageEntryLike = Omit<StoredMessageEntry, "kind">;
 
+/** 单个 run 的收口摘要（折叠分组摘要行与崩溃中断态的数据面，17 号票）。 */
+export interface RunSummary {
+  runId: string;
+  /** 正常收口的结束时刻；undefined = 该 run 无 marker 收口（崩溃恢复补的
+   *  interrupted 修复行 endedAt 为空）——渲染层据此标「已中断」。 */
+  endedAt?: number;
+  durationMs?: number;
+  toolCount?: number;
+}
+
+/** 从会话树条目推导 run 收口摘要表（runId → 摘要）。
+ *  依据 system 条目里的 runMarker part（§6.1）；崩溃修复行 endedAt 为空，
+ *  恰好承载「未收口」语义（15 号票 shortcut 的渲染层落地，17 号票）。 */
+export function deriveRunSummaries(messages: MessageEntryLike[]): Map<string, RunSummary> {
+  const summaries = new Map<string, RunSummary>();
+  for (const entry of messages) {
+    if (entry.role !== "system") continue;
+    const marker = entry.parts.find(
+      (p): p is Extract<WirePart, { type: "runMarker" }> => p.type === "runMarker",
+    );
+    if (!marker) continue;
+    summaries.set(marker.runId, {
+      runId: marker.runId,
+      endedAt: marker.endedAt,
+      durationMs: marker.durationMs,
+      toolCount: marker.toolCount,
+    });
+  }
+  return summaries;
+}
+
 // ---- 落盘（spike：单 JSON 文件；生产：逐条 JSONL）----
 
 export function serializeSession(entries: StoredEntry[]): string {

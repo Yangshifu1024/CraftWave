@@ -637,11 +637,8 @@ pub async fn start_chat_core(
             {
                 let data_root = app.store.root().to_path_buf();
                 let _ = std::fs::create_dir_all(&data_root);
-                let project_root = crate::host::commands::workspace::resolve_session_roots(
-                    app,
-                    &session_id,
-                )
-                .0;
+                let project_root =
+                    crate::host::commands::workspace::resolve_session_roots(app, &session_id).0;
                 let _ = std::fs::create_dir_all(&project_root);
                 crate::tools::ToolsContext::new(project_root, data_root)
             },
@@ -683,6 +680,9 @@ pub async fn start_chat_core(
         };
         let mut run = AgentRun::from_spec(&spec, (*prompt).clone(), Some(history));
         let mut resume_state: Option<DriveState> = None;
+        // 错误终态信息（§11.3 分类器为后续票，M1 统一 E_INTERNAL）：loop 内
+        // 记录、收尾随 run:error 事件发出（17 号票）
+        let mut errored: Option<String> = None;
         let final_exit: RunExit = loop {
             let attempt = drive_run(
                 &driver,
@@ -698,6 +698,7 @@ pub async fn start_chat_core(
             .await;
             match attempt {
                 Err(err) => {
+                    errored = Some(err.to_string());
                     // 错误终态兜底：任何 rig 失败都以 runEnded(error) 收场（§5.3 终态不变量）
                     send_error_ended(&mut sink, err.to_string());
                     break RunExit::Cancelled;
@@ -718,6 +719,7 @@ pub async fn start_chat_core(
                                     continue;
                                 }
                                 Err(e) => {
+                                    errored = Some(format!("审批恢复失败：{e}"));
                                     send_error_ended(&mut sink, format!("审批恢复失败：{e}"));
                                     break RunExit::Cancelled;
                                 }
@@ -743,6 +745,24 @@ pub async fn start_chat_core(
                 run_id.clone(),
                 suggest_tail,
             );
+        }
+
+        // run 终态事件（§3.5，17 号票补实装）：前端 Tab 指示与系统通知门
+        // （TauriEventSink 旁路）共用这三个键；payload 口径照文档。
+        let duration_ms = (now_ms() - handle.snapshot().started_at).max(0) as u64;
+        match (&final_exit, &errored) {
+            (RunExit::Done(_), _) => events.emit(
+                keys::RUN_DONE,
+                serde_json::json!({ "sessionId": session_id, "runId": run_id, "durationMs": duration_ms }),
+            ),
+            (_, Some(message)) => events.emit(
+                keys::RUN_ERROR,
+                serde_json::json!({ "sessionId": session_id, "runId": run_id, "code": "E_INTERNAL", "message": message }),
+            ),
+            _ => events.emit(
+                keys::RUN_CANCELLED,
+                serde_json::json!({ "sessionId": session_id, "runId": run_id }),
+            ),
         }
         runs_for_task.remove(&session_id, &run_id);
     });

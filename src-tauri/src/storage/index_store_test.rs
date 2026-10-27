@@ -50,7 +50,10 @@ fn remove_drops_entry_and_reports_missing() {
     let dir = tempfile::tempdir().unwrap();
     let idx = index(dir.path());
     idx.upsert(meta("s1", 10)).unwrap();
-    assert_eq!(idx.remove("s1").unwrap().map(|m| m.id), Some("s1".to_string()));
+    assert_eq!(
+        idx.remove("s1").unwrap().map(|m| m.id),
+        Some("s1".to_string())
+    );
     assert!(idx.list().is_empty());
     assert_eq!(idx.remove("s1").unwrap(), None);
 }

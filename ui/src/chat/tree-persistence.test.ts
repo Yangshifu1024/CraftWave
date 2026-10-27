@@ -12,6 +12,7 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 import type { StoredEntry, StoredMessageEntry, StoredMetaEntry, WirePart } from "../ipc/types";
 import { createScriptedAdapter, type ReplyScript, splitChunks } from "./scripted-backend";
 import {
+  deriveRunSummaries,
   entriesToExported,
   exportToEntries,
   parseSession,
@@ -481,5 +482,53 @@ describe("C-4 实证：0.15.31 导出结构字段面", () => {
     expect(nodeIds.has(repo.headId!)).toBe(true);
     const headItem = repo.messages.find((m) => m.message.id === repo.headId);
     expect(nodeIds.has(headItem!.parentId ?? "")).toBe(headItem!.parentId !== null);
+  });
+});
+
+// ---- deriveRunSummaries（17 号票折叠分组数据面） ----
+
+describe("deriveRunSummaries（runMarker 收口摘要推导）", () => {
+  it("正常收口与崩溃（endedAt 空）的 run 各自入表", () => {
+    const summaries = deriveRunSummaries([
+      {
+        id: "run-1:marker",
+        role: "system",
+        createdAt: 1,
+        parts: [
+          {
+            type: "runMarker",
+            runId: "run-1",
+            startedAt: 10,
+            endedAt: 90,
+            durationMs: 80,
+            toolCount: 3,
+          },
+        ],
+      },
+      {
+        id: "run-2:marker",
+        role: "system",
+        createdAt: 2,
+        parts: [{ type: "runMarker", runId: "run-2", startedAt: 100 }],
+      },
+      { id: "u1", role: "user", createdAt: 3, parts: [{ type: "text", text: "问" }] },
+    ]);
+    expect(summaries.get("run-1")).toEqual({
+      runId: "run-1",
+      endedAt: 90,
+      durationMs: 80,
+      toolCount: 3,
+    });
+    // 崩溃修复行（endedAt 缺省）：渲染层据此标「已中断」
+    expect(summaries.get("run-2")?.endedAt).toBeUndefined();
+    expect(summaries.size).toBe(2);
+  });
+
+  it("非 system 条目与无 marker 的条目不入表", () => {
+    const summaries = deriveRunSummaries([
+      { id: "u1", role: "user", createdAt: 1, parts: [{ type: "text", text: "问" }] },
+      { id: "s1", role: "system", createdAt: 2, parts: [{ type: "text", text: "" }] },
+    ]);
+    expect(summaries.size).toBe(0);
   });
 });

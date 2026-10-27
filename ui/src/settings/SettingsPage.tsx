@@ -45,6 +45,7 @@ import {
   type PageKey,
 } from "@/settings/registry";
 import { useSettingsStore } from "@/stores/settings";
+import { applyTheme } from "@/theme";
 
 /** 页图标（线性、跟随文本色，与 CodeWave 口径一致） */
 const PAGE_ICON: Record<PageKey, (props: { className?: string }) => ReactNode> = {
@@ -457,13 +458,21 @@ function ChoiceCard({
   );
 }
 
-/** 界面页：主题 + 界面语言 + AI 回复语言（ui 段整卡） */
+/** 界面页：主题 + 界面语言 + AI 回复语言（ui 段整卡）+ 系统通知偏好 */
 function AppearancePage() {
   const config = useSettingsStore((s) => s.config);
   const patchConfig = useSettingsStore((s) => s.patchConfig);
+  // 主题草稿即时预览（FR-13-03）：草稿变化即应用；丢弃草稿/保存都会令
+  // config 回到基线，本副作用随之回滚——无需额外的取消预览逻辑
+  useEffect(() => {
+    if (config?.ui?.theme) applyTheme(config.ui.theme);
+  }, [config?.ui?.theme]);
   if (!config) return null;
   const patchUi = (patch: Partial<AppConfig["ui"]>) =>
     patchConfig({ ui: { ...config.ui, ...patch } });
+  const notifications = config.notifications ?? { enabled: true, interventionOnly: false };
+  const patchNotifications = (patch: Partial<AppConfig["notifications"]>) =>
+    patchConfig({ notifications: { ...notifications, ...patch } });
 
   return (
     <div>
@@ -490,6 +499,26 @@ function AppearancePage() {
             />
           </div>
         </div>
+      </SettingsSection>
+      <SettingsSection title="系统通知">
+        <SettingsRow
+          title="启用系统通知"
+          description="窗口后台/失焦时，运行完成与人工介入经系统通知提醒。"
+        >
+          <Switch
+            checked={notifications.enabled}
+            onCheckedChange={(v) => patchNotifications({ enabled: v })}
+          />
+        </SettingsRow>
+        <SettingsRow
+          title="仅人工介入时通知"
+          description="开启后只在询问/审批等待时通知，运行完成不提醒。"
+        >
+          <Switch
+            checked={notifications.interventionOnly}
+            onCheckedChange={(v) => patchNotifications({ interventionOnly: v })}
+          />
+        </SettingsRow>
       </SettingsSection>
       <SettingsSection title="语言">
         <SettingsRow title="界面语言" description="设置界面与提示文案的显示语言。">

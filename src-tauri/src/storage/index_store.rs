@@ -94,7 +94,11 @@ impl SessionIndex {
             .lock
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        self.read().ok()?.sessions.into_iter().find(|m| m.id == session_id)
+        self.read()
+            .ok()?
+            .sessions
+            .into_iter()
+            .find(|m| m.id == session_id)
     }
 
     /// 部分更新（rename / 项目转临时等字段级修改）；返回更新后的条目，
@@ -159,8 +163,8 @@ impl SessionIndex {
             .map_err(IndexError::Io)?;
         let victim_ids: HashSet<String> = victims.iter().map(|m| m.id.clone()).collect();
         for meta in &victims {
-            let line = serde_json::to_string(meta)
-                .map_err(|e| IndexError::Corrupt(e.to_string()))?;
+            let line =
+                serde_json::to_string(meta).map_err(|e| IndexError::Corrupt(e.to_string()))?;
             out.write_all(line.as_bytes()).map_err(IndexError::Io)?;
             out.write_all(b"\n").map_err(IndexError::Io)?;
         }

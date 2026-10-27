@@ -168,6 +168,27 @@ pub struct LogConfig {
     pub level: LogLevel,
 }
 
+/// 系统通知偏好（FR-13-06 设置项，17 号票）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotificationConfig {
+    /// 通知总开关。
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// 仅人工介入（ask/审批等待）时通知；false 时 run 终态也通知。
+    #[serde(default)]
+    pub intervention_only: bool,
+}
+
+impl Default for NotificationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            intervention_only: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppConfig {
@@ -185,6 +206,8 @@ pub struct AppConfig {
     pub ui: UiConfig,
     #[serde(default)]
     pub log: LogConfig,
+    #[serde(default)]
+    pub notifications: NotificationConfig,
 }
 
 fn default_schema_version() -> u32 {
@@ -235,6 +258,7 @@ impl Default for AppConfig {
             approval: ApprovalConfig::default(),
             ui: UiConfig::default(),
             log: LogConfig::default(),
+            notifications: NotificationConfig::default(),
         }
     }
 }

@@ -40,6 +40,8 @@ use std::collections::HashMap;
 use storage::SessionMeta;
 #[allow(unused_imports)]
 use storage::SessionTreeData;
+#[allow(unused_imports)]
+use storage::config_store::ConfigStore;
 
 #[cfg(test)]
 #[path = "ipc_manifest_test.rs"]
@@ -112,6 +114,7 @@ ipc_commands! {
     host::commands::chat::cancel_run => args: CancelRunArgs, ret: bool;
     host::commands::chat::resolve_ask => args: ResolveAskArgs, ret: ();
     host::commands::chat::approve_plan => args: ApprovePlanArgs, ret: ();
+    host::commands::system::resolve_exit_request => args: ResolveExitRequestArgs, ret: ();
     #[cfg(debug_assertions)]
     mock_chat::mock_chat_run => args: (), ret: ();
     select_dir => args: (), ret: Option<String>;
@@ -150,16 +153,45 @@ async fn restore_native_titlebar(window: WebviewWindow) -> Result<(), String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // 单实例必须最先注册（FR-13-10）：二次启动不落 WebView，直接唤起既有主窗
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            host::shell::activate_main_window(app);
+        }))
         .plugin(tauri_plugin_decoration::init())
+        .plugin(tauri_plugin_notification::init())
+        // 关闭到托盘（FR-13-06/07，§9.6）：close 请求一律拦截为隐藏，
+        // 真正退出只经托盘菜单（存在活跃 run 时先经 app:exit_requested 确认）
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
         .setup(|app| {
             // §7.1：数据目录 ~/.craftwave（config.json + histories + sessions）
             let home = app.path().home_dir()?;
             let data_dir = home.join(".craftwave");
             std::fs::create_dir_all(&data_dir)?;
-            let state = host::AppState::new_in(
+            let handle = app.handle().clone();
+            // 通知门三件套先独立构造（AppHandle/配置缓存/活跃会话标识），
+            // 再与 AppState 共享同一份 Arc（配置改写后通知偏好即读即生效）
+            let config = std::sync::Arc::new(ConfigStore::new(data_dir.join("config.json")));
+            let active_session = std::sync::Arc::new(std::sync::Mutex::new(None));
+            let notify = std::sync::Arc::new(host::notify::NotifyGate::new(
+                handle.clone(),
+                active_session.clone(),
+                config.clone(),
+            ));
+            host::notify::install_click_routing(&notify);
+            let mut state = host::AppState::new_in(
                 data_dir,
-                std::sync::Arc::new(host::TauriEventSink(app.handle().clone())),
+                std::sync::Arc::new(host::TauriEventSink {
+                    app: handle.clone(),
+                    notify: notify.clone(),
+                }),
             );
+            state.config = config;
+            state.active_session = active_session;
             // RunManager 以共享句柄单独 manage：start_chat/cancel_run/
             // resolve_ask/approve_plan 以 State<RunManager> 注入（Clone =
             // 同一注册表，§5.1）；漏 manage 会报 "state not managed for
@@ -168,6 +200,7 @@ pub fn run() {
             app.manage(state.runs.clone());
             app.manage(state.store.clone());
             app.manage(state);
+            host::shell::install_tray(&handle)?;
             Ok(())
         })
         .invoke_handler(invoke_handler())
