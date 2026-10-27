@@ -44,6 +44,12 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
             libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
       - run: pnpm install --frozen-lockfile
+      - name: Rust 检查（fmt / clippy / test，对齐 §12.4 与提交链）
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+          cargo test
+        working-directory: src-tauri
       - run: pnpm build
         env:
           MACOSX_DEPLOYMENT_TARGET: "13.0"
