@@ -1,6 +1,8 @@
 use tauri::WebviewWindow;
 use tauri_plugin_decoration::WebviewWindowExt;
 
+pub mod spike;
+
 /// 激活覆盖式自绘标题栏；macOS 上按 40px 顶栏摆放交通灯（y=顶栏中线）。
 #[tauri::command]
 async fn activate_custom_titlebar(window: WebviewWindow) -> Result<(), String> {
