@@ -17,6 +17,14 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "2.12", features = [] }
 tauri-plugin-decoration = "3.0"
+# S2/S3 spike（C-6 双版本验证）：0.45.0 主底料；=0.46.0-rc.1 已平行重验通过（零改动）
+rig = "0.45.0"
+futures = "0.3"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+# 本地 OpenAI 兼容 mock SSE 服务（S2 流保真 / S3 工具循环测试用，不进产物）
+axum = "0.8"
 
 [profile.release]
 codegen-units = 1
