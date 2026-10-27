@@ -1,1 +1,12 @@
 .DS_Store
+.zcode
+
+# Node / 前端
+node_modules/
+ui/dist/
+
+# Rust / Tauri
+src-tauri/target/
+src-tauri/gen/schemas/
+src-tauri/icons/android/
+src-tauri/icons/ios/
