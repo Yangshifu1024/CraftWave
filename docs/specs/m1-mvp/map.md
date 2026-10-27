@@ -27,6 +27,7 @@ CraftWave M1 MVP 出口准则达成：P0 需求全集实现，NFR-01/02/06/09/12
 - [S2+S3 rig 流事件保真与手动工具循环（含 C-6 收口）](tasks/05-spike-s2s3-rig-stream-loop.md)：两者均可行——载体 `rig::run::AgentRun`（sans-IO）+ CallTools 整只 run 序列化审批挂起（含跨重启）；锁 0.45.0（双版本零改动实证）；NFR-02 余量 >35ms；帧协议增 `ts?`/callId 同源/节流语义钉死；**附带发现 rig MSRV=1.97.1，工具链已抬升**。
 - [S1 assistant-ui 镜像工具桥接](tasks/06-spike-s1-mirror-tools.md)：可行，不退 D11；唯一修正：local runtime 无 execute 管线，改为 adapter 直写 result；`makeAssistantToolUI` 已废弃、`Tools` 是 resource 工厂、partial JSON 依赖 assistant-stream 显式声明（§10.3 已重写）。
 - [S4 消息树持久化 roundtrip（含 C-4 钉死）](tasks/07-spike-s4-tree-roundtrip.md)：roundtrip 通过（编辑/重生成/分支切换逐节点一致，vitest 11 例）；C-4 定案（headId/messages 结构钉死，§6.1 增 `status?`）；D12 复核 rig-memory 直接承载不可行，决策维持并增补 redact 复刻点。
+- [S5 取消传播全链路](tasks/08-spike-s5-cancel-propagation.md)：可行——select! 流停 0.03–0.06ms、含进程组收割 6–8ms，全链远低于 1s；标记语义钉死（被收割/未执行补 E_CANCELLED、已完成保留不回滚、runEnded(cancelled) 必为收齐后最后一帧，帧协议零修订）；Windows Job Object 方案 MSVC target 可编译性已验。
 
 ## Not yet specified
 
