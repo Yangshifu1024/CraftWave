@@ -22,6 +22,8 @@ export const DEFAULT_CONFIG: AppConfig = {
 interface SettingsState {
   /** 已加载草稿（null = 尚未加载） */
   config: AppConfig | null;
+  /** 已保存基线（脏判定 = config 与 baseline 的 JSON 差集；随 load/save/供应商即时持久化同步前移） */
+  baseline: AppConfig | null;
   loading: boolean;
   saving: boolean;
   /** 最近一次操作的 §3.1 错误负载（骨架级：字符串展示） */
@@ -29,12 +31,14 @@ interface SettingsState {
   load: () => Promise<void>;
   /** 从内置预设实例化一个供应商（仅入草稿，经 saveAll 落盘） */
   addFromPreset: (slug: string) => void;
-  /** 新增/更新供应商并立即持久化（newKey 走 keyring，§9.4） */
+  /** 新增/更新供应商并立即持久化（Key 明文存 config.json，§9.4） */
   upsertProvider: (provider: ProviderConfig, newKey?: string) => Promise<boolean>;
-  /** 删除供应商（即时持久化，同步删 keyring 账户） */
+  /** 删除供应商（即时持久化） */
   removeProvider: (providerId: string) => Promise<boolean>;
   /** 草稿层设置全局默认模型 */
   setActiveModel: (modelId: string) => void;
+  /** 草稿层局部覆写（ui/proxy/approval/log 等非供应商字段） */
+  patchConfig: (patch: Partial<AppConfig>) => void;
   /** 整份保存（save_config，返回归一化结果刷新草稿） */
   saveAll: () => Promise<boolean>;
   /** 关闭设置页时丢弃未保存草稿并复位错误 */
@@ -43,6 +47,7 @@ interface SettingsState {
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   config: null,
+  baseline: null,
   loading: false,
   saving: false,
   error: null,
@@ -51,7 +56,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     set({ loading: true, error: null });
     try {
       const config = await client.getConfig();
-      set({ config, loading: false });
+      set({ config, baseline: structuredClone(config), loading: false });
     } catch (err) {
       set({ error: client.toIpcError(err).message, loading: false });
     }
@@ -73,7 +78,9 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         const providers = current.providers.some((p) => p.id === saved.id)
           ? current.providers.map((p) => (p.id === saved.id ? saved : p))
           : [...current.providers, saved];
-        set({ config: { ...current, providers }, saving: false });
+        const next = { ...current, providers };
+        // 供应商走即时持久化：config 与 baseline 一起前移，脏判定不受影响
+        set({ config: next, baseline: structuredClone(next), saving: false });
       } else {
         set({ saving: false });
       }
@@ -90,10 +97,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       await client.deleteProvider(providerId);
       const current = get().config;
       if (current) {
-        set({
-          config: { ...current, providers: current.providers.filter((p) => p.id !== providerId) },
-          saving: false,
-        });
+        const next = {
+          ...current,
+          providers: current.providers.filter((p) => p.id !== providerId),
+        };
+        set({ config: next, baseline: structuredClone(next), saving: false });
       } else {
         set({ saving: false });
       }
@@ -110,13 +118,19 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     set({ config: { ...current, activeModelId: modelId } });
   },
 
+  patchConfig: (patch) => {
+    const current = get().config;
+    if (!current) return;
+    set({ config: { ...current, ...patch } });
+  },
+
   saveAll: async () => {
     const current = get().config;
     if (!current) return false;
     set({ saving: true, error: null });
     try {
       const normalized = await client.saveConfig(current);
-      set({ config: normalized, saving: false });
+      set({ config: normalized, baseline: structuredClone(normalized), saving: false });
       return true;
     } catch (err) {
       set({ error: client.toIpcError(err).message, saving: false });
