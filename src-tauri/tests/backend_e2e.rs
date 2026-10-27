@@ -664,7 +664,6 @@ async fn e2e_approval_suspend_serialize_resume_done() {
 mod command_face {
     use super::*;
 
-    use craftwave_lib::providers::keyring::{MemoryKeyring, credential_account};
     use craftwave_lib::providers::types::{ApiFormat, ProviderConfig, ProviderModel};
     use craftwave_lib::storage::config_store::ConfigStore;
 
@@ -674,8 +673,7 @@ mod command_face {
             name: "Mock 供应商".to_owned(),
             api_format: ApiFormat::OpenaiChat,
             base_url: Some(base_url.to_owned()),
-            credential_ref: Some(credential_account("prov-1")),
-            credential_count: 1,
+            api_key: Some("mock-key".into()),
             models: vec![ProviderModel {
                 id: "model-1".to_owned(),
                 model: "gpt-4o-mock".to_owned(),
@@ -694,10 +692,8 @@ mod command_face {
 
     fn app_fixture_with_events(mock: &MockOpenAI) -> (AppState, Arc<RecordingEventSink>) {
         let dir = tempfile::tempdir().expect("tempdir");
-        let config_path = dir.path().join("config.json");
-        let intent_path = dir.path().join("intent.json");
         let store: ConfigStore<craftwave_lib::providers::types::AppConfig> =
-            ConfigStore::new(config_path, intent_path);
+            ConfigStore::new(dir.path().join("config.json"));
         let config = craftwave_lib::providers::types::AppConfig {
             providers: vec![provider_fixture(&mock.base_url)],
             active_model_id: Some("model-1".to_owned()),
@@ -710,27 +706,12 @@ mod command_face {
         (
             AppState {
                 config: store,
-                keys: Arc::new(MemoryKeyring::new()),
                 runs: RunManager::new(),
                 events: events.clone(),
                 session_usage: std::sync::Mutex::new(std::collections::HashMap::new()),
-            }
-            .with_key("mock-key"),
+            },
             events,
         )
-    }
-
-    trait WithKey {
-        fn with_key(self, key: &str) -> AppState;
-    }
-
-    impl WithKey for AppState {
-        fn with_key(self, key: &str) -> AppState {
-            let provider = self.config.load().unwrap().providers[0].clone();
-            let reference = provider.credential_ref.clone().unwrap();
-            self.keys.set_secret(&reference, key).unwrap();
-            self
-        }
     }
 
     fn user_entry(text: &str) -> craftwave_lib::storage::MessageEntry {

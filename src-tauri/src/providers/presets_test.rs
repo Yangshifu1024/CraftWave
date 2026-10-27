@@ -28,8 +28,7 @@ fn preset_instantiation_valid_provider_config() {
     let provider = preset_to_provider(preset);
     assert_eq!(provider.name, "DeepSeek");
     assert_eq!(provider.api_format, ApiFormat::OpenaiChat);
-    assert_eq!(provider.credential_count, 0, "凭据待 save_provider 提交");
-    assert!(provider.credential_ref.is_none());
+    assert!(provider.api_key.is_none(), "Key 留空待设置页填写");
     assert!(uuid::Uuid::parse_str(&provider.id).is_ok(), "id 为 uuid");
     for model in &provider.models {
         assert!(uuid::Uuid::parse_str(&model.id).is_ok());

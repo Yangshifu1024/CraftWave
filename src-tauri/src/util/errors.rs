@@ -100,7 +100,6 @@ pub const E_NOT_FOUND: &str = "E_NOT_FOUND";
 pub const E_SESSION_RUNNING: &str = "E_SESSION_RUNNING";
 pub const E_SESSION_REV: &str = "E_SESSION_REV";
 pub const E_STORAGE_IO: &str = "E_STORAGE_IO";
-pub const E_KEYRING: &str = "E_KEYRING";
 pub const E_INTERNAL: &str = "E_INTERNAL";
 pub const E_COMMAND_TIMEOUT: &str = "E_COMMAND_TIMEOUT";
 pub const E_PLAN_STALE: &str = "E_PLAN_STALE";
@@ -158,11 +157,6 @@ impl IpcError {
     /// E_STORAGE_IO：磁盘 IO 失败（§3.6，13 号票补录）。
     pub fn storage_io(message: impl Into<String>) -> Self {
         Self::new(E_STORAGE_IO, message)
-    }
-
-    /// E_KEYRING：钥匙串读写失败（§9.4，FR-05-09）。
-    pub fn keyring(message: impl Into<String>) -> Self {
-        Self::new(E_KEYRING, message)
     }
 
     /// E_INTERNAL：内部状态兜底。

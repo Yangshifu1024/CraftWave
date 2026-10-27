@@ -1,6 +1,6 @@
 # CraftWave 工作交接（HandOff）
 
-> 生成于 2026-10-28。上一会话完成 14 号「工具系统接线」票（四工具 + 审批门 + 工具卡片 UI），本文件供新设备上的全新会话接续。
+> 生成于 2026-10-28（同日二次更新）。14 号票合并后追加两项用户决策优化：废除 keyring（Key 明文存 config.json + 0600）与 dev 模式原始错误输出（技术设计文档 v2.5）。
 > 规则：本文件只做索引与状态快照，细节一律引用票文件/文档/提交，不复述。
 
 ## 一、必读顺序（新会话开场）
@@ -15,6 +15,7 @@
 - **地图进度**：01–14 号票全部关闭。四张 spike（S1/S2+S3/S4/S5/S6）+ 三张实现切片（storage/tools/providers）+ 核心链路（13 号）+ 工具系统接线（14 号）均已合并进 main。
 - **测试基线**：Rust 233 单测/集成（lib 209 + 集成 24，另 1 例真钥匙串冒烟 `#[ignore]`）；前端 vitest 75 例；biome/tsc 全绿。测试方法命名已全仓英文化（纪律见五）。
 - **已通的能力**：在 13 号（backend RunLoop + 帧渲染 + 取消全链）之上，14 号新增——注册表 8 工具（command/plan/ask 接入，suggest 为 run 尾后台小调用不开放模型）；审批门生产化（矩阵×围栏×计划门×签名放行，**批级预判零执行挂起** + DriveState 延续恢复 + deny 补帧 + autoConfirm 300s）；ask 协议（AskSlot/resolve_ask，挂起与问卷双路径共用）；事件面 5 键（EventSink 抽象：ask:opened/closed、plan:update、run:suggestions、tokens:update）；`approve_plan` 命令（§3.3 26c）；前端正式 toolkit（参数与 Rust ToolSpec 经 manifest `toolSpecs` 双向锁定）+ 7 卡片 + AskPanel + suggest ghost + sessionUsage 事件校正。
+- **同日追加（v2.5 用户决策）**：① **keyring 已废除**——API Key 明文存 config.json（ProviderConfig.apiKey；credentialRef/credentialCount 已删），config.json 落盘/加载统一收紧 0600，intent.json 协议移除，keyring crate 依赖删除（§9.4 改写）；② dev 模式原始错误输出：前端 DEV 条件 console（start_chat reject + runEnded error 帧）、Rust debug_assertions eprintln（send_error_ended）。另修复：lib.rs 曾漏 manage RunManager 导致 GUI start_chat 报 "state not managed"（headless 测试盲区，已补）。
 - **14 号票顺带修正两处 13 号缺陷**（测试钉死）：挂起重放重复执行（改批级预判）；跨轮桥接 callId 撞车（派生 id 加 turn 前缀）。文档修订 v2.4 六处。
 
 ## 三、下一步（按地图雾区顺序）

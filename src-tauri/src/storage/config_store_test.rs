@@ -3,7 +3,6 @@
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 
 use super::{ConfigPayload, ConfigStore};
 use crate::util::errors::{E_INVALID_ARG, IpcError};
@@ -41,7 +40,7 @@ impl ConfigPayload for DemoConfig {
 }
 
 fn store_in(dir: &std::path::Path) -> ConfigStore<DemoConfig> {
-    ConfigStore::new(dir.join("config.json"), dir.join("intent.json"))
+    ConfigStore::new(dir.join("config.json"))
 }
 
 #[test]
@@ -97,52 +96,72 @@ fn save_validation_failure_config_intact() {
 }
 
 #[test]
-fn commit_external_fail_intent_kept_config_intact() {
+fn update_failure_keeps_config_intact() {
     let dir = tempfile::tempdir().unwrap();
     let store = store_in(dir.path());
+    store
+        .save(DemoConfig {
+            version: 2,
+            items: vec!["keep".into()],
+        })
+        .unwrap();
 
     let err = store
-        .commit(
-            DemoConfig {
-                version: 2,
-                items: vec!["next".into()],
-            },
-            Some(json!({ "opId": "op-1", "providerId": "p1" })),
-            |_cfg| Err(IpcError::keyring("模拟钥匙串失败")),
-        )
+        .update(|cfg| {
+            cfg.items.push("next".into());
+            Err(IpcError::internal("模拟更新失败"))
+        })
         .unwrap_err();
-    assert_eq!(err.code, "E_KEYRING");
-
-    // 意向保留；config 不变更
-    let pending = store.pending_intent().unwrap().expect("意向应保留");
-    assert_eq!(pending["opId"], "op-1");
-    assert_eq!(store.load().unwrap().items, Vec::<String>::new());
+    assert_eq!(err.code, "E_INTERNAL");
+    assert_eq!(store.load().unwrap().items, vec!["keep".to_string()]);
 }
 
 #[test]
-fn commit_success_intent_removed_cache_swapped() {
+fn update_success_cache_swapped() {
     let dir = tempfile::tempdir().unwrap();
     let store = store_in(dir.path());
-    let arc = store
-        .commit(
-            DemoConfig {
-                version: 2,
-                items: vec!["x".into()],
-            },
-            Some(json!({ "opId": "op-2" })),
-            |cfg| {
-                cfg.items.push("from-external".into());
-                Ok(())
-            },
-        )
+    store
+        .save(DemoConfig {
+            version: 2,
+            items: vec!["x".to_string()],
+        })
         .unwrap();
-    assert_eq!(
-        arc.items,
-        vec!["x".to_string(), "from-external".to_string()]
-    );
-    assert!(store.pending_intent().unwrap().is_none(), "成功后删意向");
+    let arc = store
+        .update(|cfg| {
+            cfg.items.push("from-update".into());
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(arc.items, vec!["x".to_string(), "from-update".to_string()]);
     // 缓存热替换：load 命中提交后的同一 Arc
     assert!(Arc::ptr_eq(&store.load().unwrap(), &arc));
+}
+
+#[cfg(unix)]
+#[test]
+fn config_file_permissions_tightened_0600() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.json");
+
+    // 既有宽权限文件：load 时顺手收紧
+    std::fs::write(&path, r#"{"version":2,"items":["a"]}"#).unwrap();
+    let wide = 0o644;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(wide)).unwrap();
+    let store = ConfigStore::new(path.clone());
+    let _ = store.load().unwrap();
+    let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600, "加载时收紧宽权限旧文件");
+
+    // save 落盘同样 0600
+    store
+        .save(DemoConfig {
+            version: 2,
+            items: vec!["b".into()],
+        })
+        .unwrap();
+    let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
 }
 
 #[test]

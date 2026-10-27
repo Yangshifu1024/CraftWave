@@ -1,9 +1,7 @@
-//! provider/settings 服务编排测试（协调器 + keyring mock 组装层）。
-
-use std::sync::Arc;
+//! provider/settings 服务编排测试（协调器组装层；keyring 已废除，
+//! Key 明文随 config.json 落盘并收紧 0600）。
 
 use super::service::{delete_provider, get_config, save_config, save_provider};
-use crate::providers::keyring::{MemoryKeyring, read_envelope};
 use crate::providers::types::{ApiFormat, AppConfig, ProviderConfig, ProviderModel};
 use crate::storage::config_store::ConfigStore;
 use crate::util::errors::E_NOT_FOUND;
@@ -14,8 +12,7 @@ fn demo_provider(id: &str, model: &str) -> ProviderConfig {
         name: format!("供应商-{id}"),
         api_format: ApiFormat::OpenaiChat,
         base_url: Some("https://api.example.com/v1".into()),
-        credential_ref: None,
-        credential_count: 0,
+        api_key: None,
         models: vec![ProviderModel {
             id: format!("m-{id}"),
             model: model.into(),
@@ -28,187 +25,123 @@ fn demo_provider(id: &str, model: &str) -> ProviderConfig {
     }
 }
 
-fn fixture(dir: &std::path::Path) -> (ConfigStore<AppConfig>, MemoryKeyring) {
-    (
-        ConfigStore::new(dir.join("config.json"), dir.join("intent.json")),
-        MemoryKeyring::new(),
-    )
+fn fixture(dir: &std::path::Path) -> ConfigStore<AppConfig> {
+    ConfigStore::new(dir.join("config.json"))
+}
+
+#[cfg(unix)]
+fn mode_of(path: &std::path::Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path).unwrap().permissions().mode() & 0o777
 }
 
 #[test]
-fn save_provider_new_key_protocol_ref_not_plaintext() {
+fn save_provider_new_key_written_plaintext_with_tight_permissions() {
     let dir = tempfile::tempdir().unwrap();
-    let (store, keys) = fixture(dir.path());
+    let store = fixture(dir.path());
 
     let provider = demo_provider("p1", "test-model");
-    let saved = save_provider(&store, &keys, provider, Some("sk-live-001".into()), "op-1").unwrap();
-    assert_eq!(
-        saved.credential_ref.as_deref(),
-        Some("craftwave.provider.p1")
-    );
-    assert_eq!(saved.credential_count, 1);
+    let saved = save_provider(&store, provider, Some("sk-live-001".into())).unwrap();
+    assert_eq!(saved.api_key.as_deref(), Some("sk-live-001"));
 
-    // config 永不存明文 Key
+    // Key 明文随 config.json 落盘；文件权限收紧 0600（unix）
     let raw = std::fs::read_to_string(dir.path().join("config.json")).unwrap();
-    assert!(
-        !raw.contains("sk-live-001"),
-        "config.json 不得出现 Key 明文"
-    );
-    // keyring 里是 envelope
-    let envelope = read_envelope(&keys, "p1").unwrap().unwrap();
-    assert_eq!(envelope.keys, vec!["sk-live-001".to_string()]);
-    // 意向已清理
-    assert!(store.pending_intent().unwrap().is_none());
+    assert!(raw.contains("sk-live-001"), "Key 明文在 config.json");
+    #[cfg(unix)]
+    assert_eq!(mode_of(&dir.path().join("config.json")), 0o600);
 }
 
 #[test]
-fn save_provider_existing_id_replaced_generation_up() {
+fn save_provider_without_key_keeps_passthrough_api_key() {
     let dir = tempfile::tempdir().unwrap();
-    let (store, keys) = fixture(dir.path());
-    let p = demo_provider("p1", "m1");
-    save_provider(&store, &keys, p.clone(), Some("sk-1".into()), "op-1").unwrap();
-    let mut renamed = demo_provider("p1", "m1");
-    renamed.name = "改名".into();
-    let saved = save_provider(&store, &keys, renamed, Some("sk-2".into()), "op-2").unwrap();
-    assert_eq!(saved.name, "改名");
-    let envelope = read_envelope(&keys, "p1").unwrap().unwrap();
-    assert_eq!(envelope.generation, 2, "数组整体覆写 generation+1（§11.2）");
+    let store = fixture(dir.path());
 
-    let config = get_config(&store).unwrap();
-    assert_eq!(config.providers.len(), 1, "同 id 不重复插入");
+    // 先带 Key 存
+    save_provider(&store, demo_provider("p1", "m"), Some("sk-a".into())).unwrap();
+    // 再不带 newKey 保存元数据：入参 apiKey 原样承载（前端整份回传口径）
+    let mut provider = demo_provider("p1", "m2");
+    provider.api_key = Some("sk-a".into());
+    let saved = save_provider(&store, provider, None).unwrap();
+    assert_eq!(saved.api_key.as_deref(), Some("sk-a"));
+    assert_eq!(saved.models[0].model, "m2", "元数据更新生效");
+
+    // 入参不带 Key 也不回传（新供应商）：apiKey 为空
+    let fresh = save_provider(&store, demo_provider("p2", "m"), None).unwrap();
+    assert!(fresh.api_key.is_none());
 }
 
 #[test]
-fn save_provider_no_key_keeps_credential_ref() {
+fn save_provider_existing_id_replaced_in_place() {
     let dir = tempfile::tempdir().unwrap();
-    let (store, keys) = fixture(dir.path());
-    save_provider(
-        &store,
-        &keys,
-        demo_provider("p1", "m1"),
-        Some("sk-1".into()),
-        "op-1",
-    )
-    .unwrap();
-
-    let mut meta_only = demo_provider("p1", "m1");
-    meta_only.credential_ref = Some("craftwave.provider.p1".into());
-    meta_only.credential_count = 1;
-    meta_only.name = "仅改名".into();
-    let saved = save_provider(&store, &keys, meta_only, None, "op-2").unwrap();
-    assert_eq!(saved.name, "仅改名");
-    assert_eq!(
-        saved.credential_ref.as_deref(),
-        Some("craftwave.provider.p1")
-    );
-    let envelope = read_envelope(&keys, "p1").unwrap().unwrap();
-    assert_eq!(envelope.generation, 1, "无 newKey 不触 keyring");
+    let store = fixture(dir.path());
+    save_provider(&store, demo_provider("p1", "v1"), None).unwrap();
+    let saved = save_provider(&store, demo_provider("p1", "v2"), None).unwrap();
+    let config = store.load().unwrap();
+    assert_eq!(config.providers.len(), 1, "同 id 原位替换不追加");
+    assert_eq!(saved.models[0].model, "v2");
 }
 
 #[test]
-fn save_provider_keyring_failure_keeps_intent() {
-    struct FailingStore;
-    impl crate::providers::keyring::KeyringStore for FailingStore {
-        fn set_secret(&self, _a: &str, _s: &str) -> Result<(), crate::util::errors::IpcError> {
-            Err(crate::util::errors::IpcError::keyring("系统钥匙串锁定"))
-        }
-        fn get_secret(&self, _a: &str) -> Result<Option<String>, crate::util::errors::IpcError> {
-            Ok(None)
-        }
-        fn delete_secret(&self, _a: &str) -> Result<(), crate::util::errors::IpcError> {
-            Ok(())
-        }
-    }
+fn save_provider_rejects_blank_new_key_and_empty_id() {
     let dir = tempfile::tempdir().unwrap();
-    let store = ConfigStore::new(
-        dir.path().join("config.json"),
-        dir.path().join("intent.json"),
-    );
+    let store = fixture(dir.path());
+    let err = save_provider(&store, demo_provider("p1", "m"), Some("  ".into())).unwrap_err();
+    assert_eq!(err.code, "E_INVALID_ARG");
 
-    let err = save_provider(
-        &store,
-        &FailingStore,
-        demo_provider("p1", "m1"),
-        Some("sk-x".into()),
-        "op-1",
-    )
-    .unwrap_err();
-    assert_eq!(err.code, "E_KEYRING");
-    assert!(
-        get_config(&store).unwrap().providers.is_empty(),
-        "config 不变更"
-    );
-    let pending = store.pending_intent().unwrap().expect("意向保留待重试");
-    assert_eq!(pending["providerId"], "p1");
+    let mut bad_id = demo_provider(" ", "m");
+    bad_id.id = " ".into();
+    let err = save_provider(&store, bad_id, None).unwrap_err();
+    assert_eq!(err.code, "E_INVALID_ARG");
 }
 
 #[test]
-fn delete_provider_removes_keyring_and_config() {
+fn delete_provider_removes_from_config() {
     let dir = tempfile::tempdir().unwrap();
-    let (store, keys) = fixture(dir.path());
-    save_provider(
-        &store,
-        &keys,
-        demo_provider("p1", "m1"),
-        Some("sk-1".into()),
-        "op-1",
-    )
-    .unwrap();
+    let store = fixture(dir.path());
+    save_provider(&store, demo_provider("p1", "m"), Some("sk-x".into())).unwrap();
+    delete_provider(&store, "p1").unwrap();
+    let config = store.load().unwrap();
+    assert!(config.providers.is_empty(), "Key 随配置一并消失");
 
-    delete_provider(&store, &keys, "p1").unwrap();
-    assert!(get_config(&store).unwrap().providers.is_empty());
-    assert_eq!(read_envelope(&keys, "p1").unwrap(), None, "同步删除账户");
-}
-
-#[test]
-fn delete_provider_missing_not_found() {
-    let dir = tempfile::tempdir().unwrap();
-    let (store, keys) = fixture(dir.path());
-    let err = delete_provider(&store, &keys, "ghost").unwrap_err();
+    let err = delete_provider(&store, "p1").unwrap_err();
     assert_eq!(err.code, E_NOT_FOUND);
 }
 
 #[test]
-fn save_config_returns_normalized() {
+fn save_config_returns_normalized_and_config_file_0600() {
     let dir = tempfile::tempdir().unwrap();
-    let (store, _keys) = fixture(dir.path());
+    let store = fixture(dir.path());
     let mut config = AppConfig::default();
-    config.providers.push(demo_provider("p1", "  m1  "));
+    config.providers.push(demo_provider("p9", "m"));
     let saved = save_config(&store, config).unwrap();
-    assert_eq!(saved.providers[0].models[0].model, "m1");
+    // demo_provider 的 maxTokens=8192 非零，归一化保留；0→默认由 types_test 覆盖
+    assert_eq!(saved.providers[0].models[0].max_tokens, 8192);
+    #[cfg(unix)]
+    assert_eq!(mode_of(&dir.path().join("config.json")), 0o600);
+
+    let loaded = get_config(&store).unwrap();
+    assert_eq!(loaded.providers.len(), 1);
 }
 
 #[test]
 fn concurrent_save_provider_all_succeed() {
     let dir = tempfile::tempdir().unwrap();
-    let store = Arc::new(ConfigStore::new(
-        dir.path().join("config.json"),
-        dir.path().join("intent.json"),
-    ));
-    let keys = Arc::new(MemoryKeyring::new());
+    let store = std::sync::Arc::new(fixture(dir.path()));
     let mut handles = Vec::new();
-    for i in 0..6 {
+    for i in 0..8 {
         let store = store.clone();
-        let keys = keys.clone();
         handles.push(std::thread::spawn(move || {
-            save_provider(
-                &store,
-                keys.as_ref(),
-                demo_provider(&format!("p{i}"), "m"),
-                Some(format!("sk-{i}")),
-                &format!("op-{i}"),
-            )
+            save_provider(&store, demo_provider(&format!("p{i}"), "m"), None).unwrap();
         }));
     }
     for h in handles {
-        h.join().unwrap().unwrap();
+        h.join().unwrap();
     }
-    let config = get_config(&store).unwrap();
-    assert_eq!(config.providers.len(), 6, "并发提交全部落盘");
-    for i in 0..6 {
-        let envelope = read_envelope(keys.as_ref(), &format!("p{i}"))
-            .unwrap()
-            .unwrap();
-        assert_eq!(envelope.generation, 1);
-    }
+    // 终态：全部提交落盘（并发读-改-写在锁内串行，无丢失）
+    let config = store.load().unwrap();
+    let mut ids: Vec<_> = config.providers.iter().map(|p| p.id.clone()).collect();
+    ids.sort();
+    let mut expect: Vec<_> = (0..8).map(|i| format!("p{i}")).collect();
+    expect.sort();
+    assert_eq!(ids, expect, "并发提交无丢失");
 }

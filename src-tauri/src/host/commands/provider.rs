@@ -1,6 +1,6 @@
 //! provider 域命令（§3.3 #8/#9）：save_provider / delete_provider。
 //!
-//! 薄壳：转调 providers::service（协调器 + §9.4 keyring 协议在服务层，可单测）。
+//! 薄壳：转调 providers::service（协调器在服务层，可单测）。
 
 use serde::Deserialize;
 use tauri::State;
@@ -25,8 +25,8 @@ pub struct DeleteProviderArgs {
     pub provider_id: String,
 }
 
-/// §3.3 #8：保存供应商；newKey 有值时走 keyring 提交协议（§9.4），
-/// 成功后仅落 credentialRef/credentialCount。返回归一化后的供应商。
+/// §3.3 #8：保存供应商；newKey 有值时写入 apiKey（明文随 config.json 0600
+/// 落盘，§9.4 改写）。返回归一化后的供应商。
 #[tauri::command]
 pub async fn save_provider(
     state: State<'_, AppState>,
@@ -35,18 +35,10 @@ pub async fn save_provider(
 ) -> Result<ProviderConfig, IpcError> {
     // 契约命名单一事实源：平铺形参回组为文档契约结构
     let args = SaveProviderArgs { provider, new_key };
-    // opId：每命令一个新 uuid（§9.4 意向幂等去重键）
-    let op_id = crate::util::ids::new_uuid();
-    service::save_provider(
-        &state.config,
-        state.keys.as_ref(),
-        args.provider,
-        args.new_key,
-        &op_id,
-    )
+    service::save_provider(&state.config, args.provider, args.new_key)
 }
 
-/// §3.3 #9：删除供应商并同步删除 keyring 账户。
+/// §3.3 #9：删除供应商（Key 随配置一并消失）。
 #[tauri::command]
 pub async fn delete_provider(
     state: State<'_, AppState>,
@@ -54,5 +46,5 @@ pub async fn delete_provider(
 ) -> Result<(), IpcError> {
     // 契约命名单一事实源：平铺形参回组为文档契约结构
     let args = DeleteProviderArgs { provider_id };
-    service::delete_provider(&state.config, state.keys.as_ref(), &args.provider_id)
+    service::delete_provider(&state.config, &args.provider_id)
 }

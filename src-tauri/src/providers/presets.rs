@@ -135,15 +135,14 @@ pub fn find_preset(slug: &str) -> Option<&'static ProviderPreset> {
     builtin_presets().iter().find(|p| p.slug == slug)
 }
 
-/// 从预设实例化一个 ProviderConfig（新 uuid；credential 字段留空待 save_provider 提交）。
+/// 从预设实例化一个 ProviderConfig（新 uuid；apiKey 留空待设置页填写）。
 pub fn preset_to_provider(preset: &ProviderPreset) -> ProviderConfig {
     ProviderConfig {
         id: new_uuid(),
         name: preset.name.to_string(),
         api_format: preset.api_format,
         base_url: Some(preset.base_url.to_string()),
-        credential_ref: None,
-        credential_count: 0,
+        api_key: None,
         models: preset
             .models
             .iter()
