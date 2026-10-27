@@ -1,0 +1,47 @@
+name: Build
+
+# 只有 tag push（或手动触发）才做三平台打包；日常检查走 ci.yml。
+
+on:
+  push:
+    tags: ["**"]
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: 三平台构建（${{ matrix.os }}）
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+      - run: pnpm install --frozen-lockfile
+      - name: Rust 检查（fmt / clippy / test）
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+          cargo test
+        working-directory: src-tauri
+      - run: pnpm build
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "13.0"

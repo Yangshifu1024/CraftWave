@@ -4,7 +4,10 @@ on:
   push:
     branches: ["**"]
   pull_request:
-  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   frontend:
@@ -22,36 +25,22 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
 
-  build:
-    name: 三平台构建（${{ matrix.os }}）
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, windows-latest, ubuntu-latest]
-    runs-on: ${{ matrix.os }}
+  backend:
+    name: Rust 检查（fmt / clippy / test）
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
-      - if: runner.os == 'Linux'
+      - name: Linux 系统依赖（tauri 编译需要）
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
-            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
-      - run: pnpm install --frozen-lockfile
-      - name: Rust 检查（fmt / clippy / test，对齐 §12.4 与提交链）
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libssl-dev librsvg2-dev
+      - name: fmt / clippy / test（debug 构建无需前端产物）
         run: |
           cargo fmt --check
           cargo clippy --all-targets -- -D warnings
           cargo test
         working-directory: src-tauri
-      - run: pnpm build
-        env:
-          MACOSX_DEPLOYMENT_TARGET: "13.0"
