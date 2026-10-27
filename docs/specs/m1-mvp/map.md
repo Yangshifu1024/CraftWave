@@ -28,6 +28,7 @@ CraftWave M1 MVP 出口准则达成：P0 需求全集实现，NFR-01/02/06/09/12
 - [S1 assistant-ui 镜像工具桥接](tasks/06-spike-s1-mirror-tools.md)：可行，不退 D11；唯一修正：local runtime 无 execute 管线，改为 adapter 直写 result；`makeAssistantToolUI` 已废弃、`Tools` 是 resource 工厂、partial JSON 依赖 assistant-stream 显式声明（§10.3 已重写）。
 - [S4 消息树持久化 roundtrip（含 C-4 钉死）](tasks/07-spike-s4-tree-roundtrip.md)：roundtrip 通过（编辑/重生成/分支切换逐节点一致，vitest 11 例）；C-4 定案（headId/messages 结构钉死，§6.1 增 `status?`）；D12 复核 rig-memory 直接承载不可行，决策维持并增补 redact 复刻点。
 - [决策：C-9/C-10 默认方案确认](tasks/09-grilling-c9-c10-defaults.md)：C-9 确认默认——后台小调用计入会话累计、不计轮次、失败静默；C-10 推翻默认——M1 即 encoding_rs+chardetng 编码自动判断（与 agent read 共用解码器），512KB 分页读取，write/edit 一律 UTF-8，GBK 不再缓 P1。
+- [实现：工具系统只读/写切片](tasks/11-impl-tools-file-slice.md)：util 共用解码器（encoding_rs 0.8.42+chardetng 1.0.0，BOM→严格 UTF-8→探测→最佳猜测）+ safety（safe_join/围栏 P0 黑白名单/权限四档矩阵）+ tools 五工具（read/write/edit/list_files/grep）与注册表钉死，90 例测试，与 §8 无出入（细化记录见票 Answer）。
 
 ## Not yet specified
 
