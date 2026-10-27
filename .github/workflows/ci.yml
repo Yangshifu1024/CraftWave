@@ -6,14 +6,15 @@ on:
   pull_request:
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # push 与同一分支的 PR 共用一组（head_ref 归一），后跑的取消先跑的
+  group: ci-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
   frontend:
     name: 前端检查（${{ matrix.os }}）
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         os: [macos-latest, windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
@@ -32,7 +33,7 @@ jobs:
   backend:
     name: Rust 检查（${{ matrix.os }}）
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         os: [macos-latest, windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
