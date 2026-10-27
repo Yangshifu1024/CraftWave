@@ -2,8 +2,10 @@ use tauri::WebviewWindow;
 use tauri_plugin_decoration::WebviewWindowExt;
 
 pub mod host;
+pub mod safety;
 pub mod spike;
 pub mod storage;
+pub mod tools;
 pub mod util;
 
 // 契约类型仅在 `ipc_commands!` 清单中经 stringify! 引用（manifest 的 args_type/ret_type 名），
