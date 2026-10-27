@@ -1,10 +1,11 @@
 import { AssistantRuntimeProvider, useLocalRuntime } from "@assistant-ui/react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { MirrorDemo } from "@/chat/mirror/MirrorDemo";
 import { echoAdapter } from "@/chat/runtime";
 import { ChatThread } from "@/chat/Thread";
+import { SettingsPage } from "@/settings/SettingsPage";
 
 const ACTIVATION_FLAG = "data-tauri-plugin-decoration-active";
 const ACTIVATION_TIMEOUT_MS = 5000;
@@ -67,12 +68,23 @@ export default function App() {
   return <SkeletonApp />;
 }
 
-/** S6 骨架回声聊天（原型期间原样保留）。 */
+/** S6 骨架回声聊天（原型期间原样保留）+ 最小设置页入口（本票：供应商/设置切片）。 */
 function SkeletonApp() {
   const runtime = useLocalRuntime(echoAdapter);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   return (
     <AssistantRuntimeProvider runtime={runtime}>
       <ChatThread />
+      {!settingsOpen && (
+        <button
+          type="button"
+          className="fixed top-3 right-3 z-40 rounded border border-neutral-300 bg-white px-3 py-1 text-sm"
+          onClick={() => setSettingsOpen(true)}
+        >
+          设置
+        </button>
+      )}
+      {settingsOpen && <SettingsPage onClose={() => setSettingsOpen(false)} />}
     </AssistantRuntimeProvider>
   );
 }
