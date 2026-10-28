@@ -96,6 +96,8 @@ impl SessionIndex {
         {
             #[cfg(debug_assertions)]
             eprintln!("[craftwave] index 归档失败（保留超限条目）：{e:?}");
+            #[cfg(not(debug_assertions))]
+            let _ = e;
         }
         self.write(&file)
     }

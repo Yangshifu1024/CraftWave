@@ -595,6 +595,8 @@ fn persist_user_fallback(app: &AppState, session_id: &str, messages: &[MessageEn
     {
         #[cfg(debug_assertions)]
         eprintln!("[craftwave] user 条目兜底落盘失败（{session_id}）：{e:?}");
+        #[cfg(not(debug_assertions))]
+        let _ = e;
     }
 }
 

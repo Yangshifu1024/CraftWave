@@ -69,3 +69,8 @@ tokio = { version = "1", features = ["full"] }
 codegen-units = 1
 lto = true
 strip = true
+
+# strip=true 会把 proc-macro dylib 的 LINKEDIT 剥出 mis-aligned（dyld 拒载，
+# rustc 报 E0463 can't find crate）；proc-macro 只参与编译不进产物，不剥。
+[profile.release.build-override]
+strip = false

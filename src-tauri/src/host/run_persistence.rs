@@ -308,6 +308,8 @@ impl RunRecorder {
                     "[craftwave] canonical 落盘失败（session={} run={}）：{e:?}",
                     self.session_id, self.run_id
                 );
+                #[cfg(not(debug_assertions))]
+                let _ = e;
             }
         }
     }
@@ -351,6 +353,8 @@ impl RunRecorder {
                 "[craftwave] index.json upsert 失败（{}）：{e:?}",
                 self.session_id
             );
+            #[cfg(not(debug_assertions))]
+            let _ = e;
         }
     }
 }

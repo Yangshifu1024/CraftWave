@@ -60,6 +60,8 @@ pub fn write_outcome(data_root: &Path, session_id: &str, call_id: &str, outcome:
     if let Err(e) = write_atomic(&path, &payload) {
         #[cfg(debug_assertions)]
         eprintln!("[craftwave] toolres 边车写入失败（{call_id}）：{e}");
+        #[cfg(not(debug_assertions))]
+        let _ = e;
     }
 }
 
