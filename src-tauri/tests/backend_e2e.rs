@@ -357,10 +357,14 @@ async fn e2e_cancel_midstream_run_ended_last_frame_latency() {
 // —— 3. 工具批取消收齐语义 ——
 
 /// 双工具执行器：read 立即完成；command spawn 真实进程树、select token 收割。
+/// sh 脚本 + Unix 进程组收割为平台专属，整段仅 Unix 编译（Windows 的
+/// Job Object 语义由主 crate 编译面覆盖，进程树收割 e2e 见 S5 票）。
+#[cfg(unix)]
 struct ReadThenCommandExecutor {
     spawned: tokio::sync::mpsc::UnboundedSender<i32>,
 }
 
+#[cfg(unix)]
 impl CancellableExecutor for ReadThenCommandExecutor {
     fn execute<'a>(
         &'a self,
@@ -430,6 +434,7 @@ impl CancellableExecutor for ReadThenCommandExecutor {
     }
 }
 
+#[cfg(unix)]
 #[cfg(unix)]
 #[tokio::test]
 async fn e2e_tool_batch_cancel_keep_completed_mark_rest() {
