@@ -167,20 +167,17 @@ async fn run_prepared(
         }
     };
     #[cfg(windows)]
-    let job = {
-        let guard = match crate::tools::process::JobGuard::new().and_then(|g| {
-            g.assign(&child)?;
-            Ok(g)
-        }) {
-            Ok(g) => g,
-            Err(e) => {
-                return CommandExit::Done(Box::new(ToolOutcome::failure(
-                    ToolError::new("E_INTERNAL_STATE", format!("Job Object 指派失败：{e}")),
-                    "命令启动失败",
-                )));
-            }
-        };
-        guard
+    let job = match crate::tools::process::JobGuard::new().and_then(|g| {
+        g.assign(&child)?;
+        Ok(g)
+    }) {
+        Ok(g) => g,
+        Err(e) => {
+            return CommandExit::Done(Box::new(ToolOutcome::failure(
+                ToolError::new("E_INTERNAL_STATE", format!("Job Object 指派失败：{e}")),
+                "命令启动失败",
+            )));
+        }
     };
 
     let mut stdout = child.stdout.take().expect("piped stdout");
