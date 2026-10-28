@@ -11,6 +11,7 @@
  */
 
 import { type ToolCallMessagePartProps, useToolArgsStatus } from "@assistant-ui/react";
+import { CircleAlert } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useSessionScope } from "@/chat/session-scope";
 import * as client from "@/ipc/client";
@@ -30,28 +31,6 @@ export function cardPhase(
 
 /** 卡片读取工具参数用的宽泛类型（args 是 JSON 解析结果）。 */
 type CardArgs = Record<string, unknown>;
-
-/** 告警图标（lucide circle-alert 造型，错误态前缀；与 Thread 错误块同款）。 */
-function AlertIconSmall() {
-  return (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-      className="shrink-0"
-    >
-      <circle cx="12" cy="12" r="10" />
-      <path d="M12 8v4" />
-      <path d="M12 16h.01" />
-    </svg>
-  );
-}
 
 /** 卡片通用 props：assistant-ui 传入的工具调用 part 数据 + 摘要行内容。 */
 interface CardProps extends ToolCallMessagePartProps<CardArgs, unknown> {
@@ -151,7 +130,7 @@ function ToolCardShell({
             title={resultSummary || argsText}
             className="flex shrink-0 cursor-help items-center gap-1 font-medium text-[var(--destructive)] underline decoration-dotted underline-offset-4"
           >
-            <AlertIconSmall />
+            <CircleAlert size={12} aria-hidden className="shrink-0" />
             失败
           </span>
         )}

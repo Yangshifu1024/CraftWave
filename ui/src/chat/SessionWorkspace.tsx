@@ -22,6 +22,17 @@ import {
   useAuiState,
   useLocalRuntime,
 } from "@assistant-ui/react";
+import {
+  CirclePlus,
+  Folder,
+  FolderPlus,
+  LoaderCircle,
+  PanelRight,
+  Pencil,
+  Plus,
+  Settings,
+  Trash2,
+} from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AskPanel } from "@/chat/AskPanel";
 import { useBackendEvents } from "@/chat/event-bridge";
@@ -127,7 +138,7 @@ export function SessionWorkspace() {
           >
             {activeTab && (
               <div className="flex min-w-0 items-center gap-1.5">
-                <FolderIcon />
+                <Folder size={16} className="shrink-0" />
                 {project && (
                   <>
                     <span className="shrink-0">{project.name}</span>
@@ -346,7 +357,7 @@ function Sidebar({
               onClick={() => void createAndOpen(undefined)}
               className="flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-ui-base text-[var(--foreground)] hover:bg-[var(--accent)]"
             >
-              <CirclePlusIcon />
+              <CirclePlus size={16} className="shrink-0" />
               新建会话
             </button>
           </div>
@@ -412,7 +423,7 @@ function Sidebar({
               onClick={onOpenSettings}
               className="flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-ui-base text-[var(--foreground)] hover:bg-[var(--accent)]"
             >
-              <SettingsIcon />
+              <Settings size={16} className="shrink-0" />
               设置
             </button>
           </div>
@@ -533,7 +544,7 @@ function NewProjectDialog({ open, onClose }: { open: boolean; onClose: () => voi
           className="flex w-full flex-col items-center gap-2 rounded-lg border border-dashed border-[var(--input)] px-4 py-6 transition-colors hover:border-[var(--cw-text-2)]"
         >
           <span className="flex size-12 items-center justify-center rounded-lg bg-[var(--muted)] text-[var(--muted-foreground)]">
-            <FolderPlusIcon />
+            <FolderPlus size={20} />
           </span>
           {homeDir === null ? (
             <span className="text-ui-base font-medium text-[var(--foreground)]">选择文件夹</span>
@@ -635,7 +646,7 @@ function ProjectRow({
   }
   return (
     <div className="group flex h-8 cursor-default items-center gap-2 rounded-lg pr-1 pl-2 text-ui-base text-[var(--foreground)] hover:bg-[var(--accent)]/60">
-      <FolderIcon />
+      <Folder size={16} className="shrink-0" />
       {/* 项目名比会话标题淡一档（ZCode subtle 层级：组容器弱于内容行） */}
       <span className="min-w-0 flex-1 overflow-hidden whitespace-nowrap text-[var(--muted-foreground)] [mask-image:linear-gradient(to_right,black_calc(100%-1.5rem),transparent)]">
         {project.name}
@@ -649,7 +660,7 @@ function ProjectRow({
         }}
         className="hidden h-6 w-6 items-center justify-center rounded hover:bg-[var(--accent)] group-hover:flex"
       >
-        <PencilIcon />
+        <Pencil size={14} />
       </button>
       <button
         type="button"
@@ -657,7 +668,7 @@ function ProjectRow({
         onClick={onAddSession}
         className="hidden h-6 w-6 items-center justify-center rounded hover:bg-[var(--accent)] group-hover:flex"
       >
-        <PlusIcon />
+        <Plus size={14} />
       </button>
       <button
         type="button"
@@ -665,7 +676,7 @@ function ProjectRow({
         onClick={onDeleteProject}
         className="hidden h-6 w-6 items-center justify-center rounded hover:bg-[var(--accent)] group-hover:flex"
       >
-        <TrashIcon />
+        <Trash2 size={14} />
       </button>
     </div>
   );
@@ -769,7 +780,13 @@ function SessionRow({
       }`}
     >
       {/* 运行中：转圈指示（ZCode 状态槽同款，size-4） */}
-      {running && <SessionLoaderIcon />}
+      {running && (
+        <LoaderCircle
+          size={16}
+          aria-hidden
+          className="shrink-0 animate-spin text-[var(--muted-foreground)]"
+        />
+      )}
       {/* 标题溢出右侧渐隐 mask（ZCode 同款 1.5rem），比硬截断柔和 */}
       <button
         type="button"
@@ -791,7 +808,7 @@ function SessionRow({
         }}
         className="hidden h-6 w-6 items-center justify-center rounded hover:bg-[var(--accent)] group-hover:flex"
       >
-        <PencilIcon />
+        <Pencil size={14} />
       </button>
       <button
         type="button"
@@ -799,7 +816,7 @@ function SessionRow({
         onClick={onDelete}
         className="hidden h-6 w-6 items-center justify-center rounded hover:bg-[var(--accent)] group-hover:flex"
       >
-        <TrashIcon />
+        <Trash2 size={14} />
       </button>
     </div>
   );
@@ -822,195 +839,8 @@ function SidebarToggle({ open, onToggle }: { open: boolean; onToggle: () => void
           : "text-[var(--muted-foreground)] hover:bg-[var(--accent)]"
       }`}
     >
-      <PanelRightIcon />
+      <PanelRight size={14} />
     </button>
-  );
-}
-
-/** 面板图标（lucide panel-right 造型）。 */
-function PanelRightIcon() {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <rect x="3" y="3" width="18" height="18" rx="2" />
-      <path d="M15 3v18" />
-    </svg>
-  );
-}
-
-/** 文件夹图标（lucide folder 造型，卡头/项目行前缀，16px；项目行淡色）。 */
-function FolderIcon() {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-      className="shrink-0"
-    >
-      <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
-    </svg>
-  );
-}
-
-/** 侧栏运行指示（lucide loader-circle 造型，会话行运行中转圈，16px 状态槽）。 */
-function SessionLoaderIcon() {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-      className="shrink-0 animate-spin text-[var(--muted-foreground)]"
-    >
-      <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-    </svg>
-  );
-}
-
-/** 铅笔图标（lucide pencil 造型，重命名操作钮，14px）。 */
-function PencilIcon() {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z" />
-      <path d="m15 5 4 4" />
-    </svg>
-  );
-}
-
-/** 垃圾桶图标（lucide trash-2 造型，删除操作钮，14px）。 */
-function TrashIcon() {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <path d="M3 6h18" />
-      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
-      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-      <path d="M10 11v6" />
-      <path d="M14 11v6" />
-    </svg>
-  );
-}
-
-/** 加号图标（lucide plus 造型，项目行「新建会话」操作钮，14px）。 */
-function PlusIcon() {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <path d="M5 12h14" />
-      <path d="M12 5v14" />
-    </svg>
-  );
-}
-
-/** 加号文件夹图标（lucide folder-plus 造型，新建项目虚线区）。 */
-function FolderPlusIcon() {
-  return (
-    <svg
-      width="20"
-      height="20"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <path d="M12 10.5v6" />
-      <path d="M9 13.5h6" />
-      <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
-    </svg>
-  );
-}
-
-/** 圈加号图标（lucide circle-plus 造型，「新建会话」行前缀）。 */
-function CirclePlusIcon() {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-      className="shrink-0"
-    >
-      <circle cx="12" cy="12" r="10" />
-      <path d="M8 12h8" />
-      <path d="M12 8v8" />
-    </svg>
-  );
-}
-
-/** 齿轮图标（lucide settings 造型，「设置」行前缀）。 */
-function SettingsIcon() {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-      className="shrink-0"
-    >
-      <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
-      <circle cx="12" cy="12" r="3" />
-    </svg>
   );
 }
 

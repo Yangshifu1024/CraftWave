@@ -19,6 +19,24 @@ import {
   useAui,
   useAuiState,
 } from "@assistant-ui/react";
+import {
+  ArrowDown,
+  ArrowUp,
+  Check,
+  ChevronDown,
+  CircleAlert,
+  File,
+  Folder,
+  Hand,
+  Lightbulb,
+  LoaderCircle,
+  Plus,
+  Shield,
+  ShieldAlert,
+  ShieldCheck,
+  Square,
+  Wrench,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
 import { useComposerKeys } from "@/chat/composer-keys";
@@ -61,7 +79,11 @@ export function ChatThread() {
                 data-testid="thread-spinner"
                 className="flex items-center gap-2 px-1 py-1 text-ui-sm text-[var(--muted-foreground)]"
               >
-                <LoaderIcon />
+                <LoaderCircle
+                  size={12}
+                  aria-hidden
+                  className="inline-block shrink-0 animate-spin"
+                />
                 处理中…
               </div>
             </AuiIf>
@@ -74,7 +96,7 @@ export function ChatThread() {
             {/* 回底按钮（FR-13-15）：已在底部时原语输出 disabled，用
                 disabled:hidden 隐藏；挂 composer 容器上方自适应其高度 */}
             <ThreadPrimitive.ScrollToBottom className="cw-pop-in absolute bottom-full left-1/2 z-20 mb-2 flex size-8 -translate-x-1/2 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--card)] text-[var(--muted-foreground)] shadow hover:text-[var(--foreground)] disabled:hidden">
-              <ArrowDownIcon />
+              <ArrowDown size={14} aria-hidden className="shrink-0" />
             </ThreadPrimitive.ScrollToBottom>
             <ComposerBar />
             <ComposerGhost />
@@ -83,6 +105,20 @@ export function ChatThread() {
       </ThreadPrimitive.Root>
     </div>
   );
+}
+
+/** 权限档菜单图标（18px，档位映射同 ZCode：plan 灯泡 / confirmEach 手 /
+ *  autoEdit 盾对勾 / fullAccess 盾警叹）。 */
+function TierMenuIcon({ tier }: { tier: PermissionTier }) {
+  const Icon =
+    tier === "plan"
+      ? Lightbulb
+      : tier === "confirmEach"
+        ? Hand
+        : tier === "autoEdit"
+          ? ShieldCheck
+          : ShieldAlert;
+  return <Icon size={18} aria-hidden className="mt-0.5 shrink-0 text-[var(--muted-foreground)]" />;
 }
 
 /** 时段问候（B1 空状态，六档边界 5/9/12/14/18/23 与 ZCode 同口径）。 */
@@ -158,7 +194,11 @@ function ComposerBar() {
                 onClick={pickActive}
                 onMouseEnter={() => hoverIndex(index)}
               >
-                {hit.kind === "dir" ? <FolderIconSmall /> : <FileIconSmall />}
+                {hit.kind === "dir" ? (
+                  <Folder size={12} aria-hidden className="shrink-0" />
+                ) : (
+                  <File size={12} aria-hidden className="shrink-0" />
+                )}
                 <span className="truncate">{hit.path}</span>
               </button>
             </li>
@@ -207,7 +247,7 @@ function ComposerBar() {
             title="附件功能随 M2 提供"
             className="flex size-7 shrink-0 items-center justify-center rounded-lg text-[var(--muted-foreground)] hover:bg-[var(--accent)] disabled:opacity-40"
           >
-            <PlusIcon />
+            <Plus size={16} aria-hidden className="shrink-0" />
           </button>
           <TierMenu />
           <div className="ml-auto flex items-center gap-1.5">
@@ -218,7 +258,7 @@ function ComposerBar() {
               aria-label="发送"
               className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90"
             >
-              <ArrowUpIcon />
+              <ArrowUp size={16} aria-hidden className="shrink-0" />
             </ComposerPrimitive.Send>
             <AuiIf condition={(s) => s.thread.isRunning}>
               <ComposerPrimitive.Cancel
@@ -226,7 +266,7 @@ function ComposerBar() {
                 title="停止（Esc）"
                 className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-[var(--muted)] text-[var(--foreground)] hover:opacity-90"
               >
-                <SquareIcon />
+                <Square size={14} aria-hidden fill="currentColor" className="shrink-0" />
               </ComposerPrimitive.Cancel>
             </AuiIf>
           </div>
@@ -282,7 +322,11 @@ function TierMenu() {
                   </span>
                 </span>
                 {t === tier && (
-                  <CheckIcon className="absolute top-1/2 right-2 -translate-y-1/2 text-[var(--muted-foreground)]" />
+                  <Check
+                    size={16}
+                    aria-hidden
+                    className="absolute top-1/2 right-2 -translate-y-1/2 text-[var(--muted-foreground)]"
+                  />
                 )}
               </button>
             </li>
@@ -302,9 +346,9 @@ function TierMenu() {
         }`}
         title="权限档（本次会话有效，Shift+Tab 循环切换）"
       >
-        <ShieldIcon />
+        <Shield size={16} aria-hidden className="inline-block shrink-0 align-[-1px]" />
         {TIER_LABELS[tier]}
-        <ChevronDownIcon />
+        <ChevronDown size={14} aria-hidden className="shrink-0 opacity-60" />
       </button>
     </div>
   );
@@ -373,7 +417,11 @@ function ModelPicker() {
             >
               跟随默认
               {selected === undefined && (
-                <CheckIcon className="absolute top-1/2 right-2 -translate-y-1/2 text-[var(--muted-foreground)]" />
+                <Check
+                  size={16}
+                  aria-hidden
+                  className="absolute top-1/2 right-2 -translate-y-1/2 text-[var(--muted-foreground)]"
+                />
               )}
             </button>
           </li>
@@ -396,7 +444,11 @@ function ModelPicker() {
                     >
                       <span className="min-w-0 truncate">{model.name}</span>
                       {model.id === selected && (
-                        <CheckIcon className="absolute top-1/2 right-2 -translate-y-1/2 text-[var(--muted-foreground)]" />
+                        <Check
+                          size={16}
+                          aria-hidden
+                          className="absolute top-1/2 right-2 -translate-y-1/2 text-[var(--muted-foreground)]"
+                        />
                       )}
                     </button>
                   </li>
@@ -416,7 +468,7 @@ function ModelPicker() {
         title="选择本会话使用的模型"
       >
         <span className="truncate">{currentName}</span>
-        <ChevronDownIcon />
+        <ChevronDown size={14} aria-hidden className="shrink-0 opacity-60" />
       </button>
     </div>
   );
@@ -517,7 +569,7 @@ function AssistantMessage() {
           onClick={toggle}
           className="flex items-center gap-2 rounded px-1 py-0.5 text-ui-sm text-[var(--muted-foreground)] hover:bg-[var(--accent)]/60"
         >
-          <WrenchIcon />
+          <Wrench size={12} aria-hidden className="shrink-0" />
           <span>
             {summary?.toolCount ?? toolCount} 次工具调用
             {durationMs !== undefined ? ` · ${formatDuration(durationMs)}` : ""}
@@ -549,7 +601,11 @@ function AssistantMessage() {
               return (
                 <details className="text-ui-sm text-[var(--muted-foreground)]">
                   <summary className="flex w-fit cursor-default select-none items-center gap-2 rounded px-1 py-0.5 hover:bg-[var(--accent)]/60">
-                    <LightbulbIcon />
+                    <Lightbulb
+                      size={12}
+                      aria-hidden
+                      className="inline-block shrink-0 align-[-1px]"
+                    />
                     <span>思考过程</span>
                     <span aria-hidden className="text-[var(--cw-dim)]">
                       ▸
@@ -566,7 +622,11 @@ function AssistantMessage() {
         </MessagePrimitive.Parts>
         <MessagePrimitive.Error>
           <ErrorPrimitive.Root className="mt-1 flex w-full items-start gap-2 rounded-lg border border-[var(--destructive)]/30 bg-[var(--destructive)]/5 px-3 py-2.5">
-            <AlertIcon />
+            <CircleAlert
+              size={14}
+              aria-hidden
+              className="mt-0.5 shrink-0 text-[var(--destructive)]"
+            />
             <div className="min-w-0 text-ui-sm">
               <div className="font-medium text-[var(--destructive)]">运行出错</div>
               <ErrorPrimitive.Message className="mt-0.5 break-words text-[var(--muted-foreground)]" />
@@ -576,329 +636,6 @@ function AssistantMessage() {
       </div>
       <BranchBar editOnly={false} />
     </MessagePrimitive.Root>
-  );
-}
-
-/** 告警图标（lucide circle-alert 造型，错误块前缀）。 */
-function AlertIcon() {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-      className="mt-0.5 shrink-0 text-[var(--destructive)]"
-    >
-      <circle cx="12" cy="12" r="10" />
-      <path d="M12 8v4" />
-      <path d="M12 16h.01" />
-    </svg>
-  );
-}
-
-/** 盾牌图标（lucide shield 造型，权限档指示前缀，16px 与 ZCode size-4 同档）。 */
-function ShieldIcon() {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-      className="inline-block shrink-0 align-[-1px]"
-    >
-      <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" />
-    </svg>
-  );
-}
-
-/** 灯泡图标（lucide lightbulb 造型，思考过程/思考中前缀）。 */
-function LightbulbIcon() {
-  return (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-      className="inline-block shrink-0 align-[-1px]"
-    >
-      <path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5" />
-      <path d="M9 18h6" />
-      <path d="M10 22h4" />
-    </svg>
-  );
-}
-
-/** 扳手图标（lucide wrench 造型，run 摘要行前缀）。 */
-function WrenchIcon() {
-  return (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-      className="shrink-0"
-    >
-      <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
-    </svg>
-  );
-}
-
-/** 菜单档位图标的通用外壳（18px 单色描边，装饰性 aria-hidden）。 */
-function TierGlyph({ children }: { children: React.ReactNode }) {
-  return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-      className="mt-0.5 shrink-0 text-[var(--muted-foreground)]"
-    >
-      {children}
-    </svg>
-  );
-}
-
-/** 权限档菜单图标（18px，按档位映射：plan 灯泡 / confirmEach 手 /
- *  autoEdit 盾对勾 / fullAccess 盾警叹——ZCode 模式图标同款语义）。 */
-function TierMenuIcon({ tier }: { tier: PermissionTier }) {
-  if (tier === "plan") {
-    return (
-      <TierGlyph>
-        <path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5" />
-        <path d="M9 18h6" />
-        <path d="M10 22h4" />
-      </TierGlyph>
-    );
-  }
-  if (tier === "confirmEach") {
-    return (
-      <TierGlyph>
-        <path d="M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2" />
-        <path d="M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2" />
-        <path d="M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8" />
-        <path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15" />
-      </TierGlyph>
-    );
-  }
-  if (tier === "autoEdit") {
-    return (
-      <TierGlyph>
-        <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" />
-        <path d="m9 12 2 2 4-4" />
-      </TierGlyph>
-    );
-  }
-  return (
-    <TierGlyph>
-      <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" />
-      <path d="M12 8v4" />
-      <path d="M12 16h.01" />
-    </TierGlyph>
-  );
-}
-
-/** 对勾图标（lucide check 造型，菜单行尾选中标记，16px）。 */
-function CheckIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-      className={className}
-    >
-      <path d="M20 6 9 17l-5-5" />
-    </svg>
-  );
-}
-
-/** 下降箭头图标（lucide arrow-down 造型，回底按钮）。 */
-function ArrowDownIcon() {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-      className="shrink-0"
-    >
-      <path d="M12 5v14" />
-      <path d="m19 12-7 7-7-7" />
-    </svg>
-  );
-}
-
-/** 上升箭头图标（lucide arrow-up 造型，发送钮，16px 与 ZCode size-4 同档）。 */
-function ArrowUpIcon() {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-      className="inline-block shrink-0 align-[-2px]"
-    >
-      <path d="m5 12 7-7 7 7" />
-      <path d="M12 19V5" />
-    </svg>
-  );
-}
-
-/** 加号图标（lucide plus 造型，附件占位钮，16px）。 */
-function PlusIcon() {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-      className="shrink-0"
-    >
-      <path d="M5 12h14" />
-      <path d="M12 5v14" />
-    </svg>
-  );
-}
-
-/** 方块图标（lucide square 实心造型，停止钮；ZCode 同款 fill-current）。 */
-function SquareIcon() {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="currentColor"
-      aria-hidden
-      className="shrink-0"
-    >
-      <rect x="6" y="6" width="12" height="12" rx="2" />
-    </svg>
-  );
-}
-
-/** 下拉箭头图标（lucide chevron-down 造型，权限档/模型触发器尾部，14px）。 */
-function ChevronDownIcon() {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-      className="shrink-0 opacity-60"
-    >
-      <path d="m6 9 6 6 6-6" />
-    </svg>
-  );
-}
-
-/** 加载圈图标（lucide loader-circle 造型，处理中旋转指示）。 */
-function LoaderIcon() {
-  return (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-      className="inline-block shrink-0 animate-spin"
-    >
-      <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-    </svg>
-  );
-}
-
-/** 小号文件夹图标（lucide folder 造型，@ 菜单目录行前缀）。 */
-function FolderIconSmall() {
-  return (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-      className="shrink-0"
-    >
-      <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
-    </svg>
-  );
-}
-
-/** 小号文件图标（lucide file 造型，@ 菜单文件行前缀）。 */
-function FileIconSmall() {
-  return (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-      className="shrink-0"
-    >
-      <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
-      <path d="M14 2v4a2 2 0 0 0 2 2h4" />
-    </svg>
   );
 }
 
@@ -962,7 +699,8 @@ function ComposerStatusBar() {
     >
       {thinkingSince !== null && (
         <span data-testid="metric-thinking" className="text-[var(--muted-foreground)]">
-          <LightbulbIcon /> 思考中 {thinkingSeconds}s
+          <Lightbulb size={12} aria-hidden className="inline-block shrink-0 align-[-1px]" /> 思考中{" "}
+          {thinkingSeconds}s
         </span>
       )}
       <span data-testid="metric-rate">{rate === null ? "—" : `${rate.toFixed(0)} tok/s`}</span>

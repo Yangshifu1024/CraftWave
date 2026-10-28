@@ -3,28 +3,9 @@
  * 手写实现（不依赖 radix 组件库）：遮罩点击与 Esc 都触发 onClose，
  * 不拦截按钮区冒泡。模态（modal）指打开时挡住背后页面、同一时刻只操作弹框。
  */
+import { X } from "lucide-react";
 import { type ReactNode, useEffect } from "react";
 import { Button } from "./button";
-
-/** 关闭图标（lucide x 造型，弹框右上角关闭钮）。 */
-function XIcon() {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <path d="M18 6 6 18" />
-      <path d="m6 6 12 12" />
-    </svg>
-  );
-}
 
 /** 底部动作区的一个按钮描述：label 文案；variant 按钮变体（默认 outline）；
  *  disabled 禁用态；onClick 点击回调。 */
@@ -88,7 +69,7 @@ export function Dialog({ open, title, onClose, children, actions, width = 440 }:
             onClick={onClose}
             className="flex size-6 items-center justify-center rounded text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
           >
-            <XIcon />
+            <X size={14} aria-hidden />
           </button>
         </div>
         <div className="text-ui-base leading-relaxed text-[var(--muted-foreground)]">

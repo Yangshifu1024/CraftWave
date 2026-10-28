@@ -7,6 +7,7 @@
  * 后端默认无限等待，autoConfirm 300s 由 Rust 侧兜底（前端无需计时）。
  */
 
+import { CircleAlert } from "lucide-react";
 import { useState } from "react";
 import { useSessionScope } from "@/chat/session-scope";
 import { resolveAsk } from "@/ipc/client";
@@ -117,7 +118,7 @@ function ApprovalForm({
       )}
       {payload.fenceReason && (
         <p className="flex items-center gap-1.5 text-ui-sm text-[var(--warning)]">
-          <AlertIcon />
+          <CircleAlert size={12} aria-hidden className="shrink-0" />
           {payload.fenceReason}
         </p>
       )}
@@ -179,27 +180,5 @@ function DiffView({
         ))}
       </div>
     </div>
-  );
-}
-
-/** 告警图标（lucide circle-alert 造型，围栏原因提示前缀；与 Thread/ToolCards 同款）。 */
-function AlertIcon() {
-  return (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-      className="shrink-0"
-    >
-      <circle cx="12" cy="12" r="10" />
-      <path d="M12 8v4" />
-      <path d="M12 16h.01" />
-    </svg>
   );
 }

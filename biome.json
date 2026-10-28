@@ -9,6 +9,7 @@
     "includes": [
       "**",
       "!**/*.md",
+      "!**/pnpm-lock.yaml",
       "!src-tauri/gen",
       "!ui/dist",
       "!src-tauri/icons/android",
