@@ -38,8 +38,6 @@ use rig::run::spec::RunSpec;
 use tokio_util::sync::CancellationToken;
 
 const TOOL_READ: &str = "read";
-// 仅被进程树收割 e2e（unix cfg 段）消费；Windows 下无消费者，放行死代码检查
-#[cfg_attr(not(unix), allow(dead_code))]
 const TOOL_COMMAND: &str = "command";
 const FULL_CHAIN_BUDGET: Duration = Duration::from_millis(1000);
 
@@ -359,14 +357,13 @@ async fn e2e_cancel_midstream_run_ended_last_frame_latency() {
 // —— 3. 工具批取消收齐语义 ——
 
 /// 双工具执行器：read 立即完成；command spawn 真实进程树、select token 收割。
-/// sh 脚本 + Unix 进程组收割为平台专属，整段仅 Unix 编译（Windows 的
-/// Job Object 语义由主 crate 编译面覆盖，进程树收割 e2e 见 S5 票）。
-#[cfg(unix)]
+/// 进程树与收割按平台分派：Unix `sh` + 进程组（SIGTERM→宽限→SIGKILL）、
+/// Windows PowerShell + Job Object（TerminateJobObject 整树）——同一 e2e
+/// 在三平台 CI 各自真实执行取消传播（19 号票：Windows 不再跳过）。
 struct ReadThenCommandExecutor {
-    spawned: tokio::sync::mpsc::UnboundedSender<i32>,
+    spawned: tokio::sync::mpsc::UnboundedSender<u64>,
 }
 
-#[cfg(unix)]
 impl CancellableExecutor for ReadThenCommandExecutor {
     fn execute<'a>(
         &'a self,
@@ -385,42 +382,34 @@ impl CancellableExecutor for ReadThenCommandExecutor {
                 }
             }),
             TOOL_COMMAND => Box::pin(async move {
-                let mut cmd = tokio::process::Command::new("sh");
-                cmd.arg("-c")
-                    .arg("sleep 900 & echo CHILD_PID=$!; wait")
-                    .stdin(std::process::Stdio::null())
-                    .stdout(std::process::Stdio::piped());
-                craftwave_lib::tools::process::enable_process_group(&mut cmd);
-                let mut child = cmd.spawn().expect("spawn 进程树");
-                let stdout = child.stdout.take().expect("piped");
-                let mut lines = tokio::io::BufReader::new(stdout);
-                use tokio::io::AsyncBufReadExt;
-                let mut line = String::new();
-                lines.read_line(&mut line).await.expect("读孙 pid");
-                let grandchild: i32 = line
-                    .trim()
-                    .strip_prefix("CHILD_PID=")
-                    .unwrap_or("")
-                    .parse()
-                    .unwrap_or(0);
-                let _ = self.spawned.send(grandchild);
+                let mut tree = spawn_command_tree().await;
+                let _ = self.spawned.send(tree.grandchild_pid as u64);
                 let _ = call_id;
                 let outcome = tokio::select! {
                     biased;
                     _ = token.cancelled() => None,
-                    status = child.wait() => Some(status.expect("wait")),
+                    status = tree.child.wait() => Some(status.expect("wait")),
                 };
                 match outcome {
                     None => {
+                        #[cfg(unix)]
                         let status = craftwave_lib::tools::process::reap_process_group(
-                            &mut child,
+                            &mut tree.child,
                             craftwave_lib::tools::process::REAP_GRACE,
                         )
                         .await
                         .expect("进程组收割");
+                        #[cfg(windows)]
+                        let status = tree
+                            .job
+                            .reap(&mut tree.child, craftwave_lib::tools::process::REAP_GRACE)
+                            .await
+                            .expect("Job Object 收割");
                         ToolExecution::Cancelled {
                             executed: true,
-                            message: format!("进程组已收割（sh 退出 {status:?}，孙进程随组终止）"),
+                            message: format!(
+                                "进程树已收割（shell 退出 {status:?}，孙进程随组/随 Job 终止）"
+                            ),
                         }
                     }
                     Some(status) => ToolExecution::Completed {
@@ -436,8 +425,82 @@ impl CancellableExecutor for ReadThenCommandExecutor {
     }
 }
 
+/// 真实进程树载体：直接子进程（shell）+ 已知 pid 的孙进程（sleep 载体）。
+/// 孙 pid 经 stdout 广播给测试侧，收割后据此断言「整树消亡」。
 #[cfg(unix)]
+struct CommandTree {
+    child: tokio::process::Child,
+    grandchild_pid: i32,
+}
+
+/// Unix 真实进程树：sh 在独立进程组里 fork 一个孙 sleep。
+/// `sh -c 'sleep 900 & echo CHILD_PID=$!; wait'` —— echo 的 $! 即孙 pid。
 #[cfg(unix)]
+async fn spawn_command_tree() -> CommandTree {
+    let mut cmd = tokio::process::Command::new("sh");
+    cmd.arg("-c")
+        .arg("sleep 900 & echo CHILD_PID=$!; wait")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped());
+    craftwave_lib::tools::process::enable_process_group(&mut cmd);
+    let mut child = cmd.spawn().expect("spawn 进程树");
+    let stdout = child.stdout.take().expect("piped");
+    let mut lines = tokio::io::BufReader::new(stdout);
+    use tokio::io::AsyncBufReadExt;
+    let mut line = String::new();
+    lines.read_line(&mut line).await.expect("读孙 pid");
+    let grandchild: i32 = line
+        .trim()
+        .strip_prefix("CHILD_PID=")
+        .unwrap_or("")
+        .parse()
+        .unwrap_or(0);
+    CommandTree {
+        child,
+        grandchild_pid: grandchild,
+    }
+}
+
+/// Windows 真实进程树：PowerShell 起一个孙 ping 并等待它，孙 pid 经
+/// stdout 广播。spawn 后立即 assign 进 Job（后代自动入组），取消时
+/// TerminateJobObject 整树收割（spawn→assign 逃逸窗口此处为测试语义，
+/// 生产路径同款时序，见 tools/command.rs）。
+#[cfg(windows)]
+struct CommandTree {
+    child: tokio::process::Child,
+    job: craftwave_lib::tools::process::JobGuard,
+    grandchild_pid: u32,
+}
+
+#[cfg(windows)]
+async fn spawn_command_tree() -> CommandTree {
+    let mut cmd = tokio::process::Command::new("powershell");
+    cmd.args([
+        "-NoProfile",
+        "-Command",
+        "$p = Start-Process -FilePath ping -ArgumentList @('-n','900','127.0.0.1') -PassThru -WindowStyle Hidden; Write-Output $p.Id; Wait-Process -Id $p.Id",
+    ])
+    .stdin(std::process::Stdio::null())
+    .stdout(std::process::Stdio::piped());
+    let mut child = cmd.spawn().expect("spawn 进程树");
+    let job = craftwave_lib::tools::process::JobGuard::new().expect("创建 Job Object");
+    job.assign(&child).expect("指派进 Job");
+    let stdout = child.stdout.take().expect("piped");
+    let mut lines = tokio::io::BufReader::new(stdout);
+    use tokio::io::AsyncBufReadExt;
+    let mut line = String::new();
+    lines.read_line(&mut line).await.expect("读孙 pid");
+    let grandchild: u32 = line
+        .trim()
+        .parse()
+        .unwrap_or_else(|_| panic!("孙 pid 数字，实际行：{line}"));
+    CommandTree {
+        child,
+        job,
+        grandchild_pid: grandchild,
+    }
+}
+
 #[tokio::test]
 async fn e2e_tool_batch_cancel_keep_completed_mark_rest() {
     let mock = MockOpenAI::start_with_turn1(vec![
@@ -456,7 +519,7 @@ async fn e2e_tool_batch_cancel_keep_completed_mark_rest() {
     );
     let sink = SharedSink::default();
     let token = CancellationToken::new();
-    let (spawned_tx, mut spawned_rx) = tokio::sync::mpsc::unbounded_channel::<i32>();
+    let (spawned_tx, mut spawned_rx) = tokio::sync::mpsc::unbounded_channel::<u64>();
 
     let sink_for_run = sink.clone();
     let token_for_run = token.clone();
@@ -537,10 +600,16 @@ async fn e2e_tool_batch_cancel_keep_completed_mark_rest() {
         "全链 <1s"
     );
 
-    // 整树收割：孙进程消亡
-    craftwave_lib::tools::process::pid_alive(grandchild);
+    // 整树收割：孙进程消亡（Unix kill(pid,0) / Windows OpenProcess 探测）
     let deadline = Instant::now() + Duration::from_secs(2);
-    while craftwave_lib::tools::process::pid_alive(grandchild) {
+    loop {
+        #[cfg(unix)]
+        let alive = craftwave_lib::tools::process::pid_alive(grandchild as i32);
+        #[cfg(windows)]
+        let alive = craftwave_lib::tools::process::pid_alive(grandchild as u32);
+        if !alive {
+            break;
+        }
         assert!(Instant::now() < deadline, "孙进程 {grandchild} 2s 内未消亡");
         tokio::time::sleep(Duration::from_millis(10)).await;
     }

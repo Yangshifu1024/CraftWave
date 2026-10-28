@@ -151,6 +151,26 @@ mod win_job {
         }
     }
 
+    /// 进程是否存活：`OpenProcess(PROCESS_SYNCHRONIZE)` + 0ms 探测等待——
+    /// 打不开句柄 = 已退出（或受保护进程，本仓场景不涉及）；拿到句柄且
+    /// 0ms 等待返回 WAIT_TIMEOUT（未 signaled）= 进程仍在运行。与 Unix
+    /// `kill(pid, 0)` 语义对齐（e2e 整树收割断言用）。
+    pub fn pid_alive(pid: u32) -> bool {
+        use windows_sys::Win32::Foundation::{CloseHandle, WAIT_TIMEOUT};
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject,
+        };
+        unsafe {
+            let handle = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid);
+            if handle.is_null() {
+                return false;
+            }
+            let wait = WaitForSingleObject(handle, 0);
+            CloseHandle(handle);
+            wait == WAIT_TIMEOUT
+        }
+    }
+
     // 句柄释放兜底：即便收割路径没走完，句柄关闭也会触发整树终止。
     impl Drop for JobGuard {
         fn drop(&mut self) {
@@ -162,7 +182,7 @@ mod win_job {
 }
 
 #[cfg(windows)]
-pub use win_job::JobGuard;
+pub use win_job::{JobGuard, pid_alive};
 
 #[cfg(all(test, unix))]
 #[path = "process_test.rs"]
