@@ -60,6 +60,8 @@ fn absolute_outside_root_is_rejected() {
 
 // 断言：经 root 内 symlink 指向外部目录的路径逃逸被拒绝
 // （canonicalize 解析真实位置后做前缀检查）。
+// 符号链接创建用 std::os::unix API（Windows 无对应权限模型），仅 Unix 跑。
+#[cfg(unix)]
 #[test]
 fn symlink_escape_is_rejected() {
     let (dir, guard) = setup();

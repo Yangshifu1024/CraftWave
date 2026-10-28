@@ -28,7 +28,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
       - run: pnpm typecheck
-      - run: pnpm test
+      # vitest 不在此跑：契约测试依赖 cargo test 产出的 manifest/fixture
+      # （§12.3 CI 顺序 = cargo test → vitest，缺文件必须红，不静默跳过），
+      # 完整前端测试在 backend 作业 cargo test 之后执行（见下）。
 
   backend:
     name: Rust 检查（${{ matrix.os }}）
@@ -54,3 +56,17 @@ jobs:
           cargo clippy --all-targets -- -D warnings
           cargo test
         working-directory: src-tauri
+      # 契约闭环（§12.3）：cargo test 产出 manifest/fixture 后跑完整前端测试
+      # （含 contract.test 双向扫描）；vitest 纯逻辑无平台差异，仅 ubuntu 跑。
+      - if: runner.os == 'Linux'
+        uses: pnpm/action-setup@v4
+      - if: runner.os == 'Linux'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - if: runner.os == 'Linux'
+        name: 前端测试（契约产物已生成）
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm test

@@ -21,7 +21,9 @@ use tokio::io::AsyncReadExt;
 use tokio_util::sync::CancellationToken;
 
 use crate::safety::tier::Capability;
-use crate::tools::process::{REAP_GRACE, enable_process_group};
+use crate::tools::process::REAP_GRACE;
+#[cfg(unix)]
+use crate::tools::process::enable_process_group;
 use crate::util::errors::ToolError;
 
 use super::{ToolAnnotations, ToolOutcome, ToolSpec, ToolsContext};

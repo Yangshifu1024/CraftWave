@@ -72,6 +72,12 @@ mod win_job {
         handle: windows_sys::Win32::Foundation::HANDLE,
     }
 
+    // 安全性说明：HANDLE 是内核对象句柄，本就允许跨线程使用（windows-sys
+    // 把它暴露为裸指针只是类型面限制）；句柄由 JobGuard 独占持有并在 Drop
+    // 时关闭一次。跨 await 持有（tokio 任务要求 Send/Sync）因此是安全的。
+    unsafe impl Send for JobGuard {}
+    unsafe impl Sync for JobGuard {}
+
     // JobGuard 的创建、指派与收割方法。
     impl JobGuard {
         /// 创建 Job Object 并设置 KILL_ON_JOB_CLOSE（句柄关闭即整树终止的兜底）。
