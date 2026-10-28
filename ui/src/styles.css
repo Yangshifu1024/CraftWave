@@ -116,7 +116,9 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .cw-pop-in,
   .cw-progress,
-  .cw-rise {
+  .cw-rise,
+  .settings-dialog,
+  .settings-dialog-mask {
     animation: none;
   }
 }
@@ -580,6 +582,13 @@ body {
   justify-content: center;
   padding: 24px;
   background: rgb(0 0 0 / 0.4);
+  animation: cw-fade var(--t-fast) var(--ease-cw);
+}
+
+@keyframes cw-fade {
+  from {
+    opacity: 0;
+  }
 }
 
 .settings-dialog {
@@ -592,6 +601,7 @@ body {
   background: var(--card);
   color: var(--card-foreground);
   box-shadow: 0 10px 40px rgb(0 0 0 / 0.18);
+  animation: cw-pop var(--t-fast) var(--ease-cw);
 }
 
 /* ============================================================

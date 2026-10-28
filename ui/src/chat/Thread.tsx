@@ -137,7 +137,7 @@ function ComposerBar() {
       {atMenu !== null && atMenu.items.length > 0 && (
         <ul
           data-testid="at-menu"
-          className="absolute bottom-full left-0 z-20 mb-1 max-h-56 w-72 overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--card)] p-1 text-secondary shadow"
+          className="cw-pop-in absolute bottom-full left-0 z-20 mb-1 max-h-56 w-72 overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--card)] p-1 text-secondary shadow"
         >
           {atMenu.items.map((hit, index) => (
             <li key={hit.path}>
@@ -237,7 +237,7 @@ function TierMenu() {
       {open && (
         <ul
           data-testid="tier-menu"
-          className="absolute bottom-full left-0 z-20 mb-1 w-40 rounded-lg border border-[var(--border)] bg-[var(--card)] p-1 text-secondary shadow"
+          className="cw-pop-in absolute bottom-full left-0 z-20 mb-1 w-40 rounded-lg border border-[var(--border)] bg-[var(--card)] p-1 text-secondary shadow"
         >
           {TIERS.map((t) => (
             <li key={t}>
@@ -325,7 +325,7 @@ function ModelPicker() {
       {open && (
         <ul
           data-testid="model-menu"
-          className="absolute bottom-full right-0 z-20 mb-1 max-h-64 w-64 overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--card)] p-1 text-secondary shadow"
+          className="cw-pop-in absolute bottom-full right-0 z-20 mb-1 max-h-64 w-64 overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--card)] p-1 text-secondary shadow"
         >
           <li>
             <button
@@ -518,7 +518,7 @@ function AssistantMessage() {
                       ▸
                     </span>
                   </summary>
-                  <p className="my-1 ml-6 whitespace-pre-wrap rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2">
+                  <p className="text-secondary my-1 ml-2 max-h-60 overflow-y-auto border-l border-[var(--border)] pl-3.5 whitespace-pre-wrap text-[var(--muted-foreground)]">
                     {part.text}
                   </p>
                 </details>

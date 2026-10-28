@@ -566,7 +566,9 @@ function ProjectRow({
   return (
     <div className="group flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-body text-[var(--foreground)] hover:bg-[var(--accent)]/60">
       <FolderIcon />
-      <span className="min-w-0 flex-1 truncate">{project.name}</span>
+      <span className="min-w-0 flex-1 overflow-hidden whitespace-nowrap [mask-image:linear-gradient(to_right,black_calc(100%-14px),transparent)]">
+        {project.name}
+      </span>
       <button
         type="button"
         aria-label="项目改名"
@@ -695,8 +697,14 @@ function SessionRow({
           : "text-[var(--foreground)] hover:bg-[var(--accent)]/60"
       }`}
     >
-      {running && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400" />}
-      <button type="button" className="min-w-0 flex-1 truncate text-left" onClick={onOpen}>
+      {/* 运行中：转圈指示（ZCode 同款，替代绿点） */}
+      {running && <SessionLoaderIcon />}
+      {/* 标题溢出右侧渐隐 mask（ZCode 同款），比硬截断柔和 */}
+      <button
+        type="button"
+        className="min-w-0 flex-1 overflow-hidden whitespace-nowrap text-left [mask-image:linear-gradient(to_right,black_calc(100%-14px),transparent)]"
+        onClick={onOpen}
+      >
         {meta.title}
       </button>
       {/* 相对时间（A6）：非活跃时淡显，活跃时与操作按钮共存 */}
@@ -784,6 +792,26 @@ function FolderIcon() {
       className="shrink-0"
     >
       <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+    </svg>
+  );
+}
+
+/** 侧栏运行指示（lucide loader-circle 造型，会话行运行中转圈）。 */
+function SessionLoaderIcon() {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      className="shrink-0 animate-spin text-[var(--muted-foreground)]"
+    >
+      <path d="M21 12a9 9 0 1 1-6.219-8.56" />
     </svg>
   );
 }
