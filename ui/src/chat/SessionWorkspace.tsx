@@ -238,7 +238,10 @@ function SessionTab({
   inspectorOpen: boolean;
 }) {
   const adapter = useMemo(() => sessionAdapter(sessionId), [sessionId]);
-  const runtime = useLocalRuntime(adapter);
+  // unstable_enableMessageQueue（实验性消息队列，FR-01-07 排队面）：运行中
+  // 发送的消息先入 composer 队列展示，当前 run 结束后自动依次发送——
+  // 避开同会话并发 run（后端 E_SESSION_RUNNING）。Steer 立即注入随 §5.5 票。
+  const runtime = useLocalRuntime(adapter, { unstable_enableMessageQueue: true });
   // run 收口摘要（17 号票折叠分组数据面）：历史收养后按 runMarker 推导
   const [summaries, setSummaries] = useState<Map<string, RunSummary>>(() => new Map());
   useEffect(() => {

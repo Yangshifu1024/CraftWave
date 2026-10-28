@@ -14,6 +14,7 @@ import {
   ComposerPrimitive,
   ErrorPrimitive,
   MessagePrimitive,
+  QueueItemPrimitive,
   ThreadPrimitive,
   useAui,
   useAuiState,
@@ -96,6 +97,27 @@ function ComposerBar() {
           ))}
         </ul>
       )}
+      {/* 消息队列条（FR-01-07 排队面）：运行中发送的消息先排队展示，
+          当前 run 结束后自动依次发送；× 可移除未发送项 */}
+      <ComposerPrimitive.Queue>
+        {() => (
+          <div
+            data-testid="queue-item"
+            className="mb-1 flex items-center gap-2 rounded-xl border border-dashed border-[var(--border)] bg-[var(--muted)]/60 px-3 py-1 text-xs text-[var(--muted-foreground)]"
+          >
+            <span className="shrink-0 rounded-full border border-[var(--border)] px-1.5 py-px text-[10px]">
+              排队中
+            </span>
+            <QueueItemPrimitive.Text className="min-w-0 flex-1 truncate" />
+            <QueueItemPrimitive.Remove
+              aria-label="移除排队消息"
+              className="shrink-0 rounded px-1 hover:text-[var(--destructive)]"
+            >
+              ×
+            </QueueItemPrimitive.Remove>
+          </div>
+        )}
+      </ComposerPrimitive.Queue>
       <ComposerPrimitive.Root className="flex items-end gap-2 rounded-2xl border border-[var(--border)] bg-[var(--card)] p-2">
         <ComposerPrimitive.Input
           rows={1}
@@ -107,14 +129,13 @@ function ComposerBar() {
         />
         <ModelPicker />
         <TierBadge />
-        <AuiIf condition={(s) => !s.thread.isRunning}>
-          <ComposerPrimitive.Send
-            aria-label="发送"
-            className="shrink-0 rounded-full bg-[var(--primary)] px-3 py-1.5 text-sm text-[var(--primary-foreground)]"
-          >
-            ↑
-          </ComposerPrimitive.Send>
-        </AuiIf>
+        {/* 发送恒显：运行中点击即入队（队列条展示，run 结束自动续发） */}
+        <ComposerPrimitive.Send
+          aria-label="发送"
+          className="shrink-0 rounded-full bg-[var(--primary)] px-3 py-1.5 text-sm text-[var(--primary-foreground)]"
+        >
+          ↑
+        </ComposerPrimitive.Send>
         <AuiIf condition={(s) => s.thread.isRunning}>
           <ComposerPrimitive.Cancel className="rounded-full border border-[var(--border)] px-3 py-1.5 text-sm">
             停止
