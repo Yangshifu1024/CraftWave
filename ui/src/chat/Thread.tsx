@@ -236,8 +236,17 @@ function ComposerBar() {
   );
 }
 
-/** 权限档下拉（FR-13-02）：盾牌图标 + 当前档名，点开四档清单直接选定
- *  （Shift+Tab 循环仍可用，§10.6 内存态——本次会话有效）。 */
+/** 权限档描述（双行菜单的第二行，对齐 ZCode 模式菜单口径）。 */
+const TIER_DESCRIPTIONS: Record<PermissionTier, string> = {
+  plan: "只读分析并给出计划，不改动文件",
+  confirmEach: "每次文件改动前逐项确认",
+  autoEdit: "自动应用文件编辑，命令仍需确认",
+  fullAccess: "自动执行全部操作，包括命令",
+};
+
+/** 权限档下拉（FR-13-02）：双行菜单（图标 + 档名 + 描述，行尾勾标记当前
+ *  档，ZCode 模式菜单同款）；fullAccess 触发器警示橙。Shift+Tab 循环仍可用，
+ *  §10.6 内存态——本次会话有效。 */
 function TierMenu() {
   const sessionId = useSessionScope();
   const tier = usePermissionTierStore((s) => s.bySession[sessionId] ?? "autoEdit");
@@ -249,24 +258,28 @@ function TierMenu() {
       {open && (
         <ul
           data-testid="tier-menu"
-          className="cw-pop-in absolute bottom-full left-0 z-20 mb-1 w-40 rounded-lg border border-[var(--border)] bg-[var(--card)] p-1 text-secondary shadow"
+          className="cw-pop-in absolute bottom-full left-0 z-20 mb-1 w-64 rounded-lg border border-[var(--border)] bg-[var(--card)] p-1 shadow"
         >
           {TIERS.map((t) => (
             <li key={t}>
               <button
                 type="button"
-                className={`flex w-full items-center gap-2 rounded-md px-2 py-1 text-left ${
-                  t === tier
-                    ? "bg-[var(--accent)] text-[var(--foreground)]"
-                    : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-                }`}
+                className="relative flex min-h-13 w-full items-start gap-3 rounded-md py-2 pr-8 pl-2 text-left hover:bg-[var(--accent)]"
                 onClick={() => {
                   setTier(sessionId, t);
                   setOpen(false);
                 }}
               >
-                <span aria-hidden>{t === tier ? "●" : "○"}</span>
-                {TIER_LABELS[t]}
+                <TierMenuIcon tier={t} />
+                <span className="flex min-w-0 flex-col gap-0.5">
+                  <span className="text-body text-[var(--foreground)]">{TIER_LABELS[t]}</span>
+                  <span className="text-secondary text-[var(--muted-foreground)]">
+                    {TIER_DESCRIPTIONS[t]}
+                  </span>
+                </span>
+                {t === tier && (
+                  <CheckIcon className="absolute top-1/2 right-2 -translate-y-1/2 text-[var(--muted-foreground)]" />
+                )}
               </button>
             </li>
           ))}
@@ -278,7 +291,11 @@ function TierMenu() {
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className="flex h-7 items-center gap-1 rounded-lg px-2 text-secondary text-[var(--muted-foreground)] hover:bg-[var(--accent)]"
+        className={`flex h-7 items-center gap-1 rounded-lg px-2 text-secondary hover:bg-[var(--accent)] ${
+          tier === "fullAccess"
+            ? "text-[var(--warning)] hover:text-[var(--warning)]"
+            : "text-[var(--muted-foreground)]"
+        }`}
         title="权限档（本次会话有效，Shift+Tab 循环切换）"
       >
         <ShieldIcon />
@@ -339,43 +356,44 @@ function ModelPicker() {
       {open && (
         <ul
           data-testid="model-menu"
-          className="cw-pop-in absolute bottom-full right-0 z-20 mb-1 max-h-64 w-64 overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--card)] p-1 text-secondary shadow"
+          className="cw-pop-in absolute right-0 bottom-full z-20 mb-1 max-h-72 w-64 overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--card)] p-1 shadow [mask-image:linear-gradient(to_bottom,black_calc(100%-24px),transparent)]"
         >
           <li>
             <button
               type="button"
-              className={`flex w-full rounded-md px-2 py-1 text-left ${
-                selected === undefined
-                  ? "bg-[var(--accent)] text-[var(--foreground)]"
-                  : "text-[var(--muted-foreground)]"
-              }`}
+              className="relative flex min-h-8 w-full items-center rounded-md pr-8 pl-2 text-left text-body text-[var(--foreground)] hover:bg-[var(--accent)]"
               onClick={() => {
                 setModel(sessionId, undefined);
                 setOpen(false);
               }}
             >
               跟随默认
+              {selected === undefined && (
+                <CheckIcon className="absolute top-1/2 right-2 -translate-y-1/2 text-[var(--muted-foreground)]" />
+              )}
             </button>
           </li>
           {groups.map((group) => (
-            <li key={group.provider} className="mt-1">
-              <div className="px-2 py-0.5 text-meta text-[var(--cw-dim)]">{group.provider}</div>
-              <ul>
+            <li key={group.provider}>
+              <div className="-mx-1 my-1 h-px bg-[var(--border)]" />
+              <div className="px-2 py-1.5 text-secondary font-medium text-[var(--cw-dim)]">
+                {group.provider}
+              </div>
+              <ul className="space-y-0.5">
                 {group.models.map((model) => (
                   <li key={model.id}>
                     <button
                       type="button"
-                      className={`flex w-full rounded-md px-2 py-1 text-left ${
-                        model.id === selected
-                          ? "bg-[var(--accent)] text-[var(--foreground)]"
-                          : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-                      }`}
+                      className="relative flex min-h-8 w-full items-center gap-2 rounded-md pr-8 pl-2 text-left text-body text-[var(--foreground)] hover:bg-[var(--accent)]"
                       onClick={() => {
                         setModel(sessionId, model.id);
                         setOpen(false);
                       }}
                     >
-                      <span className="truncate">{model.name}</span>
+                      <span className="min-w-0 truncate">{model.name}</span>
+                      {model.id === selected && (
+                        <CheckIcon className="absolute top-1/2 right-2 -translate-y-1/2 text-[var(--muted-foreground)]" />
+                      )}
                     </button>
                   </li>
                 ))}
@@ -637,6 +655,85 @@ function WrenchIcon() {
       className="shrink-0"
     >
       <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+    </svg>
+  );
+}
+
+/** 菜单档位图标的通用外壳（18px 单色描边，装饰性 aria-hidden）。 */
+function TierGlyph({ children }: { children: React.ReactNode }) {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      className="mt-0.5 shrink-0 text-[var(--muted-foreground)]"
+    >
+      {children}
+    </svg>
+  );
+}
+
+/** 权限档菜单图标（18px，按档位映射：plan 灯泡 / confirmEach 手 /
+ *  autoEdit 盾对勾 / fullAccess 盾警叹——ZCode 模式图标同款语义）。 */
+function TierMenuIcon({ tier }: { tier: PermissionTier }) {
+  if (tier === "plan") {
+    return (
+      <TierGlyph>
+        <path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5" />
+        <path d="M9 18h6" />
+        <path d="M10 22h4" />
+      </TierGlyph>
+    );
+  }
+  if (tier === "confirmEach") {
+    return (
+      <TierGlyph>
+        <path d="M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2" />
+        <path d="M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2" />
+        <path d="M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8" />
+        <path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15" />
+      </TierGlyph>
+    );
+  }
+  if (tier === "autoEdit") {
+    return (
+      <TierGlyph>
+        <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" />
+        <path d="m9 12 2 2 4-4" />
+      </TierGlyph>
+    );
+  }
+  return (
+    <TierGlyph>
+      <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" />
+      <path d="M12 8v4" />
+      <path d="M12 16h.01" />
+    </TierGlyph>
+  );
+}
+
+/** 对勾图标（lucide check 造型，菜单行尾选中标记，16px）。 */
+function CheckIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      className={className}
+    >
+      <path d="M20 6 9 17l-5-5" />
     </svg>
   );
 }
