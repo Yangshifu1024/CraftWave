@@ -75,10 +75,12 @@ pub fn run(ctx: &ToolsContext, args: &GrepArgs) -> ToolOutcome {
             continue;
         }
         let path = entry.path();
+        // 展示路径统一正斜杠（Windows 下 PathBuf 默认反斜杠；正斜杠两侧
+        // 均接受，跨平台输出一致）
         let display = path
             .strip_prefix(&root_clone)
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_else(|_| path.to_string_lossy().into_owned());
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_else(|_| path.to_string_lossy().replace('\\', "/"));
         let mut sink = grep_searcher::sinks::UTF8(|_line_no, line| {
             if matches.len() >= max {
                 truncated = true;

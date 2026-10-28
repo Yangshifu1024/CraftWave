@@ -43,13 +43,13 @@ async fn simple_command_exit_code_and_output() {
 #[tokio::test]
 async fn stdout_stderr_merged_nonzero_exit() {
     let ws = TestWorkspace::new();
-    let exit = execute(
-        &ws.ctx(),
-        "c2",
-        &args("echo OUT; echo ERR >&2; exit 3"),
-        &CancellationToken::new(),
-    )
-    .await;
+    // 两个 shell 的等价写法（产品命令入口：Unix sh / Windows powershell）
+    let command = if cfg!(windows) {
+        "Write-Output OUT; [Console]::Error.WriteLine('ERR'); exit 3"
+    } else {
+        "echo OUT; echo ERR >&2; exit 3"
+    };
+    let exit = execute(&ws.ctx(), "c2", &args(command), &CancellationToken::new()).await;
     let CommandExit::Done(outcome) = exit else {
         panic!("应 Done")
     };
@@ -121,14 +121,13 @@ async fn cancel_reaps_process_group() {
 #[tokio::test]
 async fn large_output_spilled_tail_and_path() {
     let ws = TestWorkspace::new();
-    // 产出 > 96KB：约 120KB 文本
-    let exit = execute(
-        &ws.ctx(),
-        "c6",
-        &args("yes 0123456789abcdefghijklmnopqrstuvwxyz | head -c 120000"),
-        &CancellationToken::new(),
-    )
-    .await;
+    // 产出 > 96KB：约 120KB 文本（两个 shell 的等价写法）
+    let command = if cfg!(windows) {
+        "Write-Output ('x' * 120000)"
+    } else {
+        "yes 0123456789abcdefghijklmnopqrstuvwxyz | head -c 120000"
+    };
+    let exit = execute(&ws.ctx(), "c6", &args(command), &CancellationToken::new()).await;
     let CommandExit::Done(outcome) = exit else {
         panic!("应 Done")
     };

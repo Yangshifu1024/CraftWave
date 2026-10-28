@@ -169,11 +169,13 @@ fn search_under(
 }
 
 /// 展示路径：项目主目录下返回相对路径（read 工具解析基准），否则绝对路径。
+/// 相对路径分隔符统一正斜杠（Windows 下 PathBuf 默认反斜杠；正斜杠两侧
+/// 工具链均接受，且与前端 @ 补全插入形态一致——16 号票口径的平台补全）。
 fn display_path(path: &Path, project_root: &Path) -> String {
     if let Ok(rel) = path.strip_prefix(project_root)
         && !rel.as_os_str().is_empty()
     {
-        return rel.to_string_lossy().into_owned();
+        return rel.to_string_lossy().replace('\\', "/");
     }
     path.to_string_lossy().into_owned()
 }
