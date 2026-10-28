@@ -1,13 +1,13 @@
 //! 工作区只读域命令（§3.3 #27 `search_workspace_paths` / #28
 //! `read_workspace_file`，16 号票）：@ 引用补全与前端预览读取。
 //!
-//! 路径校验复用 safety::PathGuard（§9.1 safe_join 单一实现，M1 roots =
-//! 项目主目录 + 数据目录）；解码复用 util::encoding（与 read 工具共用，
-//! C-10）；单次响应 ≤512KB（MAX_RESPONSE_BYTES）。
+//! 路径校验复用 safety::PathGuard（§9.1 safe_join 单一实现；C-8 收窄后
+//! roots = 项目主目录 + 数据目录下 `workspace/` 子目录，21 号票）；解码复用
+//! util::encoding（与 read 工具共用，C-10）；单次响应 ≤512KB（MAX_RESPONSE_BYTES）。
 //!
 //! @ 补全的返回路径约定（16 号票钉死）：项目主目录下的条目返回相对路径
-//! （模型 read 工具的解析基准即项目主目录，可直接消费）；数据目录专属
-//! 条目返回绝对路径。
+//! （模型 read 工具的解析基准即项目主目录，可直接消费）；workspace 子目录
+//! 专属条目返回绝对路径（数据目录本体退出可见面，21 号票）。
 
 use std::collections::HashSet;
 use std::fs;
@@ -22,18 +22,26 @@ use crate::safety::safe_join::PathGuard;
 use crate::util::encoding::{MAX_RESPONSE_BYTES, decode_text, is_probably_binary};
 use crate::util::errors::ToolError;
 
-/// 会话 roots 解析（项目会话=项目主目录，临时会话=数据目录；§6.2 钉死）。
-/// 返回 (project_root, data_root)。
+/// 会话 roots 解析（§6.2/§9.1，C-8 复判收窄，21 号票）：
+///
+/// - 项目会话：两根 = 项目主目录 + `<data_root>/workspace/`；
+/// - 临时会话（含未知会话兜底）：两根同目录 = `<data_root>/workspace/`。
+///
+/// 返回 (project_root, data_root)——第二根语义为「数据目录下的 agent
+/// workspace 子目录」，PathGuard 构造（tools guard / read_workspace_file）
+/// 与 @ 补全遍历都以它为 roots：数据目录本体（config.json/sessions/ 等存储
+/// 内部文件）退出模型文件工具与 @ 补全的可见面。目录不在这里落盘创建，
+/// 由使用方 create_dir_all（chat.rs 既有习惯）或按不存在口径报错。
 pub(crate) fn resolve_session_roots(app: &AppState, session_id: &str) -> (PathBuf, PathBuf) {
-    let data_root = app.store.root().to_path_buf();
+    let workspace_root = app.store.root().join("workspace");
     let project_root = app
         .store
         .index()
         .get(session_id)
         .and_then(|meta| meta.project_id)
         .and_then(|pid| app.projects.home_of(&pid))
-        .unwrap_or_else(|| data_root.clone());
-    (project_root, data_root)
+        .unwrap_or_else(|| workspace_root.clone());
+    (project_root, workspace_root)
 }
 
 /// ToolError → D14 错误码（safe_join 语义原样透传）。
@@ -219,8 +227,10 @@ pub(crate) fn read_workspace_file_core(
         _ => None,
     };
     let (project_root, data_root) = resolve_session_roots(app, session_id);
-    // roots 需真实存在（canonicalize）；数据目录必然存在，项目目录按需补建
+    // roots 需真实存在（canonicalize）：项目目录按需补建；workspace 子目录
+    // 首次使用即建（chat.rs 同款习惯，21 号票收窄后的第二根）
     let _ = fs::create_dir_all(&project_root);
+    let _ = fs::create_dir_all(&data_root);
     let guard = PathGuard::new(vec![project_root, data_root]).map_err(to_ipc_error)?;
     let abs = guard.resolve(path).map_err(to_ipc_error)?;
 

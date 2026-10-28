@@ -42,6 +42,9 @@ pub struct ToolsContext {
 // ToolsContext 的构造与路径守卫方法。
 impl ToolsContext {
     /// 构造工具执行上下文（两个根目录应传 canonical 后的绝对路径）。
+    /// `data_root` 语义为「第二根」：生产路径传
+    /// `resolve_session_roots` 收窄后的 `<data>/workspace/` 子目录
+    /// （C-8/21 号票），测试直接传临时目录。
     pub fn new(project_root: PathBuf, data_root: PathBuf) -> Self {
         Self {
             project_root,

@@ -641,15 +641,18 @@ pub async fn start_chat_core(
     let cancel = handle.cancel.clone();
     let executor: Arc<dyn crate::backend::run_loop::CancellableExecutor> = Arc::new(
         ToolsetExecutor::new(
-            // 会话 roots（§6.2/§9.1，16 号票）：项目会话=项目主目录，
-            // 临时会话=数据目录；数据根恒为 AppState.store（与存储/边车同根；
-            // 测试注入临时目录）。
+            // 会话 roots（§6.2/§9.1，16 号票；C-8 收窄 21 号票）：项目会话=
+            // 项目主目录 + 数据目录下 `workspace/` 子目录，临时会话两根同为
+            // workspace 子目录——数据目录本体（config/sessions 等存储内部
+            // 文件）退出模型文件工具可见面；收窄单一落点在
+            // resolve_session_roots，这里只负责两根首次使用即建（canonicalize
+            // 前置）。宿主侧边车（spill/logs）仍挂 AppState.store 根，不经
+            // 本 roots。
             {
-                let data_root = app.store.root().to_path_buf();
-                let _ = std::fs::create_dir_all(&data_root);
-                let project_root =
-                    crate::host::commands::workspace::resolve_session_roots(app, &session_id).0;
+                let (project_root, data_root) =
+                    crate::host::commands::workspace::resolve_session_roots(app, &session_id);
                 let _ = std::fs::create_dir_all(&project_root);
+                let _ = std::fs::create_dir_all(&data_root);
                 crate::tools::ToolsContext::new(project_root, data_root)
             },
             run_config.tier,

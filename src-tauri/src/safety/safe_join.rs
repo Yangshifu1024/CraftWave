@@ -4,7 +4,9 @@
 //! 项目主目录）→ 规范化并解析符号链接 → canonical 前缀 ∈ roots。
 //! `full_access` 档不解除本检查（由调用方纪律保证，本模块无法感知档位）。
 //!
-//! M1 roots = 项目主目录 + 数据目录（§9.1，无 extra_roots）。
+//! roots = 项目主目录 + 数据目录下 `workspace/` 子目录（§9.1，无 extra_roots；
+//! C-8 复判 2026-10-28 收窄，21 号票——数据目录本体退出 agent 可见面，收窄
+//! 单一落点在 host::commands::workspace::resolve_session_roots）。
 
 use std::path::{Component, Path, PathBuf};
 
@@ -14,7 +16,7 @@ use crate::util::errors::ToolError;
 /// 之后 [`PathGuard::resolve`] 可反复调用。
 #[derive(Debug, Clone)]
 pub struct PathGuard {
-    /// canonical 后的 roots（含项目主目录与数据目录）。
+    /// canonical 后的 roots（项目主目录 + workspace 子目录，§9.1 收窄口径）。
     roots: Vec<PathBuf>,
     /// canonical 后的项目主目录（相对路径的解析基准）。
     project_root: PathBuf,
