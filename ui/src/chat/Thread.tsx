@@ -66,7 +66,7 @@ export function ChatThread() {
               </div>
             </AuiIf>
           </div>
-          <ThreadPrimitive.ViewportFooter className="sticky bottom-0 pt-2">
+          <ThreadPrimitive.ViewportFooter className="sticky bottom-0 pt-2 pb-1">
             <div className="mx-auto w-full max-w-4xl">
               <ComposerBar />
               <ComposerGhost />
@@ -164,7 +164,7 @@ function ComposerBar() {
         {() => (
           <div
             data-testid="queue-item"
-            className="mb-1 flex items-center gap-2 rounded-xl border border-dashed border-[var(--border)] bg-[var(--muted)]/60 px-3 py-1 text-secondary text-[var(--muted-foreground)]"
+            className="mb-1 flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--muted)]/60 px-2.5 py-1 text-secondary text-[var(--muted-foreground)]"
           >
             <span className="shrink-0 rounded-full border border-[var(--border)] px-1.5 text-meta leading-4">
               排队中
@@ -179,45 +179,51 @@ function ComposerBar() {
           </div>
         )}
       </ComposerPrimitive.Queue>
-      <ComposerPrimitive.Root className="rounded-2xl border border-[var(--border)] bg-[var(--card)] p-2 shadow-sm">
-        {/* 第一层：输入框（无独立边框，占满卡片宽） */}
+      {/* 输入壳（ZCode 同款结构）：p-3 卡，输入框与工具栏/状态栏纵向 gap-2；
+          hover 边框提亮一档（--input），focus-within 蓝边呼应聚焦令牌 */}
+      <ComposerPrimitive.Root className="flex flex-col gap-2 rounded-2xl border border-[var(--border)] bg-[var(--card)] p-3 shadow-sm transition-colors hover:border-[var(--input)] focus-within:border-[var(--cw-focus)]">
         <ComposerPrimitive.Input
           rows={1}
           placeholder="发一条消息，运行中的消息将自动排队…"
-          className="max-h-32 w-full resize-none bg-transparent px-2 py-1.5 text-body focus:outline-none"
+          className="max-h-40 min-h-6 w-full resize-none bg-transparent py-0.5 text-body leading-5 placeholder:text-[var(--muted-foreground)] focus:outline-none"
           onKeyDown={onKeyDown}
           onKeyUp={(e) => onCursor(e.currentTarget.selectionStart ?? 0)}
           onClick={(e) => onCursor(e.currentTarget.selectionStart ?? 0)}
         />
-        {/* 第二层：工具栏——左（附件占位 + 权限档下拉）右（模型 + 发送/停止） */}
-        <div className="flex items-center gap-1 px-1 pt-1">
+        {/* 工具栏：左簇（附件 + 权限档）右簇（模型 + 发送/停止），簇间纯空隙 */}
+        <div className="flex items-center gap-2">
           <button
             type="button"
             aria-label="附件（M2 提供）"
             disabled
             title="附件功能随 M2 提供"
-            className="shrink-0 rounded px-1.5 py-0.5 text-body text-[var(--cw-dim)]"
+            className="flex size-7 shrink-0 items-center justify-center rounded-lg text-[var(--muted-foreground)] hover:bg-[var(--accent)] disabled:opacity-40"
           >
-            +
+            <PlusIcon />
           </button>
           <TierMenu />
-          <div className="ml-auto flex items-center gap-1">
+          <div className="ml-auto flex items-center gap-1.5">
             <ModelPicker />
-            {/* 发送恒显：运行中点击即入队（队列条展示，run 结束自动续发） */}
+            {/* 发送恒显：运行中点击即入队（队列条展示，run 结束自动续发）——
+                故不与停止同位替换（ZCode 无排队面，两键并列是本应用的差异） */}
             <ComposerPrimitive.Send
               aria-label="发送"
-              className="shrink-0 rounded-lg bg-[var(--primary)] px-2.5 py-1 text-body text-[var(--primary-foreground)]"
+              className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90"
             >
               <ArrowUpIcon />
             </ComposerPrimitive.Send>
             <AuiIf condition={(s) => s.thread.isRunning}>
-              <ComposerPrimitive.Cancel className="rounded-lg border border-[var(--border)] px-2.5 py-1 text-body">
-                停止
+              <ComposerPrimitive.Cancel
+                aria-label="停止"
+                title="停止（Esc）"
+                className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-[var(--muted)] text-[var(--foreground)] hover:opacity-90"
+              >
+                <SquareIcon />
               </ComposerPrimitive.Cancel>
             </AuiIf>
           </div>
         </div>
-        {/* 第三层：状态栏（A5）——思考计时 + 速率/本轮/会话三数 + 工具次数 */}
+        {/* 状态栏（A5）——思考计时 + 速率/本轮/会话三数 + 工具次数（ZCode 无此层，保留） */}
         <ComposerStatusBar />
       </ComposerPrimitive.Root>
     </div>
@@ -266,10 +272,12 @@ function TierMenu() {
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className="rounded px-1.5 py-0.5 text-meta text-[var(--muted-foreground)] hover:bg-[var(--accent)]"
+        className="flex h-7 items-center gap-1 rounded-lg px-2 text-secondary text-[var(--muted-foreground)] hover:bg-[var(--accent)]"
         title="权限档（本次会话有效，Shift+Tab 循环切换）"
       >
-        <ShieldIcon /> {TIER_LABELS[tier]} ∨
+        <ShieldIcon />
+        {TIER_LABELS[tier]}
+        <ChevronDownIcon />
       </button>
     </div>
   );
@@ -376,10 +384,11 @@ function ModelPicker() {
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className="max-w-36 truncate rounded-full border border-[var(--border)] px-2 py-0.5 text-meta text-[var(--muted-foreground)] hover:border-[var(--ring)]"
+        className="flex h-7 max-w-40 min-w-0 items-center gap-1 rounded-lg px-2 text-secondary text-[var(--muted-foreground)] hover:bg-[var(--accent)]"
         title="选择本会话使用的模型"
       >
-        {currentName} ∨
+        <span className="truncate">{currentName}</span>
+        <ChevronDownIcon />
       </button>
     </div>
   );
@@ -564,12 +573,12 @@ function AlertIcon() {
   );
 }
 
-/** 盾牌图标（lucide shield 造型，权限档指示前缀）。 */
+/** 盾牌图标（lucide shield 造型，权限档指示前缀，16px 与 ZCode size-4 同档）。 */
 function ShieldIcon() {
   return (
     <svg
-      width="12"
-      height="12"
+      width="16"
+      height="16"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
@@ -626,12 +635,12 @@ function WrenchIcon() {
   );
 }
 
-/** 上升箭头图标（lucide arrow-up 造型，发送钮）。 */
+/** 上升箭头图标（lucide arrow-up 造型，发送钮，16px 与 ZCode size-4 同档）。 */
 function ArrowUpIcon() {
   return (
     <svg
-      width="14"
-      height="14"
+      width="16"
+      height="16"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
@@ -643,6 +652,63 @@ function ArrowUpIcon() {
     >
       <path d="m5 12 7-7 7 7" />
       <path d="M12 19V5" />
+    </svg>
+  );
+}
+
+/** 加号图标（lucide plus 造型，附件占位钮，16px）。 */
+function PlusIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      className="shrink-0"
+    >
+      <path d="M5 12h14" />
+      <path d="M12 5v14" />
+    </svg>
+  );
+}
+
+/** 方块图标（lucide square 实心造型，停止钮；ZCode 同款 fill-current）。 */
+function SquareIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden
+      className="shrink-0"
+    >
+      <rect x="6" y="6" width="12" height="12" rx="2" />
+    </svg>
+  );
+}
+
+/** 下拉箭头图标（lucide chevron-down 造型，权限档/模型触发器尾部，14px）。 */
+function ChevronDownIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      className="shrink-0 opacity-60"
+    >
+      <path d="m6 9 6 6 6-6" />
     </svg>
   );
 }
@@ -764,7 +830,7 @@ function ComposerStatusBar() {
   return (
     <div
       data-testid="composer-status"
-      className="flex items-center gap-3 px-1 pt-1.5 text-meta tabular-nums text-[var(--cw-dim)]"
+      className="flex items-center gap-3 text-meta tabular-nums text-[var(--cw-dim)]"
     >
       {thinkingSince !== null && (
         <span data-testid="metric-thinking" className="text-[var(--muted-foreground)]">

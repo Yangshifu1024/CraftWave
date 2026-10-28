@@ -339,20 +339,20 @@ function Sidebar({
           style={{ paddingLeft: "max(var(--tauri-plugin-decoration-left-clearance, 76px), 8px)" }}
         />
         <div className="flex min-h-0 flex-1 flex-col">
-          {/* 主操作区：整宽大行（ZCode「新建任务」行样式） */}
-          <div className="px-3 pt-1">
+          {/* 主操作区：整宽大行（ZCode NewTaskButtonGroup 同款：h-8 圆角 lg） */}
+          <div className="px-2 pt-1">
             <button
               type="button"
               data-testid="new-temp-session"
               onClick={() => void createAndOpen(undefined)}
-              className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-body text-[var(--foreground)] hover:bg-[var(--accent)]"
+              className="flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-body text-[var(--foreground)] hover:bg-[var(--accent)]"
             >
               <CirclePlusIcon />
               新建会话
             </button>
           </div>
-          <div className="mx-3 mt-2 shrink-0 border-t border-[var(--border)]" />
-          <div className="px-3 pb-1 pt-2">
+          <div className="mx-3 mt-2 shrink-0 border-t border-[var(--border)]/50" />
+          <div className="px-2 pb-1 pt-2">
             <Input
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
@@ -374,7 +374,7 @@ function Sidebar({
               ))}
             </SectionBody>
             {/* 项目组标题：悬停露出「新建项目」 */}
-            <div className="group mt-3 flex items-center px-2 pb-1 text-meta text-[var(--muted-foreground)]">
+            <div className="group mt-3 flex h-7 items-center px-2 pb-1 text-secondary font-medium text-[var(--cw-dim)]">
               <span>项目</span>
               <button
                 type="button"
@@ -395,8 +395,8 @@ function Sidebar({
                     onAddSession={() => void createAndOpen(project.id)}
                     onDeleteProject={() => setConfirm({ kind: "project", project })}
                   />
-                  {/* 名下会话相对项目行缩进一级 */}
-                  <div className="ml-4">
+                  {/* 名下会话相对项目行缩进一级（ZCode pl-2 同量级） */}
+                  <div className="ml-2 pt-1">
                     <SectionBody>
                       {list.map((meta) => (
                         <SessionRow
@@ -414,12 +414,12 @@ function Sidebar({
             })}
           </div>
           {/* 底部：设置入口（右栏用量改由卡头右上钮开合） */}
-          <div className="p-2">
+          <div className="px-2 pb-2 pt-1">
             <button
               type="button"
               data-testid="open-settings"
               onClick={onOpenSettings}
-              className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-body text-[var(--foreground)] hover:bg-[var(--accent)]"
+              className="flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-body text-[var(--foreground)] hover:bg-[var(--accent)]"
             >
               <SettingsIcon />
               设置
@@ -508,9 +508,9 @@ async function client_deleteProject(projectId: string): Promise<void> {
 
 // ---- 小件 ----
 
-/** 左栏分组标题：小灰字（「临时会话」「项目」）。 */
+/** 左栏分组标题：小灰字加粗一档（「临时会话」「项目」，ZCode 组头 medium 同款）。 */
 function SectionHeader({ title }: { title: string }) {
-  return <div className="px-2 pb-1 text-meta text-[var(--muted-foreground)]">{title}</div>;
+  return <div className="px-2 pb-1 text-secondary font-medium text-[var(--cw-dim)]">{title}</div>;
 }
 
 /** 左栏项目行：文件夹图标 + 项目名（前景色大字）；悬停露出改名/加会话/
@@ -564,9 +564,10 @@ function ProjectRow({
     );
   }
   return (
-    <div className="group flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-body text-[var(--foreground)] hover:bg-[var(--accent)]/60">
+    <div className="group flex h-8 cursor-default items-center gap-2 rounded-lg pr-1 pl-2 text-body text-[var(--foreground)] hover:bg-[var(--accent)]/60">
       <FolderIcon />
-      <span className="min-w-0 flex-1 overflow-hidden whitespace-nowrap [mask-image:linear-gradient(to_right,black_calc(100%-14px),transparent)]">
+      {/* 项目名比会话标题淡一档（ZCode subtle 层级：组容器弱于内容行） */}
+      <span className="min-w-0 flex-1 overflow-hidden whitespace-nowrap text-[var(--muted-foreground)] [mask-image:linear-gradient(to_right,black_calc(100%-1.5rem),transparent)]">
         {project.name}
       </span>
       <button
@@ -576,7 +577,7 @@ function ProjectRow({
           setName(project.name);
           setEditing(true);
         }}
-        className="hidden rounded px-0.5 hover:bg-[var(--accent)] group-hover:block"
+        className="hidden h-6 w-6 items-center justify-center rounded hover:bg-[var(--accent)] group-hover:flex"
       >
         <PencilIcon />
       </button>
@@ -584,15 +585,15 @@ function ProjectRow({
         type="button"
         aria-label="在项目下新建会话"
         onClick={onAddSession}
-        className="hidden rounded px-0.5 hover:bg-[var(--accent)] group-hover:block"
+        className="hidden h-6 w-6 items-center justify-center rounded hover:bg-[var(--accent)] group-hover:flex"
       >
-        +
+        <PlusIcon />
       </button>
       <button
         type="button"
         aria-label="删除项目"
         onClick={onDeleteProject}
-        className="hidden rounded px-0.5 hover:bg-[var(--accent)] group-hover:block"
+        className="hidden h-6 w-6 items-center justify-center rounded hover:bg-[var(--accent)] group-hover:flex"
       >
         <TrashIcon />
       </button>
@@ -608,7 +609,7 @@ function SectionBody({ children }: { children: React.ReactNode }) {
   const hidden = items.length - SECTION_PREVIEW_COUNT;
   const visible = expanded || hidden <= 0 ? items : items.slice(0, SECTION_PREVIEW_COUNT);
   return (
-    <>
+    <div className="space-y-0.5">
       {visible}
       {hidden > 0 && !expanded && (
         <button
@@ -619,7 +620,7 @@ function SectionBody({ children }: { children: React.ReactNode }) {
           显示更多（{hidden}）
         </button>
       )}
-    </>
+    </div>
   );
 }
 
@@ -691,24 +692,24 @@ function SessionRow({
   return (
     <div
       data-testid={`session-row-${meta.id}`}
-      className={`group flex cursor-default items-center gap-1 rounded-md px-2 py-1.5 text-body ${
+      className={`group flex h-8 cursor-default items-center gap-1.5 rounded-lg pr-1 pl-2 text-body ${
         active
           ? "bg-[var(--accent)] text-[var(--foreground)]"
           : "text-[var(--foreground)] hover:bg-[var(--accent)]/60"
       }`}
     >
-      {/* 运行中：转圈指示（ZCode 同款，替代绿点） */}
+      {/* 运行中：转圈指示（ZCode 状态槽同款，size-4） */}
       {running && <SessionLoaderIcon />}
-      {/* 标题溢出右侧渐隐 mask（ZCode 同款），比硬截断柔和 */}
+      {/* 标题溢出右侧渐隐 mask（ZCode 同款 1.5rem），比硬截断柔和 */}
       <button
         type="button"
-        className="min-w-0 flex-1 overflow-hidden whitespace-nowrap text-left [mask-image:linear-gradient(to_right,black_calc(100%-14px),transparent)]"
+        className="min-w-0 flex-1 overflow-hidden whitespace-nowrap text-left [mask-image:linear-gradient(to_right,black_calc(100%-1.5rem),transparent)]"
         onClick={onOpen}
       >
         {meta.title}
       </button>
-      {/* 相对时间（A6）：非活跃时淡显，活跃时与操作按钮共存 */}
-      <span className="shrink-0 text-meta tabular-nums text-[var(--cw-dim)]">
+      {/* 相对时间（A6）：悬停让位于操作钮（ZCode 元信息 hover 隐藏同款） */}
+      <span className="shrink-0 text-meta tabular-nums text-[var(--cw-dim)] group-hover:hidden">
         {relativeTime(meta.updatedAt)}
       </span>
       <button
@@ -718,7 +719,7 @@ function SessionRow({
           setTitle(meta.title);
           setEditing(true);
         }}
-        className="hidden rounded px-0.5 hover:bg-[var(--accent)] group-hover:block"
+        className="hidden h-6 w-6 items-center justify-center rounded hover:bg-[var(--accent)] group-hover:flex"
       >
         <PencilIcon />
       </button>
@@ -726,9 +727,9 @@ function SessionRow({
         type="button"
         aria-label="删除会话"
         onClick={onDelete}
-        className="hidden rounded px-0.5 hover:bg-[var(--accent)] group-hover:block"
+        className="hidden h-6 w-6 items-center justify-center rounded hover:bg-[var(--accent)] group-hover:flex"
       >
-        ×
+        <TrashIcon />
       </button>
     </div>
   );
@@ -776,12 +777,12 @@ function PanelRightIcon() {
   );
 }
 
-/** 文件夹图标（lucide folder 造型，卡头/项目行前缀）。 */
+/** 文件夹图标（lucide folder 造型，卡头/项目行前缀，16px；项目行淡色）。 */
 function FolderIcon() {
   return (
     <svg
-      width="14"
-      height="14"
+      width="16"
+      height="16"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
@@ -796,12 +797,12 @@ function FolderIcon() {
   );
 }
 
-/** 侧栏运行指示（lucide loader-circle 造型，会话行运行中转圈）。 */
+/** 侧栏运行指示（lucide loader-circle 造型，会话行运行中转圈，16px 状态槽）。 */
 function SessionLoaderIcon() {
   return (
     <svg
-      width="12"
-      height="12"
+      width="16"
+      height="16"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
@@ -816,12 +817,12 @@ function SessionLoaderIcon() {
   );
 }
 
-/** 铅笔图标（lucide pencil 造型，重命名操作钮）。 */
+/** 铅笔图标（lucide pencil 造型，重命名操作钮，14px）。 */
 function PencilIcon() {
   return (
     <svg
-      width="12"
-      height="12"
+      width="14"
+      height="14"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
@@ -836,12 +837,12 @@ function PencilIcon() {
   );
 }
 
-/** 垃圾桶图标（lucide trash-2 造型，删除操作钮）。 */
+/** 垃圾桶图标（lucide trash-2 造型，删除操作钮，14px）。 */
 function TrashIcon() {
   return (
     <svg
-      width="12"
-      height="12"
+      width="14"
+      height="14"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
@@ -855,6 +856,26 @@ function TrashIcon() {
       <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
       <path d="M10 11v6" />
       <path d="M14 11v6" />
+    </svg>
+  );
+}
+
+/** 加号图标（lucide plus 造型，项目行「新建会话」操作钮，14px）。 */
+function PlusIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M5 12h14" />
+      <path d="M12 5v14" />
     </svg>
   );
 }
