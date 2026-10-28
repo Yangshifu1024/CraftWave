@@ -69,7 +69,7 @@ export function ChatThread() {
         </ThreadPrimitive.Viewport>
         {/* composer 固定底区：在滚动容器（Viewport）之外，不随内容滚动、
             内容也不会钻入其背后（sticky 方案的两个老问题一并消除） */}
-        <div className="shrink-0 px-4 pb-1">
+        <div className="shrink-0 px-4 pb-3">
           <div className="relative mx-auto w-full max-w-4xl">
             {/* 回底按钮（FR-13-15）：已在底部时原语输出 disabled，用
                 disabled:hidden 隐藏；挂 composer 容器上方自适应其高度 */}
