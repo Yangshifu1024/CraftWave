@@ -1,6 +1,6 @@
 # CraftWave 工作交接（HandOff）
 
-> 生成于 2026-10-28（第七次更新）。追加：收官雾区毕业立 18/19/20 三票；18 号票（打包与验收剧本）全流程关闭——macOS 决策放弃 Intel、release 面 strip 坑修复、build.yml 首跑三平台全绿；验收剧本 acceptance.md 入库。
+> 生成于 2026-10-28（第八次更新）。追加：19 号票（平台欠账四项）与 21 号票（C-8 roots 收窄落地）经 worktree 子代理完成合并；20 号票（C-8 grilling）定案关闭——**01–21 号票全部关闭，地图只剩终局验收**；flaky 会话锁测试去时序化。
 > 规则：本文件只做索引与状态快照，细节一律引用票文件/文档/提交，不复述。
 
 ## 一、必读顺序（新会话开场）
@@ -11,10 +11,11 @@
 4. 票目录 `docs/specs/m1-mvp/tasks/`——一票一文件，Answer 节是各票结论。
 5. **全仓源码注释已按"新入职实习生可独立读懂"标准整理过一轮**（153 文件，`c6d0953`）——领域术语首次出现处都有一句话解释，读代码即读文档。
 
-## 二、当前状态快照（main = 票 18 关闭提交，与 origin/main 一致；**检查 CI 六 job 全绿 + build.yml 打包首跑三平台全绿**）
+## 二、当前状态快照（main = `a0166a3`，与 origin/main 一致；**CI 六 job 全绿 + Windows e2e 首跑实证 + build.yml 打包三平台绿**）
 
-- **地图进度**：01–18 号票关闭；19（平台欠账）/20（C-8 grilling）已立待做；最后一站=用户按 acceptance.md 执行 1 周真实使用验收。
-- **测试基线**：Rust 233 lib + 25 集成（macOS 本地）+ release check 零 warning；前端 vitest 107 例；tsc/Biome 全绿；manifest 双向契约 27 命令 10 事件键；**GitHub CI 三平台六 job 全绿；build.yml（tag 触发打包）workflow_dispatch 首跑三平台绿**——产物 dmg 6.77MiB / nsis 5.70MiB / deb 8.70MiB / AppImage 83.27MiB（rpm 顺带产出不收集）。
+- **地图进度**：**01–21 号票全部关闭**。地图只剩一站：用户按 `docs/specs/m1-mvp/acceptance.md` 执行 1 周真实使用验收（通过即 M1 关图）。
+- **测试基线**：Rust lib 242（macOS）/ 236（Windows，含批取消 e2e 首跑）+ 集成 25；前端 vitest 111；manifest 双向契约 **29 命令**（+`notification_permission_status`/`open_notification_settings`）10 事件键；CI 六 job 全绿（run 40664137483）。
+- **20 号票 C-8 定案（grilling）**：agent roots 收窄「项目主目录 + `<data_root>/workspace/` 子目录」（推翻维持默认）；command 旁路（读 Key 类）记为已声明风险；GLOSSARY.md 首建；文档 v2.9。
 - **18 号票关键决策与发现**：
   - **macOS 放弃 Intel（2026-10-28 用户决策）**：FR-16-01 universal 口径收窄 arm64-only，PRD/设计文档 v2.8 已回写；build.yml 无需平台分支（三平台统一主机架构构建）。CodeWave 对照结论：其依赖树同样含 aws-lc-sys，「不需要交叉编译」真因是从未跨架构构建（主机=目标）；universal 取消后该问题整体消失。
   - **release 面 strip 坑**（最重要发现，§12.4 已注记）：`[profile.release] strip=true` 剥坏 proc-macro dylib（`dlopen: mis-aligned LINKEDIT string pool` → dyld 拒载 → rustc E0463），修复=`[profile.release.build-override] strip=false`；dev 面检查链（含 CI）探不到，仅 release 构建暴露。
@@ -27,15 +28,13 @@
   - `e927a5b` **工作流风格改版**（对照用户参考截图 A1–A7+B）：助手内容平铺无气泡 + 内容列 max-w-4xl 居中；工具卡单行摘要化（`ToolCardShell`：图标+主参数+diff 徽标+状态，点击展开，错误态默认展开）；思考单行；运行中 spinner；Composer 三层（输入/工具栏：附件占位+盾牌权限档下拉+模型+方形发送；状态栏：思考计时+三数）；左栏相对时间 + 分组超 5 条折叠；Inspector 计划区（`plan-state.ts` 订阅 plan:update，内存态）。
   - `fbc99d5` 通知 capability（`notification:default`——插件注入的初始化脚本走 JS 面查权限，Rust 侧调用不需要但 JS 面要）+ Inspector planItems selector 稳定空数组。
 - **CI 修复**（`ae5189c`→`0c5bf3b` 六笔）：Windows 编译三处（enable_process_group 导入缺 cfg(unix)、JobGuard 缺 unsafe Send/Sync、symlink 测试 unix API）+ S5/e2e 测试 cfg(unix) + Windows 分支 clippy let_and_return + dead_code + 四例测试平台化（workspace/grep 展示路径统一正斜杠；command 测试双 shell 分支）。**欠账（进程树收割 e2e Windows 跳过等四项）已立 19 号票承接**。
-- **分支记录**：`fix/*`、`feat/*` 各分支均 fast-forward 并入 main，未删除（最新：`fix/packaging-arm64`）。
+- **分支记录**：`fix/*`、`feat/*` 各分支均 fast-forward 并入 main，未删除（最新：`fix/packaging-arm64`、`feat/t19-platform-debts`）。
 
-## 三、下一步（地图收官阶段）
+## 三、下一步（地图终局）
 
-1. **19 号票（平台欠账收敛）**：e2e 双平台 executor（Windows 批取消语义真实覆盖）、macOS 托盘左键对齐（`show_menu_on_left_click(false)`）、macOS 通知权限引导、退出确认 10s 超时兜底——可丢 worktree 后台子代理做。
-2. **20 号票（C-8 安全复判，grilling/HITL）**：临时会话 roots=全局数据目录对 write/edit 是否过宽（config.json 明文 Key 在可写面内）——主会话与用户做，子代理不得代答；结论回写附录 C-8 + 必要改动立票。
-3. **终局关**：19/20 关闭后，用户按 `docs/specs/m1-mvp/acceptance.md` 在 macOS 真实项目连续使用 1 周（每日记录 acceptance-log.md），通过即 M1 关图。
-4. 小项（穿插）：rate 的 TextDelta 自算、steer/followUp（**排队 Steer 按钮随 §5.5 票**——队列 UI 已就位，QueueItemPrimitive.Steer 未接）、错误分类 §11.3、ts-rs 引入（C-2 后半）、session_prefs 域命令（#24/#25——**模型选择/权限档的持久化挂这**）、pending_intent UI 接线、设置页与预设打磨（含：通知正文带会话标题、权限档初始档与 §10.6 confirm_each 口径复核、关闭到托盘改直接退出的配置项、主题启动防亮闪、思考时长帧面计时（现 thinkingSince 只有起止点））。
-5. **待核实的疑似笔误**（注释任务发现、铁律未动）：`ui/src/settings/SettingsPage.tsx` 的 SecurityPage 中 `entry.indexOf("")` 恒为 0，白名单条目切分疑似漏了分隔符实参，随设置域票核实。
+1. **终局关（唯一在途）**：用户按 `docs/specs/m1-mvp/acceptance.md` 在 macOS 真实项目连续使用 1 周（每日记录 acceptance-log.md）；本地产 dmg 可直接装（`src-tauri/target/release/bundle/dmg/`）；通过即 M1 关图。验收期顺手人工验证：托盘左键单击/右键菜单、设置页通知引导（生产 bundle 才有真实授权态）。
+2. 小项（穿插）：rate 的 TextDelta 自算、steer/followUp（**排队 Steer 按钮随 §5.5 票**——队列 UI 已就位，QueueItemPrimitive.Steer 未接）、错误分类 §11.3、ts-rs 引入（C-2 后半）、session_prefs 域命令（#24/#25——**模型选择/权限档的持久化挂这**）、pending_intent UI 接线、设置页与预设打磨（含：通知正文带会话标题、权限档初始档与 §10.6 confirm_each 口径复核、关闭到托盘改直接退出的配置项、主题启动防亮闪、思考时长帧面计时（现 thinkingSince 只有起止点））。
+3. **待核实的疑似笔误**（注释任务发现、铁律未动）：`ui/src/settings/SettingsPage.tsx` 的 SecurityPage 中 `entry.indexOf("")` 恒为 0，白名单条目切分疑似漏了分隔符实参，随设置域票核实。
 
 ## 四、工作方式（本图约定）
 
@@ -64,6 +63,9 @@
 - **前端 vi.mock("@/ipc/client") 要补全依赖链导出**（session.ts → runtime.ts → startChat 等），mock 缺导出整文件报错。
 - **zustand selector 内严禁 `?? []` / `?? {}` 兜底**——每次渲染新建引用，Object.is 恒不等，React 报「getSnapshot should be cached」并 Maximum update depth 无限循环；一律模块级常量空值（run-metrics 的 EMPTY_METRICS、Inspector 的 EMPTY_PLAN 同款）。新加 selector 时全仓 grep 复查。
 - **capability 要覆盖插件注入脚本的 JS 面**：tauri-plugin-notification 的初始化脚本查 is_permission_granted 走前端权限（`notification:default`），Rust 侧调用不需要——判权限时两头都要想。
+- **通知授权态插件面不可信（19 号票实证）**：tauri-plugin-notification 桌面端 `permission_state` 恒报 Granted（2.7/2.8 源码核实）——真实授权查询自建（macOS 直查 UNUserNotificationCenter，objc2 系依赖；dev 裸进程无 bundle id 按 unknown 早退防 ObjC 异常），前端引导条随重聚焦重查。
+- **托盘左键 17 号票记录是保守误记（19 号票核实）**：tauri 2.12.5 + tray-icon 0.25.1 源码核实 `show_menu_on_left_click(false)` 在 macOS 同样生效——左键唤起/右键菜单三平台本就一致，勿再按「macOS 左键弹菜单」旧口径写代码或文档（Linux AppIndicator 有边界，注释已注明）。
+- **测试禁时序赌注（flaky 教训，a0166a3）**：`!handle.is_finished()` 类断言赌「主线程先于子线程执行」，CI 慢机必炸（ubuntu 已实红一次）——并发断言一律用 `try_lock`/channel 即时判定的确定性写法。
 - **跨平台路径口径（CI 修复定式）**：面向用户的展示路径（workspace 搜索、grep 命中行）统一正斜杠（`replace('\\', "/")`）；command 测试用 `if cfg!(windows)` 给 powershell 等价命令（产品命令入口本就 Unix sh / Windows powershell 双 shell）；unix 专属 API（std::os::unix、进程组收割）的测试加 `#[cfg(unix)]`；Windows JobGuard 裸句柄要 `unsafe impl Send/Sync`（内核句柄本可跨线程）。
 - **CI 契约测试跑位**：contract.test.ts 依赖 cargo test 产物（ipc-manifest.json + session-tree-fixture.jsonl），前端 job 不装 Rust——完整 pnpm test 在 backend job（ubuntu）cargo test 之后跑（ci.yml），前端 job 只 lint/typecheck。本地顺序同：先 cargo test 再 pnpm test。
 - **macOS 交叉验证 Windows 不可行**：aws-lc-sys 构建脚本需目标平台工具链（cmake/NASM），cfg 面只能交 CI windows job 验证——本地绿≠CI 绿，改 cfg 相关代码预期要跑两三轮 CI。（macOS 内交叉 x86_64 切片原本同样受此限；18 号票决策放弃 Intel 后不再有跨架构构建，此坑仅存 Windows 向。）
