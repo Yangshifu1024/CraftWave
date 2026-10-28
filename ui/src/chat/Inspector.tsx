@@ -8,7 +8,7 @@
  */
 
 import { useEffect, useState } from "react";
-import { usePlanStateStore } from "@/chat/plan-state";
+import { type PlanItem, usePlanStateStore } from "@/chat/plan-state";
 import { useSessionMetrics } from "@/chat/run-metrics";
 import { useSessionScope } from "@/chat/session-scope";
 import { getConfig } from "@/ipc/client";
@@ -46,6 +46,11 @@ function useContextWindow(): number {
   return window;
 }
 
+/** 空计划快照（模块级常量：selector 缺桶时返回稳定引用，防 React
+ *  「getSnapshot should be cached」无限渲染循环——每次 `?? []` 都会新建
+ *  数组引用，zustand 的 Object.is 比较恒不等）。 */
+const EMPTY_PLAN: PlanItem[] = [];
+
 /** 右栏用量面板本体：实时速率 / 本轮用量 / 会话累计 / 上下文进度条
  *  + 最近运行终态；头部开关控制「run 结束自动折叠」。 */
 export function Inspector() {
@@ -54,7 +59,7 @@ export function Inspector() {
   const contextWindow = useContextWindow();
   const collapseRuns = useSessionsStore((s) => s.collapseRuns);
   const setCollapseRuns = useSessionsStore((s) => s.setCollapseRuns);
-  const planItems = usePlanStateStore((s) => s.bySession[sessionId] ?? []);
+  const planItems = usePlanStateStore((s) => s.bySession[sessionId] ?? EMPTY_PLAN);
 
   const total = (u: { input: number; output: number }) => u.input + u.output;
   const hitRate =
