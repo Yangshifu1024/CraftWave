@@ -7,20 +7,24 @@
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AppConfig } from "@/ipc/types";
+import type { AppConfig, NotificationPermissionStatus } from "@/ipc/types";
 import { useSettingsStore } from "@/stores/settings";
 import { SettingsPage } from "./SettingsPage";
 
 // IPC 测试桩（vi.fn 可按用例指定返回值）
 const getConfigMock = vi.fn<() => Promise<AppConfig>>();
 const saveConfigMock = vi.fn<(config: AppConfig) => Promise<AppConfig>>();
-// 只替换读/存配置两个命令，其余保留 client.ts 真实现
+const permissionStatusMock = vi.fn<() => Promise<NotificationPermissionStatus>>();
+const openSettingsMock = vi.fn<() => Promise<void>>();
+// 只替换读/存配置与通知引导两命令，其余保留 client.ts 真实现
 vi.mock("@/ipc/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/ipc/client")>();
   return {
     ...actual,
     getConfig: () => getConfigMock(),
     saveConfig: (config: AppConfig) => saveConfigMock(config),
+    notificationPermissionStatus: () => permissionStatusMock(),
+    openNotificationSettings: () => openSettingsMock(),
   };
 });
 
@@ -37,7 +41,11 @@ const BASE_CONFIG: AppConfig = {
 beforeEach(() => {
   getConfigMock.mockReset();
   saveConfigMock.mockReset();
+  permissionStatusMock.mockReset();
+  openSettingsMock.mockReset();
   getConfigMock.mockResolvedValue(structuredClone(BASE_CONFIG));
+  // 授权态默认已授予：不影响既有用例的断言面（引导条只在未授权时出现）
+  permissionStatusMock.mockResolvedValue({ status: "granted", hasSettingsEntry: true });
   useSettingsStore.setState({
     config: structuredClone(BASE_CONFIG),
     baseline: structuredClone(BASE_CONFIG),
@@ -129,5 +137,44 @@ describe("搜索", () => {
     expect(screen.queryByRole("tab", { name: "界面" })).toBeNull();
     fireEvent.click(screen.getByRole("option", { name: /日志/ }));
     expect(screen.getByText("日志", { selector: ".settings-actions-title" })).toBeTruthy();
+  });
+});
+
+describe("通知授权引导（19 号票）", () => {
+  it("未授权（prompt）时通知区显示引导与打开系统设置入口，点击走深链", async () => {
+    permissionStatusMock.mockResolvedValue({ status: "prompt", hasSettingsEntry: true });
+    render(<SettingsPage onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByTestId("open-notification-settings")).toBeTruthy());
+    expect(screen.getByText(/尚未授予通知权限/)).toBeTruthy();
+    fireEvent.click(screen.getByTestId("open-notification-settings"));
+    await waitFor(() => expect(openSettingsMock).toHaveBeenCalledTimes(1));
+  });
+
+  it("被拒（denied）时显示被拒文案", async () => {
+    permissionStatusMock.mockResolvedValue({ status: "denied", hasSettingsEntry: true });
+    render(<SettingsPage onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByText(/已被拒绝/)).toBeTruthy());
+    expect(screen.getByTestId("open-notification-settings")).toBeTruthy();
+  });
+
+  it("已授权与查不出（unknown）时不显示引导，不打扰", async () => {
+    permissionStatusMock.mockResolvedValue({ status: "granted", hasSettingsEntry: true });
+    const { unmount } = render(<SettingsPage onClose={() => {}} />);
+    await waitFor(() => expect(permissionStatusMock).toHaveBeenCalled());
+    expect(screen.queryByTestId("open-notification-settings")).toBeNull();
+    expect(screen.queryByText(/尚未授予通知权限/)).toBeNull();
+    unmount();
+
+    permissionStatusMock.mockResolvedValue({ status: "unknown", hasSettingsEntry: true });
+    render(<SettingsPage onClose={() => {}} />);
+    await waitFor(() => expect(permissionStatusMock).toHaveBeenCalledTimes(2));
+    expect(screen.queryByTestId("open-notification-settings")).toBeNull();
+  });
+
+  it("无系统设置入口（Linux）时引导条不出按钮", async () => {
+    permissionStatusMock.mockResolvedValue({ status: "prompt", hasSettingsEntry: false });
+    render(<SettingsPage onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByText(/尚未授予通知权限/)).toBeTruthy());
+    expect(screen.queryByTestId("open-notification-settings")).toBeNull();
   });
 });

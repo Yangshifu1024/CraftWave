@@ -24,6 +24,10 @@ use crate::providers::types::AppConfig;
 use crate::storage::config_store::ConfigStore;
 use crate::util::events::{EventSink, keys};
 
+#[cfg(test)]
+#[path = "notify_test.rs"]
+mod notify_test;
+
 /// 通知门：窗口焦点判定 + 配置开关判定 + 发送，均为尽力而为（失败只
 /// 影响通知本身，不影响 run 主链路）。
 pub struct NotifyGate {
@@ -81,6 +85,10 @@ impl NotifyGate {
     }
 
     /// 统一出口：防打扰判定通过才发送。
+    ///
+    /// 授权未授予时的口径（19 号票）：`show()` 失败（macOS 拒发）一律吞掉——
+    /// 通知是尽力而为的旁路，触发侧静默降级不报错、不影响 run 主链路；
+    /// 授权引导在设置页（`notification_permission_status` 命令）承担。
     fn send(&self, session_id: &str, body: &str, anchor: Value) {
         if self.suppressed(session_id) {
             return;
@@ -152,4 +160,64 @@ impl EventSink for TauriEventEmit<'_> {
         use tauri::Emitter;
         let _ = self.0.emit(key, payload);
     }
+}
+
+/// 授权态前端口径（字符串化，跨 IPC 返回）：
+/// `granted` 可送达 / `denied` 被拒 / `prompt` 未决定 / `unknown` 查不出。
+#[cfg(target_os = "macos")]
+pub const AUTH_GRANTED: &str = "granted";
+#[cfg(target_os = "macos")]
+pub const AUTH_DENIED: &str = "denied";
+#[cfg(target_os = "macos")]
+pub const AUTH_PROMPT: &str = "prompt";
+#[cfg(target_os = "macos")]
+pub const AUTH_UNKNOWN: &str = "unknown";
+
+/// UNAuthorizationStatus 原始值 → 前端口径。Provisional（静音送达）与
+/// Ephemeral 都能送达，归 granted；纯映射无副作用，单测见 notify_test.rs。
+#[cfg(target_os = "macos")]
+fn authorization_word(status: objc2_user_notifications::UNAuthorizationStatus) -> &'static str {
+    use objc2_user_notifications::UNAuthorizationStatus;
+    if status == UNAuthorizationStatus::NotDetermined {
+        AUTH_PROMPT
+    } else if status == UNAuthorizationStatus::Denied {
+        AUTH_DENIED
+    } else {
+        AUTH_GRANTED
+    }
+}
+
+/// macOS 通知授权态查询（19 号票，设置页引导的数据面）。
+///
+/// 必须在主线程调用（UNUserNotificationCenter 的线程约束）：发起异步设置
+/// 查询，结果经 `tx` 回传——completion 由系统队列回调，调用方在别的线程
+/// `recv_timeout` 等待（毫秒级；等不到按 `unknown` 口径，宁可少打扰）。
+///
+/// 为什么不走插件的 `permission_state`：桌面端实现恒返回 Granted
+/// （tauri-plugin-notification 2.7/2.8 源码），拿不到 macOS 真实授权态。
+/// dev 裸进程（`cargo tauri dev`，无 Info.plist）没有 bundle id，直接查会
+/// 抛 ObjC 异常——按 `unknown` 早退，生产（bundle .app）才有真实口径。
+#[cfg(target_os = "macos")]
+pub fn query_macos_authorization(tx: std::sync::mpsc::Sender<&'static str>) {
+    use block2::RcBlock;
+    use objc2_foundation::NSBundle;
+    use objc2_user_notifications::{UNNotificationSettings, UNUserNotificationCenter};
+    use std::ptr::NonNull;
+
+    // dev 裸进程没有 bundle id：UNUserNotificationCenter 会抛 ObjC 异常，早退
+    // （objc2 把这两个方法标为安全绑定——异常是 ObjC 层的，Rust 面拦不住）
+    let bundled = NSBundle::mainBundle().bundleIdentifier().is_some();
+    if !bundled {
+        let _ = tx.send(AUTH_UNKNOWN);
+        return;
+    }
+    // 线程约束：本函数已由调用方调度在主线程；completion 块由系统队列回调，
+    // 块内只做 channel send（不触碰 UI、不 panic——send 断连也只返回 Err）。
+    let center = UNUserNotificationCenter::currentNotificationCenter();
+    let block = RcBlock::new(move |settings: NonNull<UNNotificationSettings>| {
+        // NonNull::as_ref 是 unsafe（对象生命周期由系统保证存活到回调结束）
+        let status = unsafe { settings.as_ref().authorizationStatus() };
+        let _ = tx.send(authorization_word(status));
+    });
+    center.getNotificationSettingsWithCompletionHandler(&block);
 }

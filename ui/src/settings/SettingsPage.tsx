@@ -21,7 +21,8 @@ import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import type { AppConfig } from "@/ipc/types";
+import { notificationPermissionStatus, openNotificationSettings } from "@/ipc/client";
+import type { AppConfig, NotificationPermissionStatus } from "@/ipc/types";
 import {
   ArrowLeftIcon,
   BlocksIcon,
@@ -471,10 +472,80 @@ function ChoiceCard({
   );
 }
 
-/** 界面页：主题 + 界面语言 + AI 回复语言（ui 段整卡）+ 系统通知偏好 */
+/**
+ * 通知授权态查询（19 号票）：挂载时查一次；窗口重新聚焦（典型场景 =
+ * 用户从系统设置授权后切回）时重查，授权变更即时反映。
+ * 查询失败（如非 Tauri 环境）→ null = 不显示引导，宁可少打扰。
+ */
+function useNotificationPermission(): NotificationPermissionStatus | null {
+  const [status, setStatus] = useState<NotificationPermissionStatus | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => {
+      void (async () => {
+        try {
+          const next = await notificationPermissionStatus();
+          if (!cancelled) setStatus(next);
+        } catch (err) {
+          console.warn("[settings] 通知授权态查询失败（不显示引导）", err);
+          if (!cancelled) setStatus(null);
+        }
+      })();
+    };
+    refresh();
+    window.addEventListener("focus", refresh);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", refresh);
+    };
+  }, []);
+  return status;
+}
+
+/** 通知授权引导条（19 号票，macOS 为主）：未授权/被拒时提示 + 打开系统
+ *  设置深链；授权后（或 unknown 查不出）不渲染，不打扰。 */
+function NotificationPermissionNotice({
+  status,
+  hasSettingsEntry,
+}: {
+  status: "prompt" | "denied";
+  hasSettingsEntry: boolean;
+}) {
+  return (
+    <Alert
+      variant="warning"
+      className="m-3"
+      title={
+        <span className="flex flex-wrap items-center gap-2">
+          {status === "denied"
+            ? "通知权限已被拒绝，系统通知无法送达。"
+            : "macOS 尚未授予通知权限，系统通知将无法送达。"}
+          {hasSettingsEntry && (
+            <button
+              type="button"
+              data-testid="open-notification-settings"
+              className="shrink-0 rounded border border-[var(--warning)]/50 px-2 py-0.5 text-xs hover:bg-[var(--warning)]/10"
+              onClick={() => {
+                void openNotificationSettings().catch((err) =>
+                  console.error("[settings] 打开系统设置失败", err),
+                );
+              }}
+            >
+              打开系统设置
+            </button>
+          )}
+        </span>
+      }
+    />
+  );
+}
+
+/** 界面页：主题 + 界面语言 + AI 回复语言（ui 段整卡）+ 系统通知偏好
+ *  （含 19 号票的 macOS 授权引导：未授权/被拒时提示并给系统设置入口） */
 function AppearancePage() {
   const config = useSettingsStore((s) => s.config);
   const patchConfig = useSettingsStore((s) => s.patchConfig);
+  const permission = useNotificationPermission();
   // 主题草稿即时预览（FR-13-03）：草稿变化即应用；丢弃草稿/保存都会令
   // config 回到基线，本副作用随之回滚——无需额外的取消预览逻辑
   useEffect(() => {
@@ -514,6 +585,14 @@ function AppearancePage() {
         </div>
       </SettingsSection>
       <SettingsSection title="系统通知">
+        {permission !== null &&
+          permission.status !== "granted" &&
+          permission.status !== "unknown" && (
+            <NotificationPermissionNotice
+              status={permission.status}
+              hasSettingsEntry={permission.hasSettingsEntry}
+            />
+          )}
         <SettingsRow
           title="启用系统通知"
           description="窗口后台/失焦时，运行完成与人工介入经系统通知提醒。"

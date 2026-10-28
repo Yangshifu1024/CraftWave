@@ -111,6 +111,9 @@ describe("§12.3 manifest 双向扫描", () => {
       "cancel_run",
       "resolve_ask",
       "approve_plan",
+      "resolve_exit_request",
+      "notification_permission_status",
+      "open_notification_settings",
     ]) {
       expect(wired, `manifest 命令 ${name} 未在 client.ts 接线（禁止只注册不使用）`).toContain(
         name,
@@ -162,6 +165,19 @@ describe("§12.3 manifest 双向扫描", () => {
     });
     expect(find("approve_plan")).toMatchObject({
       args_type: "ApprovePlanArgs",
+      ret_type: "()",
+    });
+    // 退出确认与通知引导（17/19 号票，§9.6）
+    expect(find("resolve_exit_request")).toMatchObject({
+      args_type: "ResolveExitRequestArgs",
+      ret_type: "()",
+    });
+    expect(find("notification_permission_status")).toMatchObject({
+      args_type: "()",
+      ret_type: "NotificationPermissionStatus",
+    });
+    expect(find("open_notification_settings")).toMatchObject({
+      args_type: "()",
       ret_type: "()",
     });
   });

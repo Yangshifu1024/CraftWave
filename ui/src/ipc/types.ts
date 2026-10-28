@@ -226,6 +226,16 @@ export interface NotificationConfig {
   interventionOnly: boolean;
 }
 
+/** 通知授权态（§9.6，19 号票；notification_permission_status 返回镜像）。
+ *  granted 可送达 / denied 被拒 / prompt 未决定 / unknown 查不出（dev 裸进程）。 */
+export type NotificationPermission = "granted" | "denied" | "prompt" | "unknown";
+
+/** notification_permission_status 返回：授权态 + 平台是否有系统设置入口。 */
+export interface NotificationPermissionStatus {
+  status: NotificationPermission;
+  hasSettingsEntry: boolean;
+}
+
 /** 应用配置根：config.json 的完整结构（schemaVersion=2）。 */
 export interface AppConfig {
   schemaVersion: 2;

@@ -50,6 +50,8 @@ use host::commands::session_tree::{
 };
 use host::commands::session_tree::{load_session_tree, save_session_tree};
 #[allow(unused_imports)]
+use host::commands::system::{NotificationPermissionStatus, resolve_exit_request};
+#[allow(unused_imports)]
 use providers::types::{AppConfig, ProviderConfig};
 #[allow(unused_imports)]
 use serde_json::Value;
@@ -136,6 +138,8 @@ ipc_commands! {
     host::commands::chat::resolve_ask => args: ResolveAskArgs, ret: ();
     host::commands::chat::approve_plan => args: ApprovePlanArgs, ret: ();
     host::commands::system::resolve_exit_request => args: ResolveExitRequestArgs, ret: ();
+    host::commands::system::notification_permission_status => args: (), ret: NotificationPermissionStatus;
+    host::commands::system::open_notification_settings => args: (), ret: ();
     #[cfg(debug_assertions)]
     mock_chat::mock_chat_run => args: (), ret: ();
     select_dir => args: (), ret: Option<String>;

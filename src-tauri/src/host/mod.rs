@@ -55,9 +55,10 @@ pub struct AppState {
     /// 活跃会话标识（前端 set_ui_state 顺带写入；通知防打扰精判共享，
     /// 17 号票）。headless 测试下无写入方，保持 None。
     pub active_session: Arc<Mutex<Option<String>>>,
-    /// 退出确认挂起标志（§9.6 退出拦截：true = 已发 app:exit_requested
-    /// 等待 resolve_exit_request 回执；false = 无挂起）。
-    pub exit_pending: Mutex<bool>,
+    /// 退出确认状态机（§9.6 退出拦截 + 19 号票超时兜底：request 置位并
+    /// 起算，resolve 回执解除；超时未回执由 request_exit 排定的定时任务
+    /// 判定后放行）。
+    pub exit_confirm: Mutex<shell::ExitConfirm>,
 }
 
 impl AppState {
@@ -73,7 +74,7 @@ impl AppState {
             projects: ProjectStore::new(&data_dir),
             ui_state: ConfigStore::new(data_dir.join("ui-state.json")),
             active_session: Arc::new(Mutex::new(None)),
-            exit_pending: Mutex::new(false),
+            exit_confirm: Mutex::new(shell::ExitConfirm::new(shell::EXIT_CONFIRM_TIMEOUT)),
         }
     }
 

@@ -20,6 +20,7 @@ import type {
   ChatFrame,
   DeleteProviderArgs,
   IpcError,
+  NotificationPermissionStatus,
   ProjectMeta,
   ProviderConfig,
   ReadWorkspaceResult,
@@ -68,6 +69,8 @@ export const COMMANDS = {
   getUiState: "get_ui_state",
   setUiState: "set_ui_state",
   resolveExitRequest: "resolve_exit_request",
+  notificationPermissionStatus: "notification_permission_status",
+  openNotificationSettings: "open_notification_settings",
 } as const;
 
 /**
@@ -289,4 +292,16 @@ export function setUiState(state: unknown): Promise<void> {
 /** 退出确认回执（§9.6）：accepted=true 放行退出；false 取消回到托盘常驻。 */
 export function resolveExitRequest(accepted: boolean): Promise<void> {
   return invoke<void>(COMMANDS.resolveExitRequest, { accepted });
+}
+
+// ---- 通知引导（§9.6，19 号票）----
+
+/** 通知授权态查询：macOS 实查系统授权；查不出（dev 裸进程）→ unknown。 */
+export function notificationPermissionStatus(): Promise<NotificationPermissionStatus> {
+  return invoke<NotificationPermissionStatus>(COMMANDS.notificationPermissionStatus, {});
+}
+
+/** 打开系统通知设置（macOS 直达「通知」面板；Windows 走 ms-settings:）。 */
+export function openNotificationSettings(): Promise<void> {
+  return invoke<void>(COMMANDS.openNotificationSettings, {});
 }

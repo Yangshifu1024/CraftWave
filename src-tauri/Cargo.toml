@@ -60,6 +60,19 @@ windows-sys = { version = "0.59", features = [
     "Win32_System_Threading",
 ] }
 
+# 【19 号票】macOS 通知授权态实查（设置页引导的数据面）：UNUserNotificationCenter
+# 设置查询 + bundle id 早退判定。objc2 系已随桌面栈在依赖树内，版本与锁面一致
+# （不新增下载）；插件自带的 permission_state 在桌面端恒报 Granted（2.7/2.8
+# 源码核实），拿不到 macOS 真实授权态，故在此直查。
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSBundle"] }
+objc2-user-notifications = { version = "0.3", features = [
+    "UNUserNotificationCenter",
+    "UNNotificationSettings",
+    "block2",
+] }
+
 [dev-dependencies]
 # 本地 OpenAI 兼容 mock SSE 服务（S2 流保真 / S3 工具循环测试用，不进产物）
 axum = "0.8"

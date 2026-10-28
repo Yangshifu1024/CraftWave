@@ -68,6 +68,12 @@ fn export_ipc_manifest_and_cross_lang_fixture() {
     assert_eq!(find("cancel_run").args_type, "CancelRunArgs");
     assert_eq!(find("resolve_ask").args_type, "ResolveAskArgs");
     assert_eq!(find("approve_plan").args_type, "ApprovePlanArgs");
+    // 通知引导两命令（19 号票）
+    assert_eq!(
+        find("notification_permission_status").ret_type,
+        "NotificationPermissionStatus"
+    );
+    assert_eq!(find("open_notification_settings").ret_type, "()");
     // 标题栏命令（骨架既有）仍在注册表
     assert!(
         commands
