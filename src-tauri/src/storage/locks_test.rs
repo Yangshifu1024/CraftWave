@@ -8,22 +8,28 @@ use std::thread;
 
 use super::LockMap;
 
-// 断言：s1 持锁期间，另一个线程获取 s2 的锁不被阻塞（不同会话互不影响），
-// 释放 s1 后该线程才能顺利 join。
+// 断言：s1 持锁期间同会话 try_lock 必失败（互斥）、不同会话 s2 不受影响可立即
+// 获锁（并行），释放后同会话可再次获锁。全部 try_lock 即时返回，无时序赌注。
 #[test]
 fn same_session_mutex_different_parallel() {
     let map = Arc::new(LockMap::default());
     let mutex = map.get("s1");
     let guard = mutex.lock().unwrap();
+
     let map2 = Arc::clone(&map);
-    let handle = thread::spawn(move || {
-        // s2 与 s1 无关，应能立即获锁
-        let mutex = map2.get("s2");
-        let _g = mutex.lock().unwrap();
-    });
-    assert!(!handle.is_finished());
+    let blocked = thread::spawn(move || map2.get("s1").try_lock().is_err())
+        .join()
+        .unwrap();
+    assert!(blocked, "s1 持锁期间同会话 try_lock 应失败");
+
+    let map3 = Arc::clone(&map);
+    let parallel = thread::spawn(move || map3.get("s2").try_lock().is_ok())
+        .join()
+        .unwrap();
+    assert!(parallel, "s1 持锁不应影响 s2 获锁");
+
     drop(guard);
-    handle.join().unwrap();
+    let _again = mutex.try_lock().expect("释放后 s1 应可再次获锁");
 }
 
 // 断言：释放后再次取同一会话的锁并加锁成功（同一 id 拿到的是同一把锁且可复用）。
