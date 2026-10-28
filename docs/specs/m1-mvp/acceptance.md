@@ -8,7 +8,9 @@
 
 | 平台 | 产物 | 安装 | 首启放行（未签名） |
 |---|---|---|---|
-| macOS (x64+arm64 universal) | `CraftWave_<ver>_universal.dmg` | dmg → 拖入 Applications | 右键「打开」一次；或 `xattr -cr /Applications/CraftWave.app` |
+| macOS（仅 Apple Silicon） | `CraftWave_<ver>_aarch64.dmg` | dmg → 拖入 Applications | 右键「打开」一次；或 `xattr -cr /Applications/CraftWave.app` |
+
+> macOS 不再支持 Intel：2026-10-28 用户决策，PRD FR-16-01 的 universal（x64+arm64）口径随之收窄为 arm64-only。
 | Windows | `CraftWave_<ver>_x64-setup.exe`（nsis） | 双击安装 | SmartScreen「更多信息 → 仍要运行」 |
 | Linux | `.AppImage` / `.deb` | `chmod +x` 直跑 / `sudo apt install ./<deb>` | — |
 
