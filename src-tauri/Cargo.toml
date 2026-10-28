@@ -66,6 +66,12 @@ windows-sys = { version = "0.59", features = [
 # 源码核实），拿不到 macOS 真实授权态，故在此直查。
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6"
+objc2-app-kit = { version = "0.3", features = [
+    "NSButton",
+    "NSResponder",
+    "NSView",
+    "NSWindow",
+] }
 objc2-foundation = { version = "0.3", features = ["NSBundle"] }
 objc2-user-notifications = { version = "0.3", features = [
     "UNUserNotificationCenter",

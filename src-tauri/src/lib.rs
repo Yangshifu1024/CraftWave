@@ -163,11 +163,55 @@ async fn activate_custom_titlebar(window: WebviewWindow) -> Result<(), String> {
         .await
         .map_err(|e| e.to_string())?;
     #[cfg(target_os = "macos")]
-    window
-        .set_traffic_lights_inset(14.0, 36.0)
-        .await
-        .map_err(|e| e.to_string())?;
+    {
+        window
+            .set_traffic_lights_inset(14.0, 36.0)
+            .await
+            .map_err(|e| e.to_string())?;
+        // 插件的重排依赖激活时序（实测可能停留在原生位置），这里直接按
+        // ZCode 口径钉死三枚按钮：心距 22（边缘间隙 10）、在 48px 顶栏垂直居中
+        if let Err(error) = apply_traffic_light_frame(&window) {
+            eprintln!("[titlebar] 交通灯手动定位失败：{error}");
+        }
+    }
     Ok(())
+}
+
+/// macOS 交通灯手动定位：close/mini/zoom 三枚按钮左缘 x=14/36/58（心距 22），
+/// 垂直居中于 48px 顶栏（AppKit 坐标 y 从底部起 → origin.y=(48-12)/2=18）。
+/// 插件后续重排按「inset + 原生相对位置」平移，会保持这里设定的相对间距。
+#[cfg(target_os = "macos")]
+fn apply_traffic_light_frame(window: &WebviewWindow) -> Result<(), String> {
+    use objc2_app_kit::NSWindowButton;
+
+    const TOPBAR: f64 = 48.0;
+    const BUTTON: f64 = 12.0;
+    const PITCH: f64 = 22.0;
+    const X0: f64 = 14.0;
+
+    let ns_window = window.ns_window().map_err(|e| e.to_string())? as usize;
+    window
+        .run_on_main_thread(move || {
+            // SAFETY: 指针来自 Tauri 的 NSWindow（usize 过桥以满足 Send），
+            // 窗口存活期覆盖本调用，且本闭包在主线程执行
+            let ns_window = unsafe { &*(ns_window as *mut objc2_app_kit::NSWindow) };
+            let roles = [
+                NSWindowButton::CloseButton,
+                NSWindowButton::MiniaturizeButton,
+                NSWindowButton::ZoomButton,
+            ];
+            for (index, role) in roles.iter().enumerate() {
+                let Some(button) = ns_window.standardWindowButton(*role) else {
+                    continue;
+                };
+                let origin = button.frame().origin;
+                let mut frame = origin;
+                frame.x = X0 + index as f64 * PITCH;
+                frame.y = (TOPBAR - BUTTON) / 2.0;
+                button.setFrameOrigin(frame);
+            }
+        })
+        .map_err(|e| e.to_string())
 }
 
 /// 看门狗（watchdog：定时检查某操作是否卡死、卡死即走备用路径的机制）
