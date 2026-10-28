@@ -41,10 +41,7 @@ export function ChatThread() {
       <ThreadPrimitive.Root className="relative flex min-h-0 flex-1 flex-col">
         <ThreadPrimitive.Viewport className="flex flex-1 flex-col overflow-y-auto p-4">
           <AuiIf condition={(s) => s.thread.isEmpty}>
-            <div className="mx-auto flex w-full max-w-4xl flex-1 flex-col items-center justify-center gap-2 text-body text-[var(--muted-foreground)]">
-              <p className="text-hero text-[var(--foreground)]">CraftWave</p>
-              <p>开始新对话</p>
-            </div>
+            <ThreadEmptyState />
           </AuiIf>
           {/* 内容列限宽居中（约 62%，A1）：消息与过程行统一宽度 */}
           <div className="mx-auto w-full max-w-4xl">
@@ -79,6 +76,53 @@ export function ChatThread() {
         {/* 回底按钮（FR-13-15）：官方原语自带「不在底部才显示」判定 */}
         <ThreadPrimitive.ScrollToBottom className="absolute bottom-36 left-1/2 z-10 -translate-x-1/2 rounded-full border border-[var(--border)] bg-[var(--card)] px-3 py-1 text-secondary text-[var(--muted-foreground)] shadow" />
       </ThreadPrimitive.Root>
+    </div>
+  );
+}
+
+/** 时段问候（B1 空状态，六档边界 5/9/12/14/18/23 与 ZCode 同口径）。 */
+function greeting(): string {
+  const hour = new Date().getHours();
+  if (hour < 5) return "夜深了";
+  if (hour < 9) return "早上好";
+  if (hour < 12) return "上午好";
+  if (hour < 14) return "中午好";
+  if (hour < 18) return "下午好";
+  if (hour < 23) return "晚上好";
+  return "夜深了";
+}
+
+/** 空状态建议词（编码代理场景，点击整句填入 composer 不发送）。 */
+const EMPTY_STATE_SUGGESTIONS = [
+  "梳理当前项目的目录结构与关键模块",
+  "审查最近的改动并给出改进建议",
+  "为某个模块补齐单元测试",
+  "解释一段看不懂的代码",
+];
+
+/** 新会话首屏（B1，ZCode 同款）：时段问候 + 建议提示词 chips；
+ *  chips 逐个下落入场（cw-rise，delay 内联 ×65ms，reduced-motion 关闭）。 */
+function ThreadEmptyState() {
+  const aui = useAui();
+  return (
+    <div className="mx-auto flex w-full max-w-4xl flex-1 flex-col items-center justify-center gap-5 py-10">
+      <div className="flex flex-col items-center gap-1.5">
+        <p className="text-hero font-medium text-[var(--foreground)]">{greeting()}</p>
+        <p className="text-body text-[var(--muted-foreground)]">开始新对话，或从下面的建议开始</p>
+      </div>
+      <div className="flex flex-wrap items-center justify-center gap-2">
+        {EMPTY_STATE_SUGGESTIONS.map((text, index) => (
+          <button
+            key={text}
+            type="button"
+            className="cw-rise h-8 rounded-lg border border-[var(--border)] px-3 text-secondary text-[var(--muted-foreground)] transition-colors hover:border-[var(--ring)] hover:text-[var(--foreground)]"
+            style={{ animationDelay: `${index * 65}ms` }}
+            onClick={() => aui.composer.setText(text, { origin: "user" })}
+          >
+            {text}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }

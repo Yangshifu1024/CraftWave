@@ -16,6 +16,7 @@ import {
   ListFilesCard,
   PlanCard,
   ReadCard,
+  toolCardExpandedMemory,
   WriteCard,
 } from "./ToolCards";
 
@@ -27,7 +28,11 @@ vi.mock("@assistant-ui/react", async (importOriginal) => {
   };
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  // 展开记忆是模块级 Map（跨用例持久），不清会污染后续用例的初值
+  toolCardExpandedMemory.clear();
+});
 
 /** 卡片 props 的类型来源（以 ReadCard 的首参推导）。 */
 type PartProps = Parameters<typeof ReadCard>[0];

@@ -69,6 +69,59 @@ body {
 }
 
 /* ============================================================
+ * 动效（A6/B3）：统一曲线与三档时长，浮层/进度共用；
+ * 全部自定义动画带 prefers-reduced-motion 降级。
+ * ============================================================ */
+:root {
+  --t-fast: 120ms;
+  --t-base: 160ms;
+  --t-enter: 200ms;
+  --ease-cw: cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+/* 浮层入场：淡入 + 95% 缩放上浮（菜单/弹框统一） */
+@keyframes cw-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(2px);
+  }
+}
+.cw-pop-in {
+  animation: cw-pop var(--t-fast) var(--ease-cw);
+}
+
+/* 运行态细进度条扫光（ZCode animated-gradient 同款，替代转圈 spinner） */
+@keyframes cw-shimmer {
+  to {
+    background-position: 200% center;
+  }
+}
+.cw-progress {
+  background: linear-gradient(90deg, var(--cw-dim) 0%, var(--cw-focus) 50%, var(--cw-dim) 100%);
+  background-size: 200% 100%;
+  animation: cw-shimmer 1.2s linear infinite;
+}
+
+/* 推荐项瀑布入场（空状态建议 chips）：逐个下落，delay 由内联指定 */
+@keyframes cw-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+.cw-rise {
+  animation: cw-rise 260ms var(--ease-cw) backwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cw-pop-in,
+  .cw-progress,
+  .cw-rise {
+    animation: none;
+  }
+}
+
+/* ============================================================
  * 设计令牌（shadcn/ui 风格，亮/暗两套）
  * 语义变量供手写的 components/ui/* 基础组件消费；
  * --cw-* 是工作区面板色（设置页左导航 / 卡片底色等，与 CodeWave 同口径），
@@ -81,14 +134,16 @@ body {
  *   md=6 菜单项与按钮；sm/最小用于行内小件。禁止跨级混用。
  * ============================================================ */
 :root {
-  /* 背景灰调（侧栏与窗口融为一体），卡片（会话区大圆角框）保持白 */
+  /* 背景灰调（侧栏与窗口融为一体），卡片（会话区大圆角框）保持白。
+   * 边框用前景色 10% 透明混合（ZCode 同款）：亮暗一套 alpha 逻辑，
+   * 随前景自动反相，新增灰档不再两头手调。 */
   --background: #f5f6f8;
   --foreground: #1f2328;
   --card: #ffffff;
   --card-foreground: #1f2328;
   --muted: #eef0f3;
   --muted-foreground: #57606a;
-  --border: #e2e6ea;
+  --border: color-mix(in srgb, var(--foreground) 10%, transparent);
   --input: #cfd5db;
   --primary: #1f2328;
   --primary-foreground: #ffffff;
@@ -116,7 +171,7 @@ body {
   --card-foreground: #e8eaed;
   --muted: #24282e;
   --muted-foreground: #9aa3ad;
-  --border: #33373d;
+  --border: color-mix(in srgb, var(--foreground) 10%, transparent);
   --input: #3d4249;
   --primary: #e8eaed;
   --primary-foreground: #17191c;

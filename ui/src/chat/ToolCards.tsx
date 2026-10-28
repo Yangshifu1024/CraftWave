@@ -31,26 +31,6 @@ export function cardPhase(
 /** 卡片读取工具参数用的宽泛类型（args 是 JSON 解析结果）。 */
 type CardArgs = Record<string, unknown>;
 
-/** 旋转指示（lucide loader-circle 造型，运行中状态；与 Thread 处理中同款）。 */
-function SpinnerIcon() {
-  return (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-      className="block animate-spin"
-    >
-      <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-    </svg>
-  );
-}
-
 /** 告警图标（lucide circle-alert 造型，错误态前缀；与 Thread 错误块同款）。 */
 function AlertIconSmall() {
   return (
@@ -105,6 +85,10 @@ function useToolOutcomeDetail(toolCallId: string, settled: boolean): ToolOutcome
   return outcome;
 }
 
+/** 展开状态全局记忆（ZCode 同款，模块级 Map）：切换会话/重挂载后保持，
+ * 长会话缓慢增长可接受（ZCode 亦不清理）。导出供测试隔离清理。 */
+export const toolCardExpandedMemory = new Map<string, boolean>();
+
 /** 单行摘要壳：整行可点击展开/收起；详情区含参数全文、结果与边车数据。 */
 function ToolCardShell({
   icon,
@@ -120,7 +104,14 @@ function ToolCardShell({
   const phase = isError ? "error" : cardPhase(status, hasResult, argsDone);
   const settled = phase === "done" || phase === "error";
   // 错误态默认展开（失败原因一眼可见）；其余默认收起为单行摘要
-  const [open, setOpen] = useState(phase === "error");
+  const [open, setOpen] = useState(
+    () => toolCardExpandedMemory.get(toolCallId) ?? phase === "error",
+  );
+  const toggle = () =>
+    setOpen((v) => {
+      toolCardExpandedMemory.set(toolCallId, !v);
+      return !v;
+    });
   const outcome = useToolOutcomeDetail(toolCallId, settled);
   const detailJson = outcome
     ? JSON.stringify(outcome.detail ?? outcome.data ?? null, null, 2)
@@ -143,7 +134,7 @@ function ToolCardShell({
       <button
         type="button"
         data-phase-label={phase}
-        onClick={() => setOpen((v) => !v)}
+        onClick={toggle}
         className="flex w-full items-center gap-2 rounded px-1 py-0.5 text-left hover:bg-[var(--accent)]/60"
         aria-expanded={open}
       >
@@ -154,14 +145,16 @@ function ToolCardShell({
           {summary || "（等待参数…）"}
         </span>
         {badges}
+        {/* 运行态：细进度条扫光（ZCode 同款，不用转圈 spinner） */}
         {phase === "running" && (
-          <span data-testid="tool-spinner" className="shrink-0 text-[var(--muted-foreground)]">
-            <SpinnerIcon />
-          </span>
+          <span data-testid="tool-spinner" className="cw-progress h-1 w-16 shrink-0 rounded-full" />
         )}
         {phase === "preparing" && <span className="shrink-0 text-[var(--cw-dim)]">…</span>}
         {phase === "error" && (
-          <span className="flex shrink-0 items-center gap-1 font-medium text-[var(--destructive)]">
+          <span
+            title={resultSummary || argsText}
+            className="flex shrink-0 cursor-help items-center gap-1 font-medium text-[var(--destructive)] underline decoration-dotted underline-offset-4"
+          >
             <AlertIconSmall />
             失败
           </span>
