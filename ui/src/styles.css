@@ -27,7 +27,7 @@ body {
  * 以维持体系完整。运行时改基准即可全局缩放（勿改 html 根字号）。
  * ============================================================ */
 @theme {
-  --ui-font-size: 16px;
+  --ui-font-size: 14px;
   --text-ui-2xs: calc(var(--ui-font-size) - 5px);
   --text-ui-xs: calc(var(--ui-font-size) - 4px);
   --text-ui-sm: calc(var(--ui-font-size) - 2px);
