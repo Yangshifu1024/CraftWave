@@ -26,7 +26,7 @@ export function Alert({ title, variant = "info", className }: AlertProps) {
     <div
       role="alert"
       className={cn(
-        "rounded-lg border px-4 py-2.5 text-sm leading-relaxed",
+        "rounded-lg border px-4 py-2.5 text-small leading-relaxed",
         VARIANT_CLASS[variant],
         className,
       )}

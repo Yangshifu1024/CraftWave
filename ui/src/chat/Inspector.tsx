@@ -89,14 +89,14 @@ export function Inspector({
     >
       {/* pt-2 + h-9 头行与会话卡头完全同基线；与窗口背景一体化（无底色无边框） */}
       <div className="flex h-full min-h-0 flex-col pt-2" style={{ width }}>
-        <div className="flex h-9 shrink-0 items-center gap-2 px-3 text-[13px] text-[var(--foreground)]">
+        <div className="flex h-9 shrink-0 items-center gap-2 px-3 text-secondary text-[var(--foreground)]">
           <span className="font-medium">用量</span>
         </div>
-        <div className="flex flex-col gap-3 p-3 text-[13px] tabular-nums text-[var(--muted-foreground)]">
+        <div className="flex flex-col gap-3 p-3 text-secondary tabular-nums text-[var(--muted-foreground)]">
           {/* 计划（B 组）：plan:update 驱动的当前计划（内存态，重启清空） */}
           {planItems.length > 0 && (
             <section>
-              <h3 className="mb-1 text-xs text-[var(--cw-dim)]">
+              <h3 className="mb-1 text-meta text-[var(--cw-dim)]">
                 计划（{planItems.filter((i) => i.status === "completed").length}/{planItems.length}
                 ）
               </h3>
@@ -125,7 +125,7 @@ export function Inspector({
             </section>
           )}
           <section>
-            <h3 className="mb-1 text-xs text-[var(--cw-dim)]">实时</h3>
+            <h3 className="mb-1 text-meta text-[var(--cw-dim)]">实时</h3>
             <div className="flex justify-between">
               <span>输出速率</span>
               <span data-testid="inspector-rate">
@@ -134,7 +134,7 @@ export function Inspector({
             </div>
           </section>
           <section>
-            <h3 className="mb-1 text-xs text-[var(--cw-dim)]">本轮用量</h3>
+            <h3 className="mb-1 text-meta text-[var(--cw-dim)]">本轮用量</h3>
             <MetricRow label="输入" value={turnUsage.input} />
             <MetricRow label="输出" value={turnUsage.output} />
             <MetricRow label="缓存读" value={turnUsage.cacheRead} />
@@ -145,7 +145,7 @@ export function Inspector({
             </div>
           </section>
           <section>
-            <h3 className="mb-1 text-xs text-[var(--cw-dim)]">会话累计</h3>
+            <h3 className="mb-1 text-meta text-[var(--cw-dim)]">会话累计</h3>
             <MetricRow label="输入" value={sessionUsage.input} />
             <MetricRow label="输出" value={sessionUsage.output} />
             <div className="flex justify-between">
@@ -160,7 +160,7 @@ export function Inspector({
             </div>
           </section>
           <section>
-            <h3 className="mb-1 text-xs text-[var(--cw-dim)]">上下文进度</h3>
+            <h3 className="mb-1 text-meta text-[var(--cw-dim)]">上下文进度</h3>
             <div
               className="relative h-2 w-full overflow-hidden rounded bg-[var(--muted)]"
               data-testid="inspector-context"
@@ -182,7 +182,7 @@ export function Inspector({
           </section>
           {lastRun && (
             <section>
-              <h3 className="mb-1 text-xs text-[var(--cw-dim)]">最近运行</h3>
+              <h3 className="mb-1 text-meta text-[var(--cw-dim)]">最近运行</h3>
               <div className="flex justify-between">
                 <span>终态</span>
                 <span data-testid="inspector-last-run">

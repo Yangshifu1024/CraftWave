@@ -381,9 +381,9 @@ export function ProvidersPage() {
         </div>
         <div className="settings-section-card">
           {activeConfig.providers.length === 0 ? (
-            <div className="px-5 py-14 text-center text-[15px] text-[var(--muted-foreground)]">
+            <div className="px-5 py-14 text-center text-body text-[var(--muted-foreground)]">
               暂无供应商
-              <div className="mt-1 text-[13px]">
+              <div className="mt-1 text-secondary">
                 点右上「添加供应商」，配置端点与 API Key 后即可开始对话。
               </div>
             </div>
@@ -507,7 +507,7 @@ export function ProvidersPage() {
             modelTarget && (
               <>
                 {view.kind === "add" && (
-                  <p className="mb-4 text-[13px] text-[var(--muted-foreground)]">
+                  <p className="mb-4 text-secondary text-[var(--muted-foreground)]">
                     填写端点与凭据后添加；模型定义完全以你的输入为准（无内置目录）。
                   </p>
                 )}
@@ -735,7 +735,7 @@ function ProviderFields({
             <FieldControl error={errors.baseUrl} wide>
               <Input
                 className={cn(
-                  "font-mono text-[13px]",
+                  "font-mono text-secondary",
                   errors.baseUrl && "settings-field-error-input",
                 )}
                 value={form.baseUrl}
@@ -762,7 +762,7 @@ function ProviderFields({
               {credential.isNew ? (
                 <Input
                   className={cn(
-                    "font-mono text-[13px]",
+                    "font-mono text-secondary",
                     errors.keys && "settings-field-error-input",
                   )}
                   autoComplete="off"
@@ -772,7 +772,7 @@ function ProviderFields({
                 />
               ) : (
                 <div className="settings-credential-options">
-                  <span className="text-[13px] text-[var(--cw-text-2)]">
+                  <span className="text-secondary text-[var(--cw-text-2)]">
                     {form.apiKey ? "已配置 API Key" : "尚未配置 API Key"}
                   </span>
                   <label>
@@ -796,7 +796,7 @@ function ProviderFields({
                   {credential.mode === "replace" && (
                     <Input
                       className={cn(
-                        "font-mono text-[13px]",
+                        "font-mono text-secondary",
                         errors.keys && "settings-field-error-input",
                       )}
                       autoComplete="off"
@@ -864,7 +864,7 @@ function ProviderFields({
 
       <div className="settings-divider">模型列表</div>
       {errors.models && (
-        <div className="mb-2 text-[13px] text-[var(--cw-err)]">{errors.models}</div>
+        <div className="mb-2 text-secondary text-[var(--cw-err)]">{errors.models}</div>
       )}
       {children}
     </>
@@ -890,7 +890,7 @@ function ModelListSection({
   if (models.length === 0) {
     return (
       <div className="settings-models-empty">
-        <span className="text-[13px] text-[var(--cw-text-2)]">暂无模型</span>
+        <span className="text-secondary text-[var(--cw-text-2)]">暂无模型</span>
         <button type="button" className="settings-dashed-button" onClick={onAdd}>
           <PlusIcon className="h-3.5 w-3.5" />
           添加模型
@@ -906,7 +906,7 @@ function ModelListSection({
             <span className="settings-collection-row-info">
               <code>{model.model}</code>
               {model.vision && <Tag>图像</Tag>}
-              <span className="text-[13px] text-[var(--muted-foreground)]">
+              <span className="text-secondary text-[var(--muted-foreground)]">
                 {Math.round(model.contextWindow / 1000)}k · {Math.round(model.maxTokens / 1000)}k
                 输出
               </span>

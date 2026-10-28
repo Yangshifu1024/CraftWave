@@ -25,7 +25,7 @@ export function Select({ width, className, children, ...rest }: SelectProps) {
     <div className={cn("relative inline-flex", width && WIDTH_CLASS[width], className)}>
       <select
         className={
-          "h-9 w-full appearance-none rounded-md border border-[var(--input)] bg-transparent pl-3 pr-8 text-[15px] " +
+          "h-9 w-full appearance-none rounded-md border border-[var(--input)] bg-transparent pl-3 pr-8 text-body " +
           "text-[var(--foreground)] transition-colors focus:border-[var(--cw-focus)] focus:outline-none " +
           "focus:ring-2 focus:ring-[var(--ring)]/40 disabled:cursor-not-allowed disabled:opacity-50"
         }

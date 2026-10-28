@@ -24,7 +24,7 @@ const VARIANT_CLASS: Record<ButtonVariant, string> = {
 /** 各尺寸档的高宽类。 */
 const SIZE_CLASS: Record<ButtonSize, string> = {
   default: "h-9 px-4",
-  sm: "h-8 px-3 text-sm",
+  sm: "h-8 px-3 text-small",
 };
 
 /** Button 的 props：在原生 button 属性之上加 variant / size 两档。 */
@@ -49,7 +49,7 @@ export function Button({
       type={type}
       ref={ref}
       className={cn(
-        "inline-flex shrink-0 items-center justify-center gap-1.5 rounded-md text-[15px] font-medium",
+        "inline-flex shrink-0 items-center justify-center gap-1.5 rounded-md text-body font-medium",
         "transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ring)]",
         "disabled:pointer-events-none disabled:opacity-50",
         VARIANT_CLASS[variant],

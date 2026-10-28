@@ -17,7 +17,7 @@ export function Badge({ children, variant = "secondary", className }: BadgeProps
   return (
     <span
       className={cn(
-        "inline-flex max-w-full shrink-0 items-center rounded-full px-2 py-0.5 text-[13px] leading-5",
+        "inline-flex max-w-full shrink-0 items-center rounded-full px-2 py-0.5 text-secondary leading-5",
         variant === "secondary"
           ? "bg-[var(--accent)] text-[var(--accent-foreground)]"
           : "border border-[var(--border)] text-[var(--muted-foreground)]",

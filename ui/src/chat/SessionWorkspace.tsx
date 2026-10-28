@@ -93,7 +93,7 @@ export function SessionWorkspace() {
 
   if (!ready) {
     return (
-      <div className="flex h-dvh items-center justify-center bg-[var(--background)] text-[15px] text-[var(--muted-foreground)]">
+      <div className="flex h-dvh items-center justify-center bg-[var(--background)] text-body text-[var(--muted-foreground)]">
         正在恢复会话…
       </div>
     );
@@ -122,7 +122,7 @@ export function SessionWorkspace() {
           {/* 卡头：项目/标题（FR 拖拽区），右侧为右栏折叠钮 */}
           <div
             data-tauri-drag-region
-            className="flex h-9 shrink-0 cursor-default select-none items-center gap-2 border-b border-[var(--border)] px-4 text-[13px] text-[var(--muted-foreground)]"
+            className="flex h-9 shrink-0 cursor-default select-none items-center gap-2 border-b border-[var(--border)] px-4 text-secondary text-[var(--muted-foreground)]"
           >
             {activeTab && (
               <div className="flex min-w-0 items-center gap-1.5">
@@ -345,7 +345,7 @@ function Sidebar({
               type="button"
               data-testid="new-temp-session"
               onClick={() => void createAndOpen(undefined)}
-              className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-[15px] text-[var(--foreground)] hover:bg-[var(--accent)]"
+              className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-body text-[var(--foreground)] hover:bg-[var(--accent)]"
             >
               <CirclePlusIcon />
               新建会话
@@ -374,7 +374,7 @@ function Sidebar({
               ))}
             </SectionBody>
             {/* 项目组标题：悬停露出「新建项目」 */}
-            <div className="group mt-3 flex items-center px-2 pb-1 text-xs text-[var(--muted-foreground)]">
+            <div className="group mt-3 flex items-center px-2 pb-1 text-meta text-[var(--muted-foreground)]">
               <span>项目</span>
               <button
                 type="button"
@@ -419,7 +419,7 @@ function Sidebar({
               type="button"
               data-testid="open-settings"
               onClick={onOpenSettings}
-              className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-[15px] text-[var(--foreground)] hover:bg-[var(--accent)]"
+              className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-body text-[var(--foreground)] hover:bg-[var(--accent)]"
             >
               <SettingsIcon />
               设置
@@ -510,7 +510,7 @@ async function client_deleteProject(projectId: string): Promise<void> {
 
 /** 左栏分组标题：小灰字（「临时会话」「项目」）。 */
 function SectionHeader({ title }: { title: string }) {
-  return <div className="px-2 pb-1 text-xs text-[var(--muted-foreground)]">{title}</div>;
+  return <div className="px-2 pb-1 text-meta text-[var(--muted-foreground)]">{title}</div>;
 }
 
 /** 左栏项目行：文件夹图标 + 项目名（前景色大字）；悬停露出改名/加会话/
@@ -564,7 +564,7 @@ function ProjectRow({
     );
   }
   return (
-    <div className="group flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-[15px] text-[var(--foreground)] hover:bg-[var(--accent)]/60">
+    <div className="group flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-body text-[var(--foreground)] hover:bg-[var(--accent)]/60">
       <FolderIcon />
       <span className="min-w-0 flex-1 truncate">{project.name}</span>
       <button
@@ -611,7 +611,7 @@ function SectionBody({ children }: { children: React.ReactNode }) {
       {hidden > 0 && !expanded && (
         <button
           type="button"
-          className="mt-0.5 w-full rounded px-1 py-0.5 text-left text-xs text-[var(--muted-foreground)] hover:bg-[var(--accent)]/60"
+          className="mt-0.5 w-full rounded px-1 py-0.5 text-left text-meta text-[var(--muted-foreground)] hover:bg-[var(--accent)]/60"
           onClick={() => setExpanded(true)}
         >
           显示更多（{hidden}）
@@ -689,7 +689,7 @@ function SessionRow({
   return (
     <div
       data-testid={`session-row-${meta.id}`}
-      className={`group flex cursor-default items-center gap-1 rounded-md px-2 py-1.5 text-[15px] ${
+      className={`group flex cursor-default items-center gap-1 rounded-md px-2 py-1.5 text-body ${
         active
           ? "bg-[var(--accent)] text-[var(--foreground)]"
           : "text-[var(--foreground)] hover:bg-[var(--accent)]/60"
@@ -700,7 +700,7 @@ function SessionRow({
         {meta.title}
       </button>
       {/* 相对时间（A6）：非活跃时淡显，活跃时与操作按钮共存 */}
-      <span className="shrink-0 text-xs tabular-nums text-[var(--cw-dim)]">
+      <span className="shrink-0 text-meta tabular-nums text-[var(--cw-dim)]">
         {relativeTime(meta.updatedAt)}
       </span>
       <button

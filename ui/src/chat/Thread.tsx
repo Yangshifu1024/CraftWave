@@ -41,8 +41,8 @@ export function ChatThread() {
       <ThreadPrimitive.Root className="relative flex min-h-0 flex-1 flex-col">
         <ThreadPrimitive.Viewport className="flex flex-1 flex-col overflow-y-auto p-4">
           <AuiIf condition={(s) => s.thread.isEmpty}>
-            <div className="mx-auto flex w-full max-w-4xl flex-1 flex-col items-center justify-center gap-2 text-[15px] text-[var(--muted-foreground)]">
-              <p className="text-xl text-[var(--foreground)]">CraftWave</p>
+            <div className="mx-auto flex w-full max-w-4xl flex-1 flex-col items-center justify-center gap-2 text-body text-[var(--muted-foreground)]">
+              <p className="text-hero text-[var(--foreground)]">CraftWave</p>
               <p>开始新对话</p>
             </div>
           </AuiIf>
@@ -62,7 +62,7 @@ export function ChatThread() {
             <AuiIf condition={(s) => s.thread.isRunning}>
               <div
                 data-testid="thread-spinner"
-                className="flex items-center gap-2 px-1 py-1 text-[13px] text-[var(--muted-foreground)]"
+                className="flex items-center gap-2 px-1 py-1 text-secondary text-[var(--muted-foreground)]"
               >
                 <LoaderIcon />
                 处理中…
@@ -77,7 +77,7 @@ export function ChatThread() {
           </ThreadPrimitive.ViewportFooter>
         </ThreadPrimitive.Viewport>
         {/* 回底按钮（FR-13-15）：官方原语自带「不在底部才显示」判定 */}
-        <ThreadPrimitive.ScrollToBottom className="absolute bottom-36 left-1/2 z-10 -translate-x-1/2 rounded-full border border-[var(--border)] bg-[var(--card)] px-3 py-1 text-[13px] text-[var(--muted-foreground)] shadow" />
+        <ThreadPrimitive.ScrollToBottom className="absolute bottom-36 left-1/2 z-10 -translate-x-1/2 rounded-full border border-[var(--border)] bg-[var(--card)] px-3 py-1 text-secondary text-[var(--muted-foreground)] shadow" />
       </ThreadPrimitive.Root>
     </div>
   );
@@ -93,13 +93,13 @@ function ComposerBar() {
       {atMenu !== null && atMenu.items.length > 0 && (
         <ul
           data-testid="at-menu"
-          className="absolute bottom-full left-0 z-20 mb-1 max-h-56 w-72 overflow-y-auto rounded border border-[var(--border)] bg-[var(--card)] py-1 text-[13px] shadow"
+          className="absolute bottom-full left-0 z-20 mb-1 max-h-56 w-72 overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--card)] p-1 text-secondary shadow"
         >
           {atMenu.items.map((hit, index) => (
             <li key={hit.path}>
               <button
                 type="button"
-                className={`flex w-full items-center gap-2 px-2 py-1 text-left ${
+                className={`flex w-full items-center gap-2 rounded-md px-2 py-1 text-left ${
                   index === atMenu.activeIndex
                     ? "bg-[var(--accent)] text-[var(--foreground)]"
                     : "text-[var(--muted-foreground)]"
@@ -120,9 +120,9 @@ function ComposerBar() {
         {() => (
           <div
             data-testid="queue-item"
-            className="mb-1 flex items-center gap-2 rounded-xl border border-dashed border-[var(--border)] bg-[var(--muted)]/60 px-3 py-1 text-[13px] text-[var(--muted-foreground)]"
+            className="mb-1 flex items-center gap-2 rounded-xl border border-dashed border-[var(--border)] bg-[var(--muted)]/60 px-3 py-1 text-secondary text-[var(--muted-foreground)]"
           >
-            <span className="shrink-0 rounded-full border border-[var(--border)] px-1.5 text-xs leading-4">
+            <span className="shrink-0 rounded-full border border-[var(--border)] px-1.5 text-meta leading-4">
               排队中
             </span>
             <QueueItemPrimitive.Text className="min-w-0 flex-1 truncate" />
@@ -140,7 +140,7 @@ function ComposerBar() {
         <ComposerPrimitive.Input
           rows={1}
           placeholder="发一条消息，运行中的消息将自动排队…"
-          className="max-h-32 w-full resize-none bg-transparent px-2 py-1.5 text-[15px] focus:outline-none"
+          className="max-h-32 w-full resize-none bg-transparent px-2 py-1.5 text-body focus:outline-none"
           onKeyDown={onKeyDown}
           onKeyUp={(e) => onCursor(e.currentTarget.selectionStart ?? 0)}
           onClick={(e) => onCursor(e.currentTarget.selectionStart ?? 0)}
@@ -152,7 +152,7 @@ function ComposerBar() {
             aria-label="附件（M2 提供）"
             disabled
             title="附件功能随 M2 提供"
-            className="shrink-0 rounded px-1.5 py-0.5 text-[15px] text-[var(--cw-dim)]"
+            className="shrink-0 rounded px-1.5 py-0.5 text-body text-[var(--cw-dim)]"
           >
             +
           </button>
@@ -162,12 +162,12 @@ function ComposerBar() {
             {/* 发送恒显：运行中点击即入队（队列条展示，run 结束自动续发） */}
             <ComposerPrimitive.Send
               aria-label="发送"
-              className="shrink-0 rounded-lg bg-[var(--primary)] px-2.5 py-1 text-[15px] text-[var(--primary-foreground)]"
+              className="shrink-0 rounded-lg bg-[var(--primary)] px-2.5 py-1 text-body text-[var(--primary-foreground)]"
             >
               <ArrowUpIcon />
             </ComposerPrimitive.Send>
             <AuiIf condition={(s) => s.thread.isRunning}>
-              <ComposerPrimitive.Cancel className="rounded-lg border border-[var(--border)] px-2.5 py-1 text-[15px]">
+              <ComposerPrimitive.Cancel className="rounded-lg border border-[var(--border)] px-2.5 py-1 text-body">
                 停止
               </ComposerPrimitive.Cancel>
             </AuiIf>
@@ -193,13 +193,13 @@ function TierMenu() {
       {open && (
         <ul
           data-testid="tier-menu"
-          className="absolute bottom-full left-0 z-20 mb-1 w-40 rounded-lg border border-[var(--border)] bg-[var(--card)] py-1 text-[13px] shadow"
+          className="absolute bottom-full left-0 z-20 mb-1 w-40 rounded-lg border border-[var(--border)] bg-[var(--card)] p-1 text-secondary shadow"
         >
           {TIERS.map((t) => (
             <li key={t}>
               <button
                 type="button"
-                className={`flex w-full items-center gap-2 px-2 py-1 text-left ${
+                className={`flex w-full items-center gap-2 rounded-md px-2 py-1 text-left ${
                   t === tier
                     ? "bg-[var(--accent)] text-[var(--foreground)]"
                     : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
@@ -222,7 +222,7 @@ function TierMenu() {
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className="rounded px-1.5 py-0.5 text-xs text-[var(--muted-foreground)] hover:bg-[var(--accent)]"
+        className="rounded px-1.5 py-0.5 text-meta text-[var(--muted-foreground)] hover:bg-[var(--accent)]"
         title="权限档（本次会话有效，Shift+Tab 循环切换）"
       >
         <ShieldIcon /> {TIER_LABELS[tier]} ∨
@@ -281,12 +281,12 @@ function ModelPicker() {
       {open && (
         <ul
           data-testid="model-menu"
-          className="absolute bottom-full right-0 z-20 mb-1 max-h-64 w-64 overflow-y-auto rounded border border-[var(--border)] bg-[var(--card)] py-1 text-[13px] shadow"
+          className="absolute bottom-full right-0 z-20 mb-1 max-h-64 w-64 overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--card)] p-1 text-secondary shadow"
         >
           <li>
             <button
               type="button"
-              className={`flex w-full px-2 py-1 text-left ${
+              className={`flex w-full rounded-md px-2 py-1 text-left ${
                 selected === undefined
                   ? "bg-[var(--accent)] text-[var(--foreground)]"
                   : "text-[var(--muted-foreground)]"
@@ -301,13 +301,13 @@ function ModelPicker() {
           </li>
           {groups.map((group) => (
             <li key={group.provider} className="mt-1">
-              <div className="px-2 py-0.5 text-xs text-[var(--cw-dim)]">{group.provider}</div>
+              <div className="px-2 py-0.5 text-meta text-[var(--cw-dim)]">{group.provider}</div>
               <ul>
                 {group.models.map((model) => (
                   <li key={model.id}>
                     <button
                       type="button"
-                      className={`flex w-full px-2 py-1 text-left ${
+                      className={`flex w-full rounded-md px-2 py-1 text-left ${
                         model.id === selected
                           ? "bg-[var(--accent)] text-[var(--foreground)]"
                           : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
@@ -332,7 +332,7 @@ function ModelPicker() {
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className="max-w-36 truncate rounded-full border border-[var(--border)] px-2 py-0.5 text-xs text-[var(--muted-foreground)] hover:border-[var(--ring)]"
+        className="max-w-36 truncate rounded-full border border-[var(--border)] px-2 py-0.5 text-meta text-[var(--muted-foreground)] hover:border-[var(--ring)]"
         title="选择本会话使用的模型"
       >
         {currentName} ∨
@@ -345,7 +345,8 @@ function ModelPicker() {
 function UserMessage() {
   return (
     <MessagePrimitive.Root className="flex flex-col items-end py-2">
-      <div className="max-w-[85%] rounded-2xl bg-[var(--muted)] px-4 py-2 text-[15px] text-[var(--foreground)]">
+      {/* 气泡右上 2px 折角 + 1px 边框（ZCode 同款），与平铺的助手消息区分 */}
+      <div className="max-w-[85%] rounded-xl rounded-tr-xs border border-[var(--border)] bg-[var(--muted)] px-4 py-2.5 text-body text-[var(--foreground)]">
         <MessagePrimitive.Parts>
           {({ part }) =>
             part.type === "text" && part.text.length > 0 ? (
@@ -433,7 +434,7 @@ function AssistantMessage() {
           type="button"
           data-testid="run-summary"
           onClick={toggle}
-          className="flex items-center gap-2 rounded px-1 py-0.5 text-[13px] text-[var(--muted-foreground)] hover:bg-[var(--accent)]/60"
+          className="flex items-center gap-2 rounded px-1 py-0.5 text-secondary text-[var(--muted-foreground)] hover:bg-[var(--accent)]/60"
         >
           <WrenchIcon />
           <span>
@@ -447,7 +448,7 @@ function AssistantMessage() {
         </button>
       )}
       {/* 工作流风格 A1：助手内容平铺（无气泡底色），与过程行同列 */}
-      <div className="w-full text-[15px]">
+      <div className="w-full text-body">
         {/* 内联 render props（勿抽组件）：S1 实证 Parts 对 tool-call part 渲染
             null 时才 fallback 到注册的镜像工具卡；抽组件会让 fallback 判定失效。
             折叠态过程 part 返回隐藏空元素（非 null）以抑制 fallback 卡。 */}
@@ -465,7 +466,7 @@ function AssistantMessage() {
             if (part.type === "reasoning") {
               // 思考过程单行摘要（A2）：与工具行同风格，点击展开全文
               return (
-                <details className="text-[13px] text-[var(--muted-foreground)]">
+                <details className="text-secondary text-[var(--muted-foreground)]">
                   <summary className="flex w-fit cursor-default select-none items-center gap-2 rounded px-1 py-0.5 hover:bg-[var(--accent)]/60">
                     <LightbulbIcon />
                     <span>思考过程</span>
@@ -485,7 +486,7 @@ function AssistantMessage() {
         <MessagePrimitive.Error>
           <ErrorPrimitive.Root className="mt-1 flex w-full items-start gap-2 rounded-lg border border-[var(--destructive)]/30 bg-[var(--destructive)]/5 px-3 py-2.5">
             <AlertIcon />
-            <div className="min-w-0 text-[13px]">
+            <div className="min-w-0 text-secondary">
               <div className="font-medium text-[var(--destructive)]">运行出错</div>
               <ErrorPrimitive.Message className="mt-0.5 break-words text-[var(--muted-foreground)]" />
             </div>
@@ -667,14 +668,14 @@ function FileIconSmall() {
  * 重生成（assistant）/ 编辑重发（user）/ 复制。官方原语自带禁用态。 */
 function BranchBar({ editOnly }: { editOnly: boolean }) {
   const btn =
-    "rounded border border-transparent px-1.5 py-0.5 text-xs text-[var(--muted-foreground)] hover:border-[var(--border)] hover:text-[var(--foreground)] disabled:opacity-30";
+    "rounded border border-transparent px-1.5 py-0.5 text-meta text-[var(--muted-foreground)] hover:border-[var(--border)] hover:text-[var(--foreground)] disabled:opacity-30";
   return (
     <div className="mt-0.5 flex items-center gap-0.5" data-testid="branch-bar">
       <BranchPickerPrimitive.Root className="flex items-center gap-0.5">
         <BranchPickerPrimitive.Previous className={btn} aria-label="上一个分支">
           ←
         </BranchPickerPrimitive.Previous>
-        <span className="text-xs text-[var(--cw-dim)]">
+        <span className="text-meta text-[var(--cw-dim)]">
           <BranchPickerPrimitive.Count />
         </span>
         <BranchPickerPrimitive.Next className={btn} aria-label="下一个分支">
@@ -719,7 +720,7 @@ function ComposerStatusBar() {
   return (
     <div
       data-testid="composer-status"
-      className="flex items-center gap-3 px-1 pt-1.5 text-xs tabular-nums text-[var(--cw-dim)]"
+      className="flex items-center gap-3 px-1 pt-1.5 text-meta tabular-nums text-[var(--cw-dim)]"
     >
       {thinkingSince !== null && (
         <span data-testid="metric-thinking" className="text-[var(--muted-foreground)]">
@@ -770,7 +771,7 @@ function ComposerGhost() {
   return (
     <div
       data-testid="composer-ghost"
-      className="mt-1 flex items-center gap-2 px-2 text-xs text-[var(--muted-foreground)]"
+      className="mt-1 flex items-center gap-2 px-2 text-meta text-[var(--muted-foreground)]"
     >
       <span>
         <span className="text-[var(--foreground)]">{input}</span>

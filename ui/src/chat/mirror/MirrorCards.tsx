@@ -89,7 +89,7 @@ export function MirrorToolCard(props: CardProps) {
     <div
       data-testid={`tool-card-${toolCallId}`}
       data-phase={phase}
-      className="my-1 rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-xs"
+      className="my-1 rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-meta"
     >
       <div className="flex items-center justify-between gap-2">
         <span className="font-medium text-[var(--foreground)]">

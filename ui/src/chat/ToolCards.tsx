@@ -134,7 +134,11 @@ function ToolCardShell({
     "";
 
   return (
-    <div data-testid={`tool-card-${toolCallId}`} data-phase={phase} className="my-0.5 text-[13px]">
+    <div
+      data-testid={`tool-card-${toolCallId}`}
+      data-phase={phase}
+      className="my-0.5 text-secondary"
+    >
       {/* 摘要行：图标 + 主参数 + 徽标 + 状态（点击展开详情） */}
       <button
         type="button"
