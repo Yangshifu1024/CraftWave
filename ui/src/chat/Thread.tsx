@@ -66,18 +66,20 @@ export function ChatThread() {
               </div>
             </AuiIf>
           </div>
-          <ThreadPrimitive.ViewportFooter className="sticky bottom-0 pt-2 pb-1">
-            <div className="relative mx-auto w-full max-w-4xl">
-              {/* 回底按钮（FR-13-15）：已在底部时原语输出 disabled，用
-                  disabled:hidden 隐藏；挂 composer 容器上方自适应其高度 */}
-              <ThreadPrimitive.ScrollToBottom className="cw-pop-in absolute bottom-full left-1/2 z-20 mb-2 flex size-8 -translate-x-1/2 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--card)] text-[var(--muted-foreground)] shadow hover:text-[var(--foreground)] disabled:hidden">
-                <ArrowDownIcon />
-              </ThreadPrimitive.ScrollToBottom>
-              <ComposerBar />
-              <ComposerGhost />
-            </div>
-          </ThreadPrimitive.ViewportFooter>
         </ThreadPrimitive.Viewport>
+        {/* composer 固定底区：在滚动容器（Viewport）之外，不随内容滚动、
+            内容也不会钻入其背后（sticky 方案的两个老问题一并消除） */}
+        <div className="shrink-0 px-4 pb-1">
+          <div className="relative mx-auto w-full max-w-4xl">
+            {/* 回底按钮（FR-13-15）：已在底部时原语输出 disabled，用
+                disabled:hidden 隐藏；挂 composer 容器上方自适应其高度 */}
+            <ThreadPrimitive.ScrollToBottom className="cw-pop-in absolute bottom-full left-1/2 z-20 mb-2 flex size-8 -translate-x-1/2 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--card)] text-[var(--muted-foreground)] shadow hover:text-[var(--foreground)] disabled:hidden">
+              <ArrowDownIcon />
+            </ThreadPrimitive.ScrollToBottom>
+            <ComposerBar />
+            <ComposerGhost />
+          </div>
+        </div>
       </ThreadPrimitive.Root>
     </div>
   );
