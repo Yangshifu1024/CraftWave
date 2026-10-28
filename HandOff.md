@@ -1,6 +1,6 @@
 # CraftWave 工作交接（HandOff）
 
-> 生成于 2026-10-28（第五次更新）。追加：17 号票（桌面体验）合入 main、全仓注释整理（实习生向代码导览）。
+> 生成于 2026-10-28（第六次更新）。追加：17 号票后的一轮 UI 快速迭代（Markdown 渲染/模型选择/排队/工作流改版）+ CI 三平台修复全绿。
 > 规则：本文件只做索引与状态快照，细节一律引用票文件/文档/提交，不复述。
 
 ## 一、必读顺序（新会话开场）
@@ -11,18 +11,23 @@
 4. 票目录 `docs/specs/m1-mvp/tasks/`——一票一文件，Answer 节是各票结论。
 5. **全仓源码注释已按"新入职实习生可独立读懂"标准整理过一轮**（153 文件，`c6d0953`）——领域术语首次出现处都有一句话解释，读代码即读文档。
 
-## 二、当前状态快照（main = `c6d0953`，17 号票 + 注释整理全部在内；本地领先 origin/main 未 push，见四）
+## 二、当前状态快照（main = `0c5bf3b`，与 origin/main 一致；**CI 六 job 全绿**）
 
-- **地图进度**：01–17 号票全部关闭。四张 spike + 三张实现切片 + 核心链路（13）+ 工具系统接线（14）+ run 生命周期落盘（15）+ 多会话与项目（16）+ **桌面体验（17，本次）**。
-- **测试基线**：Rust 233 lib + 25 集成全绿（clippy/build/fmt 干净）；前端 vitest 106 例；tsc/Biome 全绿；manifest 双向契约 27 命令 10 事件键。
-- **17 号票**（`2a99c59`）：宿主四件套（单实例 single-instance 插件 / 托盘 + 关闭到托盘 / 退出拦截 resolve_exit_request(#23 参数 accepted) / 系统通知 notification 插件——TauriEventSink 对 run:done/error/cancelled + ask:opened 单一旁路，防打扰=通知偏好域+焦点/活跃会话抑制，on_action 点击回跳 notify:activate 路由）+ run 终态三键补实装；前端主题三态（html.dark + 设置页即时预览 + 全量语义令牌迁移中性强调色）、折叠分组（**一 run 一消息的组件内折叠定式**；崩溃 run 渲染层标「已中断」——存储 status 不动）、Composer 全套（@ 菜单/↑↓ 历史/Esc/Shift+Tab 权限档（惰性 runConfig）/草稿 ui-state 持久化；IME/Enter 由 ComposerPrimitive.Input 原生承担）、右栏 Inspector 用量页、滚动跟随 + 回底按钮、项目改名；键位表回写 §10.6。15/16 号票 shortcut 全部收敛。
-- **注释整理**（`c6d0953`，用户指令专项）：153 文件全仓注释（Rust //! 模块文档 + 全项注释 + 关键逻辑「为什么」；前端同口径），零代码行为改动。
-- **分支记录**：`feat/run-persistence`、`feat/sessions-projects`、`feat/desktop-experience`、`docs/comments-full-repo` 均 fast-forward 并入 main，未删除。
+- **地图进度**：01–17 号票全部关闭（17 号票后未立新票——以下 UI 迭代为用户直接驱动的增量修复/打磨，随提交入库）。
+- **测试基线**：Rust 233 lib + 25 集成（macOS 本地）；前端 vitest 107 例；tsc/Biome 全绿；manifest 双向契约 27 命令 10 事件键；**GitHub CI 三平台六 job 全绿**（契约测试跑位见五节坑 13）。
+- **17 号票后 UI 迭代**（提交序列，均已在 main）：
+  - `eacd05c` 流式 Markdown（**streamdown 2.7.1**，注意包名不是 react-streamdown——那是其更名前的旧名，npm 404）；styles.css 的 `.cw-md` 排版段；左栏首行下移 40px 避交通灯；「设置/用量」双入口移左栏底部。
+  - `ca6c500` Composer 模型下拉（`session-model.ts` 会话内存态 → RunConfig.modelId 惰性生效，§11.1 Rust 面既有）；权限档可点击。
+  - `c39cfb8` 运行中消息排队（`useLocalRuntime(adapter, { unstable_enableMessageQueue: true })`；`ComposerPrimitive.Queue` + `QueueItemPrimitive`；Send 恒显）。
+  - `e927a5b` **工作流风格改版**（对照用户参考截图 A1–A7+B）：助手内容平铺无气泡 + 内容列 max-w-4xl 居中；工具卡单行摘要化（`ToolCardShell`：图标+主参数+diff 徽标+状态，点击展开，错误态默认展开）；思考单行；运行中 spinner；Composer 三层（输入/工具栏：附件占位+盾牌权限档下拉+模型+方形发送；状态栏：思考计时+三数）；左栏相对时间 + 分组超 5 条折叠；Inspector 计划区（`plan-state.ts` 订阅 plan:update，内存态）。
+  - `fbc99d5` 通知 capability（`notification:default`——插件注入的初始化脚本走 JS 面查权限，Rust 侧调用不需要但 JS 面要）+ Inspector planItems selector 稳定空数组。
+- **CI 修复**（`ae5189c`→`0c5bf3b` 六笔）：Windows 编译三处（enable_process_group 导入缺 cfg(unix)、JobGuard 缺 unsafe Send/Sync、symlink 测试 unix API）+ S5/e2e 测试 cfg(unix) + Windows 分支 clippy let_and_return + dead_code + 四例测试平台化（workspace/grep 展示路径统一正斜杠；command 测试双 shell 分支）。**欠账：进程树收割 e2e 在 Windows 跳过，批取消收齐语义 Windows 无真实覆盖——随打包票补双平台 executor**。
+- **分支记录**：`fix/*`、`feat/*` 各分支均 fast-forward 并入 main，未删除。
 
 ## 三、下一步（按地图雾区顺序）
 
-1. **三平台打包与 1 周真实使用验收**：打包矩阵（dmg/nsis/AppImage+deb）、验收剧本（真实项目、记录方式）；**C-8（临时会话 roots 边界）安全复判在此毕业成票**；17 号票遗留 P1 随手收敛（macOS 通知权限引导、托盘左键单击平台差异、退出确认无超时）。
-2. 小项：rate 的 TextDelta 自算、steer/followUp、错误分类 §11.3、ts-rs 引入（C-2 后半）、session_prefs 域命令（#24/#25）、pending_intent UI 接线、设置页与预设打磨（含 17 号票 shortcut：通知正文带会话标题、权限档初始档与 §10.6 confirm_each 口径复核、关闭到托盘改直接退出的配置项、主题启动防亮闪）。
+1. **三平台打包与 1 周真实使用验收**：打包矩阵（dmg/nsis/AppImage+deb）、验收剧本（真实项目、记录方式）；**C-8（临时会话 roots 边界）安全复判在此毕业成票**；顺手收敛欠账：e2e 双平台 executor、macOS 通知权限引导、托盘左键单击平台差异、退出确认无超时。
+2. 小项：rate 的 TextDelta 自算、steer/followUp（**排队 Steer 按钮随 §5.5 票**——队列 UI 已就位，QueueItemPrimitive.Steer 未接）、错误分类 §11.3、ts-rs 引入（C-2 后半）、session_prefs 域命令（#24/#25——**模型选择/权限档的持久化挂这**）、pending_intent UI 接线、设置页与预设打磨（含：通知正文带会话标题、权限档初始档与 §10.6 confirm_each 口径复核、关闭到托盘改直接退出的配置项、主题启动防亮闪、思考时长帧面计时（现 thinkingSince 只有起止点））。
 3. **待核实的疑似笔误**（注释任务发现、铁律未动）：`ui/src/settings/SettingsPage.tsx` 的 SecurityPage 中 `entry.indexOf("")` 恒为 0，白名单条目切分疑似漏了分隔符实参，随设置域票核实。
 
 ## 四、工作方式（本图约定）
@@ -50,7 +55,14 @@
 - **assistant-ui 0.15.31 API 坑**：① `BranchPickerPrimitive.Count` 零 props（样式套外层 span）；② `ThreadMessage` 不带 parentId（活动路径父子关系按传入线性序推导——save 协议建立在此前提上）；③ `ComposerPrimitive.Input` 原生承担 Enter 发送/Shift+Enter 换行/IME isComposing 防护（17 号票实证，勿重复手写）；④ `ThreadPrimitive.Viewport autoScroll` 内建「跟随最新 + 上滚暂停」。
 - **真实帧序是 Usage 先于工具执行**——RunRecorder 落盘顺序依赖它，写帧序测试别把 ToolResult 放 Usage 前。
 - **前端 vi.mock("@/ipc/client") 要补全依赖链导出**（session.ts → runtime.ts → startChat 等），mock 缺导出整文件报错。
-- 新依赖（累计）：`anstream`（ANSI 清洗）、`rfd`（select_dir，同步命令）、`@types/json-schema`（ui devDep）、`tauri-plugin-single-instance` 2.5.4、`tauri-plugin-notification` 2.7.0、tauri features += `tray-icon`；`sha2` 全仓统一 **0.11**。
+- **zustand selector 内严禁 `?? []` / `?? {}` 兜底**——每次渲染新建引用，Object.is 恒不等，React 报「getSnapshot should be cached」并 Maximum update depth 无限循环；一律模块级常量空值（run-metrics 的 EMPTY_METRICS、Inspector 的 EMPTY_PLAN 同款）。新加 selector 时全仓 grep 复查。
+- **capability 要覆盖插件注入脚本的 JS 面**：tauri-plugin-notification 的初始化脚本查 is_permission_granted 走前端权限（`notification:default`），Rust 侧调用不需要——判权限时两头都要想。
+- **跨平台路径口径（CI 修复定式）**：面向用户的展示路径（workspace 搜索、grep 命中行）统一正斜杠（`replace('\\', "/")`）；command 测试用 `if cfg!(windows)` 给 powershell 等价命令（产品命令入口本就 Unix sh / Windows powershell 双 shell）；unix 专属 API（std::os::unix、进程组收割）的测试加 `#[cfg(unix)]`；Windows JobGuard 裸句柄要 `unsafe impl Send/Sync`（内核句柄本可跨线程）。
+- **CI 契约测试跑位**：contract.test.ts 依赖 cargo test 产物（ipc-manifest.json + session-tree-fixture.jsonl），前端 job 不装 Rust——完整 pnpm test 在 backend job（ubuntu）cargo test 之后跑（ci.yml），前端 job 只 lint/typecheck。本地顺序同：先 cargo test 再 pnpm test。
+- **macOS 交叉验证 Windows 不可行**：aws-lc-sys 构建脚本需目标平台工具链（cmake/NASM），cfg 面只能交 CI windows job 验证——本地绿≠CI 绿，改 cfg 相关代码预期要跑两三轮 CI。
+- **streamdown 包名**：Vercel 流式 Markdown 组件是 `streamdown`（react-streamdown 是更名前旧名，npm 404）；样式导入 `streamdown/styles.css` + 自建 `.cw-md` 排版段（Tailwind preflight 会拍平标题/列表）。
+- **消息排队（assistant-ui 实验面）**：`useLocalRuntime(adapter, { unstable_enableMessageQueue: true })` 开启后运行中发送入 composer 队列、run 结束自动续发（后端 E_SESSION_RUNNING 约束天然满足——remove 在帧发出后同步完成）；`ComposerPrimitive.Queue` + `QueueItemPrimitive`（Text/Remove/Steer——Steer 随 §5.5 票）；官方标注 experimental，升级 0.15.x 小版本留意此点。
+- 新依赖（累计）：`anstream`（ANSI 清洗）、`rfd`（select_dir，同步命令）、`@types/json-schema`（ui devDep）、`tauri-plugin-single-instance` 2.5.4、`tauri-plugin-notification` 2.7.0、tauri features += `tray-icon`、**`streamdown` 2.7.1（ui）**；`sha2` 全仓统一 **0.11**。
 - **智谱 GLM Coding Plan 端点三协议分流**：Anthropic `…/api/anthropic`；OpenAI Chat Completions `…/api/coding/paas/v4`；OpenAI Responses `…/api/v1`。rig 的 openai_chat 拼 `{baseUrl}/chat/completions`，协议不匹配时服务端回 5xx/403 而非明确报错。
 - **前端纯浏览器黑屏是既有行为**（无 Tauri IPC 不渲染）；UI 视觉调试用临时 `preview.html` 入口预置 store 数据绕开 IPC（用完即删，勿提交）。
 - 测试不进源码文件：Rust 用 `*_test.rs` / `tests/`，前端用 `*.test.ts(x)`。
