@@ -20,7 +20,7 @@ import * as client from "@/ipc/client";
 import type { ChatFrame, MessageEntry, RunConfig } from "@/ipc/types";
 import { syncTreeBeforeSend, useSessionPersistStore } from "@/stores/session";
 import { bindCancelToRun } from "./cancel-bridge";
-import { type ChatPart, FrameBuffer, toParts } from "./frames";
+import { type ChatPart, FrameBuffer, type FrameSnapshot, toParts } from "./frames";
 import { tierOf } from "./permission-tier";
 import { useRunMetricsStore } from "./run-metrics";
 import { modelOf } from "./session-model";
@@ -178,16 +178,30 @@ export const defaultDeps: TauriAdapterDeps = {
   cancelRun: client.cancelRun,
 };
 
-/** runEnded reason → assistant-ui 终态 status（done=complete；cancelled/error=incomplete）。 */
-function endStatus(reason: "done" | "error" | "cancelled"): ChatModelRunResult["status"] {
-  switch (reason) {
+/** runEnded 终态 → assistant-ui status（done=complete；cancelled/error=
+ *  incomplete；error 时带上错误文案——线程错误态展示原文而非通用占位）。 */
+function endStatus(ended: NonNullable<FrameSnapshot["ended"]>): ChatModelRunResult["status"] {
+  switch (ended.reason) {
     case "cancelled":
       return { type: "incomplete", reason: "cancelled" };
     case "error":
-      return { type: "incomplete", reason: "error" };
+      return {
+        type: "incomplete",
+        reason: "error",
+        ...(ended.error ? { error: ended.error.message } : {}),
+      };
     default:
       return { type: "complete", reason: "stop" };
   }
+}
+
+/** 命令面 reject（D14 形状 {code,message,detail?}）→ 错误终态帧的 error 载荷。 */
+function toFrameError(err: unknown): { code: string; message: string } {
+  if (typeof err === "object" && err !== null && "code" in err && "message" in err) {
+    const shaped = err as { code: unknown; message: unknown };
+    return { code: String(shaped.code), message: String(shaped.message) };
+  }
+  return { code: "E_START_CHAT", message: String(err) };
 }
 
 /** 生产 adapter（§10.2 伪代码的产品化落地，S6 骨架遗留单例形态）。 */
@@ -245,34 +259,48 @@ export function createTauriChatAdapter(deps: TauriAdapterDeps): ChatModelAdapter
         return Promise.reject(new Error(`非桥接命令：${cmd}`));
       });
       try {
-        const invokePromise = deps.startChat({
-          sessionId: deps.sessionId,
-          messages: toWire(messages),
-          runConfig,
-          onFrame: (frame: ChatFrame) => {
-            if (import.meta.env.DEV && frame.type === "runEnded" && frame.reason === "error") {
-              console.error("[run] 错误终态：", frame.error);
-            }
-            if (
-              unstable_assistantMessageId !== undefined &&
-              frame.type === "runStarted" &&
-              !useSessionPersistStore
-                .getState()
-                .scopes[deps.sessionId]?.runtimeNodes.has(unstable_assistantMessageId)
-            ) {
-              useSessionPersistStore
-                .getState()
-                .noteRuntimeNode(deps.sessionId, unstable_assistantMessageId, frame.runId);
-            }
-            buffer.push(frame);
-            deps.onFrame?.(frame);
-          },
-        });
-        // 命令面失败在 dev 模式打原始错误（UI 只显示通用错误；排障线索进
-        // webview console + tauri dev 终端，2026-10-28 优化项）
-        if (import.meta.env.DEV) {
-          invokePromise.catch((err) => console.error("[start_chat] 命令失败：", err));
-        }
+        // 已见最大帧 seq（合成终态帧取 maxSeq+1，避免被丢序保护吞掉）
+        let maxSeq = -1;
+        const invokePromise = deps
+          .startChat({
+            sessionId: deps.sessionId,
+            messages: toWire(messages),
+            runConfig,
+            onFrame: (frame: ChatFrame) => {
+              maxSeq = Math.max(maxSeq, frame.seq);
+              if (import.meta.env.DEV && frame.type === "runEnded" && frame.reason === "error") {
+                console.error("[run] 错误终态：", frame.error);
+              }
+              if (
+                unstable_assistantMessageId !== undefined &&
+                frame.type === "runStarted" &&
+                !useSessionPersistStore
+                  .getState()
+                  .scopes[deps.sessionId]?.runtimeNodes.has(unstable_assistantMessageId)
+              ) {
+                useSessionPersistStore
+                  .getState()
+                  .noteRuntimeNode(deps.sessionId, unstable_assistantMessageId, frame.runId);
+              }
+              buffer.push(frame);
+              deps.onFrame?.(frame);
+            },
+          })
+          .catch((err: unknown) => {
+            // 命令面失败（未配模型/参数非法等，后端注册 run 前即 reject、
+            // 零帧）：合成错误终态帧让 run 收口，避免线程挂死「处理中」；
+            // 原始错误进 console（排障线索，webview + tauri dev 终端）
+            console.error("[start_chat] 命令失败：", err);
+            buffer.push({
+              seq: maxSeq + 1,
+              type: "runEnded",
+              reason: "error",
+              durationMs: 0,
+              toolCount: 0,
+              turn: 0,
+              error: toFrameError(err),
+            });
+          });
         // 64ms 节流快照迭代：runEnded 快照 yield 后迭代自然收口（§10.2）
         for await (const snapshot of buffer.snapshots()) {
           if (signal.aborted && !snapshot.ended) {
@@ -283,7 +311,7 @@ export function createTauriChatAdapter(deps: TauriAdapterDeps): ChatModelAdapter
           const content = toParts(snapshot);
           yield {
             content: content.length > 0 ? content : [{ type: "text", text: "" }],
-            ...(snapshot.ended ? { status: endStatus(snapshot.ended.reason) } : {}),
+            ...(snapshot.ended ? { status: endStatus(snapshot.ended) } : {}),
           };
         }
         await invokePromise;

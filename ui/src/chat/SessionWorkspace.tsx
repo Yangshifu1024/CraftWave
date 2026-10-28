@@ -1,13 +1,15 @@
 /**
  * 会话工作区（16 号票 FR-01-01/02 + 17 号票三栏 FR-13-01）：
  *
+ * - 背景一体化：窗口/左栏/右栏同底色；会话区承载在四周留缝的四角圆角
+ *   卡上，卡头显示项目/标题并放右栏折叠钮（Tab 条已移除——会话切换由
+ *   左栏承担；左栏常开，顶条只为交通灯让位）；
  * - 左栏：临时会话区 + 项目分组会话树、新建（临时会话/项目/项目下会话）、
  *   标题本地过滤、重命名/删除、项目删除（名下会话转临时）、项目改名
- *   （16 号票 shortcut，17 号票收敛）；
- * - 顶栏：拖拽区 + Tab 条（运行中指示、关闭）；
- * - Tab 面：每会话一个 keep-mounted SessionTab（独立 runtime/草稿/运行态/
- *   滚动锚点；非活跃仅隐藏，run 帧照收）+ 右栏 Inspector（可折叠，开合入
- *   ui-state，FR-13-01）；
+ *   （16 号票 shortcut，17 号票收敛）；宽度可拖（min=初始宽，max=半屏）；
+ * - 会话面：每会话一个 keep-mounted SessionTab（独立 runtime/草稿/运行态/
+ *   滚动锚点；非活跃仅隐藏，run 帧照收）；
+ * - 右栏 Inspector（可折叠，开合入 ui-state，FR-13-01；宽度可拖）；
  * - 宿主事件接线（17 号票）：app:exit_requested 退出确认（resolve_exit_request
  *   回执）、notify:activate 通知点击路由到对应会话。
  */
@@ -20,7 +22,7 @@ import {
   useAuiState,
   useLocalRuntime,
 } from "@assistant-ui/react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AskPanel } from "@/chat/AskPanel";
 import { useBackendEvents } from "@/chat/event-bridge";
 import { Inspector } from "@/chat/Inspector";
@@ -53,19 +55,34 @@ import { useSessionsStore } from "@/stores/sessions";
 // config 为纯数据可提模块级，各 SessionTab 共用同一份）。
 const cwAuiConfig = AuiConfig({ tools: Tools({ toolkit: cwToolkit }) });
 
-/** 会话工作区根组件：左栏 + 顶栏 Tab 条 + 每会话 Tab 面 + 右栏用量面板。
- *  挂载时恢复会话列表，未就绪前显示加载占位。 */
+/** 侧栏初始宽（= 最小宽）：原 w-60 / w-72 对应像素；可拖宽，上限半屏。 */
+export const SIDEBAR_MIN_WIDTH = 240;
+export const INSPECTOR_MIN_WIDTH = 288;
+
+/** 宽度夹取：min=初始宽，max=半屏（拖动与键盘方向键共用同一条规则）。 */
+export function clampWidth(w: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, w));
+}
+
+/** 会话工作区根组件：左栏（含交通灯让位顶条，常开）| 会话大圆角卡 | 右栏。
+ *  背景一体化：左/右栏与窗口同底色，会话区承载在四角圆角卡上（四周留缝），
+ *  卡头显示项目/标题。挂载时恢复会话列表，未就绪前显示加载占位。 */
 export function SessionWorkspace() {
   useBackendEvents();
   const { exitDialog } = useHostEvents();
   const ready = useSessionsStore((s) => s.ready);
   const tabs = useSessionsStore((s) => s.tabs);
+  const projects = useSessionsStore((s) => s.projects);
   const activeId = useSessionsStore((s) => s.activeId);
   const inspectorOpen = useSessionsStore((s) => s.inspectorOpen);
-  const setActive = useSessionsStore((s) => s.setActive);
-  const closeTab = useSessionsStore((s) => s.closeTab);
+  const setInspectorOpen = useSessionsStore((s) => s.setInspectorOpen);
   // 设置页浮层（17 号后从 App 顶层挪入工作区；入口在左栏底部）
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // 侧栏宽度为局部态不落盘（重启回初始宽；持久化的是开合状态）
+  const [leftWidth, setLeftWidth] = useState(SIDEBAR_MIN_WIDTH);
+  const [rightWidth, setRightWidth] = useState(INSPECTOR_MIN_WIDTH);
+  // 拖宽进行中：关掉宽度过渡，保证手柄 1:1 跟手（松手后恢复动画）
+  const [resizing, setResizing] = useState(false);
 
   useEffect(() => {
     void useSessionsStore
@@ -81,40 +98,75 @@ export function SessionWorkspace() {
       </div>
     );
   }
+  const activeTab = tabs.find((t) => t.id === activeId);
+  const project =
+    activeTab?.projectId !== undefined
+      ? projects.find((p) => p.id === activeTab.projectId)
+      : undefined;
   return (
-    <div className="flex h-dvh bg-[var(--background)] text-[var(--foreground)]">
-      <Sidebar onOpenSettings={() => setSettingsOpen(true)} />
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header
-          data-tauri-drag-region
-          className="flex h-10 shrink-0 cursor-default select-none items-center bg-[var(--card)] pl-2 text-xs text-[var(--muted-foreground)]"
-          style={{
-            paddingLeft: "max(var(--tauri-plugin-decoration-left-clearance, 76px), 8px)",
-            paddingRight: "var(--tauri-plugin-decoration-right-clearance, 8px)",
-          }}
-        >
-          {tabs.map((tab) => (
-            <TabChip
-              key={tab.id}
-              meta={tab}
-              active={tab.id === activeId}
-              onActivate={() => setActive(tab.id)}
-              onClose={() => closeTab(tab.id)}
-            />
-          ))}
-          <span className="ml-auto pr-1">CraftWave</span>
-        </header>
-        <div className="relative min-h-0 flex-1">
-          {tabs.map((tab) => (
-            <SessionTab
-              key={tab.id}
-              sessionId={tab.id}
-              active={tab.id === activeId}
-              inspectorOpen={inspectorOpen}
-            />
-          ))}
+    <div className="flex h-dvh bg-[var(--background)] pr-2 text-[var(--foreground)]">
+      {/* pr-2：右栏收起（右手柄不渲染）时卡片右侧仍留与底部一致的缝 */}
+      <Sidebar width={leftWidth} animate={!resizing} onOpenSettings={() => setSettingsOpen(true)} />
+      {/* 手柄贴卡片边框，留缝留在手柄外侧（ml-2/mr-2） */}
+      <ResizeHandle
+        label="左侧栏宽度"
+        value={leftWidth}
+        min={SIDEBAR_MIN_WIDTH}
+        className="ml-2"
+        onResizing={setResizing}
+        onChange={setLeftWidth}
+      />
+      {/* 会话区大圆角卡：上下与窗口边缘留缝（py-2），左右紧贴拖宽手柄 */}
+      <div className="flex min-w-0 flex-1 flex-col py-2">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)]">
+          {/* 卡头：项目/标题（FR 拖拽区），右侧为右栏折叠钮 */}
+          <div
+            data-tauri-drag-region
+            className="flex h-9 shrink-0 cursor-default select-none items-center gap-2 border-b border-[var(--border)] px-4 text-xs text-[var(--muted-foreground)]"
+          >
+            {activeTab && (
+              <div className="flex min-w-0 items-center gap-1.5">
+                <FolderIcon />
+                {project && (
+                  <>
+                    <span className="shrink-0">{project.name}</span>
+                    <span className="text-[var(--cw-dim)]">/</span>
+                  </>
+                )}
+                <span className="truncate font-medium text-[var(--foreground)]">
+                  {activeTab.title}
+                </span>
+              </div>
+            )}
+            <SidebarToggle open={inspectorOpen} onToggle={() => setInspectorOpen(!inspectorOpen)} />
+          </div>
+          <div className="relative min-h-0 flex-1">
+            {tabs.map((tab) => (
+              <SessionTab key={tab.id} sessionId={tab.id} active={tab.id === activeId} />
+            ))}
+          </div>
         </div>
       </div>
+      {activeId !== null && (
+        <>
+          {inspectorOpen && (
+            <ResizeHandle
+              label="右侧栏宽度"
+              value={rightWidth}
+              min={INSPECTOR_MIN_WIDTH}
+              inverse
+              className="mr-2"
+              onResizing={setResizing}
+              onChange={setRightWidth}
+            />
+          )}
+          {/* Inspector 只依赖会话域（scope/metrics/plan store），提升到
+              工作区挂载以便拖宽手柄同层排布；随 activeId 取数即随 Tab 切换 */}
+          <SessionScopeContext.Provider value={activeId}>
+            <Inspector width={rightWidth} open={inspectorOpen} animate={!resizing} />
+          </SessionScopeContext.Provider>
+        </>
+      )}
       {exitDialog}
       {settingsOpen && <SettingsPage onClose={() => setSettingsOpen(false)} />}
     </div>
@@ -175,68 +227,8 @@ function ExitConfirmDialog({ open, onClose }: { open: boolean; onClose: () => vo
   );
 }
 
-/** Tab 页签：标题 + 运行指示 + 关闭。 */
-function TabChip({
-  meta,
-  active,
-  onActivate,
-  onClose,
-}: {
-  meta: SessionMeta;
-  active: boolean;
-  onActivate: () => void;
-  onClose: () => void;
-}) {
-  const running = useSessionsStore((s) => s.running[meta.id]);
-  return (
-    <div
-      data-testid={`tab-${meta.id}`}
-      role="tab"
-      aria-selected={active}
-      tabIndex={0}
-      className={`group mr-1 flex max-w-40 shrink-0 cursor-default items-center gap-1 rounded-t px-2 py-1 ${
-        active
-          ? "bg-[var(--background)] text-[var(--foreground)]"
-          : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-      }`}
-      onClick={onActivate}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") onActivate();
-      }}
-    >
-      {running && (
-        <span
-          data-testid={`tab-running-${meta.id}`}
-          className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400"
-        />
-      )}
-      <span className="truncate text-xs">{meta.title}</span>
-      <button
-        type="button"
-        aria-label="关闭会话"
-        onClick={(e) => {
-          e.stopPropagation();
-          onClose();
-        }}
-        className="ml-0.5 hidden rounded px-0.5 text-[var(--muted-foreground)] hover:bg-[var(--accent)] group-hover:block"
-      >
-        ×
-      </button>
-    </div>
-  );
-}
-
-/** 单会话 Tab 面（keep-mounted：非活跃 display:none，运行态与帧流不断）。
- *  右栏 Inspector 只挂在活跃 Tab 内（FR-13-01：按活跃会话取数 + 随 Tab 切换）。 */
-function SessionTab({
-  sessionId,
-  active,
-  inspectorOpen,
-}: {
-  sessionId: string;
-  active: boolean;
-  inspectorOpen: boolean;
-}) {
+/** 单会话 Tab 面（keep-mounted：非活跃 display:none，运行态与帧流不断）。 */
+function SessionTab({ sessionId, active }: { sessionId: string; active: boolean }) {
   const adapter = useMemo(() => sessionAdapter(sessionId), [sessionId]);
   // unstable_enableMessageQueue（实验性消息队列，FR-01-07 排队面）：运行中
   // 发送的消息先入 composer 队列展示，当前 run 结束后自动依次发送——
@@ -267,7 +259,6 @@ function SessionTab({
           <RunSummariesContext.Provider value={summaries}>
             <ChatThread />
             <AskPanel />
-            {active && inspectorOpen && <Inspector />}
             <RunningReporter sessionId={sessionId} />
             <DraftRestorer sessionId={sessionId} />
           </RunSummariesContext.Provider>
@@ -299,10 +290,19 @@ function DraftRestorer({ sessionId }: { sessionId: string }) {
   return null;
 }
 
-/** 左栏（§10.7）：搜索 + 临时会话区 + 项目分组会话树；底部「设置/用量」
- *  双入口各占一半宽度。顶部首行下移 40px 与中间 Tab 条同高——避开 macOS
- *  交通灯（红黄绿窗口按钮，占据窗口左上角约 76×32 像素）。 */
-function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
+/** 左栏（§10.7）：顶部条（交通灯让位，常驻）+ 搜索 + 临时会话区 +
+ *  项目分组会话树；底部「设置/用量」双入口各占一半宽度。与窗口背景
+ *  一体化（无底色无边框）。宽度受控（拖宽手柄，min=初始宽 max=半屏），
+ *  拖动时过渡关闭保证跟手。 */
+function Sidebar({
+  width,
+  animate,
+  onOpenSettings,
+}: {
+  width: number;
+  animate: boolean;
+  onOpenSettings: () => void;
+}) {
   const [filter, setFilter] = useState("");
   const [confirm, setConfirm] = useState<
     { kind: "session"; session: SessionMeta } | { kind: "project"; project: ProjectMeta } | null
@@ -310,8 +310,6 @@ function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const projects = useSessionsStore((s) => s.projects);
   const sessions = useSessionsStore((s) => s.sessions);
   const activeId = useSessionsStore((s) => s.activeId);
-  const inspectorOpen = useSessionsStore((s) => s.inspectorOpen);
-  const setInspectorOpen = useSessionsStore((s) => s.setInspectorOpen);
   const openTab = useSessionsStore((s) => s.openTab);
 
   const needle = filter.trim().toLowerCase();
@@ -327,59 +325,45 @@ function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   return (
     <aside
       data-testid="session-sidebar"
-      className="flex w-60 shrink-0 flex-col border-r border-[var(--border)] bg-[var(--card)]"
+      className={`shrink-0 overflow-hidden ${
+        animate ? "transition-[width] duration-200 ease-out" : ""
+      }`}
+      style={{ width }}
     >
-      {/* 顶部下移 40px（pt-10）与中间 Tab 条同基线：避开 macOS 交通灯区域 */}
-      <div className="flex items-center gap-1 p-2 pt-10">
-        <button
-          type="button"
-          data-testid="new-temp-session"
-          onClick={() => void createAndOpen(undefined)}
-          className="flex-1 rounded bg-[var(--primary)] px-2 py-1 text-xs text-[var(--primary-foreground)] hover:opacity-90"
-        >
-          + 新会话
-        </button>
-        <button
-          type="button"
-          data-testid="new-project"
-          onClick={() => void createProject()}
-          className="rounded border border-[var(--border)] px-2 py-1 text-xs text-[var(--muted-foreground)] hover:border-[var(--ring)]"
-        >
-          项目
-        </button>
-      </div>
-      <div className="px-2 pb-2">
-        <Input
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          placeholder="搜索会话标题…"
-          className="w-full"
+      <div className="flex h-full min-h-0 flex-col" style={{ width }}>
+        {/* 顶部条：交通灯让位；h-9（36px）与 Rust 侧交通灯容器
+            （12px 钮 + inset 24）同心 */}
+        <div
+          data-tauri-drag-region
+          className="h-9 shrink-0 cursor-default select-none"
+          style={{ paddingLeft: "max(var(--tauri-plugin-decoration-left-clearance, 76px), 8px)" }}
         />
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-        <Section title="临时会话" count={temporaries.length}>
-          {temporaries.map((meta) => (
-            <SessionRow
-              key={meta.id}
-              meta={meta}
-              active={meta.id === activeId}
-              onOpen={() => openTab(meta)}
-              onDelete={() => setConfirm({ kind: "session", session: meta })}
-            />
-          ))}
-        </Section>
-        {projects.map((project) => {
-          const list = byProject.get(project.id) ?? [];
-          return (
-            <Section
-              key={project.id}
-              title={project.name}
-              count={list.length}
-              project={project}
-              onAddSession={() => void createAndOpen(project.id)}
-              onDeleteProject={() => setConfirm({ kind: "project", project })}
+        <div className="flex min-h-0 flex-1 flex-col">
+          {/* 主操作区：整宽大行（ZCode「新建任务」行样式） */}
+          <div className="px-3 pt-1">
+            <button
+              type="button"
+              data-testid="new-temp-session"
+              onClick={() => void createAndOpen(undefined)}
+              className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm text-[var(--foreground)] hover:bg-[var(--accent)]"
             >
-              {list.map((meta) => (
+              <CirclePlusIcon />
+              新建会话
+            </button>
+          </div>
+          <div className="mx-3 mt-2 shrink-0 border-t border-[var(--border)]" />
+          <div className="px-3 pb-1 pt-2">
+            <Input
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              placeholder="搜索会话标题…"
+              className="w-full rounded-lg"
+            />
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+            <SectionHeader title="临时会话" />
+            <SectionBody>
+              {temporaries.map((meta) => (
                 <SessionRow
                   key={meta.id}
                   meta={meta}
@@ -388,29 +372,60 @@ function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
                   onDelete={() => setConfirm({ kind: "session", session: meta })}
                 />
               ))}
-            </Section>
-          );
-        })}
-      </div>
-      {/* 底部双入口：设置页 + 右栏用量页开合，横向平铺各占一半宽度 */}
-      <div className="flex gap-1 border-t border-[var(--border)] p-2">
-        <button
-          type="button"
-          data-testid="open-settings"
-          onClick={onOpenSettings}
-          className="flex-1 rounded border border-[var(--border)] px-2 py-1 text-xs text-[var(--muted-foreground)] hover:border-[var(--ring)]"
-        >
-          设置
-        </button>
-        <button
-          type="button"
-          data-testid="inspector-toggle"
-          aria-pressed={inspectorOpen}
-          onClick={() => setInspectorOpen(!inspectorOpen)}
-          className="flex-1 rounded border border-[var(--border)] px-2 py-1 text-xs text-[var(--muted-foreground)] hover:border-[var(--ring)]"
-        >
-          用量
-        </button>
+            </SectionBody>
+            {/* 项目组标题：悬停露出「新建项目」 */}
+            <div className="group mt-3 flex items-center px-2 pb-1 text-xs text-[var(--muted-foreground)]">
+              <span>项目</span>
+              <button
+                type="button"
+                data-testid="new-project"
+                aria-label="新建项目"
+                onClick={() => void createProject()}
+                className="ml-auto hidden rounded px-1 hover:bg-[var(--accent)] group-hover:block"
+              >
+                +
+              </button>
+            </div>
+            {projects.map((project) => {
+              const list = byProject.get(project.id) ?? [];
+              return (
+                <div key={project.id} className="mb-1">
+                  <ProjectRow
+                    project={project}
+                    onAddSession={() => void createAndOpen(project.id)}
+                    onDeleteProject={() => setConfirm({ kind: "project", project })}
+                  />
+                  {/* 名下会话相对项目行缩进一级 */}
+                  <div className="ml-4">
+                    <SectionBody>
+                      {list.map((meta) => (
+                        <SessionRow
+                          key={meta.id}
+                          meta={meta}
+                          active={meta.id === activeId}
+                          onOpen={() => openTab(meta)}
+                          onDelete={() => setConfirm({ kind: "session", session: meta })}
+                        />
+                      ))}
+                    </SectionBody>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {/* 底部：设置入口（右栏用量改由卡头右上钮开合） */}
+          <div className="p-2">
+            <button
+              type="button"
+              data-testid="open-settings"
+              onClick={onOpenSettings}
+              className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm text-[var(--foreground)] hover:bg-[var(--accent)]"
+            >
+              <SettingsIcon />
+              设置
+            </button>
+          </div>
+        </div>
       </div>
       <ConfirmDialog
         open={confirm !== null}
@@ -493,31 +508,29 @@ async function client_deleteProject(projectId: string): Promise<void> {
 
 // ---- 小件 ----
 
-/** 左栏分组容器：标题 + 计数，项目分组时悬停露出改名/加会话/删项目按钮；
- *  改名走内联输入框（Enter 提交，Esc 取消）。 */
-function Section({
-  title,
-  count,
+/** 左栏分组标题：小灰字（「临时会话」「项目」）。 */
+function SectionHeader({ title }: { title: string }) {
+  return <div className="px-2 pb-1 text-xs text-[var(--muted-foreground)]">{title}</div>;
+}
+
+/** 左栏项目行：文件夹图标 + 项目名（前景色大字）；悬停露出改名/加会话/
+ *  删项目，改名走内联输入框（Enter 提交，Esc 取消）。 */
+function ProjectRow({
   project,
-  children,
   onAddSession,
   onDeleteProject,
 }: {
-  title: string;
-  count: number;
-  /** 项目分组时传入（标题行内改名，16 号票 shortcut，17 号票收敛）。 */
-  project?: ProjectMeta;
-  children: React.ReactNode;
-  onAddSession?: () => void;
-  onDeleteProject?: () => void;
+  project: ProjectMeta;
+  onAddSession: () => void;
+  onDeleteProject: () => void;
 }) {
   const [editing, setEditing] = useState(false);
-  const [name, setName] = useState(title);
+  const [name, setName] = useState(project.name);
   const commit = () => {
     setEditing(false);
     const trimmed = name.trim();
-    if (project === undefined || !trimmed || trimmed === project.name) {
-      setName(title);
+    if (!trimmed || trimmed === project.name) {
+      setName(project.name);
       return;
     }
     void (async () => {
@@ -531,64 +544,56 @@ function Section({
       }
     })();
   };
-  return (
-    <div className="mb-2">
-      <div className="group flex items-center gap-1 px-1 py-0.5 text-[11px] text-[var(--muted-foreground)]">
-        {editing ? (
-          <Input
-            autoFocus
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onBlur={commit}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") commit();
-              if (e.key === "Escape") {
-                setName(title);
-                setEditing(false);
-              }
-            }}
-          />
-        ) : (
-          <>
-            <span className="truncate">{title}</span>
-            <span className="text-[var(--cw-dim)]">{count}</span>
-            {project !== undefined && (
-              <button
-                type="button"
-                aria-label="项目改名"
-                onClick={() => {
-                  setName(title);
-                  setEditing(true);
-                }}
-                className="hidden rounded px-1 hover:bg-[var(--accent)] group-hover:block"
-              >
-                ✎
-              </button>
-            )}
-          </>
-        )}
-        {onAddSession && (
-          <button
-            type="button"
-            aria-label="在项目下新建会话"
-            onClick={onAddSession}
-            className={`${project === undefined ? "ml-auto" : ""} hidden rounded px-1 hover:bg-[var(--accent)] group-hover:block`}
-          >
-            +
-          </button>
-        )}
-        {onDeleteProject && (
-          <button
-            type="button"
-            aria-label="删除项目"
-            onClick={onDeleteProject}
-            className={`hidden rounded px-1 hover:bg-[var(--accent)] group-hover:block ${onAddSession ? "" : "ml-auto"}`}
-          >
-            🗑
-          </button>
-        )}
+  if (editing) {
+    return (
+      <div className="px-1 py-0.5">
+        <Input
+          autoFocus
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commit();
+            if (e.key === "Escape") {
+              setName(project.name);
+              setEditing(false);
+            }
+          }}
+        />
       </div>
-      <SectionBody>{children}</SectionBody>
+    );
+  }
+  return (
+    <div className="group flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm text-[var(--foreground)] hover:bg-[var(--accent)]/60">
+      <FolderIcon />
+      <span className="min-w-0 flex-1 truncate">{project.name}</span>
+      <button
+        type="button"
+        aria-label="项目改名"
+        onClick={() => {
+          setName(project.name);
+          setEditing(true);
+        }}
+        className="hidden rounded px-0.5 hover:bg-[var(--accent)] group-hover:block"
+      >
+        ✎
+      </button>
+      <button
+        type="button"
+        aria-label="在项目下新建会话"
+        onClick={onAddSession}
+        className="hidden rounded px-0.5 hover:bg-[var(--accent)] group-hover:block"
+      >
+        +
+      </button>
+      <button
+        type="button"
+        aria-label="删除项目"
+        onClick={onDeleteProject}
+        className="hidden rounded px-0.5 hover:bg-[var(--accent)] group-hover:block"
+      >
+        🗑
+      </button>
     </div>
   );
 }
@@ -630,7 +635,8 @@ function relativeTime(updatedAt: number): string {
   return `${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-/** 左栏单行会话：点击打开 Tab；悬停露出重命名/删除按钮（重命名内联输入）。 */
+/** 左栏单行会话：点击打开 Tab；悬停露出重命名/删除按钮（重命名内联输入）。
+ *  运行中显示绿点（原 Tab 条的运行指示随其移除迁入左栏）。 */
 function SessionRow({
   meta,
   active,
@@ -642,6 +648,7 @@ function SessionRow({
   onOpen: () => void;
   onDelete: () => void;
 }) {
+  const running = useSessionsStore((s) => s.running[meta.id]);
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(meta.title);
   const commit = () => {
@@ -682,12 +689,13 @@ function SessionRow({
   return (
     <div
       data-testid={`session-row-${meta.id}`}
-      className={`group flex cursor-default items-center gap-1 rounded px-1 py-0.5 text-xs ${
+      className={`group flex cursor-default items-center gap-1 rounded-md px-2 py-1.5 text-sm ${
         active
           ? "bg-[var(--accent)] text-[var(--foreground)]"
-          : "text-[var(--muted-foreground)] hover:bg-[var(--accent)]/60"
+          : "text-[var(--foreground)] hover:bg-[var(--accent)]/60"
       }`}
     >
+      {running && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400" />}
       <button type="button" className="min-w-0 flex-1 truncate text-left" onClick={onOpen}>
         {meta.title}
       </button>
@@ -715,5 +723,171 @@ function SessionRow({
         ×
       </button>
     </div>
+  );
+}
+
+/** 右栏折叠钮（卡头右端）：展开态高亮、收起态灰调，与右栏开合同步。 */
+function SidebarToggle({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+  const label = open ? "折叠右侧栏" : "展开右侧栏";
+  return (
+    <button
+      type="button"
+      data-testid="inspector-toggle-top"
+      aria-label={label}
+      aria-pressed={open}
+      title={label}
+      onClick={onToggle}
+      className={`ml-auto rounded p-1.5 ${
+        open
+          ? "bg-[var(--accent)] text-[var(--foreground)]"
+          : "text-[var(--muted-foreground)] hover:bg-[var(--accent)]"
+      }`}
+    >
+      <PanelRightIcon />
+    </button>
+  );
+}
+
+/** 面板图标（lucide panel-right 造型）。 */
+function PanelRightIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <path d="M15 3v18" />
+    </svg>
+  );
+}
+
+/** 文件夹图标（lucide folder 造型，卡头/项目行前缀）。 */
+function FolderIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      className="shrink-0"
+    >
+      <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+    </svg>
+  );
+}
+
+/** 圈加号图标（lucide circle-plus 造型，「新建会话」行前缀）。 */
+function CirclePlusIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      className="shrink-0"
+    >
+      <circle cx="12" cy="12" r="10" />
+      <path d="M8 12h8" />
+      <path d="M12 8v8" />
+    </svg>
+  );
+}
+
+/** 齿轮图标（lucide settings 造型，「设置」行前缀）。 */
+function SettingsIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      className="shrink-0"
+    >
+      <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+/** 侧栏拖宽手柄：pointer capture 横向拖动（右栏方向相反），双击恢复初始宽
+ *  （min=初始宽），方向键 ±16px（separator 键盘约定），上限半屏；拖动起止
+ *  经 onResizing 通知宿主关/开侧栏宽度过渡。 */
+function ResizeHandle({
+  label,
+  value,
+  min,
+  inverse,
+  className,
+  onChange,
+  onResizing,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  /** 右栏手柄：向左拖 = 加宽。 */
+  inverse?: boolean;
+  /** 手柄外侧留缝等布局微调（如 ml-2/mr-2）。 */
+  className?: string;
+  onChange: (w: number) => void;
+  onResizing?: (resizing: boolean) => void;
+}) {
+  const drag = useRef<{ x: number; w: number } | null>(null);
+  const clamp = (w: number) => clampWidth(w, min, window.innerWidth / 2);
+  const dir = inverse ? -1 : 1;
+  return (
+    // biome-ignore lint/a11y/useSemanticElements: 交互式拖宽手柄，<hr> 无交互语义
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={label}
+      aria-valuenow={value}
+      tabIndex={0}
+      className={`w-1 shrink-0 cursor-col-resize touch-none bg-transparent hover:bg-[var(--border)] ${className ?? ""}`}
+      onPointerDown={(e) => {
+        drag.current = { x: e.clientX, w: value };
+        e.currentTarget.setPointerCapture(e.pointerId);
+        onResizing?.(true);
+      }}
+      onPointerMove={(e) => {
+        if (drag.current === null) return;
+        onChange(clamp(drag.current.w + (e.clientX - drag.current.x) * dir));
+      }}
+      onPointerUp={(e) => {
+        drag.current = null;
+        e.currentTarget.releasePointerCapture(e.pointerId);
+        onResizing?.(false);
+      }}
+      onPointerCancel={() => {
+        drag.current = null;
+        onResizing?.(false);
+      }}
+      onDoubleClick={() => onChange(min)}
+      onKeyDown={(e) => {
+        if (e.key === "ArrowLeft") onChange(clamp(value - 16 * dir));
+        if (e.key === "ArrowRight") onChange(clamp(value + 16 * dir));
+      }}
+    />
   );
 }

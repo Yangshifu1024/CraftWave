@@ -36,13 +36,14 @@ import { useSessionsStore } from "@/stores/sessions";
  *  A1：工作流风格平铺，不占满整屏宽）。 */
 export function ChatThread() {
   return (
-    <div className="flex h-full min-h-0 flex-1 flex-col bg-[var(--background)] text-[var(--foreground)]">
+    // 透明背景：透出承载它的大圆角卡（bg-card），自身不再铺底色
+    <div className="flex h-full min-h-0 flex-1 flex-col text-[var(--foreground)]">
       <ThreadPrimitive.Root className="relative flex min-h-0 flex-1 flex-col">
         <ThreadPrimitive.Viewport className="flex flex-1 flex-col overflow-y-auto p-4">
           <AuiIf condition={(s) => s.thread.isEmpty}>
             <div className="mx-auto flex w-full max-w-4xl flex-1 flex-col items-center justify-center gap-2 text-sm text-[var(--muted-foreground)]">
               <p className="text-lg text-[var(--foreground)]">CraftWave</p>
-              <p>空聊天窗已就绪 —— rig 流式接入见 S2/S3 票</p>
+              <p>开始新对话</p>
             </div>
           </AuiIf>
           {/* 内容列限宽居中（约 62%，A1）：消息与过程行统一宽度 */}
@@ -482,13 +483,39 @@ function AssistantMessage() {
           }}
         </MessagePrimitive.Parts>
         <MessagePrimitive.Error>
-          <ErrorPrimitive.Root className="text-xs text-[var(--destructive)]">
-            <ErrorPrimitive.Message />
+          <ErrorPrimitive.Root className="mt-1 flex w-full items-start gap-2 rounded-lg border border-[var(--destructive)]/30 bg-[var(--destructive)]/5 px-3 py-2.5">
+            <AlertIcon />
+            <div className="min-w-0 text-xs">
+              <div className="font-medium text-[var(--destructive)]">运行出错</div>
+              <ErrorPrimitive.Message className="mt-0.5 break-words text-[var(--muted-foreground)]" />
+            </div>
           </ErrorPrimitive.Root>
         </MessagePrimitive.Error>
       </div>
       <BranchBar editOnly={false} />
     </MessagePrimitive.Root>
+  );
+}
+
+/** 告警图标（lucide circle-alert 造型，错误块前缀）。 */
+function AlertIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      className="mt-0.5 shrink-0 text-[var(--destructive)]"
+    >
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 8v4" />
+      <path d="M12 16h.01" />
+    </svg>
   );
 }
 

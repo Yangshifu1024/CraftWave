@@ -4,7 +4,8 @@
  *
  * 数据按活跃会话取（useSessionMetrics 分桶）；上下文窗口取当前激活模型
  * 的 contextWindow（get_config 一次拉取；无激活模型时按文档默认 128000）。
- * 头部带「run 结束自动折叠」开关（§10.4/FR-01-10 可配置，ui-state 持久化）。
+ * 「run 结束自动折叠」（§10.4/FR-01-10）行为保留，UI 开关已移除——按
+ * ui-state 持久化值（缺省 true）执行。
  */
 
 import { useEffect, useState } from "react";
@@ -13,7 +14,6 @@ import { useSessionMetrics } from "@/chat/run-metrics";
 import { useSessionScope } from "@/chat/session-scope";
 import { getConfig } from "@/ipc/client";
 import type { ProviderConfig } from "@/ipc/types";
-import { useSessionsStore } from "@/stores/sessions";
 
 /** 技术设计文档 normalize 默认：contextWindow 缺省 128000。 */
 const DEFAULT_CONTEXT_WINDOW = 128000;
@@ -52,13 +52,21 @@ function useContextWindow(): number {
 const EMPTY_PLAN: PlanItem[] = [];
 
 /** 右栏用量面板本体：实时速率 / 本轮用量 / 会话累计 / 上下文进度条
- *  + 最近运行终态；头部开关控制「run 结束自动折叠」。 */
-export function Inspector() {
+ *  + 最近运行终态。宽度受控
+ *  （拖宽手柄，min=初始宽 max=半屏）；开合动画走外层宽度过渡，内层定宽
+ *  防内容回流；收起后 inert 挡键盘焦点（面板常驻挂载）。 */
+export function Inspector({
+  width,
+  open,
+  animate,
+}: {
+  width: number;
+  open: boolean;
+  animate: boolean;
+}) {
   const sessionId = useSessionScope();
   const { rate, turnUsage, sessionUsage, lastRun } = useSessionMetrics(sessionId);
   const contextWindow = useContextWindow();
-  const collapseRuns = useSessionsStore((s) => s.collapseRuns);
-  const setCollapseRuns = useSessionsStore((s) => s.setCollapseRuns);
   const planItems = usePlanStateStore((s) => s.bySession[sessionId] ?? EMPTY_PLAN);
 
   const total = (u: { input: number; output: number }) => u.input + u.output;
@@ -73,118 +81,122 @@ export function Inspector() {
   return (
     <aside
       data-testid="inspector"
-      className="flex w-72 shrink-0 flex-col border-l border-[var(--border)] bg-[var(--card)]"
+      className={`shrink-0 overflow-hidden ${
+        animate ? "transition-[width] duration-200 ease-out" : ""
+      }`}
+      style={{ width: open ? width : 0 }}
+      inert={!open}
     >
-      <div className="flex items-center gap-2 border-b border-[var(--border)] px-3 py-2 text-xs text-[var(--foreground)]">
-        <span className="font-medium">用量</span>
-        <label className="ml-auto flex cursor-default items-center gap-1 text-[11px] text-[var(--muted-foreground)]">
-          <input
-            type="checkbox"
-            checked={collapseRuns}
-            onChange={(e) => setCollapseRuns(e.target.checked)}
-          />
-          自动折叠
-        </label>
-      </div>
-      <div className="flex flex-col gap-3 p-3 text-xs text-[var(--muted-foreground)]">
-        {/* 计划（B 组）：plan:update 驱动的当前计划（内存态，重启清空） */}
-        {planItems.length > 0 && (
+      {/* pt-2 + h-9 头行与会话卡头完全同基线；与窗口背景一体化（无底色无边框） */}
+      <div className="flex h-full min-h-0 flex-col pt-2" style={{ width }}>
+        <div className="flex h-9 shrink-0 items-center gap-2 px-3 text-xs text-[var(--foreground)]">
+          <span className="font-medium">用量</span>
+        </div>
+        <div className="flex flex-col gap-3 p-3 text-xs text-[var(--muted-foreground)]">
+          {/* 计划（B 组）：plan:update 驱动的当前计划（内存态，重启清空） */}
+          {planItems.length > 0 && (
+            <section>
+              <h3 className="mb-1 text-[11px] text-[var(--cw-dim)]">
+                计划（{planItems.filter((i) => i.status === "completed").length}/{planItems.length}
+                ）
+              </h3>
+              <ul className="space-y-0.5" data-testid="inspector-plan">
+                {planItems.map((item) => (
+                  <li key={item.id} className="flex items-start gap-1.5">
+                    <span
+                      className={
+                        item.status === "completed"
+                          ? "text-emerald-600 dark:text-emerald-400"
+                          : "text-[var(--muted-foreground)]"
+                      }
+                    >
+                      {item.status === "completed"
+                        ? "●"
+                        : item.status === "in_progress"
+                          ? "◐"
+                          : "○"}
+                    </span>
+                    <span className={item.status === "completed" ? "line-through" : ""}>
+                      {item.text}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
           <section>
-            <h3 className="mb-1 text-[11px] text-[var(--cw-dim)]">
-              计划（{planItems.filter((i) => i.status === "completed").length}/{planItems.length}）
-            </h3>
-            <ul className="space-y-0.5" data-testid="inspector-plan">
-              {planItems.map((item) => (
-                <li key={item.id} className="flex items-start gap-1.5">
-                  <span
-                    className={
-                      item.status === "completed"
-                        ? "text-emerald-600 dark:text-emerald-400"
-                        : "text-[var(--muted-foreground)]"
-                    }
-                  >
-                    {item.status === "completed" ? "●" : item.status === "in_progress" ? "◐" : "○"}
-                  </span>
-                  <span className={item.status === "completed" ? "line-through" : ""}>
-                    {item.text}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </section>
-        )}
-        <section>
-          <h3 className="mb-1 text-[11px] text-[var(--cw-dim)]">实时</h3>
-          <div className="flex justify-between">
-            <span>输出速率</span>
-            <span data-testid="inspector-rate">
-              {rate === null ? "—" : `${rate.toFixed(0)} tok/s`}
-            </span>
-          </div>
-        </section>
-        <section>
-          <h3 className="mb-1 text-[11px] text-[var(--cw-dim)]">本轮用量</h3>
-          <MetricRow label="输入" value={turnUsage.input} />
-          <MetricRow label="输出" value={turnUsage.output} />
-          <MetricRow label="缓存读" value={turnUsage.cacheRead} />
-          <MetricRow label="缓存写" value={turnUsage.cacheWrite} />
-          <div className="mt-1 flex justify-between text-[var(--foreground)]">
-            <span>合计</span>
-            <span data-testid="inspector-turn-total">{total(turnUsage)} tok</span>
-          </div>
-        </section>
-        <section>
-          <h3 className="mb-1 text-[11px] text-[var(--cw-dim)]">会话累计</h3>
-          <MetricRow label="输入" value={sessionUsage.input} />
-          <MetricRow label="输出" value={sessionUsage.output} />
-          <div className="flex justify-between">
-            <span>缓存命中率</span>
-            <span data-testid="inspector-cache">
-              {hitRate === null ? "—" : `${(hitRate * 100).toFixed(0)}%`}
-            </span>
-          </div>
-          <div className="mt-1 flex justify-between text-[var(--foreground)]">
-            <span>合计</span>
-            <span data-testid="inspector-session-total">{total(sessionUsage)} tok</span>
-          </div>
-        </section>
-        <section>
-          <h3 className="mb-1 text-[11px] text-[var(--cw-dim)]">上下文进度</h3>
-          <div
-            className="relative h-2 w-full overflow-hidden rounded bg-[var(--muted)]"
-            data-testid="inspector-context"
-          >
-            <div
-              className="h-full bg-[var(--primary)]"
-              style={{ width: `${contextRatio * 100}%` }}
-            />
-            {/* §10.5：0.6 阈值标线（超过即接近压缩线） */}
-            <div
-              className="absolute top-0 h-full w-px bg-[var(--destructive)]"
-              style={{ left: "60%" }}
-            />
-          </div>
-          <div className="mt-1 flex justify-between">
-            <span>{contextUsed} tok</span>
-            <span>{contextWindow} 窗口</span>
-          </div>
-        </section>
-        {lastRun && (
-          <section>
-            <h3 className="mb-1 text-[11px] text-[var(--cw-dim)]">最近运行</h3>
+            <h3 className="mb-1 text-[11px] text-[var(--cw-dim)]">实时</h3>
             <div className="flex justify-between">
-              <span>终态</span>
-              <span data-testid="inspector-last-run">
-                {lastRun.reason === "done"
-                  ? `完成 · ${(lastRun.durationMs / 1000).toFixed(1)}s`
-                  : lastRun.reason === "cancelled"
-                    ? "已取消"
-                    : "出错"}
-                {lastRun.reason === "done" ? ` · ${lastRun.toolCount} 次工具` : ""}
+              <span>输出速率</span>
+              <span data-testid="inspector-rate">
+                {rate === null ? "—" : `${rate.toFixed(0)} tok/s`}
               </span>
             </div>
           </section>
-        )}
+          <section>
+            <h3 className="mb-1 text-[11px] text-[var(--cw-dim)]">本轮用量</h3>
+            <MetricRow label="输入" value={turnUsage.input} />
+            <MetricRow label="输出" value={turnUsage.output} />
+            <MetricRow label="缓存读" value={turnUsage.cacheRead} />
+            <MetricRow label="缓存写" value={turnUsage.cacheWrite} />
+            <div className="mt-1 flex justify-between text-[var(--foreground)]">
+              <span>合计</span>
+              <span data-testid="inspector-turn-total">{total(turnUsage)} tok</span>
+            </div>
+          </section>
+          <section>
+            <h3 className="mb-1 text-[11px] text-[var(--cw-dim)]">会话累计</h3>
+            <MetricRow label="输入" value={sessionUsage.input} />
+            <MetricRow label="输出" value={sessionUsage.output} />
+            <div className="flex justify-between">
+              <span>缓存命中率</span>
+              <span data-testid="inspector-cache">
+                {hitRate === null ? "—" : `${(hitRate * 100).toFixed(0)}%`}
+              </span>
+            </div>
+            <div className="mt-1 flex justify-between text-[var(--foreground)]">
+              <span>合计</span>
+              <span data-testid="inspector-session-total">{total(sessionUsage)} tok</span>
+            </div>
+          </section>
+          <section>
+            <h3 className="mb-1 text-[11px] text-[var(--cw-dim)]">上下文进度</h3>
+            <div
+              className="relative h-2 w-full overflow-hidden rounded bg-[var(--muted)]"
+              data-testid="inspector-context"
+            >
+              <div
+                className="h-full bg-[var(--primary)]"
+                style={{ width: `${contextRatio * 100}%` }}
+              />
+              {/* §10.5：0.6 阈值标线（超过即接近压缩线） */}
+              <div
+                className="absolute top-0 h-full w-px bg-[var(--destructive)]"
+                style={{ left: "60%" }}
+              />
+            </div>
+            <div className="mt-1 flex justify-between">
+              <span>{contextUsed} tok</span>
+              <span>{contextWindow} 窗口</span>
+            </div>
+          </section>
+          {lastRun && (
+            <section>
+              <h3 className="mb-1 text-[11px] text-[var(--cw-dim)]">最近运行</h3>
+              <div className="flex justify-between">
+                <span>终态</span>
+                <span data-testid="inspector-last-run">
+                  {lastRun.reason === "done"
+                    ? `完成 · ${(lastRun.durationMs / 1000).toFixed(1)}s`
+                    : lastRun.reason === "cancelled"
+                      ? "已取消"
+                      : "出错"}
+                  {lastRun.reason === "done" ? ` · ${lastRun.toolCount} 次工具` : ""}
+                </span>
+              </div>
+            </section>
+          )}
+        </div>
       </div>
     </aside>
   );

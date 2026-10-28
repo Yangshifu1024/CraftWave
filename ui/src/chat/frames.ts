@@ -36,6 +36,8 @@ export interface FrameSnapshot {
     reason: "done" | "error" | "cancelled";
     durationMs: number;
     toolCount: number;
+    /** 错误终态的错误载荷（run:error 帧 / 命令面合成帧），线程错误态展示用。 */
+    error?: { code: string; message: string };
   };
   /** runStarted 帧信息（帧到达前为 null）。 */
   run: RunInfo | null;
@@ -126,6 +128,7 @@ export class FrameBuffer {
           reason: frame.reason,
           durationMs: frame.durationMs,
           toolCount: frame.toolCount,
+          error: frame.error,
         };
         break;
       default:

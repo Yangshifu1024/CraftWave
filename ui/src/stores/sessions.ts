@@ -6,8 +6,8 @@
  * - projects/sessions：左栏列表（list_projects / list_sessions 全量，操作后刷新）；
  * - running：Tab 运行指示（SessionTab 内 useThread 桥进 store）；
  * - ui-state：界面状态持久化（Tab 布局 { tabIds, activeId }、自动折叠开关、
- *   Inspector 开合、各会话输入框草稿，§3.3 #30/#31 命令读写），写侧带防抖
- *   （见 persistUiState）。
+ *   Inspector 开合、各会话输入框草稿，§3.3 #30/#31 命令读写），写侧带
+ *   防抖（见 persistUiState）。
  */
 
 import { create } from "zustand";

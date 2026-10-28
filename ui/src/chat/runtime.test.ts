@@ -210,6 +210,34 @@ describe("createTauriChatAdapter：帧消费管线", () => {
     expect(yields.at(-1)!.status).toEqual({ type: "incomplete", reason: "cancelled" });
     void cancelRun;
   });
+
+  it("命令面失败（如未配模型）：零帧 reject → 合成错误终态帧收口，不挂死", async () => {
+    const adapter = createTauriChatAdapter({
+      sessionId: "sess-test",
+      runConfig: { tier: "autoEdit", maxTurns: 4, steer: false },
+      // 复刻 resolve_model 前置失败：注册 run 前即 reject，一帧不发
+      startChat: vi.fn(async () => {
+        throw {
+          code: "E_INVALID_ARG",
+          message: "未指定模型：RunConfig.modelId 与 activeModelId 均为空",
+        };
+      }),
+      cancelRun: vi.fn(async () => true),
+      syncTree: async () => {},
+    });
+
+    const yields: { status?: unknown }[] = [];
+    for await (const result of asAsync(adapter.run(runOptions()))) {
+      yields.push(result as { status?: unknown });
+    }
+    expect(yields.length).toBeGreaterThanOrEqual(1);
+    // 错误文案随 status.error 透出（线程错误态显示原文，而非 "An error occurred"）
+    expect(yields.at(-1)!.status).toEqual({
+      type: "incomplete",
+      reason: "error",
+      error: "未指定模型：RunConfig.modelId 与 activeModelId 均为空",
+    });
+  });
 });
 
 // ---- sessionAdapter：会话级内存态（权限档 + 模型覆盖）随发送生效（17 号票） ----

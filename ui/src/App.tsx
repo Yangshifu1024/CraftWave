@@ -112,9 +112,9 @@ export default function App() {
 }
 
 /**
- * 主界面骨架（M1 多会话工作区挂载点，16 号票）：左栏 / Tab 条 / 每个会话
- * 独立的聊天运行时都在 SessionWorkspace 内部装配；设置页浮层也由
- * SessionWorkspace 挂载（入口在左栏底部，17 号票后调整）。
+ * 主界面骨架（M1 多会话工作区挂载点，16 号票）：左栏 / 会话大圆角卡 /
+ * 每个会话独立的聊天运行时都在 SessionWorkspace 内部装配；设置页浮层也
+ * 由 SessionWorkspace 挂载（入口在左栏底部，17 号票后调整）。
  */
 function SkeletonApp() {
   return <SessionWorkspace />;
