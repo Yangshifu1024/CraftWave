@@ -304,7 +304,6 @@ function Sidebar({
   animate: boolean;
   onOpenSettings: () => void;
 }) {
-  const [filter, setFilter] = useState("");
   const [confirm, setConfirm] = useState<
     { kind: "session"; session: SessionMeta } | { kind: "project"; project: ProjectMeta } | null
   >(null);
@@ -315,13 +314,9 @@ function Sidebar({
   const activeId = useSessionsStore((s) => s.activeId);
   const openTab = useSessionsStore((s) => s.openTab);
 
-  const needle = filter.trim().toLowerCase();
-  const visible = needle
-    ? sessions.filter((m) => m.title.toLowerCase().includes(needle))
-    : sessions;
-  const temporaries = visible.filter((m) => m.projectId === undefined);
+  const temporaries = sessions.filter((m) => m.projectId === undefined);
   const byProject = new Map<string, SessionMeta[]>();
-  for (const meta of visible) {
+  for (const meta of sessions) {
     if (meta.projectId === undefined) continue;
     byProject.set(meta.projectId, [...(byProject.get(meta.projectId) ?? []), meta]);
   }
@@ -356,15 +351,7 @@ function Sidebar({
             </button>
           </div>
           <div className="mx-3 mt-3 shrink-0 border-t border-[var(--border)]/50" />
-          <div className="px-2 pb-1 pt-2">
-            <Input
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-              placeholder="搜索会话标题…"
-              className="w-full rounded-lg"
-            />
-          </div>
-          <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+          <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2 pt-2">
             <SectionHeader title="临时会话" />
             <SectionBody>
               {temporaries.map((meta) => (
