@@ -38,3 +38,7 @@ Status: resolved
 **剩余**：build.yml 与代码修复 commit → push → workflow_dispatch 三平台实跑（dispatch 只跑 main 上的流水线，须先合入）。
 
 **CI 实跑结果（run 40646253875，2026-10-28）**：三平台构建 job 全绿，产物收集步骤全命中——macOS `CraftWave_0.1.0_aarch64.dmg` 6.77 MiB、Windows `CraftWave_0.1.0_x64-setup.exe`（nsis）5.70 MiB、Linux `CraftWave_0.1.0_amd64.deb` 8.70 MiB + `CraftWave_0.1.0_amd64.AppImage` 83.27 MiB（bundler 顺带产 rpm，FR-16-01 未要求、收集步骤不收）。dmg/deb 体积对照 FR-16-05（<25MB）余量充足；AppImage 83MB 系自带 runtime 所致，FR-16-05 属 P2 非硬门，实测值记账。FR-16-01 打包矩阵达成，本票关闭；终局关（1 周真实使用验收）按 acceptance.md 由用户执行。
+
+## Comments
+
+- 2026-10-28（关闭后口径补充，用户）：**Linux 产物补 rpm**——bundler 本就产出 rpm（首跑已验证可产），仅需 build.yml 收集步骤加 `rpm/*.rpm`；PRD FR-16-01 行已注记。下次 tag 构建生效。
