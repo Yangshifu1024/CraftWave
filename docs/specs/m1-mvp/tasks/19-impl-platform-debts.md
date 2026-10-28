@@ -1,7 +1,7 @@
 # 19. 实现：CI/平台欠账收敛
 
 Type: task
-Status: ready-for-agent
+Status: claimed
 
 ## Question
 

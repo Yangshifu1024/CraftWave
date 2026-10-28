@@ -1,7 +1,7 @@
 # 20. 决策：C-8 临时会话 roots 边界安全复判
 
 Type: grilling
-Status: ready-for-agent
+Status: claimed
 
 ## Question
 
