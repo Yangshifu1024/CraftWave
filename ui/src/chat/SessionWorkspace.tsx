@@ -22,17 +22,7 @@ import {
   useAuiState,
   useLocalRuntime,
 } from "@assistant-ui/react";
-import {
-  CirclePlus,
-  Folder,
-  FolderPlus,
-  LoaderCircle,
-  PanelRight,
-  Pencil,
-  Plus,
-  Settings,
-  Trash2,
-} from "lucide-react";
+import { CirclePlus, Folder, FolderPlus, LoaderCircle, PanelRight, Settings } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AskPanel } from "@/chat/AskPanel";
 import { useBackendEvents } from "@/chat/event-bridge";
@@ -45,6 +35,7 @@ import { cwToolkit } from "@/chat/toolkit";
 import type { RunSummary } from "@/chat/tree-persistence";
 import { deriveRunSummaries, loadedTreeToExported } from "@/chat/tree-persistence";
 import { ConfirmDialog } from "@/components/ui/confirm";
+import { ContextMenu, type ContextMenuEntry } from "@/components/ui/context-menu";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import {
@@ -320,6 +311,15 @@ function Sidebar({
   >(null);
   // 新建项目弹窗（参考 ZCode 创建项目弹窗）：+ 钮改为开弹窗选名称与目录
   const [createOpen, setCreateOpen] = useState(false);
+  // 右键菜单（ZCode 列表级单例）：坐标 + 目标；重命名受控 id（菜单触发
+  // 行内编辑态，替代已移除的 hover 内联钮——时间戳不再被挤）
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [menu, setMenu] = useState<{
+    x: number;
+    y: number;
+    kind: "session" | "project";
+    id: string;
+  } | null>(null);
   const list = useScrollFade();
   const projects = useSessionsStore((s) => s.projects);
   const sessions = useSessionsStore((s) => s.sessions);
@@ -332,6 +332,35 @@ function Sidebar({
     if (meta.projectId === undefined) continue;
     byProject.set(meta.projectId, [...(byProject.get(meta.projectId) ?? []), meta]);
   }
+  const contextEntries: ContextMenuEntry[] =
+    menu === null
+      ? []
+      : menu.kind === "session"
+        ? [
+            { label: "重命名", onSelect: () => setRenamingId(menu.id) },
+            { separator: true },
+            {
+              label: "删除会话",
+              danger: true,
+              onSelect: () => {
+                const meta = sessions.find((m) => m.id === menu.id);
+                if (meta) setConfirm({ kind: "session", session: meta });
+              },
+            },
+          ]
+        : [
+            { label: "新建会话", onSelect: () => void createAndOpen(menu.id) },
+            { label: "重命名", onSelect: () => setRenamingId(menu.id) },
+            { separator: true },
+            {
+              label: "删除项目",
+              danger: true,
+              onSelect: () => {
+                const project = projects.find((pr) => pr.id === menu.id);
+                if (project) setConfirm({ kind: "project", project });
+              },
+            },
+          ];
   return (
     <aside
       data-testid="session-sidebar"
@@ -377,8 +406,10 @@ function Sidebar({
                   key={meta.id}
                   meta={meta}
                   active={meta.id === activeId}
+                  editing={renamingId === meta.id}
+                  onRenameEnd={() => setRenamingId(null)}
                   onOpen={() => openTab(meta)}
-                  onDelete={() => setConfirm({ kind: "session", session: meta })}
+                  onContextMenu={(x, y) => setMenu({ x, y, kind: "session", id: meta.id })}
                 />
               ))}
             </SectionBody>
@@ -401,8 +432,9 @@ function Sidebar({
                 <div key={project.id} className="mb-1">
                   <ProjectRow
                     project={project}
-                    onAddSession={() => void createAndOpen(project.id)}
-                    onDeleteProject={() => setConfirm({ kind: "project", project })}
+                    editing={renamingId === project.id}
+                    onRenameEnd={() => setRenamingId(null)}
+                    onContextMenu={(x, y) => setMenu({ x, y, kind: "project", id: project.id })}
                   />
                   {/* 名下会话缩进一级：ZCode 为两层 pl-2（16px） */}
                   <div className="ml-4 pt-1">
@@ -412,8 +444,10 @@ function Sidebar({
                           key={meta.id}
                           meta={meta}
                           active={meta.id === activeId}
+                          editing={renamingId === meta.id}
+                          onRenameEnd={() => setRenamingId(null)}
                           onOpen={() => openTab(meta)}
-                          onDelete={() => setConfirm({ kind: "session", session: meta })}
+                          onContextMenu={(x, y) => setMenu({ x, y, kind: "session", id: meta.id })}
                         />
                       ))}
                     </SectionBody>
@@ -437,6 +471,12 @@ function Sidebar({
         </div>
       </div>
       <NewProjectDialog open={createOpen} onClose={() => setCreateOpen(false)} />
+      <ContextMenu
+        x={menu?.x ?? 0}
+        y={menu?.y ?? 0}
+        entries={contextEntries}
+        onClose={() => setMenu(null)}
+      />
       <ConfirmDialog
         open={confirm !== null}
         title={
@@ -605,17 +645,18 @@ function SectionHeader({ title }: { title: string }) {
  *  删项目，改名走内联输入框（Enter 提交，Esc 取消）。 */
 function ProjectRow({
   project,
-  onAddSession,
-  onDeleteProject,
+  editing,
+  onRenameEnd,
+  onContextMenu,
 }: {
   project: ProjectMeta;
-  onAddSession: () => void;
-  onDeleteProject: () => void;
+  editing: boolean;
+  onRenameEnd: () => void;
+  onContextMenu: (x: number, y: number) => void;
 }) {
-  const [editing, setEditing] = useState(false);
   const [name, setName] = useState(project.name);
   const commit = () => {
-    setEditing(false);
+    onRenameEnd();
     const trimmed = name.trim();
     if (!trimmed || trimmed === project.name) {
       setName(project.name);
@@ -644,7 +685,7 @@ function ProjectRow({
             if (e.key === "Enter") commit();
             if (e.key === "Escape") {
               setName(project.name);
-              setEditing(false);
+              onRenameEnd();
             }
           }}
         />
@@ -652,39 +693,19 @@ function ProjectRow({
     );
   }
   return (
-    <div className="group flex h-8 cursor-default items-center gap-2 rounded-lg pr-1 pl-2.5 text-ui-base text-[var(--foreground)] hover:bg-[var(--selected)]">
+    // biome-ignore lint/a11y/noStaticElementInteractions: 右键菜单宿主行，交互语义由内部 button 承担
+    <div
+      onContextMenu={(e) => {
+        e.preventDefault();
+        onContextMenu(e.clientX, e.clientY);
+      }}
+      className="group flex h-8 cursor-default items-center gap-2 rounded-lg pr-1 pl-2.5 text-ui-base text-[var(--foreground)] hover:bg-[var(--selected)]"
+    >
       <Folder size={16} className="shrink-0" />
       {/* 项目名比会话标题淡一档（ZCode subtle 层级：组容器弱于内容行） */}
       <span className="min-w-0 flex-1 text-[var(--muted-foreground)]">
         <MarqueeTitle text={project.name} />
       </span>
-      <button
-        type="button"
-        aria-label="项目改名"
-        onClick={() => {
-          setName(project.name);
-          setEditing(true);
-        }}
-        className="h-6 w-6 items-center justify-center rounded opacity-0 transition-opacity hover:bg-[var(--accent)] group-hover:opacity-100"
-      >
-        <Pencil size={14} />
-      </button>
-      <button
-        type="button"
-        aria-label="在项目下新建会话"
-        onClick={onAddSession}
-        className="h-6 w-6 items-center justify-center rounded opacity-0 transition-opacity hover:bg-[var(--accent)] group-hover:opacity-100"
-      >
-        <Plus size={14} />
-      </button>
-      <button
-        type="button"
-        aria-label="删除项目"
-        onClick={onDeleteProject}
-        className="h-6 w-6 items-center justify-center rounded opacity-0 transition-opacity hover:bg-[var(--accent)] group-hover:opacity-100"
-      >
-        <Trash2 size={14} />
-      </button>
     </div>
   );
 }
@@ -804,24 +825,27 @@ function relativeTime(updatedAt: number): string {
   return `${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-/** 左栏单行会话：点击打开 Tab；悬停露出重命名/删除按钮（重命名内联输入）。
- *  运行中显示绿点（原 Tab 条的运行指示随其移除迁入左栏）。 */
+/** 左栏单行会话：点击打开 Tab；右键菜单承载重命名/删除（内联输入改名，
+ *  editing 由侧栏受控）；运行中显示转圈。 */
 function SessionRow({
   meta,
   active,
+  editing,
+  onRenameEnd,
   onOpen,
-  onDelete,
+  onContextMenu,
 }: {
   meta: SessionMeta;
   active: boolean;
+  editing: boolean;
+  onRenameEnd: () => void;
   onOpen: () => void;
-  onDelete: () => void;
+  onContextMenu: (x: number, y: number) => void;
 }) {
   const running = useSessionsStore((s) => s.running[meta.id]);
-  const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(meta.title);
   const commit = () => {
-    setEditing(false);
+    onRenameEnd();
     const trimmed = title.trim();
     if (!trimmed || trimmed === meta.title) {
       setTitle(meta.title);
@@ -848,7 +872,7 @@ function SessionRow({
             if (e.key === "Enter") commit();
             if (e.key === "Escape") {
               setTitle(meta.title);
-              setEditing(false);
+              onRenameEnd();
             }
           }}
         />
@@ -856,8 +880,13 @@ function SessionRow({
     );
   }
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: 右键菜单宿主行，交互语义由内部 button 承担
     <div
       data-testid={`session-row-${meta.id}`}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        onContextMenu(e.clientX, e.clientY);
+      }}
       className={`group flex h-8 cursor-default items-center gap-2 rounded-lg pr-1 pl-2.5 text-ui-base ${
         active
           ? "bg-[var(--selected)] text-[var(--foreground)]"
@@ -877,28 +906,9 @@ function SessionRow({
         <MarqueeTitle text={meta.title} />
       </button>
       {/* 相对时间（A6）：悬停让位于操作钮（ZCode 元信息 hover 隐藏同款） */}
-      <span className="mr-0.5 shrink-0 text-ui-sm tabular-nums text-[var(--cw-dim)] group-hover:hidden">
+      <span className="mr-0.5 shrink-0 text-ui-sm tabular-nums text-[var(--cw-dim)]">
         {relativeTime(meta.updatedAt)}
       </span>
-      <button
-        type="button"
-        aria-label="重命名会话"
-        onClick={() => {
-          setTitle(meta.title);
-          setEditing(true);
-        }}
-        className="h-6 w-6 items-center justify-center rounded opacity-0 transition-opacity hover:bg-[var(--accent)] group-hover:opacity-100"
-      >
-        <Pencil size={14} />
-      </button>
-      <button
-        type="button"
-        aria-label="删除会话"
-        onClick={onDelete}
-        className="h-6 w-6 items-center justify-center rounded opacity-0 transition-opacity hover:bg-[var(--accent)] group-hover:opacity-100"
-      >
-        <Trash2 size={14} />
-      </button>
     </div>
   );
 }
