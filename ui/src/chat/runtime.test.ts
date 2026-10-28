@@ -1,7 +1,9 @@
 import type { ChatModelAdapter, ChatModelRunResult, ThreadMessage } from "@assistant-ui/react";
 import { describe, expect, it, vi } from "vitest";
-import type { ChatFrame } from "@/ipc/types";
+import type { ChatFrame, RunConfig } from "@/ipc/types";
+import { tierOf } from "./permission-tier";
 import { createTauriChatAdapter, toWire } from "./runtime";
+import { modelOf, useSessionModelStore } from "./session-model";
 
 /**
  * tauriChatModel 契约测试（§10.2 产品化）：
@@ -207,5 +209,45 @@ describe("createTauriChatAdapter：帧消费管线", () => {
     // 这里断言 runEnded(cancelled) 的终态 status 映射。
     expect(yields.at(-1)!.status).toEqual({ type: "incomplete", reason: "cancelled" });
     void cancelRun;
+  });
+});
+
+// ---- sessionAdapter：会话级内存态（权限档 + 模型覆盖）随发送生效（17 号票） ----
+
+describe("sessionAdapter：会话内存态 runConfig", () => {
+  it("会话覆盖的模型 id 与权限档在发送时带入 start_chat；未覆盖时省略 modelId", async () => {
+    const sentArgs: { runConfig: RunConfig }[] = [];
+    const frames: ChatFrame[] = [
+      f({ type: "runStarted", runId: "run-1", model: "m" }),
+      f({ type: "runEnded", reason: "done", durationMs: 10, toolCount: 0, turn: 1 }),
+    ];
+    const fake = vi.fn(async (args: { runConfig: RunConfig; onFrame: (f: ChatFrame) => void }) => {
+      sentArgs.push({ runConfig: args.runConfig });
+      for (const frame of frames) args.onFrame(frame);
+      return { runId: "run-fake" };
+    });
+    // 直接注入 fake 的方式与生产 sessionAdapter 无缝衔接：经 deps 替换 startChat
+    const adapter = createTauriChatAdapter({
+      sessionId: "sess-model",
+      // 与 sessionAdapter 相同的惰性取值口径（tier + modelId）
+      runConfig: () => {
+        const base = { tier: tierOf("sess-model"), maxTurns: 24, steer: false };
+        const modelId = modelOf("sess-model");
+        return modelId !== undefined ? { ...base, modelId } : base;
+      },
+      startChat: fake,
+      cancelRun: async () => true,
+      syncTree: async () => {},
+    });
+
+    // 未覆盖：不带 modelId
+    for await (const _ of asAsync(adapter.run(runOptions()))) void _;
+    expect(sentArgs.at(-1)!.runConfig.modelId).toBeUndefined();
+
+    // 覆盖后：带上会话选择
+    useSessionModelStore.getState().setModel("sess-model", "model-xyz");
+    for await (const _ of asAsync(adapter.run(runOptions()))) void _;
+    expect(sentArgs.at(-1)!.runConfig.modelId).toBe("model-xyz");
+    useSessionModelStore.getState().setModel("sess-model", undefined);
   });
 });

@@ -23,7 +23,9 @@ import { Streamdown } from "streamdown";
 import { useComposerKeys } from "@/chat/composer-keys";
 import { TIER_LABELS, usePermissionTierStore } from "@/chat/permission-tier";
 import { useSessionMetrics } from "@/chat/run-metrics";
+import { useSessionModelStore } from "@/chat/session-model";
 import { useRunSummaries, useSessionScope } from "@/chat/session-scope";
+import { getConfig } from "@/ipc/client";
 import { matchGhost, useAskStore } from "@/stores/ask";
 import { useSessionsStore } from "@/stores/sessions";
 
@@ -103,12 +105,15 @@ function ComposerBar() {
           onKeyUp={(e) => onCursor(e.currentTarget.selectionStart ?? 0)}
           onClick={(e) => onCursor(e.currentTarget.selectionStart ?? 0)}
         />
+        <ModelPicker />
         <TierBadge />
         <AuiIf condition={(s) => !s.thread.isRunning}>
           <ComposerPrimitive.Send
             aria-label="发送"
-            className="rounded-full bg-[var(--primary)] px-3 py-1.5 text-sm text-[var(--primary-foreground)]"
-          />
+            className="shrink-0 rounded-full bg-[var(--primary)] px-3 py-1.5 text-sm text-[var(--primary-foreground)]"
+          >
+            ↑
+          </ComposerPrimitive.Send>
         </AuiIf>
         <AuiIf condition={(s) => s.thread.isRunning}>
           <ComposerPrimitive.Cancel className="rounded-full border border-[var(--border)] px-3 py-1.5 text-sm">
@@ -120,18 +125,132 @@ function ComposerBar() {
   );
 }
 
-/** 权限档指示（FR-13-02：Shift+Tab 循环切换，§10.6 内存态）。 */
+/** 权限档指示与切换（FR-13-02：点击或 Shift+Tab 循环，§10.6 内存态——
+ *  本次会话有效，重启回默认档）。 */
 function TierBadge() {
   const sessionId = useSessionScope();
   const tier = usePermissionTierStore((s) => s.bySession[sessionId] ?? "autoEdit");
+  const cycle = usePermissionTierStore((s) => s.cycle);
   return (
-    <span
+    <button
+      type="button"
       data-testid="tier-badge"
-      className="shrink-0 rounded-full border border-[var(--border)] px-2 py-0.5 text-[11px] text-[var(--muted-foreground)]"
-      title="Shift+Tab 切换权限档（本次会话有效）"
+      onClick={() => cycle(sessionId)}
+      className="shrink-0 rounded-full border border-[var(--border)] px-2 py-0.5 text-[11px] text-[var(--muted-foreground)] hover:border-[var(--ring)]"
+      title="点击或 Shift+Tab 切换权限档（本次会话有效）"
     >
       {TIER_LABELS[tier]}
-    </span>
+    </button>
+  );
+}
+
+/**
+ * 模型选择下拉（FR-13-05 Ctrl+L 的 M1 简化形态）：列出配置里全部供应商
+ * 的模型；选中即本会话覆盖（发送时经 RunConfig.modelId 生效，§11.1），
+ * 「跟随默认」回到全局 activeModelId。清单在每次打开时拉取（设置页
+ * 改动即时反映）。
+ */
+function ModelPicker() {
+  const sessionId = useSessionScope();
+  const selected = useSessionModelStore((s) => s.bySession[sessionId]);
+  const setModel = useSessionModelStore((s) => s.setModel);
+  const [open, setOpen] = useState(false);
+  // 全部模型（按供应商分组）与全局默认模型 id：打开时拉取
+  const [groups, setGroups] = useState<
+    { provider: string; models: { id: string; name: string }[] }[]
+  >([]);
+  const [activeId, setActiveId] = useState<string | undefined>(undefined);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    void getConfig()
+      .then((config) => {
+        if (cancelled) return;
+        setActiveId(config.activeModelId);
+        setGroups(
+          config.providers.map((p) => ({
+            provider: p.name,
+            models: (p.models ?? []).map((m) => ({ id: m.id, name: m.model })),
+          })),
+        );
+      })
+      .catch(() => {
+        // IPC 异常（纯浏览器等）：清单留空，仅显示当前选择
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
+  // 当前显示名：会话覆盖优先，否则全局默认的模型名，再否则占位提示
+  const currentName =
+    groups.flatMap((g) => g.models).find((m) => m.id === (selected ?? activeId))?.name ??
+    selected ??
+    "默认模型";
+
+  return (
+    <div className="relative shrink-0">
+      {open && (
+        <ul
+          data-testid="model-menu"
+          className="absolute bottom-full right-0 z-20 mb-1 max-h-64 w-64 overflow-y-auto rounded border border-[var(--border)] bg-[var(--card)] py-1 text-xs shadow"
+        >
+          <li>
+            <button
+              type="button"
+              className={`flex w-full px-2 py-1 text-left ${
+                selected === undefined
+                  ? "bg-[var(--accent)] text-[var(--foreground)]"
+                  : "text-[var(--muted-foreground)]"
+              }`}
+              onClick={() => {
+                setModel(sessionId, undefined);
+                setOpen(false);
+              }}
+            >
+              跟随默认
+            </button>
+          </li>
+          {groups.map((group) => (
+            <li key={group.provider} className="mt-1">
+              <div className="px-2 py-0.5 text-[10px] text-[var(--cw-dim)]">{group.provider}</div>
+              <ul>
+                {group.models.map((model) => (
+                  <li key={model.id}>
+                    <button
+                      type="button"
+                      className={`flex w-full px-2 py-1 text-left ${
+                        model.id === selected
+                          ? "bg-[var(--accent)] text-[var(--foreground)]"
+                          : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                      }`}
+                      onClick={() => {
+                        setModel(sessionId, model.id);
+                        setOpen(false);
+                      }}
+                    >
+                      <span className="truncate">{model.name}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </li>
+          ))}
+        </ul>
+      )}
+      <button
+        type="button"
+        data-testid="model-picker"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className="max-w-36 truncate rounded-full border border-[var(--border)] px-2 py-0.5 text-[11px] text-[var(--muted-foreground)] hover:border-[var(--ring)]"
+        title="选择本会话使用的模型"
+      >
+        {currentName} ∨
+      </button>
+    </div>
   );
 }
 

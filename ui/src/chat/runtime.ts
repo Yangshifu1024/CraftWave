@@ -23,6 +23,7 @@ import { bindCancelToRun } from "./cancel-bridge";
 import { type ChatPart, FrameBuffer, toParts } from "./frames";
 import { tierOf } from "./permission-tier";
 import { useRunMetricsStore } from "./run-metrics";
+import { modelOf } from "./session-model";
 import { readRunMarker } from "./tree-persistence";
 
 // ---- S6 骨架回声适配器（无后端 dev fallback，原样保留） ----
@@ -198,13 +199,17 @@ export const tauriChatModel: ChatModelAdapter = createTauriChatAdapter({
 /**
  * 按会话产出生产 adapter（16 号票多会话）：每 Tab 一个实例——帧入本会话的
  * metrics 桶，运行态节点记账记到本会话的 persist 分桶；runConfig 惰性取值
- * （17 号票：发送时读会话权限档，Shift+Tab 循环的内存态）。
+ * （17 号票：发送时读会话权限档与模型覆盖，均为内存态）。
  */
 export function sessionAdapter(sessionId: string): ChatModelAdapter {
   return createTauriChatAdapter({
     ...defaultDeps,
     sessionId,
-    runConfig: () => ({ ...DEFAULT_RUN_CONFIG, tier: tierOf(sessionId) }),
+    runConfig: () => ({
+      ...DEFAULT_RUN_CONFIG,
+      tier: tierOf(sessionId),
+      ...(modelOf(sessionId) !== undefined ? { modelId: modelOf(sessionId) } : {}),
+    }),
     onFrame: (frame) => useRunMetricsStore.getState().ingest(sessionId, frame),
   });
 }
