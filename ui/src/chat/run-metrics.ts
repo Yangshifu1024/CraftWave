@@ -23,6 +23,9 @@ export interface SessionMetrics {
   sessionUsage: UsageTotal;
   /** 进行中 run 的标识（runStarted 写入；runEnded 摘要回填用，17 号票） */
   currentRunId: string | null;
+  /** 思考计时（参考样式 A5）：reasoningDelta 首帧时刻（epoch ms）；模型转出
+   *  正文/开始工具即置 null——「🧠 思考中…Ns」状态条的驱动面。 */
+  thinkingSince: number | null;
   /** runEnded 的终态摘要（计数条定格用；null = 无运行） */
   lastRun: null | {
     runId: string;
@@ -46,6 +49,7 @@ const emptyMetrics = (): SessionMetrics => ({
   turnUsage: zeroUsage(),
   sessionUsage: zeroUsage(),
   currentRunId: null,
+  thinkingSince: null,
   lastRun: null,
 });
 
@@ -95,8 +99,26 @@ export const useRunMetricsStore = create<RunMetricsStore>((set) => ({
             ...m,
             turnUsage: zeroUsage(),
             currentRunId: frame.runId,
+            thinkingSince: null,
             lastRun: null,
           })),
+        }));
+        break;
+      case "reasoningDelta":
+        // 思考计时起点（A5）：首个思考帧记录时刻，转出正文/工具后清零
+        set((s) => ({
+          bySession: updateSession(s.bySession, sessionId, (m) =>
+            m.thinkingSince === null ? { ...m, thinkingSince: Date.now() } : m,
+          ),
+        }));
+        break;
+      case "textDelta":
+      case "toolStarted":
+        // 模型转入正文或开始动手：思考段结束
+        set((s) => ({
+          bySession: updateSession(s.bySession, sessionId, (m) =>
+            m.thinkingSince === null ? m : { ...m, thinkingSince: null },
+          ),
         }));
         break;
       case "usage":
@@ -114,6 +136,7 @@ export const useRunMetricsStore = create<RunMetricsStore>((set) => ({
           bySession: updateSession(s.bySession, sessionId, (m) => ({
             ...m,
             currentRunId: null,
+            thinkingSince: null,
             lastRun: {
               runId: m.currentRunId ?? "",
               reason: frame.reason,

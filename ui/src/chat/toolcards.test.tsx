@@ -5,7 +5,7 @@
  * 返回形状：{ status, argsStatus }）。
  */
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AskCard,
@@ -60,12 +60,20 @@ describe("cardPhase 状态机（纯逻辑）", () => {
 });
 
 describe("工具卡渲染", () => {
-  it("read：路径与行区间", () => {
+  /** 参考样式改版后卡片默认收为单行摘要；点击摘要行展开详情再断言。 */
+  function expandCard() {
+    fireEvent.click(
+      screen.getByTestId("tool-card-c1").querySelector("button") as HTMLButtonElement,
+    );
+  }
+
+  it("read：摘要行路径 + 展开后行区间", () => {
     render(<ReadCard {...props({ path: "src/main.rs", offset: 10, limit: 50 })} />);
     expect(screen.getByTestId("tool-card-c1").textContent).toContain("src/main.rs");
+    expect(screen.getByTestId("tool-card-c1").getAttribute("data-phase")).toBe("running");
+    expandCard();
     expect(screen.getByTestId("tool-card-c1").textContent).toContain("10 起");
     expect(screen.getByTestId("tool-card-c1").textContent).toContain("50 行");
-    expect(screen.getByTestId("tool-card-c1").getAttribute("data-phase")).toBe("running");
   });
 
   it("write：+N 徽标按 content 行数", () => {
@@ -97,7 +105,7 @@ describe("工具卡渲染", () => {
     expect(screen.getByTestId("tool-card-c1").textContent).toContain("项目根");
   });
 
-  it("plan：条目与状态渲染 + 批准语义在摘要", () => {
+  it("plan：摘要完成数统计 + 展开后条目与状态", () => {
     render(
       <PlanCard
         {...props({
@@ -109,6 +117,8 @@ describe("工具卡渲染", () => {
         })}
       />,
     );
+    expect(screen.getByTestId("tool-card-c1").textContent).toContain("0/2");
+    expandCard();
     expect(screen.getByTestId("tool-card-c1").textContent).toContain("读配置");
     expect(screen.getByTestId("tool-card-c1").textContent).toContain("进行中");
     expect(screen.getByTestId("tool-card-c1").textContent).toContain("写总结");
@@ -119,16 +129,19 @@ describe("工具卡渲染", () => {
     expect(screen.getByTestId("tool-card-c1").textContent).toContain("选方案");
   });
 
-  it("result 直写：完成态与摘要行 / isError 错误态", () => {
+  it("result 直写：完成态摘要在详情 / isError 错误态默认展开", () => {
     const done = resultOf("命令完成（2 行输出）");
     render(<CommandCard {...props({ command: "ls" }, done)} />);
     const card = screen.getByTestId("tool-card-c1");
     expect(card.getAttribute("data-phase")).toBe("done");
+    expandCard();
     expect(card.textContent).toContain("命令完成（2 行输出）");
 
     cleanup();
     const failed = resultOf("E_FENCE_BLOCKED：围栏拦截", true);
     render(<CommandCard {...props({ command: "rm -rf /" }, failed)} />);
     expect(screen.getByTestId("tool-card-c1").getAttribute("data-phase")).toBe("error");
+    // 错误态默认展开：失败原因无需点击即可见
+    expect(screen.getByTestId("tool-card-c1").textContent).toContain("E_FENCE_BLOCKED");
   });
 });

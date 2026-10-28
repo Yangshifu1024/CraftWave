@@ -29,6 +29,8 @@ export interface PermissionTierStore {
   bySession: Record<string, PermissionTier>;
   /** 循环切换并返回新档位（Shift+Tab）。 */
   cycle: (sessionId: string) => PermissionTier;
+  /** 直接选定档位（Composer 下拉）。 */
+  setTier: (sessionId: string, tier: PermissionTier) => void;
 }
 
 /** zustand store：按会话分桶保存权限档（多 Tab 各自独立切换互不影响）。 */
@@ -40,6 +42,10 @@ export const usePermissionTierStore = create<PermissionTierStore>((set, get) => 
     const next = TIERS[(TIERS.indexOf(current) + 1) % TIERS.length];
     set((s) => ({ bySession: { ...s.bySession, [sessionId]: next } }));
     return next;
+  },
+
+  setTier: (sessionId, tier) => {
+    set((s) => ({ bySession: { ...s.bySession, [sessionId]: tier } }));
   },
 }));
 

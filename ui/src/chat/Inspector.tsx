@@ -8,6 +8,7 @@
  */
 
 import { useEffect, useState } from "react";
+import { usePlanStateStore } from "@/chat/plan-state";
 import { useSessionMetrics } from "@/chat/run-metrics";
 import { useSessionScope } from "@/chat/session-scope";
 import { getConfig } from "@/ipc/client";
@@ -53,6 +54,7 @@ export function Inspector() {
   const contextWindow = useContextWindow();
   const collapseRuns = useSessionsStore((s) => s.collapseRuns);
   const setCollapseRuns = useSessionsStore((s) => s.setCollapseRuns);
+  const planItems = usePlanStateStore((s) => s.bySession[sessionId] ?? []);
 
   const total = (u: { input: number; output: number }) => u.input + u.output;
   const hitRate =
@@ -80,6 +82,32 @@ export function Inspector() {
         </label>
       </div>
       <div className="flex flex-col gap-3 p-3 text-xs text-[var(--muted-foreground)]">
+        {/* 计划（B 组）：plan:update 驱动的当前计划（内存态，重启清空） */}
+        {planItems.length > 0 && (
+          <section>
+            <h3 className="mb-1 text-[11px] text-[var(--cw-dim)]">
+              计划（{planItems.filter((i) => i.status === "completed").length}/{planItems.length}）
+            </h3>
+            <ul className="space-y-0.5" data-testid="inspector-plan">
+              {planItems.map((item) => (
+                <li key={item.id} className="flex items-start gap-1.5">
+                  <span
+                    className={
+                      item.status === "completed"
+                        ? "text-emerald-600 dark:text-emerald-400"
+                        : "text-[var(--muted-foreground)]"
+                    }
+                  >
+                    {item.status === "completed" ? "●" : item.status === "in_progress" ? "◐" : "○"}
+                  </span>
+                  <span className={item.status === "completed" ? "line-through" : ""}>
+                    {item.text}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
         <section>
           <h3 className="mb-1 text-[11px] text-[var(--cw-dim)]">实时</h3>
           <div className="flex justify-between">

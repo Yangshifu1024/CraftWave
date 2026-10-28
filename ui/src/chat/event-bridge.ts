@@ -1,20 +1,22 @@
 /**
- * 后端事件桥（§3.5，14 号票）：App 级订阅 4 键事件分发到 store。
+ * 后端事件桥（§3.5，14 号票）：App 级订阅事件分发到 store。
  *
  * - ask:opened / ask:closed → ask store（AskPanel 渲染源）；
  * - run:suggestions → askHint（Composer ghost，§10.4）；
- * - tokens:update → runMetrics.sessionUsage 权威校正（§10.5/C-9）。
+ * - tokens:update → runMetrics.sessionUsage 权威校正（§10.5/C-9）；
+ * - plan:update → planState（Inspector 计划页，参考样式改版）。
  *
- * plan:update 本票不订阅（右栏常驻计划面板属桌面体验票；消息内 plan 卡由
- * 帧 face 驱动）。listen 依赖可注入（测试）。
+ * listen 依赖可注入（测试）。
  */
 
 import { useEffect } from "react";
+import { usePlanStateStore } from "@/chat/plan-state";
 import { useRunMetricsStore } from "@/chat/run-metrics";
 import { EVENT_KEYS, listenEvent } from "@/ipc/client";
 import type {
   AskClosedEvent,
   AskOpenedEvent,
+  PlanUpdateEvent,
   RunSuggestionsEvent,
   TokensUpdateEvent,
 } from "@/ipc/types";
@@ -50,6 +52,9 @@ export function useBackendEvents(deps: EventBridgeDeps = defaultEventBridgeDeps)
       }),
       deps.listen(EVENT_KEYS.tokensUpdate, (p: TokensUpdateEvent) => {
         useRunMetricsStore.getState().applyTokensUpdate(p.sessionId, p.usage);
+      }),
+      deps.listen(EVENT_KEYS.planUpdate, (p: PlanUpdateEvent) => {
+        usePlanStateStore.getState().applyUpdate(p.sessionId, p.items);
       }),
     ];
     return () => {

@@ -81,7 +81,7 @@ describe("useBackendEvents（事件分发，按 sessionId 入桶）", () => {
       }),
     };
     renderHook(() => useBackendEvents(deps));
-    await vi.waitFor(() => expect(handlers.size).toBe(4));
+    await vi.waitFor(() => expect(handlers.size).toBe(5));
 
     // ask:opened → ask store（按 sessionId 分桶）
     const opened: AskOpenedEvent = {
@@ -130,7 +130,7 @@ describe("useBackendEvents（事件分发，按 sessionId 入桶）", () => {
       }),
     };
     const { unmount } = renderHook(() => useBackendEvents(deps));
-    await vi.waitFor(() => expect(deps.listen).toHaveBeenCalledTimes(4));
+    await vi.waitFor(() => expect(deps.listen).toHaveBeenCalledTimes(5));
     unmount();
     // cleanup 里 unlisten.then(fn => fn()) 是微任务，等待其落地
     await vi.waitFor(() => {

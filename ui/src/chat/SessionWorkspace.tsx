@@ -588,9 +588,46 @@ function Section({
           </button>
         )}
       </div>
-      {children}
+      <SectionBody>{children}</SectionBody>
     </div>
   );
+}
+
+/** 分组体（A7 显示更多）：超过 5 条默认只显示前 5 条，点「显示更多 (N)」展开。 */
+const SECTION_PREVIEW_COUNT = 5;
+function SectionBody({ children }: { children: React.ReactNode }) {
+  const [expanded, setExpanded] = useState(false);
+  const items = Array.isArray(children) ? children : [children];
+  const hidden = items.length - SECTION_PREVIEW_COUNT;
+  const visible = expanded || hidden <= 0 ? items : items.slice(0, SECTION_PREVIEW_COUNT);
+  return (
+    <>
+      {visible}
+      {hidden > 0 && !expanded && (
+        <button
+          type="button"
+          className="mt-0.5 w-full rounded px-1 py-0.5 text-left text-[11px] text-[var(--muted-foreground)] hover:bg-[var(--accent)]/60"
+          onClick={() => setExpanded(true)}
+        >
+          显示更多（{hidden}）
+        </button>
+      )}
+    </>
+  );
+}
+
+/** 相对时间（A6）：<1 分钟「刚刚」；当天「N 小时」；7 天内「N 天」；更早 MM-DD。 */
+function relativeTime(updatedAt: number): string {
+  const diffMs = Date.now() - updatedAt;
+  const minutes = Math.floor(diffMs / 60000);
+  if (minutes < 1) return "刚刚";
+  if (minutes < 60) return `${minutes} 分钟`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} 小时`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days} 天`;
+  const d = new Date(updatedAt);
+  return `${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 /** 左栏单行会话：点击打开 Tab；悬停露出重命名/删除按钮（重命名内联输入）。 */
@@ -654,6 +691,10 @@ function SessionRow({
       <button type="button" className="min-w-0 flex-1 truncate text-left" onClick={onOpen}>
         {meta.title}
       </button>
+      {/* 相对时间（A6）：非活跃时淡显，活跃时与操作按钮共存 */}
+      <span className="shrink-0 text-[10px] text-[var(--cw-dim)]">
+        {relativeTime(meta.updatedAt)}
+      </span>
       <button
         type="button"
         aria-label="重命名会话"

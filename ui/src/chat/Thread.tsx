@@ -27,40 +27,56 @@ import { useSessionMetrics } from "@/chat/run-metrics";
 import { useSessionModelStore } from "@/chat/session-model";
 import { useRunSummaries, useSessionScope } from "@/chat/session-scope";
 import { getConfig } from "@/ipc/client";
+import type { PermissionTier } from "@/ipc/types";
 import { matchGhost, useAskStore } from "@/stores/ask";
 import { useSessionsStore } from "@/stores/sessions";
 
 /** 消息区（FR-13-15 滚动跟随：Viewport autoScroll 内建「跟随最新 + 上滚
- * 暂停」；不在底部时显示回底按钮，17 号票）。 */
+ *  暂停」；不在底部时显示回底按钮，17 号票）。内容列限宽居中（参考样式
+ *  A1：工作流风格平铺，不占满整屏宽）。 */
 export function ChatThread() {
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col bg-[var(--background)] text-[var(--foreground)]">
       <ThreadPrimitive.Root className="relative flex min-h-0 flex-1 flex-col">
         <ThreadPrimitive.Viewport className="flex flex-1 flex-col overflow-y-auto p-4">
           <AuiIf condition={(s) => s.thread.isEmpty}>
-            <div className="flex flex-1 flex-col items-center justify-center gap-2 text-sm text-[var(--muted-foreground)]">
+            <div className="mx-auto flex w-full max-w-4xl flex-1 flex-col items-center justify-center gap-2 text-sm text-[var(--muted-foreground)]">
               <p className="text-lg text-[var(--foreground)]">CraftWave</p>
               <p>空聊天窗已就绪 —— rig 流式接入见 S2/S3 票</p>
             </div>
           </AuiIf>
-          <ThreadPrimitive.Messages>
-            {({ message }) =>
-              // system = runMarker 等存储标记节点（custom 载荷保真，§6.2 跳过内容）——不渲染
-              message.role === "system" ? null : message.role === "user" ? (
-                <UserMessage />
-              ) : (
-                <AssistantMessage />
-              )
-            }
-          </ThreadPrimitive.Messages>
+          {/* 内容列限宽居中（约 62%，A1）：消息与过程行统一宽度 */}
+          <div className="mx-auto w-full max-w-4xl">
+            <ThreadPrimitive.Messages>
+              {({ message }) =>
+                // system = runMarker 等存储标记节点（custom 载荷保真，§6.2 跳过内容）——不渲染
+                message.role === "system" ? null : message.role === "user" ? (
+                  <UserMessage />
+                ) : (
+                  <AssistantMessage />
+                )
+              }
+            </ThreadPrimitive.Messages>
+            {/* 运行中末尾 spinner（A3） */}
+            <AuiIf condition={(s) => s.thread.isRunning}>
+              <div
+                data-testid="thread-spinner"
+                className="flex items-center gap-2 px-1 py-1 text-xs text-[var(--muted-foreground)]"
+              >
+                <span className="inline-block animate-spin">◌</span>
+                处理中…
+              </div>
+            </AuiIf>
+          </div>
           <ThreadPrimitive.ViewportFooter className="sticky bottom-0 pt-2">
-            <ComposerBar />
-            <ComposerGhost />
-            <RunMetricsBar />
+            <div className="mx-auto w-full max-w-4xl">
+              <ComposerBar />
+              <ComposerGhost />
+            </div>
           </ThreadPrimitive.ViewportFooter>
         </ThreadPrimitive.Viewport>
         {/* 回底按钮（FR-13-15）：官方原语自带「不在底部才显示」判定 */}
-        <ThreadPrimitive.ScrollToBottom className="absolute bottom-32 left-1/2 z-10 -translate-x-1/2 rounded-full border border-[var(--border)] bg-[var(--card)] px-3 py-1 text-xs text-[var(--muted-foreground)] shadow" />
+        <ThreadPrimitive.ScrollToBottom className="absolute bottom-36 left-1/2 z-10 -translate-x-1/2 rounded-full border border-[var(--border)] bg-[var(--card)] px-3 py-1 text-xs text-[var(--muted-foreground)] shadow" />
       </ThreadPrimitive.Root>
     </div>
   );
@@ -118,50 +134,99 @@ function ComposerBar() {
           </div>
         )}
       </ComposerPrimitive.Queue>
-      <ComposerPrimitive.Root className="flex items-end gap-2 rounded-2xl border border-[var(--border)] bg-[var(--card)] p-2">
+      <ComposerPrimitive.Root className="rounded-2xl border border-[var(--border)] bg-[var(--card)] p-2 shadow-sm">
+        {/* 第一层：输入框（无独立边框，占满卡片宽） */}
         <ComposerPrimitive.Input
           rows={1}
-          placeholder="发一条消息试试骨架回声…"
-          className="max-h-32 flex-1 resize-none bg-transparent px-2 py-1.5 text-sm focus:outline-none"
+          placeholder="发一条消息，运行中的消息将自动排队…"
+          className="max-h-32 w-full resize-none bg-transparent px-2 py-1.5 text-sm focus:outline-none"
           onKeyDown={onKeyDown}
           onKeyUp={(e) => onCursor(e.currentTarget.selectionStart ?? 0)}
           onClick={(e) => onCursor(e.currentTarget.selectionStart ?? 0)}
         />
-        <ModelPicker />
-        <TierBadge />
-        {/* 发送恒显：运行中点击即入队（队列条展示，run 结束自动续发） */}
-        <ComposerPrimitive.Send
-          aria-label="发送"
-          className="shrink-0 rounded-full bg-[var(--primary)] px-3 py-1.5 text-sm text-[var(--primary-foreground)]"
-        >
-          ↑
-        </ComposerPrimitive.Send>
-        <AuiIf condition={(s) => s.thread.isRunning}>
-          <ComposerPrimitive.Cancel className="rounded-full border border-[var(--border)] px-3 py-1.5 text-sm">
-            停止
-          </ComposerPrimitive.Cancel>
-        </AuiIf>
+        {/* 第二层：工具栏——左（附件占位 + 权限档下拉）右（模型 + 发送/停止） */}
+        <div className="flex items-center gap-1 px-1 pt-1">
+          <button
+            type="button"
+            aria-label="附件（M2 提供）"
+            disabled
+            title="附件功能随 M2 提供"
+            className="shrink-0 rounded px-1.5 py-0.5 text-sm text-[var(--cw-dim)]"
+          >
+            +
+          </button>
+          <TierMenu />
+          <div className="ml-auto flex items-center gap-1">
+            <ModelPicker />
+            {/* 发送恒显：运行中点击即入队（队列条展示，run 结束自动续发） */}
+            <ComposerPrimitive.Send
+              aria-label="发送"
+              className="shrink-0 rounded-lg bg-[var(--primary)] px-2.5 py-1 text-sm text-[var(--primary-foreground)]"
+            >
+              ↑
+            </ComposerPrimitive.Send>
+            <AuiIf condition={(s) => s.thread.isRunning}>
+              <ComposerPrimitive.Cancel className="rounded-lg border border-[var(--border)] px-2.5 py-1 text-sm">
+                停止
+              </ComposerPrimitive.Cancel>
+            </AuiIf>
+          </div>
+        </div>
+        {/* 第三层：状态栏（A5）——思考计时 + 速率/本轮/会话三数 + 工具次数 */}
+        <ComposerStatusBar />
       </ComposerPrimitive.Root>
     </div>
   );
 }
 
-/** 权限档指示与切换（FR-13-02：点击或 Shift+Tab 循环，§10.6 内存态——
- *  本次会话有效，重启回默认档）。 */
-function TierBadge() {
+/** 权限档下拉（FR-13-02）：盾牌图标 + 当前档名，点开四档清单直接选定
+ *  （Shift+Tab 循环仍可用，§10.6 内存态——本次会话有效）。 */
+function TierMenu() {
   const sessionId = useSessionScope();
   const tier = usePermissionTierStore((s) => s.bySession[sessionId] ?? "autoEdit");
-  const cycle = usePermissionTierStore((s) => s.cycle);
+  const setTier = usePermissionTierStore((s) => s.setTier);
+  const [open, setOpen] = useState(false);
+  const TIERS: PermissionTier[] = ["plan", "confirmEach", "autoEdit", "fullAccess"];
   return (
-    <button
-      type="button"
-      data-testid="tier-badge"
-      onClick={() => cycle(sessionId)}
-      className="shrink-0 rounded-full border border-[var(--border)] px-2 py-0.5 text-[11px] text-[var(--muted-foreground)] hover:border-[var(--ring)]"
-      title="点击或 Shift+Tab 切换权限档（本次会话有效）"
-    >
-      {TIER_LABELS[tier]}
-    </button>
+    <div className="relative shrink-0">
+      {open && (
+        <ul
+          data-testid="tier-menu"
+          className="absolute bottom-full left-0 z-20 mb-1 w-40 rounded-lg border border-[var(--border)] bg-[var(--card)] py-1 text-xs shadow"
+        >
+          {TIERS.map((t) => (
+            <li key={t}>
+              <button
+                type="button"
+                className={`flex w-full items-center gap-2 px-2 py-1 text-left ${
+                  t === tier
+                    ? "bg-[var(--accent)] text-[var(--foreground)]"
+                    : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                }`}
+                onClick={() => {
+                  setTier(sessionId, t);
+                  setOpen(false);
+                }}
+              >
+                <span aria-hidden>{t === tier ? "●" : "○"}</span>
+                {TIER_LABELS[t]}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <button
+        type="button"
+        data-testid="tier-badge"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className="rounded px-1.5 py-0.5 text-[11px] text-[var(--muted-foreground)] hover:bg-[var(--accent)]"
+        title="权限档（本次会话有效，Shift+Tab 循环切换）"
+      >
+        🛡 {TIER_LABELS[tier]} ∨
+      </button>
+    </div>
   );
 }
 
@@ -275,11 +340,11 @@ function ModelPicker() {
   );
 }
 
-/** 用户消息气泡：右对齐，仅渲染文本 part，附编辑重发操作条。 */
+/** 用户消息：右对齐浅底块（工作流风格 A1：弱化为 muted 底，不用主色）。 */
 function UserMessage() {
   return (
-    <MessagePrimitive.Root className="flex flex-col items-end py-1">
-      <div className="max-w-[80%] rounded-2xl bg-[var(--primary)] px-4 py-2 text-sm text-[var(--primary-foreground)]">
+    <MessagePrimitive.Root className="flex flex-col items-end py-2">
+      <div className="max-w-[85%] rounded-2xl bg-[var(--muted)] px-4 py-2 text-sm text-[var(--foreground)]">
         <MessagePrimitive.Parts>
           {({ part }) =>
             part.type === "text" && part.text.length > 0 ? (
@@ -361,13 +426,13 @@ function AssistantMessage() {
 
   return (
     <MessagePrimitive.Root className="flex w-full flex-col items-start py-1">
-      {/* 摘要行（§10.4）：过程存在且收起时显示；点击展开/收起 */}
+      {/* 摘要行（§10.4，参考样式 A1 单行风）：过程存在且收起时显示；点击展开/收起 */}
       {collapsed && processParts.length > 0 && (
         <button
           type="button"
           data-testid="run-summary"
           onClick={toggle}
-          className="mb-1 flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--card)] px-3 py-0.5 text-xs text-[var(--muted-foreground)] hover:border-[var(--ring)]"
+          className="flex items-center gap-2 rounded px-1 py-0.5 text-xs text-[var(--muted-foreground)] hover:bg-[var(--accent)]/60"
         >
           <span aria-hidden>⚙</span>
           <span>
@@ -375,10 +440,13 @@ function AssistantMessage() {
             {durationMs !== undefined ? ` · ${formatDuration(durationMs)}` : ""}
           </span>
           {interrupted && <span className="text-[var(--destructive)]">已中断</span>}
-          <span className="text-[var(--cw-dim)]">展开</span>
+          <span aria-hidden className="text-[var(--cw-dim)]">
+            ▸
+          </span>
         </button>
       )}
-      <div className="w-full max-w-[80%] rounded-2xl bg-[var(--card)] px-4 py-2 text-sm">
+      {/* 工作流风格 A1：助手内容平铺（无气泡底色），与过程行同列 */}
+      <div className="w-full text-sm">
         {/* 内联 render props（勿抽组件）：S1 实证 Parts 对 tool-call part 渲染
             null 时才 fallback 到注册的镜像工具卡；抽组件会让 fallback 判定失效。
             折叠态过程 part 返回隐藏空元素（非 null）以抑制 fallback 卡。 */}
@@ -394,10 +462,19 @@ function AssistantMessage() {
             }
             if (collapsed) return <span hidden />;
             if (part.type === "reasoning") {
+              // 思考过程单行摘要（A2）：与工具行同风格，点击展开全文
               return (
-                <details className="my-1 rounded border border-[var(--border)] bg-[var(--muted)] px-2 py-1 text-xs text-[var(--muted-foreground)]">
-                  <summary className="cursor-default select-none">思考过程</summary>
-                  <p className="mt-1 whitespace-pre-wrap">{part.text}</p>
+                <details className="text-xs text-[var(--muted-foreground)]">
+                  <summary className="flex w-fit cursor-default select-none items-center gap-2 rounded px-1 py-0.5 hover:bg-[var(--accent)]/60">
+                    <span aria-hidden>🧠</span>
+                    <span>思考过程</span>
+                    <span aria-hidden className="text-[var(--cw-dim)]">
+                      ▸
+                    </span>
+                  </summary>
+                  <p className="my-1 ml-6 whitespace-pre-wrap rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2">
+                    {part.text}
+                  </p>
                 </details>
               );
             }
@@ -453,14 +530,31 @@ function BranchBar({ editOnly }: { editOnly: boolean }) {
   );
 }
 
-/** 计数条三数（§10.5：rate / turnUsage / sessionUsage 常驻 Composer 下方；
- * 16 号票按本会话桶取数）。 */
-function RunMetricsBar() {
+/** Composer 状态栏（A5，§10.5 三数 + 思考计时 + 工具次数）：常驻输入卡片
+ *  底部一行；思考计时由 reasoning/text 帧驱动（run-metrics thinkingSince）。 */
+function ComposerStatusBar() {
   const sessionId = useSessionScope();
-  const { rate, turnUsage, sessionUsage, lastRun } = useSessionMetrics(sessionId);
+  const { rate, turnUsage, sessionUsage, lastRun, thinkingSince } = useSessionMetrics(sessionId);
+  // 思考中秒表：thinkingSince 有值即每秒重算（组件级刷新，无需全局定时器）
+  const [, forceTick] = useState(0);
+  useEffect(() => {
+    if (thinkingSince === null) return;
+    const timer = setInterval(() => forceTick((n) => n + 1), 1000);
+    return () => clearInterval(timer);
+  }, [thinkingSince]);
   const tokens = (u: { input: number; output: number }) => `${u.input + u.output}`;
+  const thinkingSeconds =
+    thinkingSince !== null ? Math.max(0, Math.round((Date.now() - thinkingSince) / 1000)) : 0;
   return (
-    <div className="mt-1 flex items-center gap-3 px-2 text-[11px] text-[var(--muted-foreground)]">
+    <div
+      data-testid="composer-status"
+      className="flex items-center gap-3 px-1 pt-1.5 text-[11px] text-[var(--cw-dim)]"
+    >
+      {thinkingSince !== null && (
+        <span data-testid="metric-thinking" className="text-[var(--muted-foreground)]">
+          🧠 思考中 {thinkingSeconds}s
+        </span>
+      )}
       <span data-testid="metric-rate">{rate === null ? "—" : `${rate.toFixed(0)} tok/s`}</span>
       <span data-testid="metric-turn">本轮 {tokens(turnUsage)} tok</span>
       <span data-testid="metric-session">会话 {tokens(sessionUsage)} tok</span>
