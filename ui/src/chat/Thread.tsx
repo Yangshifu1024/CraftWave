@@ -236,12 +236,14 @@ function ComposerBar() {
   );
 }
 
-/** 权限档描述（双行菜单的第二行，对齐 ZCode 模式菜单口径）。 */
+/** 权限档描述（双行菜单第二行，文案直接取自 ZCode zh-CN 语言包
+ *  mode.description.glm.*，按档位映射：plan→plan / confirmEach→build /
+ *  autoEdit→edit / fullAccess→yolo）。 */
 const TIER_DESCRIPTIONS: Record<PermissionTier, string> = {
-  plan: "只读分析并给出计划，不改动文件",
-  confirmEach: "每次文件改动前逐项确认",
-  autoEdit: "自动应用文件编辑，命令仍需确认",
-  fullAccess: "自动执行全部操作，包括命令",
+  plan: "编辑前先出计划。",
+  confirmEach: "改文件前先问我。",
+  autoEdit: "自动编辑文件。",
+  fullAccess: "减少确认次数。",
 };
 
 /** 权限档下拉（FR-13-02）：双行菜单（图标 + 档名 + 描述，行尾勾标记当前
