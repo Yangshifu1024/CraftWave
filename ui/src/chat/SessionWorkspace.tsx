@@ -34,6 +34,7 @@ import { cwToolkit } from "@/chat/toolkit";
 import type { RunSummary } from "@/chat/tree-persistence";
 import { deriveRunSummaries, loadedTreeToExported } from "@/chat/tree-persistence";
 import { ConfirmDialog } from "@/components/ui/confirm";
+import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import {
   createSession,
@@ -307,6 +308,8 @@ function Sidebar({
   const [confirm, setConfirm] = useState<
     { kind: "session"; session: SessionMeta } | { kind: "project"; project: ProjectMeta } | null
   >(null);
+  // 新建项目弹窗（参考 ZCode 创建项目弹窗）：+ 钮改为开弹窗选名称与目录
+  const [createOpen, setCreateOpen] = useState(false);
   const projects = useSessionsStore((s) => s.projects);
   const sessions = useSessionsStore((s) => s.sessions);
   const activeId = useSessionsStore((s) => s.activeId);
@@ -380,7 +383,7 @@ function Sidebar({
                 type="button"
                 data-testid="new-project"
                 aria-label="新建项目"
-                onClick={() => void createProject()}
+                onClick={() => setCreateOpen(true)}
                 className="ml-auto hidden rounded px-1 hover:bg-[var(--accent)] group-hover:block"
               >
                 +
@@ -427,6 +430,7 @@ function Sidebar({
           </div>
         </div>
       </div>
+      <NewProjectDialog open={createOpen} onClose={() => setCreateOpen(false)} />
       <ConfirmDialog
         open={confirm !== null}
         title={
@@ -468,17 +472,95 @@ async function createAndOpen(projectId: string | undefined): Promise<void> {
   }
 }
 
-/** 新建项目：弹目录选择器，取目录名作项目名注册。 */
-async function createProject(): Promise<void> {
+/** 新建项目：按名称+目录注册，随后刷新左栏列表（名称留空时调用方兜底；
+ *  失败上抛让弹窗保持打开）。 */
+async function createProject(name: string, homeDir: string): Promise<void> {
   try {
-    const dir = await selectDir();
-    if (!dir) return;
-    const name = dir.split("/").filter(Boolean).at(-1) ?? dir;
-    await saveProject({ project: { name, homeDir: dir } });
+    await saveProject({ project: { name, homeDir } });
     await useSessionsStore.getState().refresh();
   } catch (err) {
     console.error("[sessions] 新建项目失败", err);
+    throw err;
   }
+}
+
+/** 新建项目弹窗（参考 ZCode 创建项目弹窗）：项目名称 + 源文件夹虚线
+ *  选择区；名称留空取文件夹名兜底，未选文件夹时创建禁用。 */
+function NewProjectDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const [name, setName] = useState("");
+  const [homeDir, setHomeDir] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const pick = async () => {
+    const dir = await selectDir();
+    if (dir) setHomeDir(dir);
+  };
+  const submit = () => {
+    if (homeDir === null || busy) return;
+    setBusy(true);
+    void (async () => {
+      const fallback = homeDir.split("/").filter(Boolean).at(-1) ?? homeDir;
+      try {
+        await createProject(name.trim() || fallback, homeDir);
+        setName("");
+        setHomeDir(null);
+        onClose();
+      } catch {
+        // 保留弹窗与已填内容，用户可直接重试
+      } finally {
+        setBusy(false);
+      }
+    })();
+  };
+  return (
+    <Dialog
+      open={open}
+      title="新建项目"
+      onClose={onClose}
+      width={480}
+      actions={[
+        { label: "取消", variant: "ghost", onClick: onClose },
+        {
+          label: "创建项目",
+          variant: "default",
+          disabled: homeDir === null || busy,
+          onClick: submit,
+        },
+      ]}
+    >
+      <div className="mb-5">
+        <p className="mb-1.5 text-body font-medium text-[var(--foreground)]">项目名称</p>
+        <Input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="新项目"
+          autoFocus
+        />
+      </div>
+      <div>
+        <p className="mb-1.5 text-body font-medium text-[var(--foreground)]">源文件夹</p>
+        <button
+          type="button"
+          data-testid="pick-project-dir"
+          onClick={() => void pick()}
+          className="flex w-full flex-col items-center gap-2 rounded-lg border border-dashed border-[var(--input)] px-4 py-6 transition-colors hover:border-[var(--cw-text-2)]"
+        >
+          <span className="flex size-12 items-center justify-center rounded-lg bg-[var(--muted)] text-[var(--muted-foreground)]">
+            <FolderPlusIcon />
+          </span>
+          {homeDir === null ? (
+            <span className="text-body font-medium text-[var(--foreground)]">选择文件夹</span>
+          ) : (
+            <span className="max-w-full truncate font-mono text-secondary text-[var(--foreground)]">
+              {homeDir}
+            </span>
+          )}
+          <span className="text-secondary text-[var(--muted-foreground)]">
+            {homeDir === null ? "CraftWave 可读取和编辑此文件夹" : "点击重新选择"}
+          </span>
+        </button>
+      </div>
+    </Dialog>
+  );
 }
 
 /** 删除会话并收尾：关 Tab + 清各 store 里该会话的分桶（持久化/指标/ask）。 */
@@ -876,6 +958,27 @@ function PlusIcon() {
     >
       <path d="M5 12h14" />
       <path d="M12 5v14" />
+    </svg>
+  );
+}
+
+/** 加号文件夹图标（lucide folder-plus 造型，新建项目虚线区）。 */
+function FolderPlusIcon() {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M12 10.5v6" />
+      <path d="M9 13.5h6" />
+      <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
     </svg>
   );
 }

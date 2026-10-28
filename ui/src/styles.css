@@ -595,7 +595,7 @@ body {
   box-sizing: border-box;
   width: 100%;
   max-width: 440px;
-  padding: 24px;
+  padding: 28px;
   border: 1px solid var(--border);
   border-radius: 16px;
   background: var(--card);

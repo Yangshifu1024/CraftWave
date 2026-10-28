@@ -6,10 +6,32 @@
 import { type ReactNode, useEffect } from "react";
 import { Button } from "./button";
 
-/** 底部动作区的一个按钮描述：label 文案；variant 按钮变体（默认 outline）；onClick 点击回调。 */
+/** 关闭图标（lucide x 造型，弹框右上角关闭钮）。 */
+function XIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M18 6 6 18" />
+      <path d="m6 6 12 12" />
+    </svg>
+  );
+}
+
+/** 底部动作区的一个按钮描述：label 文案；variant 按钮变体（默认 outline）；
+ *  disabled 禁用态；onClick 点击回调。 */
 export interface DialogActionItem {
   label: string;
   variant?: "default" | "outline" | "ghost" | "danger";
+  disabled?: boolean;
   onClick: () => void;
 }
 
@@ -58,7 +80,17 @@ export function Dialog({ open, title, onClose, children, actions, width = 440 }:
         aria-modal="true"
         aria-label={title}
       >
-        <h2 className="mb-2 text-title font-semibold text-[var(--foreground)]">{title}</h2>
+        <div className="mb-5 flex items-center justify-between">
+          <h2 className="text-title font-semibold text-[var(--foreground)]">{title}</h2>
+          <button
+            type="button"
+            aria-label="关闭"
+            onClick={onClose}
+            className="flex size-6 items-center justify-center rounded text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+          >
+            <XIcon />
+          </button>
+        </div>
         <div className="text-body leading-relaxed text-[var(--muted-foreground)]">{children}</div>
         {actions && actions.length > 0 && (
           <div className="mt-6 flex flex-wrap items-center justify-end gap-2">
@@ -66,6 +98,7 @@ export function Dialog({ open, title, onClose, children, actions, width = 440 }:
               <Button
                 key={action.label}
                 variant={action.variant ?? "outline"}
+                disabled={action.disabled}
                 onClick={action.onClick}
               >
                 {action.label}
