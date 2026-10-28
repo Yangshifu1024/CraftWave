@@ -699,7 +699,7 @@ function ProjectRow({
         e.preventDefault();
         onContextMenu(e.clientX, e.clientY);
       }}
-      className="group flex h-8 cursor-default items-center gap-2 rounded-lg pr-1 pl-2.5 text-ui-base text-[var(--foreground)] hover:bg-[var(--selected)]"
+      className="group flex h-8 cursor-default select-none items-center gap-2 rounded-lg pr-1 pl-2.5 text-ui-base text-[var(--foreground)] hover:bg-[var(--selected)]"
     >
       <Folder size={16} className="shrink-0" />
       {/* 项目名比会话标题淡一档（ZCode subtle 层级：组容器弱于内容行） */}
@@ -887,7 +887,7 @@ function SessionRow({
         e.preventDefault();
         onContextMenu(e.clientX, e.clientY);
       }}
-      className={`group flex h-8 cursor-default items-center gap-2 rounded-lg pr-1 pl-2.5 text-ui-base ${
+      className={`group flex h-8 cursor-default select-none items-center gap-2 rounded-lg pr-1 pl-2.5 text-ui-base ${
         active
           ? "bg-[var(--selected)] text-[var(--foreground)]"
           : "text-[var(--foreground)] hover:bg-[var(--selected)]"
