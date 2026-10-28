@@ -93,7 +93,7 @@ export function SessionWorkspace() {
 
   if (!ready) {
     return (
-      <div className="flex h-dvh items-center justify-center bg-[var(--background)] text-sm text-[var(--muted-foreground)]">
+      <div className="flex h-dvh items-center justify-center bg-[var(--background)] text-[15px] text-[var(--muted-foreground)]">
         正在恢复会话…
       </div>
     );
@@ -122,7 +122,7 @@ export function SessionWorkspace() {
           {/* 卡头：项目/标题（FR 拖拽区），右侧为右栏折叠钮 */}
           <div
             data-tauri-drag-region
-            className="flex h-9 shrink-0 cursor-default select-none items-center gap-2 border-b border-[var(--border)] px-4 text-xs text-[var(--muted-foreground)]"
+            className="flex h-9 shrink-0 cursor-default select-none items-center gap-2 border-b border-[var(--border)] px-4 text-[13px] text-[var(--muted-foreground)]"
           >
             {activeTab && (
               <div className="flex min-w-0 items-center gap-1.5">
@@ -345,7 +345,7 @@ function Sidebar({
               type="button"
               data-testid="new-temp-session"
               onClick={() => void createAndOpen(undefined)}
-              className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm text-[var(--foreground)] hover:bg-[var(--accent)]"
+              className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-[15px] text-[var(--foreground)] hover:bg-[var(--accent)]"
             >
               <CirclePlusIcon />
               新建会话
@@ -419,7 +419,7 @@ function Sidebar({
               type="button"
               data-testid="open-settings"
               onClick={onOpenSettings}
-              className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm text-[var(--foreground)] hover:bg-[var(--accent)]"
+              className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-[15px] text-[var(--foreground)] hover:bg-[var(--accent)]"
             >
               <SettingsIcon />
               设置
@@ -564,7 +564,7 @@ function ProjectRow({
     );
   }
   return (
-    <div className="group flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm text-[var(--foreground)] hover:bg-[var(--accent)]/60">
+    <div className="group flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-[15px] text-[var(--foreground)] hover:bg-[var(--accent)]/60">
       <FolderIcon />
       <span className="min-w-0 flex-1 truncate">{project.name}</span>
       <button
@@ -576,7 +576,7 @@ function ProjectRow({
         }}
         className="hidden rounded px-0.5 hover:bg-[var(--accent)] group-hover:block"
       >
-        ✎
+        <PencilIcon />
       </button>
       <button
         type="button"
@@ -592,7 +592,7 @@ function ProjectRow({
         onClick={onDeleteProject}
         className="hidden rounded px-0.5 hover:bg-[var(--accent)] group-hover:block"
       >
-        🗑
+        <TrashIcon />
       </button>
     </div>
   );
@@ -611,7 +611,7 @@ function SectionBody({ children }: { children: React.ReactNode }) {
       {hidden > 0 && !expanded && (
         <button
           type="button"
-          className="mt-0.5 w-full rounded px-1 py-0.5 text-left text-[11px] text-[var(--muted-foreground)] hover:bg-[var(--accent)]/60"
+          className="mt-0.5 w-full rounded px-1 py-0.5 text-left text-xs text-[var(--muted-foreground)] hover:bg-[var(--accent)]/60"
           onClick={() => setExpanded(true)}
         >
           显示更多（{hidden}）
@@ -689,7 +689,7 @@ function SessionRow({
   return (
     <div
       data-testid={`session-row-${meta.id}`}
-      className={`group flex cursor-default items-center gap-1 rounded-md px-2 py-1.5 text-sm ${
+      className={`group flex cursor-default items-center gap-1 rounded-md px-2 py-1.5 text-[15px] ${
         active
           ? "bg-[var(--accent)] text-[var(--foreground)]"
           : "text-[var(--foreground)] hover:bg-[var(--accent)]/60"
@@ -700,7 +700,7 @@ function SessionRow({
         {meta.title}
       </button>
       {/* 相对时间（A6）：非活跃时淡显，活跃时与操作按钮共存 */}
-      <span className="shrink-0 text-[10px] text-[var(--cw-dim)]">
+      <span className="shrink-0 text-xs tabular-nums text-[var(--cw-dim)]">
         {relativeTime(meta.updatedAt)}
       </span>
       <button
@@ -712,7 +712,7 @@ function SessionRow({
         }}
         className="hidden rounded px-0.5 hover:bg-[var(--accent)] group-hover:block"
       >
-        ✎
+        <PencilIcon />
       </button>
       <button
         type="button"
@@ -784,6 +784,49 @@ function FolderIcon() {
       className="shrink-0"
     >
       <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+    </svg>
+  );
+}
+
+/** 铅笔图标（lucide pencil 造型，重命名操作钮）。 */
+function PencilIcon() {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z" />
+      <path d="m15 5 4 4" />
+    </svg>
+  );
+}
+
+/** 垃圾桶图标（lucide trash-2 造型，删除操作钮）。 */
+function TrashIcon() {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M3 6h18" />
+      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+      <path d="M10 11v6" />
+      <path d="M14 11v6" />
     </svg>
   );
 }

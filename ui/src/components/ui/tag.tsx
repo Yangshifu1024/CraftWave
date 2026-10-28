@@ -16,7 +16,7 @@ export function Tag({ children, className }: TagProps) {
   return (
     <span
       className={cn(
-        "inline-flex max-w-full shrink-0 items-center gap-1 rounded-md border border-[var(--border)] px-1.5 py-px text-xs leading-5 text-[var(--muted-foreground)]",
+        "inline-flex max-w-full shrink-0 items-center gap-1 rounded-md border border-[var(--border)] px-1.5 py-px text-[13px] leading-5 text-[var(--muted-foreground)]",
         className,
       )}
     >
@@ -39,7 +39,7 @@ export interface CheckableTagProps {
 /** 渲染可点选标签：锁定或无回调时退化为纯展示；否则渲染成带 aria-pressed 的按钮。 */
 export function CheckableTag({ checked, locked, onChange, children, ...aria }: CheckableTagProps) {
   const base = cn(
-    "inline-flex max-w-full shrink-0 items-center gap-1 rounded-md border px-1.5 py-px text-xs leading-5 transition-colors",
+    "inline-flex max-w-full shrink-0 items-center gap-1 rounded-md border px-1.5 py-px text-[13px] leading-5 transition-colors",
     checked
       ? "border-[var(--cw-focus)]/50 bg-[var(--accent)] text-[var(--accent-foreground)]"
       : "border-[var(--border)] text-[var(--muted-foreground)]",

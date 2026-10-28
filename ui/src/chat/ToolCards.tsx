@@ -31,6 +31,48 @@ export function cardPhase(
 /** 卡片读取工具参数用的宽泛类型（args 是 JSON 解析结果）。 */
 type CardArgs = Record<string, unknown>;
 
+/** 旋转指示（lucide loader-circle 造型，运行中状态；与 Thread 处理中同款）。 */
+function SpinnerIcon() {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      className="block animate-spin"
+    >
+      <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+    </svg>
+  );
+}
+
+/** 告警图标（lucide circle-alert 造型，错误态前缀；与 Thread 错误块同款）。 */
+function AlertIconSmall() {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      className="shrink-0"
+    >
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 8v4" />
+      <path d="M12 16h.01" />
+    </svg>
+  );
+}
+
 /** 卡片通用 props：assistant-ui 传入的工具调用 part 数据 + 摘要行内容。 */
 interface CardProps extends ToolCallMessagePartProps<CardArgs, unknown> {
   /** 摘要行的动作图标（emoji，与参考界面口径一致）。 */
@@ -92,7 +134,7 @@ function ToolCardShell({
     "";
 
   return (
-    <div data-testid={`tool-card-${toolCallId}`} data-phase={phase} className="my-0.5 text-xs">
+    <div data-testid={`tool-card-${toolCallId}`} data-phase={phase} className="my-0.5 text-[13px]">
       {/* 摘要行：图标 + 主参数 + 徽标 + 状态（点击展开详情） */}
       <button
         type="button"
@@ -109,16 +151,16 @@ function ToolCardShell({
         </span>
         {badges}
         {phase === "running" && (
-          <span
-            data-testid="tool-spinner"
-            className="shrink-0 animate-spin text-[var(--muted-foreground)]"
-          >
-            ◌
+          <span data-testid="tool-spinner" className="shrink-0 text-[var(--muted-foreground)]">
+            <SpinnerIcon />
           </span>
         )}
         {phase === "preparing" && <span className="shrink-0 text-[var(--cw-dim)]">…</span>}
         {phase === "error" && (
-          <span className="shrink-0 font-medium text-[var(--destructive)]">⚠️ 失败</span>
+          <span className="flex shrink-0 items-center gap-1 font-medium text-[var(--destructive)]">
+            <AlertIconSmall />
+            失败
+          </span>
         )}
         <span aria-hidden className="shrink-0 text-[var(--cw-dim)]">
           {open ? "▾" : "▸"}

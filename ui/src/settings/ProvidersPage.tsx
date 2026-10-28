@@ -381,9 +381,9 @@ export function ProvidersPage() {
         </div>
         <div className="settings-section-card">
           {activeConfig.providers.length === 0 ? (
-            <div className="px-5 py-14 text-center text-sm text-[var(--muted-foreground)]">
+            <div className="px-5 py-14 text-center text-[15px] text-[var(--muted-foreground)]">
               暂无供应商
-              <div className="mt-1 text-xs">
+              <div className="mt-1 text-[13px]">
                 点右上「添加供应商」，配置端点与 API Key 后即可开始对话。
               </div>
             </div>
@@ -734,7 +734,10 @@ function ProviderFields({
           <div className="settings-row-control">
             <FieldControl error={errors.baseUrl} wide>
               <Input
-                className={cn("font-mono text-xs", errors.baseUrl && "settings-field-error-input")}
+                className={cn(
+                  "font-mono text-[13px]",
+                  errors.baseUrl && "settings-field-error-input",
+                )}
                 value={form.baseUrl}
                 placeholder="https://api.example.com/v1"
                 onChange={(e) => onPatch({ baseUrl: e.target.value })}
@@ -758,7 +761,10 @@ function ProviderFields({
             <FieldControl error={errors.keys} wide>
               {credential.isNew ? (
                 <Input
-                  className={cn("font-mono text-xs", errors.keys && "settings-field-error-input")}
+                  className={cn(
+                    "font-mono text-[13px]",
+                    errors.keys && "settings-field-error-input",
+                  )}
                   autoComplete="off"
                   value={credential.newKey}
                   placeholder="sk-…"
@@ -790,7 +796,7 @@ function ProviderFields({
                   {credential.mode === "replace" && (
                     <Input
                       className={cn(
-                        "font-mono text-xs",
+                        "font-mono text-[13px]",
                         errors.keys && "settings-field-error-input",
                       )}
                       autoComplete="off"
@@ -900,7 +906,7 @@ function ModelListSection({
             <span className="settings-collection-row-info">
               <code>{model.model}</code>
               {model.vision && <Tag>图像</Tag>}
-              <span className="text-xs text-[var(--muted-foreground)]">
+              <span className="text-[13px] text-[var(--muted-foreground)]">
                 {Math.round(model.contextWindow / 1000)}k · {Math.round(model.maxTokens / 1000)}k
                 输出
               </span>

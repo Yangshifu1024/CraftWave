@@ -52,10 +52,10 @@ function QuestionForm({
 
   return (
     <div className="space-y-3">
-      <h3 className="text-sm font-medium text-[var(--foreground)]">{payload.title}</h3>
+      <h3 className="text-[15px] font-medium text-[var(--foreground)]">{payload.title}</h3>
       {payload.questions.map((q) => (
         <div key={q.id} data-testid={`ask-question-${q.id}`} className="space-y-1">
-          <p className="text-xs text-[var(--foreground)]">{q.text}</p>
+          <p className="text-[13px] text-[var(--foreground)]">{q.text}</p>
           <div className="flex flex-wrap gap-1.5">
             {q.options?.map((opt) => (
               <button
@@ -63,7 +63,7 @@ function QuestionForm({
                 type="button"
                 data-selected={answers[q.id] === opt.id}
                 onClick={() => setAnswers((prev) => ({ ...prev, [q.id]: opt.id }))}
-                className={`rounded-full border px-2.5 py-1 text-xs ${
+                className={`rounded-full border px-2.5 py-1 text-[13px] ${
                   answers[q.id] === opt.id
                     ? "border-[var(--ring)] bg-[var(--accent)] text-[var(--foreground)]"
                     : "border-[var(--border)] text-[var(--foreground)] hover:border-[var(--border)]"
@@ -78,7 +78,7 @@ function QuestionForm({
                 placeholder="自由输入…"
                 value={answers[q.id] ?? ""}
                 onChange={(e) => setAnswers((prev) => ({ ...prev, [q.id]: e.target.value }))}
-                className="min-w-32 flex-1 rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1 text-xs text-[var(--foreground)]"
+                className="min-w-32 flex-1 rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1 text-[13px] text-[var(--foreground)]"
               />
             )}
           </div>
@@ -88,7 +88,7 @@ function QuestionForm({
         type="button"
         disabled={!complete}
         onClick={submit}
-        className="rounded-full bg-[var(--primary)] px-4 py-1.5 text-xs text-[var(--primary-foreground)] disabled:opacity-40"
+        className="rounded-full bg-[var(--primary)] px-4 py-1.5 text-[13px] text-[var(--primary-foreground)] disabled:opacity-40"
       >
         提交回答
       </button>
@@ -109,13 +109,18 @@ function ApprovalForm({
   };
   return (
     <div className="space-y-3">
-      <h3 className="text-sm font-medium text-[var(--foreground)]">{payload.title}</h3>
+      <h3 className="text-[15px] font-medium text-[var(--foreground)]">{payload.title}</h3>
       {payload.command && (
-        <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded bg-[var(--background)] px-2 py-1 font-mono text-xs text-[var(--foreground)]">
+        <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded bg-[var(--background)] px-2 py-1 font-mono text-[13px] text-[var(--foreground)]">
           {payload.command}
         </pre>
       )}
-      {payload.fenceReason && <p className="text-xs text-amber-400">⚠ {payload.fenceReason}</p>}
+      {payload.fenceReason && (
+        <p className="flex items-center gap-1.5 text-[13px] text-[var(--warning)]">
+          <AlertIcon />
+          {payload.fenceReason}
+        </p>
+      )}
       {payload.diff && <DiffView diff={payload.diff} />}
       <div className="flex justify-end gap-2">
         {payload.options.map((opt) => (
@@ -124,9 +129,9 @@ function ApprovalForm({
             type="button"
             data-testid={`ask-option-${opt.id}`}
             onClick={() => submit(opt.id)}
-            className={`rounded-full px-4 py-1.5 text-xs ${
+            className={`rounded-full px-4 py-1.5 text-[13px] ${
               opt.mode === "deny"
-                ? "border border-[var(--border)] text-[var(--foreground)] hover:border-red-500"
+                ? "border border-[var(--border)] text-[var(--foreground)] hover:border-[var(--destructive)]"
                 : "bg-[var(--primary)] text-[var(--primary-foreground)]"
             }`}
           >
@@ -153,19 +158,19 @@ function DiffView({
 }) {
   return (
     <div data-testid="ask-diff" className="rounded border border-[var(--border)]">
-      <p className="border-b border-[var(--border)] px-2 py-1 font-mono text-xs text-[var(--foreground)]">
+      <p className="border-b border-[var(--border)] px-2 py-1 font-mono text-[13px] text-[var(--foreground)]">
         {diff.path}
       </p>
       <div className="max-h-64 overflow-auto">
         {diff.hunks.map((hunk) => (
           <div key={hunk.header}>
-            <p className="px-2 py-0.5 font-mono text-[10px] text-[var(--muted-foreground)]">
+            <p className="px-2 py-0.5 font-mono text-xs text-[var(--muted-foreground)]">
               {hunk.header}
             </p>
             {hunk.lines.map((line) => (
               <pre
                 key={`${line.kind}:${line.text}`}
-                className={`px-2 font-mono text-xs ${diffLineClass[line.kind]}`}
+                className={`px-2 font-mono text-[13px] ${diffLineClass[line.kind]}`}
               >
                 {line.kind === "add" ? "+" : line.kind === "del" ? "−" : " "} {line.text}
               </pre>
@@ -174,5 +179,27 @@ function DiffView({
         ))}
       </div>
     </div>
+  );
+}
+
+/** 告警图标（lucide circle-alert 造型，围栏原因提示前缀；与 Thread/ToolCards 同款）。 */
+function AlertIcon() {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      className="shrink-0"
+    >
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 8v4" />
+      <path d="M12 16h.01" />
+    </svg>
   );
 }

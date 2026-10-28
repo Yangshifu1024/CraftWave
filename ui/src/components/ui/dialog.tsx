@@ -58,8 +58,8 @@ export function Dialog({ open, title, onClose, children, actions, width = 440 }:
         aria-modal="true"
         aria-label={title}
       >
-        <h2 className="mb-2 text-base font-semibold text-[var(--foreground)]">{title}</h2>
-        <div className="text-sm leading-relaxed text-[var(--muted-foreground)]">{children}</div>
+        <h2 className="mb-2 text-[17px] font-semibold text-[var(--foreground)]">{title}</h2>
+        <div className="text-[15px] leading-relaxed text-[var(--muted-foreground)]">{children}</div>
         {actions && actions.length > 0 && (
           <div className="mt-6 flex flex-wrap items-center justify-end gap-2">
             {actions.map((action) => (
