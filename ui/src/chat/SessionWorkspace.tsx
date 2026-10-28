@@ -342,8 +342,9 @@ function Sidebar({
           style={{ paddingLeft: "max(var(--tauri-plugin-decoration-left-clearance, 76px), 8px)" }}
         />
         <div className="flex min-h-0 flex-1 flex-col">
-          {/* 主操作区：整宽大行（ZCode NewTaskButtonGroup 同款：h-8 圆角 lg） */}
-          <div className="px-2 pt-1">
+          {/* 主操作区：整宽大行（ZCode NewTaskButtonGroup 同款：h-8 圆角 lg，
+              顶部 pt-3 对齐其导航块 py-3 的呼吸感） */}
+          <div className="px-2 pt-3">
             <button
               type="button"
               data-testid="new-temp-session"
@@ -354,7 +355,7 @@ function Sidebar({
               新建会话
             </button>
           </div>
-          <div className="mx-3 mt-2 shrink-0 border-t border-[var(--border)]/50" />
+          <div className="mx-3 mt-3 shrink-0 border-t border-[var(--border)]/50" />
           <div className="px-2 pb-1 pt-2">
             <Input
               value={filter}
@@ -376,8 +377,8 @@ function Sidebar({
                 />
               ))}
             </SectionBody>
-            {/* 项目组标题：悬停露出「新建项目」 */}
-            <div className="group mt-3 flex h-7 items-center px-2 pb-1 text-secondary font-medium text-[var(--cw-dim)]">
+            {/* 项目组标题：与行文字同字号仅灰+medium（截图口径）；悬停露出「新建项目」 */}
+            <div className="group mt-3 flex h-7 items-center px-2 text-body font-medium text-[var(--cw-dim)]">
               <span>项目</span>
               <button
                 type="button"
@@ -398,8 +399,8 @@ function Sidebar({
                     onAddSession={() => void createAndOpen(project.id)}
                     onDeleteProject={() => setConfirm({ kind: "project", project })}
                   />
-                  {/* 名下会话相对项目行缩进一级（ZCode pl-2 同量级） */}
-                  <div className="ml-2 pt-1">
+                  {/* 名下会话缩进一级：ZCode 为两层 pl-2（16px） */}
+                  <div className="ml-4 pt-1">
                     <SectionBody>
                       {list.map((meta) => (
                         <SessionRow
@@ -417,7 +418,7 @@ function Sidebar({
             })}
           </div>
           {/* 底部：设置入口（右栏用量改由卡头右上钮开合） */}
-          <div className="px-2 pb-2 pt-1">
+          <div className="px-2 pb-3 pt-2">
             <button
               type="button"
               data-testid="open-settings"
@@ -590,9 +591,9 @@ async function client_deleteProject(projectId: string): Promise<void> {
 
 // ---- 小件 ----
 
-/** 左栏分组标题：小灰字加粗一档（「临时会话」「项目」，ZCode 组头 medium 同款）。 */
+/** 左栏分组标题：与行文字同字号，仅灰+medium（截图与 ZCode 组头口径一致）。 */
 function SectionHeader({ title }: { title: string }) {
-  return <div className="px-2 pb-1 text-secondary font-medium text-[var(--cw-dim)]">{title}</div>;
+  return <div className="px-2 pb-1 text-body font-medium text-[var(--cw-dim)]">{title}</div>;
 }
 
 /** 左栏项目行：文件夹图标 + 项目名（前景色大字）；悬停露出改名/加会话/
@@ -696,7 +697,7 @@ function SectionBody({ children }: { children: React.ReactNode }) {
       {hidden > 0 && !expanded && (
         <button
           type="button"
-          className="mt-0.5 w-full rounded px-1 py-0.5 text-left text-meta text-[var(--muted-foreground)] hover:bg-[var(--accent)]/60"
+          className="mt-0.5 w-full rounded px-2 py-0.5 text-left text-body text-[var(--cw-dim)] hover:bg-[var(--accent)]/60"
           onClick={() => setExpanded(true)}
         >
           显示更多（{hidden}）
