@@ -1,6 +1,6 @@
 # CraftWave 工作交接（HandOff）
 
-> 生成于 2026-10-28（第六次更新）。追加：17 号票后的一轮 UI 快速迭代（Markdown 渲染/模型选择/排队/工作流改版）+ CI 三平台修复全绿。
+> 生成于 2026-10-28（第七次更新）。追加：收官雾区毕业立 18/19/20 三票；18 号票（打包与验收剧本）全流程关闭——macOS 决策放弃 Intel、release 面 strip 坑修复、build.yml 首跑三平台全绿；验收剧本 acceptance.md 入库。
 > 规则：本文件只做索引与状态快照，细节一律引用票文件/文档/提交，不复述。
 
 ## 一、必读顺序（新会话开场）
@@ -11,24 +11,31 @@
 4. 票目录 `docs/specs/m1-mvp/tasks/`——一票一文件，Answer 节是各票结论。
 5. **全仓源码注释已按"新入职实习生可独立读懂"标准整理过一轮**（153 文件，`c6d0953`）——领域术语首次出现处都有一句话解释，读代码即读文档。
 
-## 二、当前状态快照（main = `0c5bf3b`，与 origin/main 一致；**CI 六 job 全绿**）
+## 二、当前状态快照（main = 票 18 关闭提交，与 origin/main 一致；**检查 CI 六 job 全绿 + build.yml 打包首跑三平台全绿**）
 
-- **地图进度**：01–17 号票全部关闭（17 号票后未立新票——以下 UI 迭代为用户直接驱动的增量修复/打磨，随提交入库）。
-- **测试基线**：Rust 233 lib + 25 集成（macOS 本地）；前端 vitest 107 例；tsc/Biome 全绿；manifest 双向契约 27 命令 10 事件键；**GitHub CI 三平台六 job 全绿**（契约测试跑位见五节坑 13）。
+- **地图进度**：01–18 号票关闭；19（平台欠账）/20（C-8 grilling）已立待做；最后一站=用户按 acceptance.md 执行 1 周真实使用验收。
+- **测试基线**：Rust 233 lib + 25 集成（macOS 本地）+ release check 零 warning；前端 vitest 107 例；tsc/Biome 全绿；manifest 双向契约 27 命令 10 事件键；**GitHub CI 三平台六 job 全绿；build.yml（tag 触发打包）workflow_dispatch 首跑三平台绿**——产物 dmg 6.77MiB / nsis 5.70MiB / deb 8.70MiB / AppImage 83.27MiB（rpm 顺带产出不收集）。
+- **18 号票关键决策与发现**：
+  - **macOS 放弃 Intel（2026-10-28 用户决策）**：FR-16-01 universal 口径收窄 arm64-only，PRD/设计文档 v2.8 已回写；build.yml 无需平台分支（三平台统一主机架构构建）。CodeWave 对照结论：其依赖树同样含 aws-lc-sys，「不需要交叉编译」真因是从未跨架构构建（主机=目标）；universal 取消后该问题整体消失。
+  - **release 面 strip 坑**（最重要发现，§12.4 已注记）：`[profile.release] strip=true` 剥坏 proc-macro dylib（`dlopen: mis-aligned LINKEDIT string pool` → dyld 拒载 → rustc E0463），修复=`[profile.release.build-override] strip=false`；dev 面检查链（含 CI）探不到，仅 release 构建暴露。
+  - 本地实证：arm64 dmg 可安装启动（冒烟 3s 拉起）、release 冷编译 2m40s。
+- **验收剧本**：`docs/specs/m1-mvp/acceptance.md`——三平台未签名安装引导、首日 P0 走查、每日强杀核查四场景（运行中/审批挂起/分支操作后/断电）、NFR 口径（NFR-09 按 v2.5 明文 0600）、记录模板（acceptance-log.md）与出口判定（7 自然日+零丢失+无阻断缺陷）。
 - **17 号票后 UI 迭代**（提交序列，均已在 main）：
   - `eacd05c` 流式 Markdown（**streamdown 2.7.1**，注意包名不是 react-streamdown——那是其更名前的旧名，npm 404）；styles.css 的 `.cw-md` 排版段；左栏首行下移 40px 避交通灯；「设置/用量」双入口移左栏底部。
   - `ca6c500` Composer 模型下拉（`session-model.ts` 会话内存态 → RunConfig.modelId 惰性生效，§11.1 Rust 面既有）；权限档可点击。
   - `c39cfb8` 运行中消息排队（`useLocalRuntime(adapter, { unstable_enableMessageQueue: true })`；`ComposerPrimitive.Queue` + `QueueItemPrimitive`；Send 恒显）。
   - `e927a5b` **工作流风格改版**（对照用户参考截图 A1–A7+B）：助手内容平铺无气泡 + 内容列 max-w-4xl 居中；工具卡单行摘要化（`ToolCardShell`：图标+主参数+diff 徽标+状态，点击展开，错误态默认展开）；思考单行；运行中 spinner；Composer 三层（输入/工具栏：附件占位+盾牌权限档下拉+模型+方形发送；状态栏：思考计时+三数）；左栏相对时间 + 分组超 5 条折叠；Inspector 计划区（`plan-state.ts` 订阅 plan:update，内存态）。
   - `fbc99d5` 通知 capability（`notification:default`——插件注入的初始化脚本走 JS 面查权限，Rust 侧调用不需要但 JS 面要）+ Inspector planItems selector 稳定空数组。
-- **CI 修复**（`ae5189c`→`0c5bf3b` 六笔）：Windows 编译三处（enable_process_group 导入缺 cfg(unix)、JobGuard 缺 unsafe Send/Sync、symlink 测试 unix API）+ S5/e2e 测试 cfg(unix) + Windows 分支 clippy let_and_return + dead_code + 四例测试平台化（workspace/grep 展示路径统一正斜杠；command 测试双 shell 分支）。**欠账：进程树收割 e2e 在 Windows 跳过，批取消收齐语义 Windows 无真实覆盖——随打包票补双平台 executor**。
-- **分支记录**：`fix/*`、`feat/*` 各分支均 fast-forward 并入 main，未删除。
+- **CI 修复**（`ae5189c`→`0c5bf3b` 六笔）：Windows 编译三处（enable_process_group 导入缺 cfg(unix)、JobGuard 缺 unsafe Send/Sync、symlink 测试 unix API）+ S5/e2e 测试 cfg(unix) + Windows 分支 clippy let_and_return + dead_code + 四例测试平台化（workspace/grep 展示路径统一正斜杠；command 测试双 shell 分支）。**欠账（进程树收割 e2e Windows 跳过等四项）已立 19 号票承接**。
+- **分支记录**：`fix/*`、`feat/*` 各分支均 fast-forward 并入 main，未删除（最新：`fix/packaging-arm64`）。
 
-## 三、下一步（按地图雾区顺序）
+## 三、下一步（地图收官阶段）
 
-1. **三平台打包与 1 周真实使用验收**：打包矩阵（dmg/nsis/AppImage+deb）、验收剧本（真实项目、记录方式）；**C-8（临时会话 roots 边界）安全复判在此毕业成票**；顺手收敛欠账：e2e 双平台 executor、macOS 通知权限引导、托盘左键单击平台差异、退出确认无超时。
-2. 小项：rate 的 TextDelta 自算、steer/followUp（**排队 Steer 按钮随 §5.5 票**——队列 UI 已就位，QueueItemPrimitive.Steer 未接）、错误分类 §11.3、ts-rs 引入（C-2 后半）、session_prefs 域命令（#24/#25——**模型选择/权限档的持久化挂这**）、pending_intent UI 接线、设置页与预设打磨（含：通知正文带会话标题、权限档初始档与 §10.6 confirm_each 口径复核、关闭到托盘改直接退出的配置项、主题启动防亮闪、思考时长帧面计时（现 thinkingSince 只有起止点））。
-3. **待核实的疑似笔误**（注释任务发现、铁律未动）：`ui/src/settings/SettingsPage.tsx` 的 SecurityPage 中 `entry.indexOf("")` 恒为 0，白名单条目切分疑似漏了分隔符实参，随设置域票核实。
+1. **19 号票（平台欠账收敛）**：e2e 双平台 executor（Windows 批取消语义真实覆盖）、macOS 托盘左键对齐（`show_menu_on_left_click(false)`）、macOS 通知权限引导、退出确认 10s 超时兜底——可丢 worktree 后台子代理做。
+2. **20 号票（C-8 安全复判，grilling/HITL）**：临时会话 roots=全局数据目录对 write/edit 是否过宽（config.json 明文 Key 在可写面内）——主会话与用户做，子代理不得代答；结论回写附录 C-8 + 必要改动立票。
+3. **终局关**：19/20 关闭后，用户按 `docs/specs/m1-mvp/acceptance.md` 在 macOS 真实项目连续使用 1 周（每日记录 acceptance-log.md），通过即 M1 关图。
+4. 小项（穿插）：rate 的 TextDelta 自算、steer/followUp（**排队 Steer 按钮随 §5.5 票**——队列 UI 已就位，QueueItemPrimitive.Steer 未接）、错误分类 §11.3、ts-rs 引入（C-2 后半）、session_prefs 域命令（#24/#25——**模型选择/权限档的持久化挂这**）、pending_intent UI 接线、设置页与预设打磨（含：通知正文带会话标题、权限档初始档与 §10.6 confirm_each 口径复核、关闭到托盘改直接退出的配置项、主题启动防亮闪、思考时长帧面计时（现 thinkingSince 只有起止点））。
+5. **待核实的疑似笔误**（注释任务发现、铁律未动）：`ui/src/settings/SettingsPage.tsx` 的 SecurityPage 中 `entry.indexOf("")` 恒为 0，白名单条目切分疑似漏了分隔符实参，随设置域票核实。
 
 ## 四、工作方式（本图约定）
 
@@ -59,7 +66,9 @@
 - **capability 要覆盖插件注入脚本的 JS 面**：tauri-plugin-notification 的初始化脚本查 is_permission_granted 走前端权限（`notification:default`），Rust 侧调用不需要——判权限时两头都要想。
 - **跨平台路径口径（CI 修复定式）**：面向用户的展示路径（workspace 搜索、grep 命中行）统一正斜杠（`replace('\\', "/")`）；command 测试用 `if cfg!(windows)` 给 powershell 等价命令（产品命令入口本就 Unix sh / Windows powershell 双 shell）；unix 专属 API（std::os::unix、进程组收割）的测试加 `#[cfg(unix)]`；Windows JobGuard 裸句柄要 `unsafe impl Send/Sync`（内核句柄本可跨线程）。
 - **CI 契约测试跑位**：contract.test.ts 依赖 cargo test 产物（ipc-manifest.json + session-tree-fixture.jsonl），前端 job 不装 Rust——完整 pnpm test 在 backend job（ubuntu）cargo test 之后跑（ci.yml），前端 job 只 lint/typecheck。本地顺序同：先 cargo test 再 pnpm test。
-- **macOS 交叉验证 Windows 不可行**：aws-lc-sys 构建脚本需目标平台工具链（cmake/NASM），cfg 面只能交 CI windows job 验证——本地绿≠CI 绿，改 cfg 相关代码预期要跑两三轮 CI。
+- **macOS 交叉验证 Windows 不可行**：aws-lc-sys 构建脚本需目标平台工具链（cmake/NASM），cfg 面只能交 CI windows job 验证——本地绿≠CI 绿，改 cfg 相关代码预期要跑两三轮 CI。（macOS 内交叉 x86_64 切片原本同样受此限；18 号票决策放弃 Intel 后不再有跨架构构建，此坑仅存 Windows 向。）
+- **release 面 strip 坑（18 号票实证）**：`[profile.release] strip=true` 剥坏 proc-macro dylib——`dlopen: mis-aligned LINKEDIT string pool`，dyld 拒载、rustc 报 E0463 can't find crate；修复 `[profile.release.build-override] strip=false`（Cargo.toml 已配）。**日常检查链全在 dev 面（strip 不生效）探不到**——涉及 release 面/打包的排查，本地直接 `cargo check --release`。
+- **build.yml 打包首跑已验证**（run 40646253875 三平台绿）：产物收集步骤按 `target/release/bundle/` 统一路径；tag push 触发时多一个「创建 Release 草稿」job 并挂载产物，workflow_dispatch 只验构建。排查构建日志用 `gh run view <id> --log`（GitHub 直连抖动时前缀代理变量）。
 - **streamdown 包名**：Vercel 流式 Markdown 组件是 `streamdown`（react-streamdown 是更名前旧名，npm 404）；样式导入 `streamdown/styles.css` + 自建 `.cw-md` 排版段（Tailwind preflight 会拍平标题/列表）。
 - **消息排队（assistant-ui 实验面）**：`useLocalRuntime(adapter, { unstable_enableMessageQueue: true })` 开启后运行中发送入 composer 队列、run 结束自动续发（后端 E_SESSION_RUNNING 约束天然满足——remove 在帧发出后同步完成）；`ComposerPrimitive.Queue` + `QueueItemPrimitive`（Text/Remove/Steer——Steer 随 §5.5 票）；官方标注 experimental，升级 0.15.x 小版本留意此点。
 - 新依赖（累计）：`anstream`（ANSI 清洗）、`rfd`（select_dir，同步命令）、`@types/json-schema`（ui devDep）、`tauri-plugin-single-instance` 2.5.4、`tauri-plugin-notification` 2.7.0、tauri features += `tray-icon`、**`streamdown` 2.7.1（ui）**；`sha2` 全仓统一 **0.11**。
