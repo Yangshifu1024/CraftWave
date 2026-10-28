@@ -164,34 +164,40 @@ body {
   --cw-dot: #2563eb;
   --cw-focus: #2563eb;
   --cw-err: #d03066;
+  /* composer 卡底：亮色与卡同白，暗色走 #272728（比中部 #161616 亮一档，
+   * ZCode 同款层次） */
+  --composer-bg: #ffffff;
 }
 
 .dark {
-  --background: #17191c;
-  --foreground: #e8eaed;
-  --card: #1e2126;
-  --card-foreground: #e8eaed;
-  --muted: #24282e;
-  --muted-foreground: #9aa3ad;
+  /* 用户定稿（2026-10-28）：侧栏/整体 #272728，中部 #161616，composer 同
+   * 侧栏，用户气泡 #262626；整套灰阶随锚点转纯中性（无蓝相）。 */
+  --background: #272728;
+  --foreground: #e8e8e9;
+  --card: #161616;
+  --card-foreground: #e8e8e9;
+  --muted: #262626;
+  --muted-foreground: #9b9b9d;
   --border: color-mix(in srgb, var(--foreground) 10%, transparent);
-  --input: #3d4249;
-  --primary: #e8eaed;
-  --primary-foreground: #17191c;
-  --accent: #2a2f36;
-  --accent-foreground: #e8eaed;
+  --input: #3f3f41;
+  --primary: #e8e8e9;
+  --primary-foreground: #191919;
+  --accent: #313133;
+  --accent-foreground: #e8e8e9;
   --destructive: #ef4444;
   --warning: #f59e0b;
   --warning-foreground: #17191c;
   --ring: #3b82f6;
-  --cw-bg-main: #1e2126;
-  --cw-bg-nav: #17191c;
-  --cw-highlight: #2a2f36;
-  --cw-text-1: #e8eaed;
-  --cw-text-2: #9aa3ad;
-  --cw-dim: #6e7781;
+  --cw-bg-main: #161616;
+  --cw-bg-nav: #272728;
+  --cw-highlight: #313133;
+  --cw-text-1: #e8e8e9;
+  --cw-text-2: #9b9b9d;
+  --cw-dim: #7c7c7e;
   --cw-dot: #3b82f6;
   --cw-focus: #3b82f6;
   --cw-err: #f87171;
+  --composer-bg: #272728;
 }
 
 /* ============================================================

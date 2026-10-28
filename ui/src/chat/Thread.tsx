@@ -180,8 +180,9 @@ function ComposerBar() {
         )}
       </ComposerPrimitive.Queue>
       {/* 输入壳（ZCode 同款结构）：p-3 卡，输入框与工具栏/状态栏纵向 gap-2；
-          hover 边框提亮一档（--input），focus-within 蓝边呼应聚焦令牌 */}
-      <ComposerPrimitive.Root className="flex flex-col gap-2 rounded-2xl border border-[var(--border)] bg-[var(--card)] p-3 shadow-sm transition-colors hover:border-[var(--input)] focus-within:border-[var(--cw-focus)]">
+          hover 边框提亮一档（--input），focus-within 蓝边呼应聚焦令牌；
+          底色用 --composer-bg（暗色 #272728 亮于中部卡，亮色同卡白） */}
+      <ComposerPrimitive.Root className="flex flex-col gap-2 rounded-2xl border border-[var(--border)] bg-[var(--composer-bg)] p-3 shadow-sm transition-colors hover:border-[var(--input)] focus-within:border-[var(--cw-focus)]">
         <ComposerPrimitive.Input
           rows={1}
           placeholder="发一条消息，运行中的消息将自动排队…"
