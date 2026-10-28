@@ -113,6 +113,30 @@ body {
   animation: cw-rise 260ms var(--ease-cw) backwards;
 }
 
+/* 标题走马灯（ZCode TaskTitleOverflowText 同款）：溢出时 hover 1s 后以
+ * 40px/s 滚动，副本间隔 24px；未溢出为静态文本，右缘 1.5rem 渐隐。 */
+.cw-marquee {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  mask-image: linear-gradient(to right, black calc(100% - 1.5rem), transparent);
+}
+.cw-marquee-track {
+  display: inline-flex;
+  gap: 24px;
+}
+.group:hover .cw-marquee-track {
+  animation: cw-marquee-scroll var(--marquee-duration, 8s) linear 1s infinite;
+}
+@keyframes cw-marquee-scroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(var(--marquee-shift));
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .cw-pop-in,
   .cw-progress,
@@ -155,6 +179,8 @@ body {
   --warning: #b45309;
   --warning-foreground: #ffffff;
   --ring: #2563eb;
+  /* 侧栏选中/悬停底（ZCode bg-selected 与 bg-surface-hover 同值口径） */
+  --selected: rgba(13, 13, 13, 0.05);
   --cw-bg-main: #ffffff;
   --cw-bg-nav: #f5f6f8;
   --cw-highlight: #e8eaee;
@@ -188,6 +214,7 @@ body {
   --warning: #f59e0b;
   --warning-foreground: #17191c;
   --ring: #3b82f6;
+  --selected: rgba(255, 255, 255, 0.1);
   --cw-bg-main: #161616;
   --cw-bg-nav: #272728;
   --cw-highlight: #313133;

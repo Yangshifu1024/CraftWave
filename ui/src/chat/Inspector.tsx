@@ -87,9 +87,9 @@ export function Inspector({
       style={{ width: open ? width : 0 }}
       inert={!open}
     >
-      {/* pt-2 + h-9 头行与会话卡头完全同基线；与窗口背景一体化（无底色无边框） */}
+      {/* pt-2 + h-12 头行与会话卡头完全同基线；与窗口背景一体化（无底色无边框） */}
       <div className="flex h-full min-h-0 flex-col pt-2" style={{ width }}>
-        <div className="flex h-9 shrink-0 items-center gap-2 px-3 text-ui-sm text-[var(--foreground)]">
+        <div className="flex h-12 shrink-0 items-center gap-2 px-3 text-ui-sm text-[var(--foreground)]">
           <span className="font-medium">用量</span>
         </div>
         <div className="flex flex-col gap-3 p-3 text-ui-sm tabular-nums text-[var(--muted-foreground)]">

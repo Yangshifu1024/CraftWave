@@ -154,8 +154,8 @@ fn select_dir() -> Option<String> {
         .map(|path| path.to_string_lossy().into_owned())
 }
 
-/// 激活覆盖式自绘标题栏；macOS 上按 36px 顶栏摆放交通灯（y=36-12=24，
-/// 容器=按钮高+y、灯垂直居中 → 灯心 y=18，与前端 h-9 顶条同心）。
+/// 激活覆盖式自绘标题栏；macOS 上按 48px 顶栏摆放交通灯（y=48-12-12=36，
+/// 容器=按钮高+y、灯垂直居中 → 灯心 y=24，与前端 h-12 顶条同心）。
 #[tauri::command]
 async fn activate_custom_titlebar(window: WebviewWindow) -> Result<(), String> {
     window
@@ -164,7 +164,7 @@ async fn activate_custom_titlebar(window: WebviewWindow) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     #[cfg(target_os = "macos")]
     window
-        .set_traffic_lights_inset(14.0, 24.0)
+        .set_traffic_lights_inset(14.0, 36.0)
         .await
         .map_err(|e| e.to_string())?;
     Ok(())

@@ -320,6 +320,7 @@ function Sidebar({
   >(null);
   // 新建项目弹窗（参考 ZCode 创建项目弹窗）：+ 钮改为开弹窗选名称与目录
   const [createOpen, setCreateOpen] = useState(false);
+  const list = useScrollFade();
   const projects = useSessionsStore((s) => s.projects);
   const sessions = useSessionsStore((s) => s.sessions);
   const activeId = useSessionsStore((s) => s.activeId);
@@ -340,29 +341,35 @@ function Sidebar({
       style={{ width }}
     >
       <div className="flex h-full min-h-0 flex-col" style={{ width }}>
-        {/* 顶部条：交通灯让位；h-9（36px）与 Rust 侧交通灯容器
-            （12px 钮 + inset 24）同心 */}
+        {/* 顶部条：交通灯让位；h-12（48px）与 Rust 侧交通灯容器
+            （12px 钮 + inset 36）同心 */}
         <div
           data-tauri-drag-region
-          className="h-9 shrink-0 cursor-default select-none"
+          className="h-12 shrink-0 cursor-default select-none"
           style={{ paddingLeft: "max(var(--tauri-plugin-decoration-left-clearance, 76px), 8px)" }}
         />
         <div className="flex min-h-0 flex-1 flex-col">
           {/* 主操作区：整宽大行（ZCode NewTaskButtonGroup 同款：h-8 圆角 lg，
               顶部 pt-3 对齐其导航块 py-3 的呼吸感） */}
-          <div className="px-2 pt-3">
+          <div className="px-2 py-3">
             <button
               type="button"
               data-testid="new-temp-session"
               onClick={() => void createAndOpen(undefined)}
-              className="flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-ui-base text-[var(--foreground)] hover:bg-[var(--accent)]"
+              className="flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-ui-base text-[var(--foreground)] hover:bg-[var(--selected)]"
             >
               <CirclePlus size={16} className="shrink-0" />
               新建会话
             </button>
           </div>
-          <div className="mx-3 mt-3 shrink-0 border-t border-[var(--border)]/50" />
-          <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2 pt-2">
+          <div className="mx-3 shrink-0 border-t border-[var(--border)]/50" />
+          <div
+            ref={list.ref}
+            className={`min-h-0 flex-1 overflow-y-auto px-2 pt-2 pb-2 ${FADE_MASK[list.fade]}`}
+          >
+            {temporaries.length === 0 && projects.length === 0 && (
+              <div className="px-8.5 py-2 text-ui-base text-[var(--cw-dim)]">暂无会话</div>
+            )}
             <SectionHeader title="临时会话" />
             <SectionBody>
               {temporaries.map((meta) => (
@@ -383,7 +390,7 @@ function Sidebar({
                 data-testid="new-project"
                 aria-label="新建项目"
                 onClick={() => setCreateOpen(true)}
-                className="ml-auto hidden rounded px-1 hover:bg-[var(--accent)] group-hover:block"
+                className="ml-auto flex h-6 w-6 items-center justify-center rounded opacity-0 transition-opacity hover:bg-[var(--accent)] group-hover:opacity-100"
               >
                 +
               </button>
@@ -416,12 +423,12 @@ function Sidebar({
             })}
           </div>
           {/* 底部：设置入口（右栏用量改由卡头右上钮开合） */}
-          <div className="px-2 pb-3 pt-2">
+          <div className="pr-3 pl-4 pt-2 pb-4">
             <button
               type="button"
               data-testid="open-settings"
               onClick={onOpenSettings}
-              className="flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-ui-base text-[var(--foreground)] hover:bg-[var(--accent)]"
+              className="flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-ui-base text-[var(--foreground)] hover:bg-[var(--selected)]"
             >
               <Settings size={16} className="shrink-0" />
               设置
@@ -591,7 +598,7 @@ async function client_deleteProject(projectId: string): Promise<void> {
 
 /** 左栏分组标题：与行文字同字号，仅灰+medium（截图与 ZCode 组头口径一致）。 */
 function SectionHeader({ title }: { title: string }) {
-  return <div className="px-2 pb-1 text-ui-base font-medium text-[var(--cw-dim)]">{title}</div>;
+  return <div className="px-2.5 py-1 text-ui-base font-medium text-[var(--cw-dim)]">{title}</div>;
 }
 
 /** 左栏项目行：文件夹图标 + 项目名（前景色大字）；悬停露出改名/加会话/
@@ -645,11 +652,11 @@ function ProjectRow({
     );
   }
   return (
-    <div className="group flex h-8 cursor-default items-center gap-2 rounded-lg pr-1 pl-2 text-ui-base text-[var(--foreground)] hover:bg-[var(--accent)]/60">
+    <div className="group flex h-8 cursor-default items-center gap-2 rounded-lg pr-1 pl-2.5 text-ui-base text-[var(--foreground)] hover:bg-[var(--selected)]">
       <Folder size={16} className="shrink-0" />
       {/* 项目名比会话标题淡一档（ZCode subtle 层级：组容器弱于内容行） */}
-      <span className="min-w-0 flex-1 overflow-hidden whitespace-nowrap text-[var(--muted-foreground)] [mask-image:linear-gradient(to_right,black_calc(100%-1.5rem),transparent)]">
-        {project.name}
+      <span className="min-w-0 flex-1 text-[var(--muted-foreground)]">
+        <MarqueeTitle text={project.name} />
       </span>
       <button
         type="button"
@@ -658,7 +665,7 @@ function ProjectRow({
           setName(project.name);
           setEditing(true);
         }}
-        className="hidden h-6 w-6 items-center justify-center rounded hover:bg-[var(--accent)] group-hover:flex"
+        className="h-6 w-6 items-center justify-center rounded opacity-0 transition-opacity hover:bg-[var(--accent)] group-hover:opacity-100"
       >
         <Pencil size={14} />
       </button>
@@ -666,7 +673,7 @@ function ProjectRow({
         type="button"
         aria-label="在项目下新建会话"
         onClick={onAddSession}
-        className="hidden h-6 w-6 items-center justify-center rounded hover:bg-[var(--accent)] group-hover:flex"
+        className="h-6 w-6 items-center justify-center rounded opacity-0 transition-opacity hover:bg-[var(--accent)] group-hover:opacity-100"
       >
         <Plus size={14} />
       </button>
@@ -674,7 +681,7 @@ function ProjectRow({
         type="button"
         aria-label="删除项目"
         onClick={onDeleteProject}
-        className="hidden h-6 w-6 items-center justify-center rounded hover:bg-[var(--accent)] group-hover:flex"
+        className="h-6 w-6 items-center justify-center rounded opacity-0 transition-opacity hover:bg-[var(--accent)] group-hover:opacity-100"
       >
         <Trash2 size={14} />
       </button>
@@ -701,6 +708,84 @@ function SectionBody({ children }: { children: React.ReactNode }) {
           显示更多（{hidden}）
         </button>
       )}
+    </div>
+  );
+}
+
+/** 滚动渐隐（ZCode ScrollFadeViewport 同款）：按滚动位置给容器切上下
+ *  24px 渐隐 mask——none/top/bottom/both 四态。 */
+type ScrollFade = "none" | "top" | "bottom" | "both";
+const FADE_MASK: Record<ScrollFade, string> = {
+  none: "",
+  top: "[mask-image:linear-gradient(to_bottom,transparent_0,black_24px,black_100%)]",
+  bottom: "[mask-image:linear-gradient(to_bottom,black_0,black_calc(100%-24px),transparent_100%)]",
+  both: "[mask-image:linear-gradient(to_bottom,transparent_0,black_24px,black_calc(100%-24px),transparent_100%)]",
+};
+
+function useScrollFade() {
+  const ref = useRef<HTMLDivElement>(null);
+  const [fade, setFade] = useState<ScrollFade>("none");
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const update = () => {
+      const top = el.scrollTop > 0;
+      const bottom = el.scrollTop + el.clientHeight < el.scrollHeight - 1;
+      setFade(top && bottom ? "both" : top ? "top" : bottom ? "bottom" : "none");
+    };
+    update();
+    el.addEventListener("scroll", update, { passive: true });
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => {
+      el.removeEventListener("scroll", update);
+      ro.disconnect();
+    };
+  }, []);
+  return { ref, fade };
+}
+
+/** 走马灯标题（ZCode TaskTitleOverflowText 同款）：溢出才滚动——
+ *  hover 1s 后以 40px/s 平移，副本间隔 24px；未溢出为静态文本。 */
+function MarqueeTitle({ text }: { text: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [overflow, setOverflow] = useState(false);
+  const [shift, setShift] = useState(0);
+  // text 变化需重测溢出（ResizeObserver 只感知容器尺寸，不感知 scrollWidth）
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 见上
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const check = () => {
+      const over = el.scrollWidth - el.clientWidth;
+      setOverflow(over > 1);
+      setShift(over);
+    };
+    check();
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [text]);
+  return (
+    <div ref={ref} className="cw-marquee">
+      <span
+        className="cw-marquee-track"
+        style={
+          overflow
+            ? ({
+                "--marquee-shift": `${-shift - 24}px`,
+                animationDuration: `${(shift + 24) / 40}s`,
+              } as React.CSSProperties)
+            : undefined
+        }
+      >
+        <span className="shrink-0">{text}</span>
+        {overflow && (
+          <span aria-hidden className="shrink-0">
+            {text}
+          </span>
+        )}
+      </span>
     </div>
   );
 }
@@ -773,10 +858,10 @@ function SessionRow({
   return (
     <div
       data-testid={`session-row-${meta.id}`}
-      className={`group flex h-8 cursor-default items-center gap-1.5 rounded-lg pr-1 pl-2 text-ui-base ${
+      className={`group flex h-8 cursor-default items-center gap-2 rounded-lg pr-1 pl-2.5 text-ui-base ${
         active
-          ? "bg-[var(--accent)] text-[var(--foreground)]"
-          : "text-[var(--foreground)] hover:bg-[var(--accent)]/60"
+          ? "bg-[var(--selected)] text-[var(--foreground)]"
+          : "text-[var(--foreground)] hover:bg-[var(--selected)]"
       }`}
     >
       {/* 运行中：转圈指示（ZCode 状态槽同款，size-4） */}
@@ -787,16 +872,12 @@ function SessionRow({
           className="shrink-0 animate-spin text-[var(--muted-foreground)]"
         />
       )}
-      {/* 标题溢出右侧渐隐 mask（ZCode 同款 1.5rem），比硬截断柔和 */}
-      <button
-        type="button"
-        className="min-w-0 flex-1 overflow-hidden whitespace-nowrap text-left [mask-image:linear-gradient(to_right,black_calc(100%-1.5rem),transparent)]"
-        onClick={onOpen}
-      >
-        {meta.title}
+      {/* 标题溢出走马灯（hover 1s 后滚动）+ 右缘渐隐，比硬截断柔和 */}
+      <button type="button" className="min-w-0 flex-1 text-left" onClick={onOpen}>
+        <MarqueeTitle text={meta.title} />
       </button>
       {/* 相对时间（A6）：悬停让位于操作钮（ZCode 元信息 hover 隐藏同款） */}
-      <span className="shrink-0 text-ui-sm tabular-nums text-[var(--cw-dim)] group-hover:hidden">
+      <span className="mr-0.5 shrink-0 text-ui-sm tabular-nums text-[var(--cw-dim)] group-hover:hidden">
         {relativeTime(meta.updatedAt)}
       </span>
       <button
@@ -806,7 +887,7 @@ function SessionRow({
           setTitle(meta.title);
           setEditing(true);
         }}
-        className="hidden h-6 w-6 items-center justify-center rounded hover:bg-[var(--accent)] group-hover:flex"
+        className="h-6 w-6 items-center justify-center rounded opacity-0 transition-opacity hover:bg-[var(--accent)] group-hover:opacity-100"
       >
         <Pencil size={14} />
       </button>
@@ -814,7 +895,7 @@ function SessionRow({
         type="button"
         aria-label="删除会话"
         onClick={onDelete}
-        className="hidden h-6 w-6 items-center justify-center rounded hover:bg-[var(--accent)] group-hover:flex"
+        className="h-6 w-6 items-center justify-center rounded opacity-0 transition-opacity hover:bg-[var(--accent)] group-hover:opacity-100"
       >
         <Trash2 size={14} />
       </button>
