@@ -59,7 +59,7 @@ export function ChatThread() {
             <AuiIf condition={(s) => s.thread.isRunning}>
               <div
                 data-testid="thread-spinner"
-                className="flex items-center gap-2 px-1 py-1 text-secondary text-[var(--muted-foreground)]"
+                className="flex items-center gap-2 px-1 py-1 text-ui-sm text-[var(--muted-foreground)]"
               >
                 <LoaderIcon />
                 处理中…
@@ -112,15 +112,17 @@ function ThreadEmptyState() {
   return (
     <div className="mx-auto flex w-full max-w-4xl flex-1 flex-col items-center justify-center gap-5 py-10">
       <div className="flex flex-col items-center gap-1.5">
-        <p className="text-hero font-medium text-[var(--foreground)]">{greeting()}</p>
-        <p className="text-body text-[var(--muted-foreground)]">开始新对话，或从下面的建议开始</p>
+        <p className="text-ui-xl font-medium text-[var(--foreground)]">{greeting()}</p>
+        <p className="text-ui-base text-[var(--muted-foreground)]">
+          开始新对话，或从下面的建议开始
+        </p>
       </div>
       <div className="flex flex-wrap items-center justify-center gap-2">
         {EMPTY_STATE_SUGGESTIONS.map((text, index) => (
           <button
             key={text}
             type="button"
-            className="cw-rise h-8 rounded-lg border border-[var(--border)] px-3 text-secondary text-[var(--muted-foreground)] transition-colors hover:border-[var(--ring)] hover:text-[var(--foreground)]"
+            className="cw-rise h-8 rounded-lg border border-[var(--border)] px-3 text-ui-sm text-[var(--muted-foreground)] transition-colors hover:border-[var(--ring)] hover:text-[var(--foreground)]"
             style={{ animationDelay: `${index * 65}ms` }}
             onClick={() => aui.composer.setText(text, { origin: "user" })}
           >
@@ -142,7 +144,7 @@ function ComposerBar() {
       {atMenu !== null && atMenu.items.length > 0 && (
         <ul
           data-testid="at-menu"
-          className="cw-pop-in absolute bottom-full left-0 z-20 mb-1 max-h-56 w-72 overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--card)] p-1 text-secondary shadow"
+          className="cw-pop-in absolute bottom-full left-0 z-20 mb-1 max-h-56 w-72 overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--card)] p-1 text-ui-sm shadow"
         >
           {atMenu.items.map((hit, index) => (
             <li key={hit.path}>
@@ -169,9 +171,9 @@ function ComposerBar() {
         {() => (
           <div
             data-testid="queue-item"
-            className="mb-1 flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--muted)]/60 px-2.5 py-1 text-secondary text-[var(--muted-foreground)]"
+            className="mb-1 flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--muted)]/60 px-2.5 py-1 text-ui-sm text-[var(--muted-foreground)]"
           >
-            <span className="shrink-0 rounded-full border border-[var(--border)] px-1.5 text-meta leading-4">
+            <span className="shrink-0 rounded-full border border-[var(--border)] px-1.5 text-ui-sm leading-4">
               排队中
             </span>
             <QueueItemPrimitive.Text className="min-w-0 flex-1 truncate" />
@@ -191,7 +193,7 @@ function ComposerBar() {
         <ComposerPrimitive.Input
           minRows={2}
           placeholder="发一条消息，运行中的消息将自动排队…"
-          className="max-h-40 w-full resize-none bg-transparent py-0.5 text-body leading-5 placeholder:text-[var(--muted-foreground)] focus:outline-none"
+          className="max-h-40 w-full resize-none bg-transparent py-0.5 text-ui-base leading-5 placeholder:text-[var(--muted-foreground)] focus:outline-none"
           onKeyDown={onKeyDown}
           onKeyUp={(e) => onCursor(e.currentTarget.selectionStart ?? 0)}
           onClick={(e) => onCursor(e.currentTarget.selectionStart ?? 0)}
@@ -274,8 +276,8 @@ function TierMenu() {
               >
                 <TierMenuIcon tier={t} />
                 <span className="flex min-w-0 flex-col gap-0.5">
-                  <span className="text-body text-[var(--foreground)]">{TIER_LABELS[t]}</span>
-                  <span className="text-secondary text-[var(--muted-foreground)]">
+                  <span className="text-ui-base text-[var(--foreground)]">{TIER_LABELS[t]}</span>
+                  <span className="text-ui-sm text-[var(--muted-foreground)]">
                     {TIER_DESCRIPTIONS[t]}
                   </span>
                 </span>
@@ -293,7 +295,7 @@ function TierMenu() {
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className={`flex h-7 items-center gap-1 rounded-lg px-2 text-secondary hover:bg-[var(--accent)] ${
+        className={`flex h-7 items-center gap-1 rounded-lg px-2 text-ui-sm hover:bg-[var(--accent)] ${
           tier === "fullAccess"
             ? "text-[var(--warning)] hover:text-[var(--warning)]"
             : "text-[var(--muted-foreground)]"
@@ -363,7 +365,7 @@ function ModelPicker() {
           <li>
             <button
               type="button"
-              className="relative flex min-h-8 w-full items-center rounded-md pr-8 pl-2 text-left text-body text-[var(--foreground)] hover:bg-[var(--accent)]"
+              className="relative flex min-h-8 w-full items-center rounded-md pr-8 pl-2 text-left text-ui-base text-[var(--foreground)] hover:bg-[var(--accent)]"
               onClick={() => {
                 setModel(sessionId, undefined);
                 setOpen(false);
@@ -378,7 +380,7 @@ function ModelPicker() {
           {groups.map((group) => (
             <li key={group.provider}>
               <div className="-mx-1 my-1 h-px bg-[var(--border)]" />
-              <div className="px-2 py-1.5 text-secondary font-medium text-[var(--cw-dim)]">
+              <div className="px-2 py-1.5 text-ui-sm font-medium text-[var(--cw-dim)]">
                 {group.provider}
               </div>
               <ul className="space-y-0.5">
@@ -386,7 +388,7 @@ function ModelPicker() {
                   <li key={model.id}>
                     <button
                       type="button"
-                      className="relative flex min-h-8 w-full items-center gap-2 rounded-md pr-8 pl-2 text-left text-body text-[var(--foreground)] hover:bg-[var(--accent)]"
+                      className="relative flex min-h-8 w-full items-center gap-2 rounded-md pr-8 pl-2 text-left text-ui-base text-[var(--foreground)] hover:bg-[var(--accent)]"
                       onClick={() => {
                         setModel(sessionId, model.id);
                         setOpen(false);
@@ -410,7 +412,7 @@ function ModelPicker() {
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className="flex h-7 max-w-40 min-w-0 items-center gap-1 rounded-lg px-2 text-secondary text-[var(--muted-foreground)] hover:bg-[var(--accent)]"
+        className="flex h-7 max-w-40 min-w-0 items-center gap-1 rounded-lg px-2 text-ui-sm text-[var(--muted-foreground)] hover:bg-[var(--accent)]"
         title="选择本会话使用的模型"
       >
         <span className="truncate">{currentName}</span>
@@ -425,7 +427,7 @@ function UserMessage() {
   return (
     <MessagePrimitive.Root className="flex flex-col items-end py-2">
       {/* 气泡右上 2px 折角 + 1px 边框（ZCode 同款），与平铺的助手消息区分 */}
-      <div className="max-w-[85%] rounded-xl rounded-tr-xs border border-[var(--border)] bg-[var(--muted)] px-4 py-2.5 text-body text-[var(--foreground)]">
+      <div className="max-w-[85%] rounded-xl rounded-tr-xs border border-[var(--border)] bg-[var(--muted)] px-4 py-2.5 text-ui-base text-[var(--foreground)]">
         <MessagePrimitive.Parts>
           {({ part }) =>
             part.type === "text" && part.text.length > 0 ? (
@@ -513,7 +515,7 @@ function AssistantMessage() {
           type="button"
           data-testid="run-summary"
           onClick={toggle}
-          className="flex items-center gap-2 rounded px-1 py-0.5 text-secondary text-[var(--muted-foreground)] hover:bg-[var(--accent)]/60"
+          className="flex items-center gap-2 rounded px-1 py-0.5 text-ui-sm text-[var(--muted-foreground)] hover:bg-[var(--accent)]/60"
         >
           <WrenchIcon />
           <span>
@@ -527,7 +529,7 @@ function AssistantMessage() {
         </button>
       )}
       {/* 工作流风格 A1：助手内容平铺（无气泡底色），与过程行同列 */}
-      <div className="w-full text-body">
+      <div className="w-full text-ui-base">
         {/* 内联 render props（勿抽组件）：S1 实证 Parts 对 tool-call part 渲染
             null 时才 fallback 到注册的镜像工具卡；抽组件会让 fallback 判定失效。
             折叠态过程 part 返回隐藏空元素（非 null）以抑制 fallback 卡。 */}
@@ -545,7 +547,7 @@ function AssistantMessage() {
             if (part.type === "reasoning") {
               // 思考过程单行摘要（A2）：与工具行同风格，点击展开全文
               return (
-                <details className="text-secondary text-[var(--muted-foreground)]">
+                <details className="text-ui-sm text-[var(--muted-foreground)]">
                   <summary className="flex w-fit cursor-default select-none items-center gap-2 rounded px-1 py-0.5 hover:bg-[var(--accent)]/60">
                     <LightbulbIcon />
                     <span>思考过程</span>
@@ -553,7 +555,7 @@ function AssistantMessage() {
                       ▸
                     </span>
                   </summary>
-                  <p className="text-secondary my-1 ml-2 max-h-60 overflow-y-auto border-l border-[var(--border)] pl-3.5 whitespace-pre-wrap text-[var(--muted-foreground)]">
+                  <p className="text-ui-sm my-1 ml-2 max-h-60 overflow-y-auto border-l border-[var(--border)] pl-3.5 whitespace-pre-wrap text-[var(--muted-foreground)]">
                     {part.text}
                   </p>
                 </details>
@@ -565,7 +567,7 @@ function AssistantMessage() {
         <MessagePrimitive.Error>
           <ErrorPrimitive.Root className="mt-1 flex w-full items-start gap-2 rounded-lg border border-[var(--destructive)]/30 bg-[var(--destructive)]/5 px-3 py-2.5">
             <AlertIcon />
-            <div className="min-w-0 text-secondary">
+            <div className="min-w-0 text-ui-sm">
               <div className="font-medium text-[var(--destructive)]">运行出错</div>
               <ErrorPrimitive.Message className="mt-0.5 break-words text-[var(--muted-foreground)]" />
             </div>
@@ -904,14 +906,14 @@ function FileIconSmall() {
  * 重生成（assistant）/ 编辑重发（user）/ 复制。官方原语自带禁用态。 */
 function BranchBar({ editOnly }: { editOnly: boolean }) {
   const btn =
-    "rounded border border-transparent px-1.5 py-0.5 text-meta text-[var(--muted-foreground)] hover:border-[var(--border)] hover:text-[var(--foreground)] disabled:opacity-30";
+    "rounded border border-transparent px-1.5 py-0.5 text-ui-sm text-[var(--muted-foreground)] hover:border-[var(--border)] hover:text-[var(--foreground)] disabled:opacity-30";
   return (
     <div className="mt-0.5 flex items-center gap-0.5" data-testid="branch-bar">
       <BranchPickerPrimitive.Root className="flex items-center gap-0.5">
         <BranchPickerPrimitive.Previous className={btn} aria-label="上一个分支">
           ←
         </BranchPickerPrimitive.Previous>
-        <span className="text-meta text-[var(--cw-dim)]">
+        <span className="text-ui-sm text-[var(--cw-dim)]">
           <BranchPickerPrimitive.Count />
         </span>
         <BranchPickerPrimitive.Next className={btn} aria-label="下一个分支">
@@ -956,7 +958,7 @@ function ComposerStatusBar() {
   return (
     <div
       data-testid="composer-status"
-      className="flex items-center gap-3 text-meta tabular-nums text-[var(--cw-dim)]"
+      className="flex items-center gap-3 text-ui-sm tabular-nums text-[var(--cw-dim)]"
     >
       {thinkingSince !== null && (
         <span data-testid="metric-thinking" className="text-[var(--muted-foreground)]">
@@ -1007,7 +1009,7 @@ function ComposerGhost() {
   return (
     <div
       data-testid="composer-ghost"
-      className="mt-1 flex items-center gap-2 px-2 text-meta text-[var(--muted-foreground)]"
+      className="mt-1 flex items-center gap-2 px-2 text-ui-sm text-[var(--muted-foreground)]"
     >
       <span>
         <span className="text-[var(--foreground)]">{input}</span>

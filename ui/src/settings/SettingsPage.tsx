@@ -296,8 +296,8 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
         {searching ? (
           <div className="settings-nav-list" role="listbox" aria-label="搜索结果">
             {results.length === 0 ? (
-              <div className="px-2 py-3 text-secondary text-[var(--cw-dim)]">
-                <div className="mb-1 text-secondary text-[var(--cw-text-2)]">没有匹配的设置页</div>
+              <div className="px-2 py-3 text-ui-sm text-[var(--cw-dim)]">
+                <div className="mb-1 text-ui-sm text-[var(--cw-text-2)]">没有匹配的设置页</div>
                 换个关键词试试
               </div>
             ) : (
@@ -312,7 +312,7 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                 >
                   <span className="settings-nav-label">
                     <span className="truncate">{PAGE_LABEL[key]}</span>
-                    <span className="ml-auto text-secondary text-[var(--cw-dim)]">
+                    <span className="ml-auto text-ui-sm text-[var(--cw-dim)]">
                       {PAGE_LABEL[key]}
                     </span>
                   </span>
@@ -524,7 +524,7 @@ function NotificationPermissionNotice({
             <button
               type="button"
               data-testid="open-notification-settings"
-              className="shrink-0 rounded border border-[var(--warning)]/50 px-2 py-0.5 text-secondary hover:bg-[var(--warning)]/10"
+              className="shrink-0 rounded border border-[var(--warning)]/50 px-2 py-0.5 text-ui-sm hover:bg-[var(--warning)]/10"
               onClick={() => {
                 void openNotificationSettings().catch((err) =>
                   console.error("[settings] 打开系统设置失败", err),
@@ -676,7 +676,7 @@ function NetworkPage() {
           <div className="border-t border-[var(--border)] py-4">
             <SettingsRow title="代理地址" description="支持 http://、https://、socks5:// 前缀。">
               <Input
-                className="w-[360px] max-w-full font-mono text-secondary"
+                className="w-[360px] max-w-full font-mono text-ui-sm"
                 placeholder="http://127.0.0.1:7890 或 socks5://127.0.0.1:1080"
                 value={manualUrl}
                 onChange={(e) => patchConfig({ proxy: { mode: "manual", url: e.target.value } })}
@@ -719,7 +719,7 @@ function SecurityPage() {
       </SettingsSection>
       <SettingsSection title="命令白名单">
         {allowlist.length === 0 ? (
-          <p className="py-10 text-center text-body text-[var(--muted-foreground)]">
+          <p className="py-10 text-center text-ui-base text-[var(--muted-foreground)]">
             还没有「始终允许」的命令；审批时勾选「始终允许本项目」会出现在这里。
           </p>
         ) : (
@@ -732,7 +732,7 @@ function SecurityPage() {
                   key={entry}
                   className="flex items-start justify-between gap-4 border-t border-[var(--border)] py-3 first:border-t-0 first:pt-0"
                 >
-                  <code className="min-w-0 flex-1 font-mono text-secondary break-all text-[var(--foreground)]">
+                  <code className="min-w-0 flex-1 font-mono text-ui-sm break-all text-[var(--foreground)]">
                     {command.trim() || "（无效条目）"}
                   </code>
                   <Button
@@ -789,11 +789,11 @@ function AboutPage() {
         <div className="settings-section-card flex items-center gap-4 p-5">
           <img src="/app-icon.png" alt="CraftWave 图标" className="h-16 w-16 rounded-[14px]" />
           <div className="flex min-w-0 flex-col gap-1">
-            <span className="text-title font-semibold">CraftWave</span>
-            <span className="text-body text-[var(--muted-foreground)]">
+            <span className="text-ui-lg font-semibold">CraftWave</span>
+            <span className="text-ui-base text-[var(--muted-foreground)]">
               本地优先的 AI 结对工作台（M1）
             </span>
-            <span className="font-mono text-secondary text-[var(--muted-foreground)]">
+            <span className="font-mono text-ui-sm text-[var(--muted-foreground)]">
               配置文件 ~/.craftwave/config.json
             </span>
           </div>
@@ -814,7 +814,7 @@ function PlaceholderPage({ page }: { page: PageKey }) {
   return (
     <div>
       <section className="settings-section">
-        <div className="settings-section-card px-5 py-10 text-center text-body text-[var(--muted-foreground)]">
+        <div className="settings-section-card px-5 py-10 text-center text-ui-base text-[var(--muted-foreground)]">
           {hints[page] ?? "该分区随后续里程碑提供。"}
         </div>
       </section>

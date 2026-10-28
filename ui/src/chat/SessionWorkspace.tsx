@@ -94,7 +94,7 @@ export function SessionWorkspace() {
 
   if (!ready) {
     return (
-      <div className="flex h-dvh items-center justify-center bg-[var(--background)] text-body text-[var(--muted-foreground)]">
+      <div className="flex h-dvh items-center justify-center bg-[var(--background)] text-ui-base text-[var(--muted-foreground)]">
         正在恢复会话…
       </div>
     );
@@ -123,7 +123,7 @@ export function SessionWorkspace() {
           {/* 卡头：项目/标题（FR 拖拽区），右侧为右栏折叠钮 */}
           <div
             data-tauri-drag-region
-            className="flex h-9 shrink-0 cursor-default select-none items-center gap-2 border-b border-[var(--border)] px-4 text-secondary text-[var(--muted-foreground)]"
+            className="flex h-9 shrink-0 cursor-default select-none items-center gap-2 border-b border-[var(--border)] px-4 text-ui-sm text-[var(--muted-foreground)]"
           >
             {activeTab && (
               <div className="flex min-w-0 items-center gap-1.5">
@@ -344,7 +344,7 @@ function Sidebar({
               type="button"
               data-testid="new-temp-session"
               onClick={() => void createAndOpen(undefined)}
-              className="flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-body text-[var(--foreground)] hover:bg-[var(--accent)]"
+              className="flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-ui-base text-[var(--foreground)] hover:bg-[var(--accent)]"
             >
               <CirclePlusIcon />
               新建会话
@@ -365,7 +365,7 @@ function Sidebar({
               ))}
             </SectionBody>
             {/* 项目组标题：与行文字同字号仅灰+medium（截图口径）；悬停露出「新建项目」 */}
-            <div className="group mt-3 flex h-7 items-center px-2 text-body font-medium text-[var(--cw-dim)]">
+            <div className="group mt-3 flex h-7 items-center px-2 text-ui-base font-medium text-[var(--cw-dim)]">
               <span>项目</span>
               <button
                 type="button"
@@ -410,7 +410,7 @@ function Sidebar({
               type="button"
               data-testid="open-settings"
               onClick={onOpenSettings}
-              className="flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-body text-[var(--foreground)] hover:bg-[var(--accent)]"
+              className="flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-ui-base text-[var(--foreground)] hover:bg-[var(--accent)]"
             >
               <SettingsIcon />
               设置
@@ -516,7 +516,7 @@ function NewProjectDialog({ open, onClose }: { open: boolean; onClose: () => voi
       ]}
     >
       <div className="mb-5">
-        <p className="mb-1.5 text-body font-medium text-[var(--foreground)]">项目名称</p>
+        <p className="mb-1.5 text-ui-base font-medium text-[var(--foreground)]">项目名称</p>
         <Input
           value={name}
           onChange={(e) => setName(e.target.value)}
@@ -525,7 +525,7 @@ function NewProjectDialog({ open, onClose }: { open: boolean; onClose: () => voi
         />
       </div>
       <div>
-        <p className="mb-1.5 text-body font-medium text-[var(--foreground)]">源文件夹</p>
+        <p className="mb-1.5 text-ui-base font-medium text-[var(--foreground)]">源文件夹</p>
         <button
           type="button"
           data-testid="pick-project-dir"
@@ -536,13 +536,13 @@ function NewProjectDialog({ open, onClose }: { open: boolean; onClose: () => voi
             <FolderPlusIcon />
           </span>
           {homeDir === null ? (
-            <span className="text-body font-medium text-[var(--foreground)]">选择文件夹</span>
+            <span className="text-ui-base font-medium text-[var(--foreground)]">选择文件夹</span>
           ) : (
-            <span className="max-w-full truncate font-mono text-secondary text-[var(--foreground)]">
+            <span className="max-w-full truncate font-mono text-ui-sm text-[var(--foreground)]">
               {homeDir}
             </span>
           )}
-          <span className="text-secondary text-[var(--muted-foreground)]">
+          <span className="text-ui-sm text-[var(--muted-foreground)]">
             {homeDir === null ? "CraftWave 可读取和编辑此文件夹" : "点击重新选择"}
           </span>
         </button>
@@ -580,7 +580,7 @@ async function client_deleteProject(projectId: string): Promise<void> {
 
 /** 左栏分组标题：与行文字同字号，仅灰+medium（截图与 ZCode 组头口径一致）。 */
 function SectionHeader({ title }: { title: string }) {
-  return <div className="px-2 pb-1 text-body font-medium text-[var(--cw-dim)]">{title}</div>;
+  return <div className="px-2 pb-1 text-ui-base font-medium text-[var(--cw-dim)]">{title}</div>;
 }
 
 /** 左栏项目行：文件夹图标 + 项目名（前景色大字）；悬停露出改名/加会话/
@@ -634,7 +634,7 @@ function ProjectRow({
     );
   }
   return (
-    <div className="group flex h-8 cursor-default items-center gap-2 rounded-lg pr-1 pl-2 text-body text-[var(--foreground)] hover:bg-[var(--accent)]/60">
+    <div className="group flex h-8 cursor-default items-center gap-2 rounded-lg pr-1 pl-2 text-ui-base text-[var(--foreground)] hover:bg-[var(--accent)]/60">
       <FolderIcon />
       {/* 项目名比会话标题淡一档（ZCode subtle 层级：组容器弱于内容行） */}
       <span className="min-w-0 flex-1 overflow-hidden whitespace-nowrap text-[var(--muted-foreground)] [mask-image:linear-gradient(to_right,black_calc(100%-1.5rem),transparent)]">
@@ -684,7 +684,7 @@ function SectionBody({ children }: { children: React.ReactNode }) {
       {hidden > 0 && !expanded && (
         <button
           type="button"
-          className="mt-0.5 w-full rounded px-2 py-0.5 text-left text-body text-[var(--cw-dim)] hover:bg-[var(--accent)]/60"
+          className="mt-0.5 w-full rounded px-2 py-0.5 text-left text-ui-base text-[var(--cw-dim)] hover:bg-[var(--accent)]/60"
           onClick={() => setExpanded(true)}
         >
           显示更多（{hidden}）
@@ -762,7 +762,7 @@ function SessionRow({
   return (
     <div
       data-testid={`session-row-${meta.id}`}
-      className={`group flex h-8 cursor-default items-center gap-1.5 rounded-lg pr-1 pl-2 text-body ${
+      className={`group flex h-8 cursor-default items-center gap-1.5 rounded-lg pr-1 pl-2 text-ui-base ${
         active
           ? "bg-[var(--accent)] text-[var(--foreground)]"
           : "text-[var(--foreground)] hover:bg-[var(--accent)]/60"
@@ -779,7 +779,7 @@ function SessionRow({
         {meta.title}
       </button>
       {/* 相对时间（A6）：悬停让位于操作钮（ZCode 元信息 hover 隐藏同款） */}
-      <span className="shrink-0 text-meta tabular-nums text-[var(--cw-dim)] group-hover:hidden">
+      <span className="shrink-0 text-ui-sm tabular-nums text-[var(--cw-dim)] group-hover:hidden">
         {relativeTime(meta.updatedAt)}
       </span>
       <button

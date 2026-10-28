@@ -81,7 +81,7 @@ export function Dialog({ open, title, onClose, children, actions, width = 440 }:
         aria-label={title}
       >
         <div className="mb-5 flex items-center justify-between">
-          <h2 className="text-title font-semibold text-[var(--foreground)]">{title}</h2>
+          <h2 className="text-ui-lg font-semibold text-[var(--foreground)]">{title}</h2>
           <button
             type="button"
             aria-label="关闭"
@@ -91,7 +91,9 @@ export function Dialog({ open, title, onClose, children, actions, width = 440 }:
             <XIcon />
           </button>
         </div>
-        <div className="text-body leading-relaxed text-[var(--muted-foreground)]">{children}</div>
+        <div className="text-ui-base leading-relaxed text-[var(--muted-foreground)]">
+          {children}
+        </div>
         {actions && actions.length > 0 && (
           <div className="mt-6 flex flex-wrap items-center justify-end gap-2">
             {actions.map((action) => (

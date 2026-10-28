@@ -8,7 +8,7 @@ import { cn } from "./cn";
 
 /** 输入控件公共类：边框/占位符/聚焦边框/禁用态（Input 与 Textarea 共用）。 */
 const FIELD_CLASS =
-  "w-full rounded-md border border-[var(--input)] bg-transparent px-3 text-body text-[var(--foreground)] " +
+  "w-full rounded-md border border-[var(--input)] bg-transparent px-3 text-ui-base text-[var(--foreground)] " +
   "placeholder:text-[var(--muted-foreground)] transition-colors " +
   "focus:border-[var(--cw-focus)] focus:outline-none " +
   "disabled:cursor-not-allowed disabled:opacity-50";
