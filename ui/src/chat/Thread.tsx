@@ -67,14 +67,17 @@ export function ChatThread() {
             </AuiIf>
           </div>
           <ThreadPrimitive.ViewportFooter className="sticky bottom-0 pt-2 pb-1">
-            <div className="mx-auto w-full max-w-4xl">
+            <div className="relative mx-auto w-full max-w-4xl">
+              {/* 回底按钮（FR-13-15）：已在底部时原语输出 disabled，用
+                  disabled:hidden 隐藏；挂 composer 容器上方自适应其高度 */}
+              <ThreadPrimitive.ScrollToBottom className="cw-pop-in absolute bottom-full left-1/2 z-20 mb-2 flex size-8 -translate-x-1/2 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--card)] text-[var(--muted-foreground)] shadow hover:text-[var(--foreground)] disabled:hidden">
+                <ArrowDownIcon />
+              </ThreadPrimitive.ScrollToBottom>
               <ComposerBar />
               <ComposerGhost />
             </div>
           </ThreadPrimitive.ViewportFooter>
         </ThreadPrimitive.Viewport>
-        {/* 回底按钮（FR-13-15）：官方原语自带「不在底部才显示」判定 */}
-        <ThreadPrimitive.ScrollToBottom className="absolute bottom-36 left-1/2 z-10 -translate-x-1/2 rounded-full border border-[var(--border)] bg-[var(--card)] px-3 py-1 text-secondary text-[var(--muted-foreground)] shadow" />
       </ThreadPrimitive.Root>
     </div>
   );
@@ -632,6 +635,27 @@ function WrenchIcon() {
       className="shrink-0"
     >
       <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+    </svg>
+  );
+}
+
+/** 下降箭头图标（lucide arrow-down 造型，回底按钮）。 */
+function ArrowDownIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      className="shrink-0"
+    >
+      <path d="M12 5v14" />
+      <path d="m19 12-7 7-7-7" />
     </svg>
   );
 }
