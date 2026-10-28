@@ -38,6 +38,8 @@ use rig::run::spec::RunSpec;
 use tokio_util::sync::CancellationToken;
 
 const TOOL_READ: &str = "read";
+// 仅被进程树收割 e2e（unix cfg 段）消费；Windows 下无消费者，放行死代码检查
+#[cfg_attr(not(unix), allow(dead_code))]
 const TOOL_COMMAND: &str = "command";
 const FULL_CHAIN_BUDGET: Duration = Duration::from_millis(1000);
 
