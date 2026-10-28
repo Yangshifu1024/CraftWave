@@ -27,7 +27,7 @@ body {
  * 时间戳单行 16px），其余档继承 html 的 1.5。
  * ============================================================ */
 @theme {
-  --ui-font-size: 15px;
+  --ui-font-size: 16px;
   --text-meta: calc(var(--ui-font-size) - 3px);
   --text-meta--line-height: calc(var(--ui-font-size) + 1px);
   --text-secondary: calc(var(--ui-font-size) - 2px);
