@@ -2,6 +2,9 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./styles.css";
+// Streamdown（流式 Markdown 渲染组件）的结构样式：动画与列表记号等
+// 基础规则；配色由 styles.css 里的 .cw-md 段按设计令牌提供
+import "streamdown/styles.css";
 
 /**
  * 前端入口：把 React 应用挂载到页面的 #root 节点。

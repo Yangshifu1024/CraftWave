@@ -2,16 +2,15 @@
  * 应用根组件：负责三件事——
  * 1. 启动期的两个副作用：自绘标题栏激活（useTitlebarActivation，防闪启动）与
  *    主题应用（useThemeBoot，按已保存配置换肤）；
- * 2. 顶层页面装配：多会话工作区（SessionWorkspace）+ 设置页全屏浮层（SettingsPage）；
+ * 2. 顶层页面装配：多会话工作区（SessionWorkspace）；
  * 3. 调试后门：URL 带 ?mirror=1 时进入镜像工具演示页（MirrorDemo）。
  */
 
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { MirrorDemo } from "@/chat/mirror/MirrorDemo";
 import { SessionWorkspace } from "@/chat/SessionWorkspace";
-import { SettingsPage } from "@/settings/SettingsPage";
 import { applyTheme } from "@/theme";
 
 /** decoration 插件激活成功后在 <html> 上打的标志属性名（出现即表示自绘标题栏就绪）。 */
@@ -114,24 +113,9 @@ export default function App() {
 
 /**
  * 主界面骨架（M1 多会话工作区挂载点，16 号票）：左栏 / Tab 条 / 每个会话
- * 独立的聊天运行时都在 SessionWorkspace 内部装配；设置页以全屏浮层形式挂在
- * 本层，由右上角"设置"按钮唤起。
+ * 独立的聊天运行时都在 SessionWorkspace 内部装配；设置页浮层也由
+ * SessionWorkspace 挂载（入口在左栏底部，17 号票后调整）。
  */
 function SkeletonApp() {
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  return (
-    <>
-      <SessionWorkspace />
-      {!settingsOpen && (
-        <button
-          type="button"
-          className="fixed top-3 right-3 z-40 rounded border border-[var(--border)] bg-[var(--card)] px-3 py-1 text-sm text-[var(--foreground)]"
-          onClick={() => setSettingsOpen(true)}
-        >
-          设置
-        </button>
-      )}
-      {settingsOpen && <SettingsPage onClose={() => setSettingsOpen(false)} />}
-    </>
-  );
+  return <SessionWorkspace />;
 }

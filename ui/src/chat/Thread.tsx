@@ -13,13 +13,13 @@ import {
   BranchPickerPrimitive,
   ComposerPrimitive,
   ErrorPrimitive,
-  MessagePartPrimitive,
   MessagePrimitive,
   ThreadPrimitive,
   useAui,
   useAuiState,
 } from "@assistant-ui/react";
 import { useEffect, useRef, useState } from "react";
+import { Streamdown } from "streamdown";
 import { useComposerKeys } from "@/chat/composer-keys";
 import { TIER_LABELS, usePermissionTierStore } from "@/chat/permission-tier";
 import { useSessionMetrics } from "@/chat/run-metrics";
@@ -141,7 +141,11 @@ function UserMessage() {
     <MessagePrimitive.Root className="flex flex-col items-end py-1">
       <div className="max-w-[80%] rounded-2xl bg-[var(--primary)] px-4 py-2 text-sm text-[var(--primary-foreground)]">
         <MessagePrimitive.Parts>
-          {({ part }) => (part.type === "text" ? <MessagePartPrimitive.Text /> : null)}
+          {({ part }) =>
+            part.type === "text" && part.text.length > 0 ? (
+              <Streamdown className="cw-md">{part.text}</Streamdown>
+            ) : null
+          }
         </MessagePrimitive.Parts>
       </div>
       <BranchBar editOnly />
@@ -244,9 +248,8 @@ function AssistantMessage() {
               return part.text.length === 0 ? (
                 <span hidden />
               ) : (
-                <p className="whitespace-pre-wrap">
-                  <MessagePartPrimitive.Text />
-                </p>
+                // 流式 Markdown（FR-01-03）：Streamdown 增量解析全量累计快照
+                <Streamdown className="cw-md">{part.text}</Streamdown>
               );
             }
             if (collapsed) return <span hidden />;

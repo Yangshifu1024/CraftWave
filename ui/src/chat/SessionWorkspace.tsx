@@ -44,6 +44,7 @@ import {
   selectDir,
 } from "@/ipc/client";
 import type { ProjectMeta, SessionMeta } from "@/ipc/types";
+import { SettingsPage } from "@/settings/SettingsPage";
 import { useAskStore } from "@/stores/ask";
 import { loadHistory, useSessionPersistStore } from "@/stores/session";
 import { useSessionsStore } from "@/stores/sessions";
@@ -63,6 +64,8 @@ export function SessionWorkspace() {
   const inspectorOpen = useSessionsStore((s) => s.inspectorOpen);
   const setActive = useSessionsStore((s) => s.setActive);
   const closeTab = useSessionsStore((s) => s.closeTab);
+  // 设置页浮层（17 号后从 App 顶层挪入工作区；入口在左栏底部）
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   useEffect(() => {
     void useSessionsStore
@@ -80,7 +83,7 @@ export function SessionWorkspace() {
   }
   return (
     <div className="flex h-dvh bg-[var(--background)] text-[var(--foreground)]">
-      <Sidebar />
+      <Sidebar onOpenSettings={() => setSettingsOpen(true)} />
       <div className="flex min-w-0 flex-1 flex-col">
         <header
           data-tauri-drag-region
@@ -113,6 +116,7 @@ export function SessionWorkspace() {
         </div>
       </div>
       {exitDialog}
+      {settingsOpen && <SettingsPage onClose={() => setSettingsOpen(false)} />}
     </div>
   );
 }
@@ -292,8 +296,10 @@ function DraftRestorer({ sessionId }: { sessionId: string }) {
   return null;
 }
 
-/** 左栏（§10.7）：搜索 + 临时会话区 + 项目分组会话树。 */
-function Sidebar() {
+/** 左栏（§10.7）：搜索 + 临时会话区 + 项目分组会话树；底部「设置/用量」
+ *  双入口各占一半宽度。顶部首行下移 40px 与中间 Tab 条同高——避开 macOS
+ *  交通灯（红黄绿窗口按钮，占据窗口左上角约 76×32 像素）。 */
+function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const [filter, setFilter] = useState("");
   const [confirm, setConfirm] = useState<
     { kind: "session"; session: SessionMeta } | { kind: "project"; project: ProjectMeta } | null
@@ -320,7 +326,8 @@ function Sidebar() {
       data-testid="session-sidebar"
       className="flex w-60 shrink-0 flex-col border-r border-[var(--border)] bg-[var(--card)]"
     >
-      <div className="flex items-center gap-1 p-2">
+      {/* 顶部下移 40px（pt-10）与中间 Tab 条同基线：避开 macOS 交通灯区域 */}
+      <div className="flex items-center gap-1 p-2 pt-10">
         <button
           type="button"
           data-testid="new-temp-session"
@@ -336,16 +343,6 @@ function Sidebar() {
           className="rounded border border-[var(--border)] px-2 py-1 text-xs text-[var(--muted-foreground)] hover:border-[var(--ring)]"
         >
           项目
-        </button>
-        {/* 右栏开合（FR-13-01 可折叠 Inspector） */}
-        <button
-          type="button"
-          data-testid="inspector-toggle"
-          aria-pressed={inspectorOpen}
-          onClick={() => setInspectorOpen(!inspectorOpen)}
-          className="rounded border border-[var(--border)] px-2 py-1 text-xs text-[var(--muted-foreground)] hover:border-[var(--ring)]"
-        >
-          用量
         </button>
       </div>
       <div className="px-2 pb-2">
@@ -391,6 +388,26 @@ function Sidebar() {
             </Section>
           );
         })}
+      </div>
+      {/* 底部双入口：设置页 + 右栏用量页开合，横向平铺各占一半宽度 */}
+      <div className="flex gap-1 border-t border-[var(--border)] p-2">
+        <button
+          type="button"
+          data-testid="open-settings"
+          onClick={onOpenSettings}
+          className="flex-1 rounded border border-[var(--border)] px-2 py-1 text-xs text-[var(--muted-foreground)] hover:border-[var(--ring)]"
+        >
+          设置
+        </button>
+        <button
+          type="button"
+          data-testid="inspector-toggle"
+          aria-pressed={inspectorOpen}
+          onClick={() => setInspectorOpen(!inspectorOpen)}
+          className="flex-1 rounded border border-[var(--border)] px-2 py-1 text-xs text-[var(--muted-foreground)] hover:border-[var(--ring)]"
+        >
+          用量
+        </button>
       </div>
       <ConfirmDialog
         open={confirm !== null}

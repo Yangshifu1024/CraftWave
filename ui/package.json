@@ -16,6 +16,7 @@
     "assistant-stream": "^0.3.54",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
+    "streamdown": "^2.7.1",
     "zustand": "^5.0.16"
   },
   "devDependencies": {
