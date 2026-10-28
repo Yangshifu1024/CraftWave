@@ -24,9 +24,6 @@ export function ContextMenu({ x, y, entries, onClose }: ContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ left: x, top: y });
 
-  // 空项即未打开：必须整组件不渲染，否则透明遮罩会盖住整个界面吞掉点击
-  if (entries.length === 0) return null;
-
   // Esc 关闭（capture 捕获行内输入框的 Esc 优先级与弹框一致）
   useEffect(() => {
     const onKeydown = (e: KeyboardEvent) => {
@@ -50,6 +47,10 @@ export function ContextMenu({ x, y, entries, onClose }: ContextMenuProps) {
       top: Math.max(4, Math.min(y, innerHeight - rect.height - 4)),
     });
   }, [x, y]);
+
+  // 空项即未打开：必须整组件不渲染，否则透明遮罩会盖住整个界面吞掉点击
+  //（置于全部 hooks 之后，满足条件返回的 hooks 顺序约束）
+  if (entries.length === 0) return null;
 
   return (
     <>
