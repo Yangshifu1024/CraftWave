@@ -184,7 +184,7 @@ function ComposerBar() {
           底色用 --composer-bg（暗色 #272728 亮于中部卡，亮色同卡白） */}
       <ComposerPrimitive.Root className="flex flex-col gap-2 rounded-2xl border border-[var(--border)] bg-[var(--composer-bg)] p-3 shadow-sm transition-colors hover:border-[var(--input)] focus-within:border-[var(--cw-focus)]">
         <ComposerPrimitive.Input
-          rows={2}
+          minRows={2}
           placeholder="发一条消息，运行中的消息将自动排队…"
           className="max-h-40 w-full resize-none bg-transparent py-0.5 text-body leading-5 placeholder:text-[var(--muted-foreground)] focus:outline-none"
           onKeyDown={onKeyDown}
