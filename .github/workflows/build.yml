@@ -61,6 +61,7 @@ jobs:
           cargo clippy --all-targets -- -D warnings
           cargo test
         working-directory: src-tauri
+      # macOS 仅出 arm64（2026-10-28 用户决策放弃 Intel，FR-16-01 universal 口径随之收窄）
       - run: pnpm build
         env:
           MACOSX_DEPLOYMENT_TARGET: "13.0"
