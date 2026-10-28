@@ -1,7 +1,9 @@
 //! 【S5 Spike】取消传播全链路集成测试：
 //! `cancel_run`（置 CancellationToken）→ 模型流停止 / 命令进程组收割（macOS 实测）
 //! → 收齐工具结果并补 E_CANCELLED → runEnded(cancelled)，全链时延实测 <1s。
-//! Windows Job Object 分支只验可编译（cfg 隔离），语义确认见票 Answer。
+//! Windows Job Object 分支只验可编译（cfg 隔离，由主 crate 编译覆盖），
+//! 语义确认见票 Answer——本文件验证的是 Unix 进程组收割语义，Windows 跳过。
+#![cfg(unix)]
 
 mod common;
 
