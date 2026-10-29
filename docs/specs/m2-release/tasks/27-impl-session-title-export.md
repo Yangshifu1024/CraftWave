@@ -33,7 +33,7 @@ FR-01-09 + FR-01-12（PRD 行 286/289，出处 §3.5/§6.1/§10.5/C-9）：
   - 会话段尾追加 meta 行 `{"kind":"meta","title":…,"revision":…}`（§6.1 meta 行 `title?` 字段已预留；**追加前先回写 §7.3 持久化时机表增此行**，fsync 与会话条目同档）；
   - 锁序 session → index 不变（§7.4）。
 - **事件**：emit `session:title` `{ sessionId, title }`——§3.5 P0 18 键之一，键位 M0 已定死；`host/commands/mod.rs` EVENTS 注释点名"session:title 随对应票填充"，本票加键，时序在落盘之后发。
-- **C-9 计量**：走 complete_once 后台小调用路径天然计入会话累计（`tokens:update` 照发、`SessionMeta.totalTokens` 重启回填一致）、不计 turnUsage；失败不计费不提示（§10.5 口径，无需额外代码，加断言测试钉住）。
+- **C-9 计量（Q39/Q40 收口）**：complete_once 后台调用的实际 usage 计入会话及按日/实际模型统计，不计 turnUsage、不增主 run 次数；响应返回 usage 时按当时本地日期落账。失败静默不提示、不重试，但已返回的 usage 仍须计入，不能承诺失败免费；未返回的用量不伪造。重启恢复遵守 Q37 四口径记录。
 
 ### 前端（ui/）
 
@@ -50,6 +50,7 @@ FR-01-09 + FR-01-12（PRD 行 286/289，出处 §3.5/§6.1/§10.5/C-9）：
 
 ### 测试
 
+- 后台调用失败但已返回 usage 时照常计会话/日/模型用量，不增本轮与主任务次数；无 usage 不伪造，标题仍走静默兜底。
 - Rust：默认标题判定（首条/非首条/已改名三态表驱动）；并发双触发只生成一次（锁内复判）；超时兜底首行截断；meta 行 + index 双写一致性；session:title 事件在落盘后发出（事件顺序断言）。
 - 前端 vitest：`export.ts` 序列化单测（活动路径、工具记录行、空会话、含图片 part 降级、非法文件名字符清洗）；事件桥 session:title 分发 → sessions store 更新（含会话不在 tabs 的分支）；contract.test 扩域（EVENTS 增 session:title，无新命令）。
 

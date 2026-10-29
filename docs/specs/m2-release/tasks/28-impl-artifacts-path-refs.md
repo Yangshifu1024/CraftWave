@@ -54,6 +54,7 @@ FR-10-06 + FR-10-03 + FR-09-05（PRD 行 493/490/477，出处 §10.7）：
 
 ### 测试
 
+- 与 17 号票的普通文件拖入共用路径 chip/发送引用段；roots 外文件仍须授权，不另建文件上传协议，不因拖拽绕过路径校验。
 - Rust：artifacts 登记（首写/重复计数/工具失败不登记/相对路径与 symlink 规范化）单测；list_artifacts exists 判定（临时目录造删）；open_in_editor 越界拒绝 E_PATH_OUTSIDE_ROOTS；search 忽略表与 50k 条目上限（大目录 fixture，debug 计时 warn 级埋点）。
 - 前端 vitest：composer-keys 引号路径用例扩展（detectAtQuery 引号内空格/闭合/非嵌套、insertAtCompletion 空格加引号）；发送引用段合成（多路径去重、上限 20、越界 token 剔除、输入框原文不变）；产物页组件（灰显置底/空态/预览 Dialog truncated 态）；contract.test 扩域（list_artifacts/list_editors/open_in_editor 三命令）。
 

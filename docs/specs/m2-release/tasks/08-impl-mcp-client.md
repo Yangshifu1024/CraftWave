@@ -20,6 +20,8 @@ Status: open
 - **断连后结果未知（2026-10-29 用户确认 Q14）**：连接可自动恢复；已发出而结果未知的工具调用不自动重放，read_only 声明也不豁免。向主代理返回“可能已执行”的可辨识结果，由主代理先核查实际结果再决定是否重试；不得经通用失败重试路径重发。错误码/结果字段实现前先回写 §3.6/§8.2。
 - **worktree 信任接缝（Q19 用户确认）**：受应用管理的 worktree 按原项目归一资源身份，同资源同内容沿用既有信任；仅副本路径改变不重复询问，但命令/环境/cwd 等实际启动配置改变仍须重核，跨项目不继承。与 24 号票一起回写指纹字段。
 - 调用审批（FR-08-04）：`backend/gate.rs` 判定链增 MCP 分支——server 未声明 read_only 且未开 always_allow 时**即便 full_access 也挂起确认**（AskPayload approval，title 带 server 名与工具名）；"始终允许"热更新不重启连接。
+- **动态工具授权（Q44）**：工具清单仍自动同步，但新增工具或输入 schema 变化时，不继承先前免审批许可，首次调用须重新确认；旧 server 级 read_only/always_allow 不自动覆盖这些新版本。许可须绑定服务器身份、原始工具名与已确认输入 schema，不能只绑定会因归一或碰撞而变化的展示名；具体指纹与存储字段先补齐 §9.7，再实现。
+- read_only/always_allow 只取用户确认的配置，远端 annotations 仅作元数据，不得据此升级为只读或免审批；仅描述文字变化可提示更新，不扩大许可。配置变更与启动信任仍遵守既有 TOFU，工具变更许可与服务器启动信任分别校验。
 - 命令 8 个（§3.3 #40–47 逐字）：`mcp_list_config {} → {global, project}`、`mcp_save_config {scope, config} → void`、`mcp_connect {scope, name} → void`（触发 TOFU）、`mcp_disconnect {scope, name}`、`mcp_reconnect {scope, name}`、`mcp_test {draft} → {ok, tools:[{name,description}], error?}`（临时连接 initialize+tools/list，**总预算 60s**，不进池）、`mcp_set_launch_trust {fingerprint, decision}`、`mcp_snapshot {} → {servers:[{name, state, toolCount}]}`。
 - 传输：stdio（`command+args+env+cwd`，tokio process 承载）与 streamable HTTP（`url+headers`）双实现（FR-08-01）。
 
@@ -32,6 +34,7 @@ Status: open
 
 ### 测试
 
+- Q44 fixture：已许可服务器新增工具、或原工具输入 schema 改变，首次调用重新询问，旧 read_only/always_allow 不自动放行；仅描述变化不扩大许可；远端 annotations 声称只读不能提高权限；碰撞重命名不能串用另一工具许可。
 - fixture 在记录已执行操作后、返回响应前断连：连接恢复但调用计数保持 1；结果明确标记可能已执行，通用失败重试不重放原调用；read_only 声明下同样覆盖。
 
 - 本地 stdio fixture echo server（§12.5 定的测试基建）：覆盖 connect→TOFU allow/remember/deny 三路径、工具发现注册、调用回喂、断连重连、`mcp:status` 四态、`tools/list_changed` 同步。
@@ -45,6 +48,7 @@ Status: open
 
 ## 验收
 
+- [ ] 动态新增/输入 schema 变化不继承旧免审批许可，首次调用重新确认；仅用户确认的 read_only/always_allow 可决定权限，远端 annotations 不提升权限。
 - [ ] 已发出但结果未知的调用不自动重放；连接恢复后主代理收到“可能已执行”的明确结果，先核查再决定重试。
 
 - [ ] 全局与项目双作用域 mcp.json 加载、同名覆盖、未知字段保存不丢

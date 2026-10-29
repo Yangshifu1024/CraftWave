@@ -24,6 +24,7 @@ Status: open
 
 - **Composer 附件**（FR-12-02/FR-13-16）：附件按钮（`<input type=file>` accept=image/*）+ 拖拽入 Composer 区（dragover 高亮）+ 粘贴（paste 事件 clipboardData 提取 image）；**≤4 张、单张 ≤5MiB**（超限即拒并提示）；附件条（缩略图+移除）；发送时 FileReader 读 base64 → `attach_image` 换 blobHash → save_session_tree 消息 part 携 `{type:"image", blobHash, mimeType}`（§6.3 双写协议不变）。
 - **拖拽目录=提议添加项目**（FR-13-16）：拖拽 entry 为目录时弹「添加为项目」确认 → `save_project { name, homeDir }` 既有命令。
+- **普通文件拖入（FR-13-16，接 28 号票）**：复用真实路径 chip 与发送引用段，文档内容由既有 read 管线读取；roots 外路径仍走 24 号票授权，不因拖入自动放开。普通路径引用不受 vision 模型限制，不另建通用二进制附件上传系统。
 - **渲染与恢复**：消息内 image part → `<img>` 经 `read_image_blob` 取 base64（data URL；CSP `img-src 'self' data: blob:` 已放行 §9.5）；重启后 load_session_tree 携 image part 按 blobHash 拉取渲染（blob 缺失灰显占位）；vision 拦截 UI：非 vision 模型激活时附件按钮置灰+拖拽/粘贴拦截提示（vision 标记来自 get_config 的 ProviderModel.vision）。
 - **read 工具卡图片态**：ReadCard 增缩略图展示（kind:"image" 结果，detail 边车/帧面 base64 取舍随 toolres 既有恢复链）。
 
@@ -31,6 +32,7 @@ Status: open
 
 ### 测试
 
+- 拖拽路由回归：图片走图片附件，目录提议添加项目，普通文件转路径引用；非 vision 模型可引用普通文件，外部路径不跳过授权。
 - 后端：blob 去重与哈希稳定、image part save/load_session_tree roundtrip、wire 重建双形态（vision 多模态块/非 vision 占位）、非 vision 兜底拒、>5MiB/非法 mime 拒、attach_image 越权读他会话 blob 拒、带图 steer 拒绝路径。
 - 前端 vitest：≤4 张/5MiB 校验、粘贴/拖拽事件提取、附件条增删、vision 置灰态；含历史图片时切非 vision 后纯文字继续、模型收到占位、界面保留原图与提示；新附图和 read 图拒绝。
 - 全链手测：附图发送 → vision 模型真实消费（mock provider 断言多模态块）→ 重启恢复缩略图。

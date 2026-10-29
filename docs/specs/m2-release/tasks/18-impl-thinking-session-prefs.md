@@ -30,7 +30,7 @@ FR 依据（原文摘引）：
 4. reasoning 注入实装：
    - 现状：`resolve_model`（`host/commands/chat.rs:126`）仅构造 `OpenAIConfig::new(key).with_base_url(..).client().chat(model)`，未传任何请求参数；
    - 注入点 = 请求装配的 rig options 面：rig-core 0.45 openai options 已内建 `Reasoning::Off / Reasoning::Effort → 请求字段 reasoning_effort` 映射（`providers/openai/options.rs`，`Effort::as_str`）；
-   - "下一请求生效"：客户端按 run 构建（§11.1），start_chat 每次读 prefs 快照，无额外语义。
+   - **下一请求生效**：指当前 run 内的下一次模型请求，不只是下一次 start_chat。每次请求前读取最新会话模型/thinking 偏好，必要时更新模型客户端与请求参数；正在进行的模型请求不被切换打断。前端 runtime 惰性取值只覆盖新 run，不能代替后端在同 run 后续请求前刷新。沿用 Q18 预算检查与 Q30 历史图片降级，模型用量按实际调用归属。
 5. 档位映射（纯函数 `thinking_to_request(level, api_format, context_window, max_tokens)`，落 `providers/reasoning.rs`）：
    - 优先级：会话 thinking 显式设置 > `ProviderModel.reasoning_effort` > 不传；
    - OpenAI 系：off → 不传（Reasoning::Off 语义）；minimal/low/medium/high → reasoning_effort 同名值；
@@ -45,7 +45,7 @@ FR 依据（原文摘引）：
    - 变更时 `set_session_prefs` 落盘（防抖）。
 2. Ctrl+L 模型切换（FR-13-05）：唤起模型选择下拉；选择即 `set_session_prefs` 持久。
    - 现状：M1 `chat/session-model.ts` 已有每会话模型覆盖但纯内存，文件头自述"持久化随 session_prefs 域后续票"——即本票。
-3. 恢复链路：进入会话 `get_session_prefs` → 回填模型 store 与 thinking store；运行中切换下一请求生效（runConfig 惰性取值已在 `runtime.ts:222` 就位）。
+3. 恢复链路：进入会话 `get_session_prefs` → 回填模型 store 与 thinking store；运行中切换写入后端偏好，当前请求结束后的下一次模型请求生效，不能仅等待下一个 run。
 4. 契约：`ipc/client.ts` COMMANDS 增 #24/#25、`ipc/types.ts` 镜像、contract.test 接线断言；§10.6 键位表增 Ctrl+L 行（回写）。
 
 - **请求预算接缝（Q18 用户确认）**：附图、切模型及下一次模型请求均走 04 号票的实际请求预算检查并预留回复空间；没有历史 usage 也不能跳过，压缩后仍超限则暂停保留输入。
@@ -54,12 +54,13 @@ FR 依据（原文摘引）：
 
 ### 测试
 
+- 同一个 run 先以模型 A/thinking low 请求，运行中切到 B/high；当前请求正常结束，下一次模型请求使用 B/high，预算与图片能力重新校验；无需重新 start_chat，usage 归实际模型。
 - Rust：prefs roundtrip / 损坏文件兜底 / 会话不存在 E_NOT_FOUND；`thinking_to_request` 表驱动（五档 × 两方言 × 窗口参数）；RunConfig 旧载荷（无 thinking）反序列化兼容；映射函数对 §11.4 回写表的锚定断言。
 - 前端：thinking store 循环与恢复、Ctrl+L 打开选择、runtime 惰性 runConfig 携带 thinking、契约测试 #24/#25。
 
 ## 边界（不在本票）
 
-- anthropic_messages / openai_responses 方言的请求接入（resolve_model 现仅 openai_chat，§11.1 相关票）；本票交付 Anthropic 预算映射纯函数 + 单测，供方言票直接消费。
+- anthropic_messages / openai_responses 方言的请求接入由 38 号票承载；本票的预算映射与偏好切换须与其接通，三协议端到端验收不能仅由纯函数测试替代。
 - 多 Key 池（FR-02-12 已砍单，Out of scope）；权限档持久化（明确不做，FR-14-05）；reasoning 内容渲染（reasoningDelta 帧已有）；模型参数编辑 UI（maxTokens/contextWindow 表单，供应商编辑器既有范畴）。
 
 ## 验收

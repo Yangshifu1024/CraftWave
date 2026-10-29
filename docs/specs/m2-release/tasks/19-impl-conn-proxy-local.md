@@ -50,7 +50,7 @@ FR 依据（原文摘引）：
 
 ## 边界（不在本票）
 
-- web_fetch/web_search 的 SSRF 防护与代理细节（12/13 号票）；per-provider headers 的请求侧接线（FR-02-11，字段 M1 已就位、未排票，如需 M2 落地另行立票）；OAuth（§11.6 P3）；anthropic_messages 方言连通测试（方言接入本身未落地，随 §11.1 票）。
+- web_fetch/web_search 的 SSRF 防护与代理细节（12/13 号票）；per-provider headers 的请求侧接线（FR-02-11，字段 M1 已就位、未排票，如需 M2 落地另行立票）；OAuth（§11.6 P3）；anthropic_messages / openai_responses 协议连通测试与实际对话接入由 38 号票接通本票探测入口，不再指向无承载的“§11.1 票”。
 
 ## 验收
 

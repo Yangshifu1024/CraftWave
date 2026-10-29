@@ -28,6 +28,7 @@ Status: open
 - **汇报与四象限**（FR-07-02/09）：子 run 终态 report/partial/no_report/cancelled 四象限；最后一次 assistant 文本即 `<report>` 结构化汇报 → 以父工具结果回喂 + `subReport{subId, report}` 帧 + `subDone{subId, outcome}` 帧（§3.4）；父级按象限处理：report 继续、partial 注明预算耗尽可续派、no_report/cancelled 注明失败原因。
 - **存储与回看**（FR-07-06）：子代理历史独立落 `histories/subs/<parentRunId>/<subId>/`（§5.9；单 JSONL 最小子集，复用 §7.4 原子写）；`load_subagent_history` 命令（§3.3 #59 `{sessionId, subId} → WireMessage[]`）。
 - **事件 6 键**（§3.5 M2 表）：`sub:spawn/sub:step/sub:report/sub:usage/sub:done/sub:error`，payload `{sessionId, runId, subId, role?, turn?, usage?, outcome?, code?}`——跨 Tab Inspector 订阅；`util/events.rs` 增键常量。
+- **用量归属（Q39/Q40，接 20 号票）**：子代理调用按实际模型及响应 usage 当时本地日期落账，加入会话总量与日/模型统计，但不加入 Composer 主轮次自身用量、不增加主 run 次数。子代理面板展示自身消耗；父级汇总只计一次，不把 sub:usage 与父事件再次累加。重启恢复沿用 Q37 四口径记录。
 
 ### 前端（ui/）
 
