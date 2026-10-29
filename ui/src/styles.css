@@ -1,68 +1,460 @@
 @import "tailwindcss";
 
 /* ============================================================
- * 设计令牌（shadcn/ui 风格，亮/暗两套）
- * 语义变量供手写的 components/ui/* 基础组件消费；
- * --cw-* 是工作区面板色（设置页左导航 / 卡片底色等，与 CodeWave 同口径）。
+ * 设计令牌（像素级复刻 ZCode 桌面端主界面，Zai 双主题）
+ *
+ * 结构对照 ZCode packages/ui/src/styles.css：
+ * - @theme 段 = Zai light（浅色默认态）；
+ * - .dark 段 = Zai dark（深色态，与 theme.ts 的 .dark 类名机制对接）。
+ * Tailwind v4 会把 @theme 里的 --color-* / --text-* 转成对应工具类
+ * （bg-background / text-foreground / text-ui-base 等），类名与 ZCode
+ * 源码一致，方便逐块照抄布局组件。
+ *
+ * 与 ZCode 的差异：ZCode 在 macOS 用 Electron vibrancy 磨砂做侧栏底
+ * （--color-background-alt 半透明），CraftWave（Tauri）当前无磨砂，
+ * 该变量取不透明侧栏色兜底，视觉与 ZCode 磨砂后的观感一致。
  * ============================================================ */
+
+@custom-variant platform-linux-desktop (
+  &:where(.platform-linux-desktop, .platform-linux-desktop *)
+);
+@custom-variant platform-mac-desktop (&:where(.platform-mac-desktop, .platform-mac-desktop *));
+@custom-variant platform-windows-desktop (
+  &:where(.platform-windows-desktop, .platform-windows-desktop *)
+);
+
 :root {
-  --background: #ffffff;
-  --foreground: #1f2328;
-  --card: #ffffff;
-  --card-foreground: #1f2328;
-  --muted: #f4f6f8;
-  --muted-foreground: #57606a;
-  --border: #e2e6ea;
-  --input: #cfd5db;
-  --primary: #1f2328;
-  --primary-foreground: #ffffff;
-  --accent: #eceef1;
-  --accent-foreground: #1f2328;
-  --destructive: #dc2626;
-  --warning: #b45309;
-  --warning-foreground: #ffffff;
-  --ring: #a3aeb9;
-  --cw-bg-main: #ffffff;
-  --cw-bg-nav: #f3f5f7;
-  --cw-highlight: #e7eaee;
-  --cw-text-1: #1f2328;
-  --cw-text-2: #57606a;
-  --cw-dim: #8a939e;
-  --cw-dot: #1677ff;
-  --cw-focus: #1677ff;
-  --cw-err: #d03066;
+  /* UI 字号基座：全部 text-ui-* 字号 token 挂在它上（ZCode styles.css:76） */
+  --ui-font-size: 14px;
+}
+
+@theme {
+  /* 等宽字体栈：各平台西文等宽在前，CJK 显式补位（Windows Consolas
+   * 不含中文字形，不加会把中文落到宋体——ZCode styles.css:146） */
+  --font-mono:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+    "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", monospace;
+
+  /* 字号体系：全部跟随 --ui-font-size 缩放（ZCode styles.css:150-162） */
+  --text-ui-settings-title: calc(var(--ui-font-size) + 10px);
+  --text-ui-settings-title--line-height: calc(4 / 3);
+  --text-ui-settings-title-lg: calc(var(--ui-font-size) + 16px);
+  --text-ui-settings-title-lg--line-height: 1.2;
+  --text-ui-xl: calc(var(--ui-font-size) + 4px);
+  --text-ui-lg: calc(var(--ui-font-size) + 2px);
+  --text-ui-base: var(--ui-font-size);
+  --text-ui-caption: calc(var(--ui-font-size) - 1px);
+  --text-ui-sm: calc(var(--ui-font-size) - 2px);
+  --text-ui-xs: calc(var(--ui-font-size) - 4px);
+  --text-ui-2xs: calc(var(--ui-font-size) - 5px);
+  --tracking-wf-label: 0.09em;
+
+  /* 动态扫光文字（运行中的动词） */
+  --animated-gradient-text-strong: rgba(13, 13, 13, 1);
+  --animated-gradient-text-soft: rgba(13, 13, 13, 0.22);
+
+  /* ---- Zai light 主题（ZCode styles.css .theme-zai-light 段） ---- */
+  --color-background: #f8f8f8;
+  --color-background-win-alt: #ececee;
+  /* ZCode 此值为 70% 透明背景混 vibrancy；本工程无磨砂，取侧栏不透明色 */
+  --color-background-alt: #f0f0f0;
+  --color-brand: #000000;
+  --color-resize-handle: #0b7fff;
+  --color-icon-blue: #0066dd;
+  --color-icon-purple: #9e77ed;
+  --color-trajectory-user: #2563eb;
+  --color-trajectory-assistant: #0f766e;
+  --color-trajectory-reasoning: #7c3aed;
+  --color-trajectory-tool-call: #d97706;
+  --color-trajectory-tool-result: #0284c7;
+  --color-accent: #ebf4ff;
+  --color-border: rgba(13, 13, 13, 0.1);
+  --color-border-hover: rgba(13, 13, 13, 0.15);
+  --color-hover: rgba(13, 13, 13, 0.05);
+  --color-selected: rgba(13, 13, 13, 0.05);
+  --color-header: #ffffff;
+  --color-panel: #ffffff;
+  --color-sidebar: #f0f0f0;
+  --color-surface: rgba(13, 13, 13, 0.03);
+  --color-surface-hover: rgba(13, 13, 13, 0.05);
+  --color-markdown-inline-code: #e6e6e6;
+  --color-card: #ffffff;
+  --color-card-selected: var(--color-input);
+  --color-card-border: var(--color-border);
+  --color-popover: #ffffff;
+  --color-popover-foreground: var(--color-foreground);
+  --color-popover-header: #f8f8f8;
+  --color-popover-border: var(--color-border);
+  --color-input: #ffffff;
+  --color-input-focused: var(--color-input);
+  --color-input-border: var(--color-border);
+  --color-input-border-hover: var(--color-border-hover);
+  --color-input-border-focused: var(--color-border-hover);
+  --color-tab: #f0f0f0;
+  --color-tab-active: #ffffff;
+  --color-tab-border: var(--color-border);
+  --color-menu: #ffffff;
+  --color-menu-hover: #f0f0f0;
+  --color-primary: #000000;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #e6e6e6;
+  --color-interaction-ask-surface: #ebf4ff;
+  --color-interaction-ask-foreground: #0066dd;
+  --color-interaction-ask-fill: rgba(70, 191, 114, 0.2);
+  --color-success-surface: #eaf7ee;
+  --color-success-surface-foreground: #166b32;
+  --color-progress-surface: var(--color-blue-50);
+  --color-progress-surface-foreground: var(--color-blue-700);
+  --color-foreground: var(--color-neutral-800);
+  --color-foreground-subtle: color-mix(in oklab, var(--color-neutral-800) 60%, transparent);
+  --color-foreground-subtlest: color-mix(in oklab, var(--color-neutral-800) 40%, transparent);
+  --lucide-subtlest-opacity: 0.4;
+  --color-foreground-inverse: #ffffff;
+  --color-success: #1e8a3e;
+  --color-success-foreground: #ffffff;
+  --color-idle-task: #9e77ed;
+  --color-idle-task-surface: #f5f3ff;
+  --color-destructive: #e03131;
+  --color-destructive-foreground: #ffffff;
+  --color-warning: #e07b00;
+  --color-warning-foreground: #ffffff;
+  --color-warning-surface: color-mix(in srgb, var(--color-warning) 12%, transparent);
+  --color-warning-surface-foreground: #914e00;
+  --color-destructive-surface: color-mix(in srgb, var(--color-destructive) 10%, transparent);
+  --color-destructive-surface-foreground: #b42020;
+  --color-diff-added: #1e8a3e;
+  --color-diff-added-foreground: #ffffff;
+  --color-diff-removed: #e03131;
+  --color-diff-removed-foreground: #ffffff;
+  --color-git-none: var(--color-foreground);
+  --color-git-modified: #e07b00;
+  --color-git-added: #1e8a3e;
+  --color-git-deleted: #e03131;
+  --color-git-renamed: #0b7fff;
+  --color-git-untracked: #1e8a3e;
+  --color-git-ignored: var(--color-foreground-subtlest);
+  --color-toast: #ffffff;
+  --color-tooltip: #f0f0f0;
+  --color-tooltip-foreground: #0d0d0d;
+  --color-tooltip-tag: #e6e6e6;
+  --color-tooltip-tag-foreground: #5c5c5c;
+  --color-tag: #e6e6e6;
+  --color-usage-chart-1: #0b7fff;
+  --color-usage-chart-2: #1e8a3e;
+  --color-usage-chart-3: #9e77ed;
+  --color-usage-chart-4: #e03131;
+  --color-usage-chart-5: #e07b00;
+  --color-usage-chart-6: #0aa7a7;
+  --color-find-highlight: #fff4eb;
+  --color-find-highlight-active: #ffb26b;
 }
 
 .dark {
-  --background: #17191c;
-  --foreground: #e8eaed;
-  --card: #1e2126;
-  --card-foreground: #e8eaed;
-  --muted: #24282e;
-  --muted-foreground: #9aa3ad;
-  --border: #33373d;
-  --input: #3d4249;
-  --primary: #e8eaed;
-  --primary-foreground: #17191c;
-  --accent: #2a2f36;
-  --accent-foreground: #e8eaed;
-  --destructive: #ef4444;
-  --warning: #f59e0b;
-  --warning-foreground: #17191c;
-  --ring: #565d66;
-  --cw-bg-main: #1e2126;
-  --cw-bg-nav: #17191c;
-  --cw-highlight: #2a2f36;
-  --cw-text-1: #e8eaed;
-  --cw-text-2: #9aa3ad;
-  --cw-dim: #6e7781;
-  --cw-dot: #3b82f6;
-  --cw-focus: #3b82f6;
-  --cw-err: #f87171;
+  --animated-gradient-text-strong: rgba(255, 255, 255, 1);
+  --animated-gradient-text-soft: rgba(255, 255, 255, 0.22);
+
+  /* ---- Zai dark 主题（ZCode styles.css .theme-zai-dark 段） ---- */
+  --color-background: #161616;
+  --color-background-win-alt: #2b2b2b;
+  --color-background-alt: #161616;
+  --color-brand: #ffffff;
+  --color-resize-handle: #4099ff;
+  --color-icon-blue: #4099ff;
+  --color-icon-purple: #7b5ce5;
+  --color-trajectory-user: #60a5fa;
+  --color-trajectory-assistant: #2dd4bf;
+  --color-trajectory-reasoning: #a78bfa;
+  --color-trajectory-tool-call: #f59e0b;
+  --color-trajectory-tool-result: #38bdf8;
+  --color-accent: #001d3d;
+  --color-border: rgba(255, 255, 255, 0.1);
+  --color-border-hover: rgba(255, 255, 255, 0.15);
+  --color-hover: rgba(255, 255, 255, 0.05);
+  --color-selected: rgba(255, 255, 255, 0.1);
+  --color-header: #202020;
+  --color-panel: #202020;
+  --color-sidebar: #161616;
+  --color-surface: rgba(255, 255, 255, 0.05);
+  --color-surface-hover: rgba(255, 255, 255, 0.1);
+  --color-markdown-inline-code: #363636;
+  --color-card: #2b2b2b;
+  --color-card-selected: var(--color-input);
+  --color-card-border: var(--color-border);
+  --color-popover: #2b2b2b;
+  --color-popover-foreground: var(--color-foreground);
+  --color-popover-header: #202020;
+  --color-popover-border: var(--color-border);
+  --color-input: #2b2b2b;
+  --color-input-focused: var(--color-input);
+  --color-input-border: var(--color-border);
+  --color-input-border-hover: var(--color-border-hover);
+  --color-input-border-focused: var(--color-border-hover);
+  --color-tab: #202020;
+  --color-tab-active: #161616;
+  --color-tab-border: var(--color-border);
+  --color-menu: #2b2b2b;
+  --color-menu-hover: #363636;
+  --color-primary: #ffffff;
+  --color-primary-foreground: #000000;
+  --color-secondary: #363636;
+  --color-interaction-ask-surface: #001d3d;
+  --color-interaction-ask-foreground: #80beff;
+  --color-interaction-ask-fill: rgba(70, 191, 114, 0.24);
+  --color-success-surface: rgba(70, 191, 114, 0.16);
+  --color-success-surface-foreground: #87d9a4;
+  --color-progress-surface: rgba(70, 130, 240, 0.16);
+  --color-progress-surface-foreground: var(--color-blue-300);
+  --color-foreground: var(--color-neutral-300);
+  --color-foreground-subtle: color-mix(in oklab, var(--color-neutral-300) 60%, transparent);
+  --color-foreground-subtlest: color-mix(in oklab, var(--color-neutral-300) 30%, transparent);
+  --lucide-subtlest-opacity: 0.3;
+  --color-foreground-inverse: #000000;
+  --color-success: #46bf72;
+  --color-success-foreground: #000000;
+  --color-idle-task: #7b5ce5;
+  --color-idle-task-surface: #160d38;
+  --color-destructive: #ff5c5c;
+  --color-destructive-foreground: #ffffff;
+  --color-warning: #ff8a30;
+  --color-warning-foreground: #000000;
+  --color-warning-surface: color-mix(in srgb, var(--color-warning) 16%, transparent);
+  --color-warning-surface-foreground: #ffa159;
+  --color-destructive-surface: color-mix(in srgb, var(--color-destructive) 16%, transparent);
+  --color-destructive-surface-foreground: #ff8585;
+  --color-diff-added: #46bf72;
+  --color-diff-added-foreground: #000000;
+  --color-diff-removed: #ff5c5c;
+  --color-diff-removed-foreground: #000000;
+  --color-git-none: var(--color-foreground);
+  --color-git-modified: #ff8a30;
+  --color-git-added: #46bf72;
+  --color-git-deleted: #ff5c5c;
+  --color-git-renamed: #4099ff;
+  --color-git-untracked: #46bf72;
+  --color-git-ignored: var(--color-foreground-subtlest);
+  --color-toast: #2b2b2b;
+  --color-tooltip: #2b2b2b;
+  --color-tooltip-foreground: #f8f8f8;
+  --color-tooltip-tag: #363636;
+  --color-tooltip-tag-foreground: #adadad;
+  --color-tag: #363636;
+  --color-usage-chart-1: #4099ff;
+  --color-usage-chart-2: #46bf72;
+  --color-usage-chart-3: #7b5ce5;
+  --color-usage-chart-4: #ff5c5c;
+  --color-usage-chart-5: #ff8a30;
+  --color-usage-chart-6: #42c8c8;
+  --color-find-highlight: #542500;
+  --color-find-highlight-active: #ff8a30;
 }
 
 /* ============================================================
- * 设置页布局（度量逐条照抄 CodeWave 设置页）
+ * 旧设计令牌兼容映射：设置页与存量组件继续消费 shadcn 风格变量名，
+ * 值统一桥接到上面的 Zai 主题 token，深浅色随 .dark 一并翻转。
+ * ============================================================ */
+:root,
+.dark {
+  --background: var(--color-background);
+  --foreground: var(--color-foreground);
+  --card: var(--color-card);
+  --card-foreground: var(--color-foreground);
+  --muted: var(--color-surface);
+  --muted-foreground: var(--color-foreground-subtle);
+  --border: var(--color-border);
+  --input: var(--color-input-border);
+  --primary: var(--color-primary);
+  --primary-foreground: var(--color-primary-foreground);
+  --accent: var(--color-hover);
+  --accent-foreground: var(--color-foreground);
+  --destructive: var(--color-destructive);
+  --warning: var(--color-warning);
+  --warning-foreground: var(--color-warning-foreground);
+  --ring: var(--color-icon-blue);
+  --cw-bg-main: var(--color-background);
+  --cw-bg-nav: var(--color-sidebar);
+  --cw-highlight: var(--color-hover);
+  --cw-text-1: var(--color-foreground);
+  --cw-text-2: var(--color-foreground-subtle);
+  --cw-dim: var(--color-foreground-subtlest);
+  --cw-dot: var(--color-icon-blue);
+  --cw-focus: var(--color-icon-blue);
+  --cw-err: var(--color-destructive);
+}
+
+/* ============================================================
+ * 全局基底（对照 ZCode styles.css 的 html/body/#root 与滚动条）
+ * ============================================================ */
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  background: var(--color-background);
+  color: var(--color-foreground);
+}
+
+/* 系统级 focus 高亮与组件 ring 叠用会出现双框，全局清零（ZCode styles.css:126；
+ * 不用 !important——仓库 lint 禁样式 important，UA 默认 outline 无 important 可直接覆盖） */
+*:focus,
+*:focus-visible {
+  outline: none;
+  box-shadow: none;
+  -webkit-box-shadow: none;
+}
+
+/* 全局原生滚动条：透明轨道 + 圆角 thumb，桌面/明暗统一（ZCode styles.css:847） */
+* {
+  scrollbar-width: auto;
+  scrollbar-color: var(--color-border) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 14px;
+  height: 14px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  min-height: 32px;
+  min-width: 32px;
+  border: 3px solid transparent;
+  border-radius: 9999px;
+  background: var(--color-border);
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ============================================================
+ * 动画与视觉词汇（对照 ZCode styles.css 的 utilities / keyframes）
+ * ============================================================ */
+
+@layer utilities {
+  /* 运行中动词的扫光文字：300% 宽渐变 4s 循环（ZCode styles.css:913） */
+  .animated-gradient-text {
+    display: inline-block;
+    background: linear-gradient(
+      90deg,
+      var(--animated-gradient-text-strong) 0%,
+      var(--animated-gradient-text-strong) 34%,
+      var(--animated-gradient-text-soft) 50%,
+      var(--animated-gradient-text-strong) 66%,
+      var(--animated-gradient-text-strong) 100%
+    );
+    background-size: 300% 100%;
+    background-clip: text;
+    -webkit-background-clip: text;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+    animation: gradient-flow 4s linear infinite;
+    will-change: background-position;
+    transform: translateZ(0);
+    backface-visibility: hidden;
+  }
+
+  .animated-gradient-text-subtle {
+    --animated-gradient-text-strong: var(--color-foreground-subtle);
+  }
+}
+
+@keyframes gradient-flow {
+  0% {
+    background-position: 100% 0;
+  }
+
+  50% {
+    background-position: 0% 0;
+  }
+
+  100% {
+    background-position: 0% 0;
+  }
+}
+
+/* 流式入场：新文本 900ms 淡入（ZCode zcode-stream-text-in） */
+@keyframes zcode-stream-text-in {
+  0% {
+    opacity: 0;
+  }
+
+  100% {
+    opacity: 1;
+  }
+}
+
+[data-zcode-stream-animate="true"],
+[data-zcode-tool-stream-animate="true"],
+[data-zcode-chat-loading-animate="true"] {
+  animation: zcode-stream-text-in 900ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  will-change: opacity;
+}
+
+/* 走马灯文字从两侧进出时只保留右侧渐隐，左边缘会出现硬切
+ * （ZCode styles.css:1419 同款：hover 时才提升合成层）。 */
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  .task-title-marquee:hover .task-title-marquee-track {
+    will-change: transform;
+  }
+}
+
+/* 工具行细进度条的 indeterminate 扫光（ZCode styles.css:997） */
+.tool-call-progress-indeterminate {
+  animation: tool-call-progress-indeterminate 1.2s ease-in-out infinite;
+}
+
+@keyframes tool-call-progress-indeterminate {
+  0% {
+    left: -33%;
+  }
+
+  100% {
+    left: 100%;
+  }
+}
+
+/* 消息行到场动画（ZCode wf-arrive：轻微上浮入场） */
+@keyframes cw-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+.cw-arrive {
+  animation: cw-arrive 200ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animated-gradient-text,
+  [data-zcode-stream-animate="true"],
+  [data-zcode-tool-stream-animate="true"],
+  [data-zcode-chat-loading-animate="true"],
+  .tool-call-progress-indeterminate,
+  .cw-arrive {
+    animation: none;
+  }
+
+  .tool-call-progress-indeterminate {
+    left: 0;
+    width: 100%;
+  }
+}
+
+/* ============================================================
+ * 设置页布局（度量逐条照抄 CodeWave 设置页，存量保留）
  *  - 左导航列：280px 基准（180..480 随窗收缩），组标题 11px dim、
  *    页行高 28px 圆角 6px，选中态只换高亮底色，脏圆点用强调色；
  *  - 右内容列：操作条（页标题 24px + 取消/保存靠右）+ 页体
@@ -623,7 +1015,7 @@
 }
 
 .settings-collection-row code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 13px;
   color: var(--cw-text-1);
   overflow-wrap: anywhere;
@@ -713,11 +1105,12 @@
 
 /* ============================================================
  * 流式 Markdown 排版（FR-01-03，Streamdown 渲染容器）
- *  Tailwind 的样式重置会把标题/列表等元素拍平成普通文本，
- *  这里按设计令牌补回 Markdown 常见元素的视觉层级。
+ *  行高与字色对齐 ZCode 正文口径（leading-[1.75]），
+ *  元素视觉层级沿用既定排版。
  * ============================================================ */
 .cw-md {
-  line-height: 1.65;
+  line-height: 1.75;
+  letter-spacing: 0.025em;
   overflow-wrap: break-word;
 }
 .cw-md > :first-child {
@@ -730,21 +1123,24 @@
 .cw-md h2,
 .cw-md h3,
 .cw-md h4 {
-  margin: 1em 0 0.4em;
+  margin: 1.5em 0 1em;
   font-weight: 600;
   line-height: 1.3;
 }
 .cw-md h1 {
-  font-size: 1.35em;
+  font-size: var(--text-ui-xl);
 }
 .cw-md h2 {
-  font-size: 1.2em;
+  font-size: var(--text-ui-lg);
 }
 .cw-md h3 {
-  font-size: 1.08em;
+  font-size: var(--text-ui-base);
 }
 .cw-md h4 {
-  font-size: 1em;
+  font-size: var(--text-ui-base);
+}
+.cw-md strong {
+  font-weight: 500;
 }
 .cw-md p {
   margin: 0.5em 0;
@@ -763,58 +1159,79 @@
 .cw-md li {
   margin: 0.2em 0;
 }
+.cw-md li::marker {
+  color: var(--color-foreground-subtlest);
+}
 .cw-md blockquote {
   margin: 0.6em 0;
   padding: 0.2em 0.9em;
-  border-left: 3px solid var(--border);
-  color: var(--muted-foreground);
+  border-left: 3px solid var(--color-border);
+  color: var(--color-foreground-subtle);
 }
 .cw-md a {
-  color: var(--foreground);
+  color: var(--color-icon-blue);
+  font-weight: 500;
+  text-decoration: none;
+  text-decoration-style: dotted;
+  text-underline-offset: 4px;
+}
+.cw-md a:hover {
   text-decoration: underline;
-  text-underline-offset: 2px;
 }
 .cw-md hr {
   margin: 1em 0;
   border: none;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--color-border);
 }
+/* 行内代码：tag 底 + 圆角 6px + 等宽小一号（ZCode message.tsx:1544 口径） */
 .cw-md code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.9em;
-  background: var(--muted);
-  border-radius: 4px;
-  padding: 0.1em 0.35em;
+  font-family: var(--font-mono);
+  font-size: var(--text-ui-sm);
+  background: color-mix(in oklab, var(--color-markdown-inline-code) 50%, transparent);
+  border-radius: 6px;
+  padding: 2px 6px;
+  margin-inline: 2px;
 }
 .cw-md pre {
-  margin: 0.6em 0;
+  margin: 1em 0;
   padding: 0.75em 0.9em;
+  border: 1px solid var(--color-border);
   border-radius: 8px;
-  background: var(--muted);
+  background: var(--color-card);
   overflow-x: auto;
-  font-size: 0.88em;
+  font-size: var(--text-ui-sm);
   line-height: 1.5;
 }
 /* 代码块内的 code 不再叠加行内码的底色与内边距 */
 .cw-md pre code {
   background: transparent;
   padding: 0;
+  margin-inline: 0;
   border-radius: 0;
   font-size: inherit;
 }
 .cw-md table {
-  margin: 0.6em 0;
-  border-collapse: collapse;
+  margin: 1em 0;
+  /* 圆角卡片化（ZCode markdown table 口径）：外壳一根边框 + 圆角，
+     内部分隔线由单元格承担 */
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  overflow: hidden;
   font-size: 0.92em;
 }
 .cw-md th,
 .cw-md td {
-  border: 1px solid var(--border);
-  padding: 0.3em 0.7em;
+  border-bottom: 1px solid var(--color-border);
+  padding: 0.45em 0.9em;
   text-align: left;
 }
+.cw-md tr:last-child td {
+  border-bottom: none;
+}
 .cw-md th {
-  background: var(--muted);
+  background: var(--color-surface);
   font-weight: 600;
 }
 .cw-md img {

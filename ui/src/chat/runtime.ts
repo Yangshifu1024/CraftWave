@@ -245,9 +245,17 @@ export function createTauriChatAdapter(deps: TauriAdapterDeps): ChatModelAdapter
         return Promise.reject(new Error(`非桥接命令：${cmd}`));
       });
       try {
+        // 重新生成的自愈：连续失败的 run 会在树上留下空 assistant 消息，
+        // 使 reload 的消息序列末条非 user（后端 wire 校验拒绝 → 死锁）。
+        // 从尾部裁掉非 user 消息，始终从最近的 user 重发；正常发送序列
+        // 末条本就是 user，此裁剪不生效。
+        const trimmed = [...messages];
+        while (trimmed.length > 0 && trimmed[trimmed.length - 1]?.role !== "user") {
+          trimmed.pop();
+        }
         const invokePromise = deps.startChat({
           sessionId: deps.sessionId,
-          messages: toWire(messages),
+          messages: toWire(trimmed),
           runConfig,
           onFrame: (frame: ChatFrame) => {
             if (import.meta.env.DEV && frame.type === "runEnded" && frame.reason === "error") {
@@ -268,11 +276,26 @@ export function createTauriChatAdapter(deps: TauriAdapterDeps): ChatModelAdapter
             deps.onFrame?.(frame);
           },
         });
-        // 命令面失败在 dev 模式打原始错误（UI 只显示通用错误；排障线索进
-        // webview console + tauri dev 终端，2026-10-28 优化项）
-        if (import.meta.env.DEV) {
-          invokePromise.catch((err) => console.error("[start_chat] 命令失败：", err));
-        }
+        // 命令面失败（wire 校验失败/会话缺失/IPC 异常等）：合成为错误终态帧
+        // 收口快照。否则快照生成器等不到 runEnded 永远不结束，UI 无限转圈、
+        // 审批等后续交互全部悬死——静默失败不可接受（2026-10-29 审批卡死定位）。
+        invokePromise.catch((err) => {
+          // Tauri 的命令失败 reject 的是普通 IpcError 对象（{code,message}），
+          // 不是 Error 实例——直接取 message 字段
+          const raw = (err as { message?: unknown }).message;
+          const message =
+            typeof raw === "string" ? raw : err instanceof Error ? err.message : String(err);
+          console.error("[start_chat] 命令失败（已合成错误终态）：", err);
+          buffer.push({
+            type: "runEnded",
+            reason: "error",
+            durationMs: 0,
+            toolCount: 0,
+            turn: 0,
+            seq: Number.MAX_SAFE_INTEGER,
+            error: { code: "E_START_CHAT", message },
+          });
+        });
         // 64ms 节流快照迭代：runEnded 快照 yield 后迭代自然收口（§10.2）
         for await (const snapshot of buffer.snapshots()) {
           if (signal.aborted && !snapshot.ended) {
@@ -281,12 +304,21 @@ export function createTauriChatAdapter(deps: TauriAdapterDeps): ChatModelAdapter
             break;
           }
           const content = toParts(snapshot);
+          const errorText = snapshot.ended?.error?.message;
           yield {
-            content: content.length > 0 ? content : [{ type: "text", text: "" }],
+            content: [
+              ...(content.length > 0 ? content : [{ type: "text" as const, text: "" }]),
+              // 命令面失败的错误原文直显（assistant-ui 的 message.error 通道
+              // 不承载 runEnded.error，渲染层用正文兜底）
+              ...(errorText !== undefined
+                ? [{ type: "text" as const, text: `运行失败：${errorText}` }]
+                : []),
+            ],
             ...(snapshot.ended ? { status: endStatus(snapshot.ended.reason) } : {}),
           };
         }
-        await invokePromise;
+        // 命令失败已在上面合成终态帧收口；此处 rejection 无需再处理
+        await invokePromise.catch(() => undefined);
       } finally {
         unbind();
       }

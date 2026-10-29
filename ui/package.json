@@ -14,6 +14,7 @@
     "@assistant-ui/react": "^0.15.31",
     "@tauri-apps/api": "^2.12.4",
     "assistant-stream": "^0.3.54",
+    "lucide-react": "^1.62.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "streamdown": "^2.7.1",

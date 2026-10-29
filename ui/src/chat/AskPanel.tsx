@@ -22,7 +22,7 @@ export function AskPanel() {
     <div
       data-testid="ask-panel"
       data-kind={current.payload.kind}
-      className="fixed inset-x-4 bottom-4 z-50 mx-auto max-w-xl rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 shadow-2xl"
+      className="fixed inset-x-4 bottom-4 z-50 mx-auto max-w-xl rounded-2xl border border-popover-border bg-popover p-4 shadow-xl"
     >
       {current.payload.kind === "question" ? (
         <QuestionForm askId={current.askId} payload={current.payload} />
@@ -31,6 +31,18 @@ export function AskPanel() {
       )}
     </div>
   );
+}
+
+/** 应答提交的共享错误面：resolveAsk 失败（槽失效/IPC 异常）时在卡片内
+ *  原位显示错误——点击无反馈会让审批永远卡死，静默失败不可接受。 */
+function useSubmitError(): [string | null, (err: unknown) => void, () => void] {
+  const [error, setError] = useState<string | null>(null);
+  const report = (err: unknown) => {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[ask] 应答提交失败", err);
+    setError(message || "应答提交失败");
+  };
+  return [error, report, () => setError(null)];
 }
 
 /** 问卷表单：逐题点选选项 / 填自由文本，全部作答后可提交（resolveAsk）。 */
@@ -42,20 +54,22 @@ function QuestionForm({
   payload: Extract<AskPayload, { kind: "question" }>;
 }) {
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [error, reportError, clearError] = useSubmitError();
   const complete = payload.questions.every(
     (q) => answers[q.id] !== undefined && answers[q.id] !== "",
   );
 
   const submit = () => {
-    void resolveAsk(askId, { kind: "question", answers });
+    clearError();
+    resolveAsk(askId, { kind: "question", answers }).catch(reportError);
   };
 
   return (
     <div className="space-y-3">
-      <h3 className="text-sm font-medium text-[var(--foreground)]">{payload.title}</h3>
+      <h3 className="text-sm font-medium text-foreground">{payload.title}</h3>
       {payload.questions.map((q) => (
         <div key={q.id} data-testid={`ask-question-${q.id}`} className="space-y-1">
-          <p className="text-xs text-[var(--foreground)]">{q.text}</p>
+          <p className="text-xs text-foreground">{q.text}</p>
           <div className="flex flex-wrap gap-1.5">
             {q.options?.map((opt) => (
               <button
@@ -88,10 +102,18 @@ function QuestionForm({
         type="button"
         disabled={!complete}
         onClick={submit}
-        className="rounded-full bg-[var(--primary)] px-4 py-1.5 text-xs text-[var(--primary-foreground)] disabled:opacity-40"
+        className="rounded-full bg-primary px-4 py-1.5 text-xs text-primary-foreground disabled:opacity-40"
       >
         提交回答
       </button>
+      {error !== null && (
+        <p
+          data-testid="ask-error"
+          className="rounded bg-destructive-surface px-2 py-1 text-xs text-destructive-surface-foreground"
+        >
+          应答提交失败：{error}（可重试）
+        </p>
+      )}
     </div>
   );
 }
@@ -104,14 +126,24 @@ function ApprovalForm({
   askId: string;
   payload: Extract<AskPayload, { kind: "approval" }>;
 }) {
+  const [error, reportError, clearError] = useSubmitError();
   const submit = (optionId: string) => {
-    void resolveAsk(askId, { kind: "approval", optionId });
+    clearError();
+    resolveAsk(askId, { kind: "approval", optionId }).catch(reportError);
   };
   return (
     <div className="space-y-3">
-      <h3 className="text-sm font-medium text-[var(--foreground)]">{payload.title}</h3>
+      <h3 className="text-sm font-medium text-foreground">{payload.title}</h3>
+      {error !== null && (
+        <p
+          data-testid="ask-error"
+          className="rounded bg-destructive-surface px-2 py-1 text-xs text-destructive-surface-foreground"
+        >
+          应答提交失败：{error}（可重试；若反复失败请停止该任务）
+        </p>
+      )}
       {payload.command && (
-        <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded bg-[var(--background)] px-2 py-1 font-mono text-xs text-[var(--foreground)]">
+        <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded bg-surface px-2 py-1 font-mono text-xs text-foreground">
           {payload.command}
         </pre>
       )}
