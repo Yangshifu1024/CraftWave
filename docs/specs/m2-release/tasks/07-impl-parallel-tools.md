@@ -1,7 +1,7 @@
 # 实现：并行工具执行与批次调度
 
 Type: task
-Status: open
+Status: resolved
 
 ## 要做什么
 
@@ -67,12 +67,33 @@ FR-03-11 + FR-04-04（§5.4/§8.3 调度规则字段级）：同批工具从"M1 
 
 ## 验收
 
-- [ ] ask 混批只执行 ask，其他调用明确返回未执行，无副作用、不申请其审批；回答后由模型重新决定。
-- [ ] 同批多个 ask 仅执行源序首个，其余明确未执行，独立问题可放单问卷，停止仍取消整个 run。
-- [ ] 同文件非重叠 edit 基于同一原内容合并原子提交，重叠或混入 write 时拒绝后续冲突调用。
-- [ ] 同批混合读写批次：读并行、写串行、冲突写被拒并回喂模型，批次语义正确。
-- [ ] 并发度配置生效（默认 4，改配置后峰值并发随之变化）。
-- [ ] 取消收齐：并发批中 cancel，runEnded(cancelled) 仍为收齐后最后一帧，既有 S5 e2e 全绿。
-- [ ] 审批挂起恢复零重复执行（14 号票批级预判语义在并发下不回归）。
-- [ ] 结果按源序回喂有测试钉住。
-- [ ] §3.2（并发度字段）、§5.4（ask 互斥语义、执行⑤修订）、§8.4（步骤 4/5 落地注记）回写完成。
+- [x] ask 混批只执行 ask，其他调用明确返回未执行，无副作用、不申请其审批；回答后由模型重新决定。
+  （e2e `ask_mixed_batch_executes_only_ask_others_reported_skipped`：confirm_each 档下 ask+command 混批，ask:opened 恰一次且 kind=question——被跳过的 command 不触发审批挂起；command 结果 E_TOOL_SKIPPED 回喂，第 2 轮请求携带跳过说明。）
+- [x] 同批多个 ask 仅执行源序首个，其余明确未执行，独立问题可放单问卷，停止仍取消整个 run。
+  （e2e `multiple_asks_execute_first_only_others_skipped`：ask:opened 恰一次，其余 ask 与 read 均 E_TOOL_SKIPPED；停止沿用既有 cancel_run 链路零新协议——取消路径未被本票改动，S5 与并发取消 e2e 全绿。）
+- [x] 同文件非重叠 edit 基于同一原内容合并原子提交，重叠或混入 write 时拒绝后续冲突调用。
+  （`edit_group_merges_non_overlapping_edits_one_commit` / `edit_group_rejects_overlapping_member_after_first` / `same_file_write_then_edit_rejects_edit` / `same_file_edit_then_write_rejects_write` / `same_file_two_writes_second_rejected` + e2e 混合批次实证。）
+- [x] 同批混合读写批次：读并行、写串行、冲突写被拒并回喂模型，批次语义正确。
+  （e2e `parallel_batch_mixed_read_write_source_order`：read 并发 + 同文件双 edit 合并提交 + 源序帧面与源序回喂；写互斥由调度层 `batch_file_write_tasks_globally_serialized_across_groups` 钉住。）
+- [x] 并发度配置生效（默认 4，改配置后峰值并发随之变化）。
+  （`batch_semaphore_caps_read_peak_at_max_parallel` 额度 4 → 峰值 4；`batch_peak_follows_configured_max_parallel` 额度 2 → 峰值 2；`tools_max_parallel_defaults_and_bounds` 钉住缺省 4 / 合法 1–16 / 越界拒绝；接线点 `start_chat_core` 装配执行器时读 `tools.maxParallel`。）
+- [x] 取消收齐：并发批中 cancel，runEnded(cancelled) 仍为收齐后最后一帧，既有 S5 e2e 全绿。
+  （e2e `parallel_batch_cancel_joins_both_commands_then_run_ended`：两命令在飞，cancel 后双进程组收割、结果收齐、runEnded(cancelled) <1s 且必为最后一帧；S5 既有断言保持绿。）
+- [x] 审批挂起恢复零重复执行（14 号票批级预判语义在并发下不回归）。
+  （`approval_confirm_each_suspend_allow_resumes_done` 保持绿：挂起时批内零执行、恢复按签名放行重放；策略门筛选与参数无关，恢复重放判定一致。）
+- [x] 结果按源序回喂有测试钉住。
+  （`batch_results_follow_source_order_not_completion_order`（慢的先完成仍按源序）+ e2e 混合批次帧面递增序与第 2 轮请求 tool 消息序断言。）
+- [x] §3.2（并发度字段）、§5.4（ask 互斥语义、执行⑤修订）、§8.4（步骤 4/5 落地注记）回写完成。
+  （v2.15：§3.2 增 `tools.maxParallel`（含 RIG tool_concurrency 澄清）；§5.4 ⑤ 改受控并发五步口径 + Q35/Q42 补齐 E_TOOL_SKIPPED 帧与恢复契约；§8.4 步骤 4/5 落地注记；§3.6 增 E_TOOL_SKIPPED 行。）
+
+## 决议记录（2026-10-30 实施定稿）
+
+- **未执行结果错误码 = `E_TOOL_SKIPPED`**（新增 §3.6 注册表行）：被跳过调用（ask 混批互斥 / 同文件写冲突）以工具级失败收口——`toolResult.ok=false + error.code=E_TOOL_SKIPPED`、模型通道回喂码+说明文本，run 不中断（与 Blocked 同型的帧内标记语义）。
+- **结果帧统一收集后按源序发出**：执行段从"逐个执行逐个发帧"改为"门控预判 → 批次并发执行 → 全部收齐后按源序发帧 + 按源序 `answer_all`"——完成顺序不改序（FR-03-11）；同时保证挂起零帧（Suspend 判定在发帧之前，恢复重放不产生重复结果帧）。
+- **策略门与门控预判的次序**：先按注册表能力（Interactive）筛选真正执行的调用（Q35/Q42：只留源序首个 ask），再对它们做既有门控预判——被跳过项不参与预判，不触发挂起、不申请审批（§5.4 回写同口径）。
+- **并发上限按 run 装配生效**：`ToolsetExecutor` 构造时读 `tools.maxParallel`（信号量 per-run，1–16 经 normalize 校验）；文件写互斥为进程级 `OnceLock` 全局 `tokio::sync::Mutex`（跨会话串行，`storage/locks.rs` 风格的 tools 域实现）；信号量与写锁由两类任务独占持有，无交叉等待死锁环。
+- **批次事务的降级规则**（§8.4 步骤 4 注记的落地细化）：同文件全 edit 组内任一成员匹配失败（NO_MATCH/AMBIGUOUS）→ 整组不合并，按源序逐个独立执行（后者基于前者修改后的文件，各出各的结果）；全员预演成功才做重叠检查（重叠者拒后续）与合并原子提交（备份 → start 降序应用 → EOL 还原 → 单次 tmp+fsync+rename → 失败恢复备份回滚整组）。
+- **批次执行契约落点**：`CancellableExecutor::execute_batch`（trait 带默认串行实现——测试假执行器零改动走 M1 语义；`ToolsetExecutor` 覆写为受控并发），调度核心 `run_batch_tasks`（JoinSet + 信号量 + 全局写互斥 + 取消停止派发/在飞 join/未派发补 `Cancelled{executed:false}`）独立成纯调度函数供单测直驱。
+- **rig part 序号语义实证**：桥接派生 callId 的序号 = 响应内 part 流水号（Text/Reasoning/ToolCall 共用自增计数，非 OpenAI wire 的 tool_calls.index 字段）——e2e 断言以"结果帧 callId 严格递增"验证源序，不假设固定基址。
+- **帧面无新增帧/事件**（票面预期成立）：toolStarted/toolArgs/toolResult 并发交错属帧序既有语义；前端 FrameBuffer 按 callId 独立状态机天然支持同批多卡（vitest 新增并发交错回归用例 2 例）。
+- **已知边界（记录不阻塞）**：同批 write+edit 混合组中源序首个 write 若已创建文件，被拒的 edit 不自动重试——由 E_INVALID_ARG 说明引导模型在本批完成后基于最新内容重新决定（Q32 定案口径，不做链式依赖执行）。

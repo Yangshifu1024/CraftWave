@@ -1560,6 +1560,9 @@ pub async fn start_chat_core(
             },
             run_config.tier,
         )
+        // 同批无冲突调用并发上限（§3.2 tools 组，07 号票）：按 run 装配时
+        // 读取配置生效（save_config 后下一次 start_chat 应用）。
+        .with_max_parallel(app.config.load()?.tools.max_parallel as usize)
         .with_env(ExecutorEnv {
             events: app.events.clone(),
             ask: handle.ask.clone(),

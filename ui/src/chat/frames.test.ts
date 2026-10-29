@@ -350,3 +350,83 @@ describe("compactDone 帧（04 号票，§3.4【M2】通知面）", () => {
     expect(empty.compaction).toBeNull();
   });
 });
+
+describe("并发工具批（07 号票）：交错帧不串卡", () => {
+  /** 并发批的帧序（Rust 侧受控并发的真实交错形态）：同批三个工具的
+   *  started/args 流式帧交错到达，结果帧按源序（B 先完成、A 最慢）。 */
+  function parallelBatchFrames(): SequencedFrame[] {
+    let seq = 0;
+    type DistributiveOmit<T, K extends keyof never> = T extends unknown ? Omit<T, K> : never;
+    type FrameArg = DistributiveOmit<SequencedFrame, "seq">;
+    const f = (frame: FrameArg): SequencedFrame => ({ seq: seq++, ...frame }) as SequencedFrame;
+    return [
+      f({ type: "runStarted", runId: "run-p", model: "gpt-4o-mock" }),
+      f({ type: "stepStarted", turn: 1 }),
+      f({ type: "textDelta", turn: 1, delta: "一次交代三件事。" }),
+      // 三个工具的 started 交错到达（A read / B grep / C read）
+      f({ type: "toolStarted", callId: "call_part_1_1", name: "read" }),
+      f({ type: "toolStarted", callId: "call_part_1_2", name: "grep" }),
+      f({ type: "toolStarted", callId: "call_part_1_3", name: "read" }),
+      // 参数增量交错
+      f({ type: "toolArgs", callId: "call_part_1_1", chunk: '{"path": "a.txt"}' }),
+      f({ type: "toolArgs", callId: "call_part_1_2", chunk: '{"pattern": "foo"' }),
+      f({ type: "toolArgs", callId: "call_part_1_3", chunk: '{"path": "b.txt"}' }),
+      f({ type: "toolArgs", callId: "call_part_1_2", chunk: ', "path": "src"}' }),
+      // 结果按源序（B 最快完成也不能插到 A 前——A 是源序第一）
+      f({ type: "toolResult", callId: "call_part_1_2", ok: true, uiSummary: "[grep] 3 处命中" }),
+      f({ type: "toolResult", callId: "call_part_1_3", ok: true, uiSummary: "[read] B 文件" }),
+      f({
+        type: "toolResult",
+        callId: "call_part_1_1",
+        ok: false,
+        uiSummary: "未执行：等待用户回答后重新决定",
+      }),
+      f({ type: "runEnded", reason: "done", durationMs: 420, toolCount: 3, turn: 1 }),
+    ];
+  }
+
+  it("同批多卡各自推进：结果与自己的 callId 配对，完成顺序不串卡", () => {
+    const buffer = new FrameBuffer();
+    for (const frame of parallelBatchFrames()) buffer.push(frame);
+    const snap = buffer.snapshot();
+
+    // 三张工具卡独立入列（toolStarted 位置即时间线位置，与到达序一致）
+    expect(snap.segments.filter((s) => s.kind === "tool").map((s) => s.callId)).toEqual([
+      "call_part_1_1",
+      "call_part_1_2",
+      "call_part_1_3",
+    ]);
+    const byId = new Map(snap.toolCalls.map((t) => [t.callId, t]));
+    expect(byId.size).toBe(3);
+    // 各卡参数只进自己的卡片：grep 的半截 JSON 不串到 read 卡上
+    expect(byId.get("call_part_1_1")!.argsJson).toBe('{"path": "a.txt"}');
+    expect(byId.get("call_part_1_2")!.argsJson).toBe('{"pattern": "foo", "path": "src"}');
+    expect(byId.get("call_part_1_3")!.argsJson).toBe('{"path": "b.txt"}');
+    // 各卡结果与自己的 callId 配对（B 先完成不影响 A/C 的状态归属）
+    expect(byId.get("call_part_1_1")!.result).toEqual({
+      ok: false,
+      uiSummary: "未执行：等待用户回答后重新决定",
+    });
+    expect(byId.get("call_part_1_2")!.result?.uiSummary).toBe("[grep] 3 处命中");
+    expect(byId.get("call_part_1_3")!.result?.uiSummary).toBe("[read] B 文件");
+    expect(snap.ended?.toolCount).toBe(3);
+  });
+
+  it("toParts：并发批的工具卡各自带自己的 args/result（isError 按 ok 归属）", () => {
+    const buffer = new FrameBuffer();
+    for (const frame of parallelBatchFrames()) buffer.push(frame);
+    const parts = toParts(buffer.snapshot());
+    const toolParts = parts.filter((p) => p.type === "tool-call");
+    expect(toolParts).toHaveLength(3);
+    const first = toolParts[0]!;
+    expect(first).toMatchObject({
+      type: "tool-call",
+      toolCallId: "call_part_1_1",
+      isError: true,
+    });
+    expect(first.argsText).toBe('{"path": "a.txt"}');
+    const grep = toolParts.find((p) => p.toolCallId === "call_part_1_2")!;
+    expect(grep).toMatchObject({ isError: false });
+    expect(grep.argsText).toBe('{"pattern": "foo", "path": "src"}');
+  });
+});

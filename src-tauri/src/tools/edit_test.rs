@@ -220,3 +220,149 @@ fn outside_roots_rejected() {
     assert!(!outcome.ok);
     assert_eq!(outcome.error.expect("e").code, "E_PATH_OUTSIDE_ROOTS");
 }
+
+// —— 07 号票：同批同文件多 edit 合并原子提交（apply_edit_group，§8.4 步骤 4/5）——
+
+use super::apply_edit_group;
+
+// 断言：非重叠多 edit 基于同一原内容预演，一次合并提交——两个 edit 都
+// 成功、共享同一最终 version，文件内容为两处替换叠加。
+#[test]
+fn group_merges_non_overlapping_edits_one_commit() {
+    let ws = TestWorkspace::new();
+    write_file(&ws, "g.txt", "alpha\nbeta\ngamma\n");
+    let outcomes = apply_edit_group(
+        &ws.ctx(),
+        "g.txt",
+        &[
+            args("g.txt", "alpha", "ALPHA"),
+            args("g.txt", "gamma", "GAMMA"),
+        ],
+        crate::tools::write::atomic_write_utf8,
+    );
+    assert_eq!(outcomes.len(), 2);
+    assert!(outcomes[0].ok, "{:?}", outcomes[0]);
+    assert!(outcomes[1].ok, "{:?}", outcomes[1]);
+    // 两个成员共享同一最终 version（一次落盘）。
+    assert_eq!(
+        outcomes[0].data.as_ref().unwrap()["version"],
+        outcomes[1].data.as_ref().unwrap()["version"]
+    );
+    assert_eq!(
+        std::fs::read_to_string(ws.project_file("g.txt")).unwrap(),
+        "ALPHA\nbeta\nGAMMA\n"
+    );
+}
+
+// 断言：区间重叠的后续成员被拒（E_INVALID_ARG），源序首个保留——
+// 文件只体现首个 edit 的修改。
+#[test]
+fn group_rejects_overlapping_member_after_first() {
+    let ws = TestWorkspace::new();
+    write_file(&ws, "g.txt", "one\ntwo\nthree\n");
+    let outcomes = apply_edit_group(
+        &ws.ctx(),
+        "g.txt",
+        &[
+            args("g.txt", "one\ntwo", "X"),
+            args("g.txt", "two\nthree", "Y"),
+        ],
+        crate::tools::write::atomic_write_utf8,
+    );
+    assert!(outcomes[0].ok, "首个成员保留：{:?}", outcomes[0]);
+    assert!(!outcomes[1].ok, "重叠成员被拒");
+    assert_eq!(outcomes[1].error.as_ref().unwrap().code, "E_INVALID_ARG");
+    assert_eq!(
+        std::fs::read_to_string(ws.project_file("g.txt")).unwrap(),
+        "X\nthree\n"
+    );
+}
+
+// 断言：批次事务回滚——落盘闭包失败 → 整组回滚（文件保持原内容），
+// 全部接受成员以失败收口（§8.4 步骤 5"任一失败回滚整组"）。
+#[test]
+fn group_commit_failure_rolls_back_whole_group() {
+    let ws = TestWorkspace::new();
+    write_file(&ws, "g.txt", "keep\n");
+    let outcomes = apply_edit_group(
+        &ws.ctx(),
+        "g.txt",
+        &[
+            args("g.txt", "keep", "changed1"),
+            args("g.txt", "keep", "changed2"),
+        ],
+        |_target, _bytes| {
+            Err(crate::util::errors::ToolError::new(
+                "E_IO",
+                "注入的落盘失败",
+            ))
+        },
+    );
+    assert_eq!(outcomes.len(), 2);
+    for outcome in &outcomes {
+        assert!(!outcome.ok, "落盘失败全组失败：{outcome:?}");
+    }
+    assert_eq!(
+        std::fs::read_to_string(ws.project_file("g.txt")).unwrap(),
+        "keep\n",
+        "回滚后文件保持原样"
+    );
+    // 备份文件已清理（同目录无 .cw-bak-* 残留）。
+    let leftovers: Vec<_> = std::fs::read_dir(ws.project_file("."))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with(".cw-bak-"))
+        .collect();
+    assert!(leftovers.is_empty(), "备份文件应清理：{leftovers:?}");
+}
+
+// 断言：任一成员匹配失败 → 整组降级为源序逐个独立执行（各出各的结果，
+// 第二个成员基于第一个修改后的文件匹配）。
+#[test]
+fn group_demotes_to_independent_runs_when_member_fails_to_match() {
+    let ws = TestWorkspace::new();
+    write_file(&ws, "g.txt", "head\nmid\ntail\n");
+    let outcomes = apply_edit_group(
+        &ws.ctx(),
+        "g.txt",
+        &[
+            args("g.txt", "mid", "MID"),
+            args("g.txt", "不存在的原文", "whatever"),
+        ],
+        crate::tools::write::atomic_write_utf8,
+    );
+    assert_eq!(outcomes.len(), 2);
+    assert!(outcomes[0].ok, "第一个成员独立执行成功：{:?}", outcomes[0]);
+    assert!(!outcomes[1].ok, "匹配失败成员回喂错误");
+    assert_eq!(outcomes[1].error.as_ref().unwrap().code, "E_EDIT_NO_MATCH");
+    assert_eq!(
+        std::fs::read_to_string(ws.project_file("g.txt")).unwrap(),
+        "head\nMID\ntail\n"
+    );
+}
+
+// 断言：合并组各成员的 lineChanges 各自统计（对位正确）。
+#[test]
+fn group_line_changes_are_per_member() {
+    let ws = TestWorkspace::new();
+    write_file(&ws, "g.txt", "a\nb\nc\n");
+    let outcomes = apply_edit_group(
+        &ws.ctx(),
+        "g.txt",
+        &[args("g.txt", "a\nb", "x\ny\nz"), args("g.txt", "c", "d")],
+        crate::tools::write::atomic_write_utf8,
+    );
+    assert!(outcomes[0].ok && outcomes[1].ok, "{outcomes:?}");
+    assert_eq!(
+        outcomes[0].data.as_ref().unwrap()["lineChanges"],
+        json!({ "add": 3, "del": 2 })
+    );
+    assert_eq!(
+        outcomes[1].data.as_ref().unwrap()["lineChanges"],
+        json!({ "add": 1, "del": 1 })
+    );
+    assert_eq!(
+        std::fs::read_to_string(ws.project_file("g.txt")).unwrap(),
+        "x\ny\nz\nd\n"
+    );
+}

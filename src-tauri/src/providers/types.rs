@@ -308,6 +308,38 @@ impl Default for CompactionConfig {
     }
 }
 
+/// 同批工具并发上限的缺省值（§3.2 tools 组注记，FR-03-11）。
+pub const DEFAULT_MAX_PARALLEL: u32 = 4;
+/// maxParallel 合法区间上限（§3.2 tools 组注记：1–16）。
+pub const MAX_PARALLEL_LIMIT: u32 = 16;
+
+/// 工具批执行配置（§3.2 tools 组，FR-03-11/FR-04-04，07 号票实装）。
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolsConfig {
+    /// 同批工具并发上限：批内无冲突调用（ReadOnly/Meta/Network）共享的信号量
+    /// 额度，缺省 4，合法区间 1–16；文件写不走此额度（进程级全局互斥队列
+    /// 串行，§5.4 ⑤）；按 run 装配执行器时读取生效（save_config 后下一次
+    /// start_chat 应用）。
+    #[serde(default = "default_max_parallel")]
+    pub max_parallel: u32,
+}
+
+/// serde 缺省值函数：同批工具并发上限缺省 4（§3.2）。
+fn default_max_parallel() -> u32 {
+    DEFAULT_MAX_PARALLEL
+}
+
+// ToolsConfig 的缺省值：并发上限 4（§3.2）。
+impl Default for ToolsConfig {
+    fn default() -> Self {
+        Self {
+            max_parallel: DEFAULT_MAX_PARALLEL,
+        }
+    }
+}
+
 /// 应用总配置，即 `~/.craftwave/config.json` 的载入/落盘结构：
 /// 一个 JSON 文件承载全部设置（供应商、激活模型、代理、审批、界面、日志、通知）。
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -347,6 +379,9 @@ pub struct AppConfig {
     /// 上下文压缩（FR-03-05，04 号票；缺省值经 Default：0.6 阈值 / 180s 超时）。
     #[serde(default)]
     pub compaction: CompactionConfig,
+    /// 工具批执行（FR-03-11/FR-04-04，07 号票；缺省值经 Default：并发上限 4）。
+    #[serde(default)]
+    pub tools: ToolsConfig,
 }
 
 /// serde 缺省值函数：schemaVersion 字段缺省时取当前版本号 2。
@@ -409,6 +444,7 @@ impl Default for AppConfig {
             notifications: NotificationConfig::default(),
             agent: None,
             compaction: CompactionConfig::default(),
+            tools: ToolsConfig::default(),
         }
     }
 }
@@ -442,6 +478,14 @@ impl AppConfig {
             return Err(IpcError::invalid_arg(
                 "compaction.timeoutSecs 不能低于 30 秒",
             ));
+        }
+        // tools.maxParallel：正整数且不超过 16（§3.2 tools 组注记——并发度过高
+        // 会放大命令/网络类工具的资源占用，超限视为配置错误拒绝整份提交）。
+        if self.tools.max_parallel == 0 || self.tools.max_parallel > MAX_PARALLEL_LIMIT {
+            return Err(IpcError::invalid_arg(format!(
+                "tools.maxParallel 必须在 1–{MAX_PARALLEL_LIMIT} 内（实际 {}）",
+                self.tools.max_parallel
+            )));
         }
         self.compaction.model_id = self
             .compaction

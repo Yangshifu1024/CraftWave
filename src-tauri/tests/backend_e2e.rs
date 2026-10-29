@@ -13,7 +13,10 @@
 //! 6. 审批门接线（14 号票）：confirm_each 挂起 → ask:opened → resolve(allow)
 //!    → 恢复 Done；resolve(deny) → 拒绝终态；围栏黑名单 Block 回喂不中断；
 //! 7. plan/ask/suggest（14 号票）：plan:update 事件 + approve_plan、
-//!    ask 问卷 resolve 回喂、suggest 后台小调用 run:suggestions + tokens:update。
+//!    ask 问卷 resolve 回喂、suggest 后台小调用 run:suggestions + tokens:update；
+//! 8. 并行工具批（07 号票）：ask 混批互斥（Q35 只执行 ask、被跳过项不申请
+//!    审批）与多 ask 源序首个（Q42）、混合读写批次源序回喂与同文件 edit
+//!    合并提交、并发取消收齐（在飞 join 后才 runEnded）。
 
 mod common;
 
@@ -756,6 +759,54 @@ async fn e2e_approval_suspend_serialize_resume_done() {
 }
 
 // —— 5. start_chat_core 命令面 ——
+
+/// 多工具批的 turn1 脚本：正文 + 按序多个工具调用（07 号票并行批驱动面）。
+fn multi_tool_turn1(calls: &[(&str, &str, &str)]) -> Vec<(&'static str, String)> {
+    let mut script: Vec<(&'static str, String)> = vec![content_delta("一次交代多件事。")];
+    for (i, (id, name, args)) in calls.iter().enumerate() {
+        script.push(tool_open(i, id, name));
+        script.push(tool_args_delta(i, args));
+    }
+    script.push(finish_chunk("tool_calls"));
+    script.push(usage_event());
+    script.push(done_marker());
+    script
+}
+
+/// 批内 ToolResult 帧面序列（callId/ok/error.code 三元组，源序断言用）。
+fn tool_result_faces(frames: &[TimedFrame]) -> Vec<(String, bool, Option<String>)> {
+    frames
+        .iter()
+        .filter_map(|t| match &t.frame.frame {
+            ChatFrame::ToolResult {
+                call_id, ok, error, ..
+            } => Some((
+                call_id.clone(),
+                *ok,
+                error.as_ref().map(|e| e.code.to_owned()),
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+/// 以临时目录为根构造真实文件工具执行器（07 号票机制层批次测试用）。
+fn file_tool_executor() -> (
+    craftwave_lib::backend::exec::ToolsetExecutor,
+    std::path::PathBuf,
+) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path().to_path_buf();
+    std::mem::forget(dir); // 测试进程生命周期内持有
+    let ctx = craftwave_lib::tools::ToolsContext::new(root.clone(), root.clone());
+    (
+        craftwave_lib::backend::exec::ToolsetExecutor::new(
+            ctx,
+            craftwave_lib::safety::tier::PermissionTier::FullAccess,
+        ),
+        root,
+    )
+}
 
 mod command_face {
     use super::*;
@@ -2494,4 +2545,322 @@ mod command_face {
         assert_eq!(err.code, "E_NOT_FOUND");
         assert_eq!(app.followups.snapshot("sess-rm").size, 1);
     }
+
+    // —— 07 号票：ask 混批互斥（Q35/Q42，命令面）——
+
+    const ASK_ARGS: &str = r#"{"title":"选方案","questions":[{"id":"q1","text":"用哪个方案？","options":[{"id":"a","label":"方案A"},{"id":"b","label":"方案B"}],"allowFreeText":false}]}"#;
+
+    /// Q35：ask 与其他工具同批——只执行 ask，其余调用明确返回未执行
+    /// （E_TOOL_SKIPPED）；confirm_each 档下被跳过的命令**不申请审批**
+    /// （ask:opened 恰一次且 kind=question）；回答后由模型重新决定。
+    #[tokio::test]
+    async fn ask_mixed_batch_executes_only_ask_others_reported_skipped() {
+        let mock = MockOpenAI::start_with_turn1(multi_tool_turn1(&[
+            ("call_1", "ask", ASK_ARGS),
+            (
+                "call_2",
+                TOOL_COMMAND,
+                r#"{"command":"echo should-not-run"}"#,
+            ),
+        ]))
+        .await;
+        let (app, events) = app_fixture_with_events(&mock);
+        let runs = RunManager::new();
+        let sink = SharedSink::default();
+
+        craftwave_lib::host::commands::chat::start_chat_core(
+            &app,
+            &runs,
+            "sess-askmix".to_owned(),
+            vec![user_entry("问用户的同时跑个命令")],
+            run_config_tier(craftwave_lib::safety::tier::PermissionTier::ConfirmEach),
+            Box::new(sink.clone()),
+            false,
+        )
+        .await
+        .unwrap();
+
+        // 只弹问卷（command 不申请审批）：ask:opened 恰一次且 kind=question
+        let opened = wait_event(&events, "ask:opened", Duration::from_secs(5)).await;
+        assert_eq!(opened["payload"]["kind"], "question");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(
+            events.payloads_of("ask:opened").len(),
+            1,
+            "被跳过的 command 不申请审批（无 approval 弹窗）"
+        );
+
+        let ask_id = opened["askId"].as_str().unwrap().to_owned();
+        let mut answers = std::collections::BTreeMap::new();
+        answers.insert("q1".to_owned(), "b".to_owned());
+        craftwave_lib::host::commands::chat::resolve_ask_core(
+            &runs,
+            &ask_id,
+            AskAnswer::Question { answers },
+        )
+        .await
+        .unwrap();
+
+        let ended = wait_ended(&sink, Duration::from_secs(10)).await;
+        assert!(matches!(
+            ended,
+            ChatFrame::RunEnded {
+                reason: EndReason::Done,
+                ..
+            }
+        ));
+        // 源序结果：ask 成功 + command 明确未执行（E_TOOL_SKIPPED）
+        let faces = tool_result_faces(&sink.frames());
+        assert_eq!(faces.len(), 2, "调用/结果配对完整");
+        assert_eq!(
+            faces[0].0, "call_part_1_1",
+            "源序首个 = ask（part 1：开头正文占 part 0）"
+        );
+        assert!(faces[0].1, "ask 正常执行并拿到回答");
+        assert_eq!(faces[1].0, "call_part_1_2", "源序第二 = command");
+        assert!(!faces[1].1, "command 未执行");
+        assert_eq!(
+            faces[1].2.as_deref(),
+            Some("E_TOOL_SKIPPED"),
+            "未执行结果带 E_TOOL_SKIPPED"
+        );
+        // 回喂面：第 2 轮请求两条 tool 消息，第 2 条含跳过说明（模型重新决定）
+        let bodies = mock.request_bodies().await;
+        let tools: Vec<&serde_json::Value> = bodies[1]["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|m| m["role"] == "tool")
+            .collect();
+        assert_eq!(tools.len(), 2);
+        assert!(
+            tools[1].to_string().contains("E_TOOL_SKIPPED"),
+            "模型通道含未执行说明：{}",
+            tools[1]
+        );
+    }
+
+    /// Q42：同批多个 ask——只执行源序首个，其余 ask 与其他工具都明确返回
+    /// 未执行；不弹出第二个问卷（不占审批槽）。
+    #[tokio::test]
+    async fn multiple_asks_execute_first_only_others_skipped() {
+        let mock = MockOpenAI::start_with_turn1(multi_tool_turn1(&[
+            ("call_1", "ask", ASK_ARGS),
+            ("call_2", "ask", ASK_ARGS),
+            ("call_3", TOOL_READ, r#"{"path": "whatever.txt"}"#),
+        ]))
+        .await;
+        let (app, events) = app_fixture_with_events(&mock);
+        let runs = RunManager::new();
+        let sink = SharedSink::default();
+
+        craftwave_lib::host::commands::chat::start_chat_core(
+            &app,
+            &runs,
+            "sess-askask".to_owned(),
+            vec![user_entry("两个问题一起问")],
+            run_config(),
+            Box::new(sink.clone()),
+            false,
+        )
+        .await
+        .unwrap();
+
+        let opened = wait_event(&events, "ask:opened", Duration::from_secs(5)).await;
+        let ask_id = opened["askId"].as_str().unwrap().to_owned();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(
+            events.payloads_of("ask:opened").len(),
+            1,
+            "同批只执行源序首个 ask（不弹第二个问卷）"
+        );
+
+        let mut answers = std::collections::BTreeMap::new();
+        answers.insert("q1".to_owned(), "a".to_owned());
+        craftwave_lib::host::commands::chat::resolve_ask_core(
+            &runs,
+            &ask_id,
+            AskAnswer::Question { answers },
+        )
+        .await
+        .unwrap();
+
+        let ended = wait_ended(&sink, Duration::from_secs(10)).await;
+        assert!(matches!(
+            ended,
+            ChatFrame::RunEnded {
+                reason: EndReason::Done,
+                ..
+            }
+        ));
+        let faces = tool_result_faces(&sink.frames());
+        assert_eq!(faces.len(), 3, "三个调用结果配对完整（源序）");
+        assert!(faces[0].1, "首个 ask 正常执行");
+        assert!(
+            !faces[1].1 && faces[1].2.as_deref() == Some("E_TOOL_SKIPPED"),
+            "第二个 ask 未执行"
+        );
+        assert!(
+            !faces[2].1 && faces[2].2.as_deref() == Some("E_TOOL_SKIPPED"),
+            "read 未执行"
+        );
+    }
+}
+
+// —— 8. 并行工具批（07 号票，机制层）：混合读写源序 + 并发取消收齐 ——
+
+/// 混合读写批次：不同文件的读并发、同文件双 edit 合并提交、结果按源序
+/// 回喂（toolResult 帧序与第 2 轮请求的 tool 消息序 = 模型调用源序）。
+#[tokio::test]
+async fn parallel_batch_mixed_read_write_source_order() {
+    let (executor, root) = file_tool_executor();
+    std::fs::write(root.join("a.txt"), "alpha").unwrap();
+    std::fs::write(root.join("b.txt"), "beta").unwrap();
+    std::fs::write(root.join("c.txt"), "x1\nx2\nx3\n").unwrap();
+    let mock = MockOpenAI::start_with_turn1(multi_tool_turn1(&[
+        ("call_1", TOOL_READ, r#"{"path": "a.txt"}"#),
+        (
+            "call_2",
+            "edit",
+            r#"{"path": "c.txt", "oldText": "x1", "newText": "y1"}"#,
+        ),
+        ("call_3", TOOL_READ, r#"{"path": "b.txt"}"#),
+        (
+            "call_4",
+            "edit",
+            r#"{"path": "c.txt", "oldText": "x3", "newText": "y3"}"#,
+        ),
+    ]))
+    .await;
+    let driver = TurnDriver::new(
+        mock_model(&mock),
+        RunSpec::new(),
+        vec![tool_def(TOOL_READ), tool_def("edit")],
+    );
+    let sink = SharedSink::default();
+    let mut sink_handle = sink.clone();
+    let exit = drive_run(
+        &driver,
+        new_run("混合批次"),
+        "run-parallel",
+        "gpt-4o-mock",
+        CancellationToken::new(),
+        Arc::new(executor),
+        Arc::new(AllowAllGate),
+        &mut sink_handle,
+        None,
+        None,
+    )
+    .await
+    .expect("跑完");
+    assert!(matches!(exit, RunExit::Done(_)), "正常终态：{exit:?}");
+
+    // 源序结果帧 ×4，全部成功（同文件双 edit 合并原子提交）。
+    let faces = tool_result_faces(&sink.frames());
+    assert_eq!(faces.len(), 4);
+    // part 序号从 1 起（脚本开头的正文占 part 0）：四个结果帧 callId 严格
+    // 递增 = 源序（完成顺序不改序）。
+    let ids: Vec<u32> = faces
+        .iter()
+        .map(|(call_id, _, _)| {
+            call_id
+                .strip_prefix("call_part_1_")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or_else(|| panic!("callId 形如 call_part_1_N：{call_id}"))
+        })
+        .collect();
+    let mut sorted = ids.clone();
+    sorted.sort_unstable();
+    assert_eq!(ids, sorted, "toolResult 帧面按源序（完成顺序不改序）");
+    for (i, (_, ok, code)) in faces.iter().enumerate() {
+        assert!(ok, "成员 {i} 成功（{code:?}）");
+    }
+    assert_eq!(
+        std::fs::read_to_string(root.join("c.txt")).unwrap(),
+        "y1\nx2\ny3\n",
+        "同文件双 edit 合并提交生效"
+    );
+    // 回喂面序 = 源序：第 2 轮请求第 1 条 tool 消息是 read a 的结果。
+    let bodies = mock.request_bodies().await;
+    let tools: Vec<String> = bodies[1]["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["role"] == "tool")
+        .map(|m| m.to_string())
+        .collect();
+    assert_eq!(tools.len(), 4);
+    assert!(tools[0].contains("alpha"), "第 1 条 = read a.txt 的结果");
+    assert!(tools[2].contains("beta"), "第 3 条 = read b.txt 的结果");
+}
+
+/// 并发取消收齐：批内两个长命令同时派发，cancel 后两进程组收割、结果
+/// 收齐，runEnded(cancelled) 必为最后一帧（S5 不变量的并发版）。
+#[tokio::test]
+async fn parallel_batch_cancel_joins_both_commands_then_run_ended() {
+    let (executor, _root) = file_tool_executor();
+    let mock = MockOpenAI::start_with_turn1(multi_tool_turn1(&[
+        ("call_1", TOOL_COMMAND, r#"{"command": "sleep 900"}"#),
+        ("call_2", TOOL_COMMAND, r#"{"command": "sleep 900"}"#),
+    ]))
+    .await;
+    let driver = TurnDriver::new(
+        mock_model(&mock),
+        RunSpec::new(),
+        vec![tool_def(TOOL_COMMAND)],
+    );
+    let sink = SharedSink::default();
+    let sink_for_run = sink.clone();
+    let token = CancellationToken::new();
+    let token_for_run = token.clone();
+    let task = tokio::spawn(async move {
+        let mut sink_handle = sink_for_run;
+        drive_run(
+            &driver,
+            new_run("两个长命令"),
+            "run-parallel-cancel",
+            "gpt-4o-mock",
+            token_for_run,
+            Arc::new(executor),
+            Arc::new(AllowAllGate),
+            &mut sink_handle,
+            None,
+            None,
+        )
+        .await
+    });
+
+    // 等流式收口（usage 帧 = 模型流结束、工具批已在执行）后取消——两个
+    // 命令都在飞；过早取消会走"模型流取消"路径（S5 另测）而非本票的
+    // "并发批取消收齐"路径。
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while sink.count_kind(|f| matches!(f, ChatFrame::Usage { .. })) < 1 {
+        assert!(Instant::now() < deadline, "等待模型流收口超时");
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+    let t_cancel = Instant::now();
+    token.cancel();
+
+    let exit = task.await.expect("run 任务完成").expect("无 PromptError");
+    assert!(matches!(exit, RunExit::Cancelled));
+    let frames = sink.frames();
+    let results = tool_result_faces(&frames);
+    assert_eq!(results.len(), 2, "两个命令都收齐（在飞 join）");
+    for (call_id, ok, code) in &results {
+        assert!(!ok, "{call_id} 被收割");
+        assert_eq!(code.as_deref(), Some("E_CANCELLED"));
+    }
+    let last = frames.last().expect("有帧");
+    let ChatFrame::RunEnded { reason, .. } = &last.frame.frame else {
+        panic!("末帧 runEnded");
+    };
+    assert_eq!(
+        *reason,
+        EndReason::Cancelled,
+        "runEnded(cancelled) 必为最后一帧"
+    );
+    assert!(
+        last.at.duration_since(t_cancel) < FULL_CHAIN_BUDGET,
+        "收齐全链 <1s"
+    );
 }

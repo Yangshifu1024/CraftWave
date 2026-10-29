@@ -1,5 +1,5 @@
 //! run 主循环（技术设计文档 §5.2）+ 工具批的审批挂起机制 + 取消传播的
-//! 收齐语义（§5.3）。
+//! 收齐语义（§5.3）+ 受控并发批次调度（§5.4 ⑤，07 号票）。
 //!
 //! 名词解释：run = 一次模型任务的完整执行；主循环（RunLoop）= 驱动这个
 //! 过程的循环——反复"调模型 → 执行工具批 → 再调模型"，直到模型给出最终
@@ -11,6 +11,12 @@
 //! - 工具批的门控预判（§5.4 ①–④）：先对整批调用做完审批判定再执行——
 //!   首个需挂起项即挂起（**挂起时批内零执行**；恢复后主循环原样重放
 //!   全部调用，因此不存在重复副作用）；硬拦项回喂错误结果帧（不中断 run）；
+//! - **策略门（Q35/Q42，07 号票）**：批内含 ask（Interactive 能力）时只
+//!   执行源序首个 ask，其余调用（含其余 ask）明确回喂"未执行"
+//!   （E_TOOL_SKIPPED）——先筛选再门控预判，被跳过项不申请审批；
+//! - **受控并发执行（§5.4 ⑤，07 号票）**：批内 Allow 项交执行器的批次
+//!   契约（[`CancellableExecutor::execute_batch`]，生产实现 = FileWrite
+//!   全局互斥串行 + 其余信号量并发），结果按源序收集后统一发帧回喂；
 //! - [`DriveState`]：跨挂起/恢复延续的驱动状态（计时、用量累计、工具
 //!   计数与调用 id 映射——恢复后不重发 runStarted、用量不回退、
 //!   toolResult 与挂起前的 toolStarted/toolArgs 帧同源）。
@@ -38,6 +44,10 @@ use super::turn::{StreamExit, TurnDriver, usage_total};
 /// 错误码注册表中的取消错误）。
 pub const E_CANCELLED: &str = "E_CANCELLED";
 
+/// ask 混批（Q35/Q42）与同批写冲突（Q32）中被跳过调用的错误码（§3.6，
+/// 07 号票）：工具级失败回喂"未执行"，模型据说明重新决定或纠正。
+const E_TOOL_SKIPPED: &str = "E_TOOL_SKIPPED";
+
 /// 工具执行产物：帧面（给界面）与模型回喂面（给模型）的双通道裁剪
 /// （§8.2 双通道在主循环侧的形状）。
 #[derive(Debug, Clone, PartialEq)]
@@ -56,7 +66,19 @@ pub enum ToolExecution {
     },
     /// 取消终止：`executed=false` 为批内尚未执行（补标记不留悬空调用）；
     /// `executed=true` 为执行中途被收割（§5.3：已产生副作用的文件写不回滚）。
+    /// 并发批（07 号票）中两态分别对应"未派发"与"在飞被收割"。
     Cancelled { executed: bool, message: String },
+}
+
+/// 一批待执行调用中的单项（源序；07 号票批次执行契约的输入单元）。
+#[derive(Debug, Clone)]
+pub struct BatchCall {
+    /// 模型侧调用 id。
+    pub call_id: String,
+    /// 工具名。
+    pub name: String,
+    /// 工具参数（JSON 文本）。
+    pub args_json: String,
 }
 
 /// 取消可感知的工具执行器契约（§5.4 门控与执行在 backend 侧的接口；
@@ -71,6 +93,40 @@ pub trait CancellableExecutor: Send + Sync {
         args_json: &'a str,
         token: &'a CancellationToken,
     ) -> Pin<Box<dyn Future<Output = ToolExecution> + Send + 'a>>;
+
+    /// 执行一批工具调用（§5.4 ⑤，07 号票批次契约）：返回结果与 `batch`
+    /// 按**源序**一一对应（完成顺序不改序——并发实现 JoinSet 收集后按下标
+    /// 重排）。取消收齐语义（§5.3 并发版）由实现保证：cancel 置位 → 停止
+    /// 派发未开始任务 → join 全部在飞任务，未派发项以
+    /// `Cancelled { executed: false }` 收口。
+    ///
+    /// 默认实现 = 逐个串行（M1 语义）：测试假执行器与未覆写实现沿用，
+    /// 生产 [`super::exec::ToolsetExecutor`] 覆写为受控并发 + 同批写冲突
+    /// 检测 + FileWrite 全局互斥。
+    fn execute_batch<'a>(
+        &'a self,
+        batch: &'a [BatchCall],
+        token: &'a CancellationToken,
+    ) -> Pin<Box<dyn Future<Output = Vec<ToolExecution>> + Send + 'a>> {
+        Box::pin(async move {
+            let mut results = Vec::with_capacity(batch.len());
+            for call in batch {
+                if token.is_cancelled() {
+                    // 串行路径的取消收齐：余项补未执行标记
+                    results.push(ToolExecution::Cancelled {
+                        executed: false,
+                        message: "取消：工具未执行".to_owned(),
+                    });
+                    continue;
+                }
+                results.push(
+                    self.execute(&call.call_id, &call.name, &call.args_json, token)
+                        .await,
+                );
+            }
+            results
+        })
+    }
 }
 
 /// 工具门控判定接口（§5.4 步骤①–④）。`Allow` 直接执行；`Suspend` 表示需
@@ -197,12 +253,15 @@ pub trait SteerSource: Send + Sync {
 /// - **steer 消费（§5.5，06 号票）**：非首拍的 CallModel 前（即上一 turn
 ///   已收尾——工具批结果回喂后）经 `steer` 取一条插话，以 user 消息追加进
 ///   本拍请求的 history（落盘与回执副作用在宿主实现内）；
-/// - CallTools（执行工具批）：**先整批判定再执行**（§5.4 ①–④）——首个
-///   Suspend 即把整只 run 序列化挂起（批内零执行）；Blocked 回喂错误
-///   结果；其余逐个执行 → 发 toolResult 帧（调用 id 经桥接映射与流式
-///   三帧同源）；
+/// - CallTools（执行工具批）：**先策略门筛选、再整批判定、后受控并发**
+///   （§5.4 ①–⑤，07 号票）——批内含 ask 时只执行源序首个 ask（其余回喂
+///   E_TOOL_SKIPPED"未执行"）；真正执行的调用中首个 Suspend 即把整只 run
+///   序列化挂起（批内零执行）；Blocked 回喂错误结果；其余交执行器批次
+///   契约并发执行（FileWrite 全局互斥串行 + 其余信号量限流），结果收集后
+///   **按源序**发 toolResult 帧（调用 id 经桥接映射与流式三帧同源）；
 /// - 取消（§5.3）：流中取消即收尾 flush + runEnded(cancelled)；工具批内
-///   任一工具报告取消 → 剩余工具补 E_CANCELLED，全部收齐后才发终态帧；
+///   任一任务报告取消（或批次执行前已取消）→ 未派发/未执行项补
+///   E_CANCELLED，全部收齐后才发终态帧；
 /// - Done：runEnded(done) 必为最后一帧。
 #[allow(clippy::too_many_arguments)]
 pub async fn drive_run(
@@ -298,24 +357,34 @@ pub async fn drive_run(
                 }
             }
             AgentRunStep::CallTools { calls } => {
-                // —— 批级门控预判（§5.4 ①–④）：先全判后执行 ——
-                // Suspend：批内零执行即挂起（恢复重放整批，无重复副作用）；
-                // Blocked：硬拦结果帧回喂，不中断 run。
-                let verdicts: Vec<GateVerdict> = calls
+                // —— 策略门（Q35/Q42，§5.4）：批内含 ask（Interactive 能力）
+                // 时只执行源序首个 ask，其余调用（含其余 ask）全部跳过——
+                // 不能继续执行同批预先生成的参数，由模型看到回答后重新决定。
+                let parts: Vec<(String, String, String)> =
+                    calls.iter().map(pending_parts).collect();
+                let first_ask = parts.iter().position(|(_, name, _)| is_interactive(name));
+
+                // —— 批级门控预判（§5.4 ①–④）：只对真正执行的调用判定 ——
+                // 被跳过项不参与（挂起时不为它们申请审批，Blocked 排除逻辑
+                // 也不作用于它们）；Suspend：批内零执行即挂起（恢复重放整批，
+                // 策略门与门控按同参数重判，结果一致，无重复副作用）。
+                let execute_indices: Vec<usize> = match first_ask {
+                    Some(ask_idx) => vec![ask_idx],
+                    None => (0..parts.len()).collect(),
+                };
+                let verdicts: Vec<(usize, GateVerdict)> = execute_indices
                     .iter()
-                    .map(|call| {
-                        let (_model_call_id, name, args_json) = pending_parts(call);
-                        gate.judge(&name, &args_json)
+                    .map(|&idx| {
+                        let (_, name, args_json) = &parts[idx];
+                        (idx, gate.judge(name, args_json))
                     })
                     .collect();
-                if let Some(idx) = verdicts
+                if let Some((idx, GateVerdict::Suspend { fence_reason })) = verdicts
                     .iter()
-                    .position(|v| matches!(v, GateVerdict::Suspend { .. }))
+                    .find(|(_, v)| matches!(v, GateVerdict::Suspend { .. }))
+                    .map(|(i, v)| (*i, v.clone()))
                 {
-                    let (model_call_id, name, args_json) = pending_parts(&calls[idx]);
-                    let GateVerdict::Suspend { fence_reason } = &verdicts[idx] else {
-                        unreachable!("position 已确认 Suspend");
-                    };
+                    let (model_call_id, name, args_json) = parts[idx].clone();
                     // 挂起前把调用 id 映射带进驱动状态（恢复后的 toolResult
                     // 才能与挂起前的 toolStarted/toolArgs 帧同源）。
                     state.model_call_ids = bridge.model_call_ids().clone();
@@ -332,34 +401,69 @@ pub async fn drive_run(
                     })));
                 }
 
+                // —— 组装批次：Allow 项进批次执行器；Blocked 项直接补错误
+                // 结果（硬拦不执行、不中断 run，§5.4 ①/③）。 ——
+                let mut batch: Vec<BatchCall> = Vec::new();
+                let mut batch_positions: Vec<usize> = Vec::new();
+                let mut prefilled: Vec<(usize, ToolExecution)> = Vec::new();
+                for (idx, verdict) in verdicts {
+                    let (call_id, name, args_json) = &parts[idx];
+                    match verdict {
+                        GateVerdict::Blocked { code, message } => {
+                            state.tool_count += 1;
+                            prefilled.push((
+                                idx,
+                                ToolExecution::Completed {
+                                    ok: false,
+                                    ui_summary: format!("已拦截：{name}"),
+                                    error: Some(FrameError::new(code, message.clone())),
+                                    model_text: format!("{code} {message}"),
+                                },
+                            ));
+                        }
+                        _ => {
+                            batch.push(BatchCall {
+                                call_id: call_id.clone(),
+                                name: name.clone(),
+                                args_json: args_json.clone(),
+                            });
+                            batch_positions.push(idx);
+                        }
+                    }
+                }
+
+                // —— 受控并发执行（§5.4 ⑤）：ToolsetExecutor 覆写为
+                // FileWrite 全局互斥串行 + 其余信号量并发；测试假执行器走
+                // trait 默认串行实现。取消收齐由实现保证（未派发补
+                // Cancelled{executed:false}，在飞 join 后才返回）。 ——
+                let executed: Vec<ToolExecution> = executor.execute_batch(&batch, &token).await;
+
+                // —— 源序拼装（FR-03-11）：帧按源序发出、answers 按源序
+                // 回喂——完成顺序不改序。 ——
+                let mut outcomes: Vec<Option<ToolExecution>> = vec![None; parts.len()];
+                for (pos, exec) in batch_positions.into_iter().zip(executed) {
+                    outcomes[pos] = Some(exec);
+                }
+                for (idx, exec) in prefilled {
+                    outcomes[idx] = Some(exec);
+                }
+                if let Some(ask_idx) = first_ask {
+                    for (idx, (_, name, _)) in parts.iter().enumerate() {
+                        if idx != ask_idx {
+                            outcomes[idx] = Some(skipped_by_ask(name));
+                        }
+                    }
+                }
+
                 let mut answers = Vec::new();
                 let mut cancel_seen = false;
-                for (call, verdict) in calls.into_iter().zip(verdicts) {
-                    let (call_id, name, args_json) = pending_parts(&call);
-                    if let GateVerdict::Blocked { code, message } = &verdict {
-                        // 硬拦（§8.7/§8.5/§8.6）：错误结果回喂，run 继续
-                        state.tool_count += 1;
-                        sink.send(ChatFrame::ToolResult {
-                            call_id: bridge.frame_call_id_for_model(&call_id),
-                            ok: false,
-                            ui_summary: format!("已拦截：{name}"),
-                            error: Some(FrameError::new(*code, message.clone())),
-                        });
-                        answers.push(super::turn::answer_one(call, format!("{code} {message}")));
-                        continue;
-                    }
-                    if cancel_seen || token.is_cancelled() {
-                        // 收齐语义：批内未执行的工具也补 E_CANCELLED，不留悬空调用
-                        sink.send(cancelled_result_frame(
-                            &bridge.frame_call_id_for_model(&call_id),
-                            &format!("{E_CANCELLED}: 取消：工具未执行"),
-                            false,
-                        ));
-                        state.tool_count += 1;
-                        continue;
-                    }
+                for (idx, call) in calls.into_iter().enumerate() {
+                    let Some(exec) = outcomes[idx].take() else {
+                        unreachable!("批内每个位置都已拼装结果");
+                    };
+                    let (call_id, _name, _args_json) = pending_parts(&call);
                     state.tool_count += 1;
-                    match executor.execute(&call_id, &name, &args_json, &token).await {
+                    match exec {
                         ToolExecution::Completed {
                             ok,
                             ui_summary,
@@ -393,7 +497,7 @@ pub async fn drive_run(
                     // 收齐后才发终态帧（§5.3 不变量：取消中工具收齐 → runEnded(cancelled)）
                     return Ok(finish_cancelled(sink, started_at, state));
                 }
-                // 整批应答回喂 run，驱动进入下一轮模型调用
+                // 整批应答（按源序）回喂 run，驱动进入下一轮模型调用
                 run.answer_all(answers)?;
             }
             AgentRunStep::Done(response) => {
@@ -454,6 +558,33 @@ fn cancelled_result_frame(call_id: &str, ui_summary: &str, executed: bool) -> Ch
                 "取消：工具未执行"
             },
         )),
+    }
+}
+
+/// ask（Interactive 能力）判定（Q35 策略门）：查工具注册表的能力分级。
+/// 未知工具名视为非 ask（由执行器回喂 E_INVALID_ARG）；suggest 属 run 尾
+/// 后台调用、不在注册表，天然不进本批。
+fn is_interactive(name: &str) -> bool {
+    crate::tools::build_registry()
+        .into_iter()
+        .find(|spec| spec.name == name)
+        .is_some_and(|spec| spec.capability == crate::safety::tier::Capability::Interactive)
+}
+
+/// ask 混批（Q35/Q42）被跳过调用的统一"未执行"产物：明确告知模型该调用
+/// 未执行、等待回答后重新决定——无副作用，也不申请审批（§5.4）。
+fn skipped_by_ask(name: &str) -> ToolExecution {
+    ToolExecution::Completed {
+        ok: false,
+        ui_summary: "未执行：等待用户回答后重新决定".to_owned(),
+        error: Some(FrameError::new(
+            E_TOOL_SKIPPED,
+            "同批包含用户询问（ask），本调用未执行，不申请审批",
+        )),
+        model_text: format!(
+            "{E_TOOL_SKIPPED} 该调用未执行：同批包含用户询问（ask），不能继续执行同批预先生成的参数；\
+             请等待用户回答后重新决定是否再次调用 {name}"
+        ),
     }
 }
 

@@ -40,6 +40,7 @@ const BASE_CONFIG: AppConfig = {
   log: { level: "info" },
   notifications: { enabled: true, interventionOnly: false },
   compaction: { threshold: 0.6, timeoutSecs: 180 },
+  tools: { maxParallel: 4 },
 };
 
 // 每个用例前：重置 mock、把 store 置为"草稿=基线"的干净状态（不脏）

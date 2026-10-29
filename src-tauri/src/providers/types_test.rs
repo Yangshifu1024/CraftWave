@@ -236,3 +236,39 @@ fn agent_custom_prompt_normalize_and_roundtrip() {
     let parsed: AppConfig = serde_json::from_str(raw).unwrap();
     assert!(parsed.agent.is_none(), "旧配置无 agent 键应容忍");
 }
+
+// 断言（07 号票）：tools.maxParallel 的 normalize 与缺省——缺省 4、合法
+// 区间 1–16，越界（0 / 超上限）拒绝整份提交；旧配置无 tools 键容忍。
+#[test]
+fn tools_max_parallel_defaults_and_bounds() {
+    // 缺省：ToolsConfig::default() = 4（§3.2）
+    let mut config = AppConfig::default();
+    assert_eq!(config.tools.max_parallel, DEFAULT_MAX_PARALLEL);
+    config.normalize().unwrap();
+
+    // serde 缺省容忍：旧配置（无 tools 键）反序列化 → maxParallel = 4
+    let raw = r#"{"schemaVersion":2,"providers":[],"approval":{"enabled":true,"autoConfirm":false,"commandAllowlist":[]},"ui":{"language":"zh-CN","theme":"system"},"log":{"level":"info"},"notifications":{"enabled":true,"interventionOnly":false}}"#;
+    let parsed: AppConfig = serde_json::from_str(raw).unwrap();
+    assert_eq!(parsed.tools.max_parallel, 4, "旧配置无 tools 键 → 缺省 4");
+
+    // 合法边界：1 与 16 都通过，且 serde 往返保持 camelCase 键面
+    for ok in [1, 4, 16] {
+        let mut config = AppConfig::default();
+        config.tools.max_parallel = ok;
+        config.normalize().unwrap();
+        let value = serde_json::to_value(&config).unwrap();
+        assert_eq!(value["tools"]["maxParallel"], ok);
+        assert_eq!(serde_json::from_value::<AppConfig>(value).unwrap(), config);
+    }
+
+    // 非法：0（并发度必须为正）与 17（超上限）拒绝整份提交
+    for bad in [0, 17, 100] {
+        let mut config = AppConfig::default();
+        config.tools.max_parallel = bad;
+        assert_eq!(
+            config.normalize().unwrap_err().code,
+            E_INVALID_ARG,
+            "maxParallel = {bad} 应拒绝"
+        );
+    }
+}

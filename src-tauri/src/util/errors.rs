@@ -128,6 +128,9 @@ pub const E_TOOL_BLOCKED: &str = "E_TOOL_BLOCKED";
 pub const E_PATH_OUTSIDE_ROOTS: &str = "E_PATH_OUTSIDE_ROOTS";
 /// 上下文超预算且压缩后仍放不下——暂停执行并保留输入（04 号票，§6.2）。
 pub const E_CONTEXT_OVERFLOW: &str = "E_CONTEXT_OVERFLOW";
+/// 同批 ask 互斥或同文件写冲突时未执行的调用——工具级失败回喂，模型据说明
+/// 重新决定或纠正（07 号票，§5.4/§8.4 步骤 4）。
+pub const E_TOOL_SKIPPED: &str = "E_TOOL_SKIPPED";
 
 /// IPC 命令统一错误负载（§3.1/§3.6，D14）：`{ code, message, detail? }`，camelCase。
 ///

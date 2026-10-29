@@ -124,6 +124,7 @@ export * from "./generated/serde_json/JsonValue";
 export * from "./generated/Theme";
 export * from "./generated/ToolError";
 export * from "./generated/ToolOutcome";
+export * from "./generated/ToolsConfig";
 export * from "./generated/UiConfig";
 export * from "./generated/UsageTotal";
 export * from "./generated/WirePart";

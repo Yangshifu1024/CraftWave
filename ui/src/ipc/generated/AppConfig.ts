@@ -6,6 +6,7 @@ import type { LogConfig } from "./LogConfig";
 import type { NotificationConfig } from "./NotificationConfig";
 import type { ProviderConfig } from "./ProviderConfig";
 import type { ProxyConfig } from "./ProxyConfig";
+import type { ToolsConfig } from "./ToolsConfig";
 import type { UiConfig } from "./UiConfig";
 
 /**
@@ -52,4 +53,8 @@ agent?: AgentConfig,
 /**
  * 上下文压缩（FR-03-05，04 号票；缺省值经 Default：0.6 阈值 / 180s 超时）。
  */
-compaction: CompactionConfig, };
+compaction: CompactionConfig, 
+/**
+ * 工具批执行（FR-03-11/FR-04-04，07 号票；缺省值经 Default：并发上限 4）。
+ */
+tools: ToolsConfig, };
