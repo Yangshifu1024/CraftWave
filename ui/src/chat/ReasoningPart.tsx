@@ -1,8 +1,22 @@
 import type { ReasoningMessagePart } from "@assistant-ui/react";
-import { ChevronRight, Lightbulb } from "lucide-react";
+import { Brain, ChevronRight } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
-/** 消费帧已有的状态和计时；历史记录缺少计时时只显示“思考过程”。 */
+/** 思考时长（ZCode Math.ceil 口径）：最少 1 秒，跨分钟带分。 */
+function formatThoughtDuration(seconds: number): string {
+  if (seconds < 60) return `持续了 ${seconds} 秒`;
+  const minutes = Math.floor(seconds / 60);
+  return `持续了 ${minutes} 分 ${seconds - minutes * 60} 秒`;
+}
+
+/**
+ * 思考块（ZCode ReasoningTrigger 同款复刻）：
+ * - 完成态单行「思考 · 持续了 N 秒」——动作词与时长全部最淡档（subtlest），
+ *   加粗只给动作词；图标静态大脑（旋转 loader 会长期占用渲染资源）。
+ * - 流式态「正在思考」文案流光 + 最后一个非空行预览（双侧 16px 渐隐、吸尾滚动）。
+ * - 收起态内容 300ms 延迟卸载（Radix 高度动画需要 closed 阶段读到真实高度）。
+ * - 展开内容：左导线 + 缩进 + 限高滚动 + 纯文本保留换行，吸底跟随。
+ */
 export function ReasoningPart({ text, status, timing }: Omit<ReasoningMessagePart, "type">) {
   const streaming = status?.type === "running";
   const [open, setOpen] = useState(false);
@@ -12,11 +26,12 @@ export function ReasoningPart({ text, status, timing }: Omit<ReasoningMessagePar
   const follow = useRef(true);
   const [overflow, setOverflow] = useState(false);
   const lastLine = text.trimEnd().split(/\r?\n/).at(-1)?.trim() ?? "";
+  // 收起态展示流式摘要，不为隐藏的耗时每秒触发重渲染；展开时再持续计时。
   useEffect(() => {
-    if (!streaming || timing === undefined) return;
+    if (!streaming || !open || timing === undefined) return;
     const timer = setInterval(() => tick((n) => n + 1), 1000);
     return () => clearInterval(timer);
-  }, [streaming, timing]);
+  }, [streaming, open, timing]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: 文本和折叠状态变化后重新测量实际溢出
   useLayoutEffect(() => {
     const el = summary.current;
@@ -41,9 +56,24 @@ export function ReasoningPart({ text, status, timing }: Omit<ReasoningMessagePar
     timing === undefined
       ? undefined
       : Math.max(
-          0,
-          Math.round(((timing.completedAt ?? performance.now()) - timing.startedAt) / 1000),
+          1,
+          Math.ceil(((timing.completedAt ?? performance.now()) - timing.startedAt) / 1000),
         );
+  const streamingSummary = streaming && !open && lastLine ? lastLine : null;
+  // ZCode 分支语义：收起 + 流式 → 「正在思考」流光 + 单行摘要；
+  // 展开或完成 → 「思考 · 持续了 N 秒」（展开中的流式按秒持续计时）。
+  const thinkingLabel =
+    streaming && !open ? (
+      <span className="cw-shimmer-text shrink-0 font-medium whitespace-nowrap">正在思考</span>
+    ) : (
+      <span className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap">
+        <span className="font-medium text-[var(--foreground-subtlest)]">思考</span>
+        <span className="font-normal text-[var(--foreground-subtlest)]">·</span>
+        <span className="font-normal text-[var(--foreground-subtlest)]">
+          {seconds !== undefined ? formatThoughtDuration(seconds) : "持续了几秒"}
+        </span>
+      </span>
+    );
   return (
     <details
       open={open}
@@ -51,39 +81,45 @@ export function ReasoningPart({ text, status, timing }: Omit<ReasoningMessagePar
         follow.current = true;
         setOpen(e.currentTarget.open);
       }}
-      className="group/reasoning min-w-0 text-ui-base text-[var(--muted-foreground)]"
+      className="group/reasoning flex min-w-0 max-w-full flex-col text-ui-base"
     >
-      <summary className="flex min-w-0 cursor-pointer select-none items-center gap-2 rounded px-1 py-1 hover:bg-[var(--accent)]/60">
-        <Lightbulb size={16} aria-hidden className="shrink-0" />
-        <span className={`shrink-0 ${streaming ? "cw-shimmer-text" : ""}`}>
-          {streaming ? "思考中" : "思考过程"}
-          {seconds !== undefined ? ` · ${seconds}s` : ""}
-        </span>
-        {streaming && !open && lastLine && (
-          <span
-            ref={summary}
-            data-testid="reasoning-preview"
-            className={`min-w-0 flex-1 overflow-hidden whitespace-nowrap ${overflow ? "cw-fade-inline" : ""}`}
-          >
-            {lastLine}
-          </span>
+      <summary className="inline-flex max-w-full min-w-0 cursor-pointer select-none items-center gap-2 self-start text-left transition-colors [&_svg]:text-[var(--foreground-subtlest)]">
+        <Brain size={16} aria-hidden className="shrink-0" />
+        {thinkingLabel}
+        {streamingSummary !== null && (
+          <>
+            <span aria-hidden className="shrink-0 text-[var(--foreground-subtlest)]">
+              ·
+            </span>
+            <span
+              ref={summary}
+              data-testid="reasoning-preview"
+              className={`min-w-0 flex-1 overflow-hidden text-[var(--foreground-subtle)] whitespace-nowrap ${overflow ? "cw-fade-inline" : ""}`}
+            >
+              {streamingSummary}
+            </span>
+          </>
         )}
         <ChevronRight
-          size={12}
+          size={16}
           aria-hidden
-          className="shrink-0 transition-transform group-open/reasoning:rotate-90"
+          className={`shrink-0 text-[var(--foreground-subtlest)] opacity-0 transition-[transform,opacity] duration-200 ease-out group-open/reasoning:rotate-90 group-open/reasoning:opacity-100 group-hover/reasoning:opacity-100 ${open ? "rotate-90 opacity-100" : ""}`}
         />
       </summary>
-      <p
-        ref={content}
-        onScroll={(e) => {
-          const el = e.currentTarget;
-          follow.current = el.scrollHeight - el.clientHeight - el.scrollTop < 24;
-        }}
-        className="my-2 ml-2 max-h-60 overflow-y-auto border-l border-[var(--border)] pl-3.5 text-ui-caption leading-[1.75] whitespace-pre-wrap [overflow-wrap:anywhere]"
-      >
-        {text}
-      </p>
+      {open && (
+        <div className="pt-3">
+          <p
+            ref={content}
+            onScroll={(e) => {
+              const el = e.currentTarget;
+              follow.current = el.scrollHeight - el.clientHeight - el.scrollTop < 2;
+            }}
+            className="ml-2 max-h-60 overflow-y-auto border-l border-[var(--border)] pl-3.5 text-[var(--foreground-subtlest)] whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
+          >
+            {text}
+          </p>
+        </div>
+      )}
     </details>
   );
 }

@@ -37,6 +37,9 @@ export function Markdown({
       className="cw-md"
       mode={streaming ? "streaming" : "static"}
       isAnimating={streaming}
+      // 表格不限高：组件默认 maxHeight 300px 会把高表格压扁出纵向滚动条，
+      // 放开让表格按内容完整展开（横向溢出仍由组件的 overflow-x-auto 兜底）
+      tableMaxHeight="none"
       plugins={streaming ? streamingPlugins : plugins}
       translations={translations}
     >

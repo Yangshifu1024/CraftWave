@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type ChatFrame, FrameBuffer, toParts } from "./frames";
+import { type ChatFrame, FrameBuffer, type FrameSnapshot, toParts } from "./frames";
 
 /**
  * 【S2 Spike】前端帧管线测试：保真（无丢失无乱序）、半截 JSON「参数准备中」、
@@ -38,13 +38,19 @@ function scriptedFrames(): ChatFrame[] {
 }
 
 describe("FrameBuffer 保真", () => {
-  it("帧序列累积：文本/思考/工具参数拼接与发送序列一致", () => {
+  it("帧序列累积：时间线保真（交错段序 = 帧到达序），工具参数拼接一致", () => {
     const buffer = new FrameBuffer();
     for (const frame of scriptedFrames()) buffer.push(frame);
     const snap = buffer.snapshot();
 
-    expect(snap.text).toBe("我来读一下配置文件。配置文件共 12 行，端口是 8087。");
-    expect(snap.reasoning).toBe("用户要我看配置，先调用 read。");
+    // 时间线段序：思考 → 正文（第一轮）→ 工具 → 正文（第二轮答案）；
+    // 同轮相邻增量合并为一段，不因 delta 分批而碎裂
+    expect(snap.segments).toEqual([
+      { kind: "reasoning", text: "用户要我看配置，先调用 read。" },
+      { kind: "text", text: "我来读一下配置文件。" },
+      { kind: "tool", callId: "call_1" },
+      { kind: "text", text: "配置文件共 12 行，端口是 8087。" },
+    ]);
     expect(snap.toolCalls).toHaveLength(1);
     expect(snap.toolCalls[0]!.name).toBe("read");
     expect(snap.toolCalls[0]!.argsJson).toBe('{"path": "/etc/app/config.toml", "offset": 0}');
@@ -75,7 +81,9 @@ describe("FrameBuffer 保真", () => {
     buffer.push({ ...frames[3]!, seq: 1 }); // 倒退帧 → 丢弃
     buffer.push(frames[3]!); // seq3 第二段思考 → 收
     expect(buffer.droppedSeq).toBe(2);
-    expect(buffer.snapshot().reasoning).toBe("用户要我看配置，先调用 read。");
+    expect(buffer.snapshot().segments).toEqual([
+      { kind: "reasoning", text: "用户要我看配置，先调用 read。" },
+    ]);
   });
 });
 
@@ -93,7 +101,7 @@ describe("FrameBuffer 快照节流与延迟埋点", () => {
     const consumer = buffer.snapshots(64);
 
     const yieldTimes: number[] = [];
-    const yields: Awaited<ReturnType<typeof consumer.next>>["value"][] = [];
+    const yields: FrameSnapshot[] = [];
     for await (const snap of consumer) {
       yieldTimes.push(performance.now());
       yields.push(snap);
@@ -101,7 +109,13 @@ describe("FrameBuffer 快照节流与延迟埋点", () => {
     }
     await producer;
 
-    expect(yields.at(-1)!.text).toBe("我来读一下配置文件。配置文件共 12 行，端口是 8087。");
+    // 文本总量保真：全部 text 段拼接与发送序列一致（跨轮不合并、无丢失）
+    const lastText = yields
+      .at(-1)!
+      .segments.filter((seg) => seg.kind === "text")
+      .map((seg) => seg.text)
+      .join("");
+    expect(lastText).toBe("我来读一下配置文件。配置文件共 12 行，端口是 8087。");
     expect(yields.at(-1)!.ended?.reason).toBe("done");
     // 快照节奏：相邻产出间隔 ≥ 64ms（64ms 窗口 ± 调度抖动）
     const gaps = yieldTimes.slice(1).map((t, i) => t - yieldTimes[i]!);
@@ -173,11 +187,17 @@ describe("FrameBuffer 本票增量（13 号票）", () => {
     expect(snap.run).toEqual({ runId: "run-1", model: "gpt-4o-mock" });
   });
 
-  it("toParts：reasoning/text/tool-call 直写 result（S1 adapter 直写语义）", () => {
+  it("toParts：按时间线交错展开，reasoning/text/tool-call 直写 result（S1 adapter 直写语义）", () => {
     const buffer = new FrameBuffer();
     for (const frame of scriptedFrames()) buffer.push(frame);
     const parts = toParts(buffer.snapshot());
-    expect(parts.map((p) => p.type)).toEqual(["reasoning", "text", "tool-call"]);
+    // 交错顺序 = 帧到达序：思考 → 第一轮正文 → 工具卡 → 第二轮最终答案
+    // （答案在工具卡之后，不再按类型归堆到工具卡前面）
+    expect(parts.map((p) => p.type)).toEqual(["reasoning", "text", "tool-call", "text"]);
+    if (parts[0]!.type !== "reasoning") throw new Error("应为 reasoning");
+    expect(parts[0]!.text).toBe("用户要我看配置，先调用 read。");
+    if (parts[1]!.type !== "text") throw new Error("应为 text");
+    expect(parts[1]!.text).toBe("我来读一下配置文件。");
     const tool = parts[2]!;
     if (tool.type !== "tool-call") throw new Error("应为 tool-call");
     expect(tool.toolCallId).toBe("call_1");
@@ -189,6 +209,8 @@ describe("FrameBuffer 本票增量（13 号票）", () => {
     // result 直写（local runtime 无 execute 管线，S1 修正）
     expect(tool.result).toEqual({ ok: true, summary: "[read] 共 12 行：port = 8087" });
     expect(tool.isError).toBe(false);
+    if (parts[3]!.type !== "text") throw new Error("应为 text");
+    expect(parts[3]!.text).toBe("配置文件共 12 行，端口是 8087。");
   });
 
   it("toParts：失败工具 isError=true；半截参数以 argsText 原文保留", () => {
@@ -228,6 +250,38 @@ describe("FrameBuffer 本票增量（13 号票）", () => {
     expect(settled.timing).toEqual({ startedAt: 1100, completedAt: 1350 });
   });
 
+  it("toParts：工具之间的旁白按原位开新思考段（不再归堆到消息开头）", () => {
+    // 形态：思考 → 工具 → 旁白（第二段思考）→ 工具 → 最终答案
+    const buffer = new FrameBuffer();
+    type DistributiveOmit<T, K extends keyof never> = T extends unknown ? Omit<T, K> : never;
+    const f = (frame: DistributiveOmit<ChatFrame, "seq">): ChatFrame =>
+      ({ seq: buffer.arrivals.length, ...frame }) as ChatFrame;
+    buffer.push(f({ type: "runStarted", runId: "run-2", model: "glm-mock" }));
+    buffer.push(f({ type: "reasoningDelta", turn: 1, delta: "先查目录，" }));
+    buffer.push(f({ type: "toolStarted", callId: "c1", name: "list_dir" }));
+    buffer.push(f({ type: "toolResult", callId: "c1", ok: true, uiSummary: "3 项" }));
+    buffer.push(f({ type: "reasoningDelta", turn: 2, delta: "再读入口文件" }));
+    buffer.push(f({ type: "toolStarted", callId: "c2", name: "read" }));
+    buffer.push(f({ type: "toolResult", callId: "c2", ok: true, uiSummary: "12 行" }));
+    buffer.push(f({ type: "textDelta", turn: 2, delta: "入口是 main.rs。" }));
+    buffer.push(f({ type: "runEnded", reason: "done", durationMs: 100, toolCount: 2, turn: 2 }));
+
+    expect(buffer.snapshot().segments).toEqual([
+      { kind: "reasoning", text: "先查目录，" },
+      { kind: "tool", callId: "c1" },
+      { kind: "reasoning", text: "再读入口文件" },
+      { kind: "tool", callId: "c2" },
+      { kind: "text", text: "入口是 main.rs。" },
+    ]);
+    expect(toParts(buffer.snapshot()).map((p) => p.type)).toEqual([
+      "reasoning",
+      "tool-call",
+      "reasoning",
+      "tool-call",
+      "text",
+    ]);
+  });
+
   it("toParts：无思考流的 run 不产出 reasoning part", () => {
     const buffer = new FrameBuffer(() => 500);
     type DistributiveOmit<T, K extends keyof never> = T extends unknown ? Omit<T, K> : never;
@@ -238,5 +292,36 @@ describe("FrameBuffer 本票增量（13 号票）", () => {
     buffer.push(f({ type: "runEnded", reason: "done", durationMs: 10, toolCount: 0, turn: 1 }));
     const parts = toParts(buffer.snapshot());
     expect(parts.map((p) => p.type)).toEqual(["text"]);
+  });
+
+  it("toParts：工具之间同组的多次思考与半截句合批，一句话不被思考行拆开", () => {
+    // 形态：思考 → 正文半句 → 思考 → 正文续句 → 工具 → 最终答案。
+    // 正文两段之间只隔着思考（无工具），属于同一句话的延续——合并为
+    // 一个 reasoning part + 一个 text part（ZCode 过程组同款观感）。
+    const buffer = new FrameBuffer();
+    type DistributiveOmit<T, K extends keyof never> = T extends unknown ? Omit<T, K> : never;
+    const f = (frame: DistributiveOmit<ChatFrame, "seq">): ChatFrame =>
+      ({ seq: buffer.arrivals.length, ...frame }) as ChatFrame;
+    buffer.push(f({ type: "runStarted", runId: "run-3", model: "glm-mock" }));
+    buffer.push(f({ type: "reasoningDelta", turn: 1, delta: "想一下" }));
+    buffer.push(f({ type: "textDelta", turn: 1, delta: "我来帮你梳理" }));
+    buffer.push(f({ type: "reasoningDelta", turn: 2, delta: "接着说" }));
+    buffer.push(f({ type: "textDelta", turn: 2, delta: "项目的目录结构。首先查看" }));
+    buffer.push(f({ type: "toolStarted", callId: "c9", name: "list_dir" }));
+    buffer.push(f({ type: "toolResult", callId: "c9", ok: true, uiSummary: "8 项" }));
+    buffer.push(f({ type: "textDelta", turn: 3, delta: "根目录如下。" }));
+    buffer.push(f({ type: "runEnded", reason: "done", durationMs: 100, toolCount: 1, turn: 3 }));
+
+    const parts = toParts(buffer.snapshot());
+    expect(parts.map((p) => p.type)).toEqual(["reasoning", "text", "tool-call", "text"]);
+    if (parts[0]!.type !== "reasoning") throw new Error("应为 reasoning");
+    // 思考合批：两段思考并成一块（段间换行）
+    expect(parts[0]!.text).toBe("想一下\n\n接着说");
+    if (parts[1]!.type !== "text") throw new Error("应为 text");
+    // 正文合批：同一句话的两截直接拼接，不再夹思考行
+    expect(parts[1]!.text).toBe("我来帮你梳理项目的目录结构。首先查看");
+    if (parts[3]!.type !== "text") throw new Error("应为 text");
+    // 工具之后新开正文组
+    expect(parts[3]!.text).toBe("根目录如下。");
   });
 });

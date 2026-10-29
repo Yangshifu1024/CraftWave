@@ -15,6 +15,7 @@ import {
   toSavePayload,
   useSessionPersistStore,
 } from "@/stores/session";
+import { useSessionsStore } from "@/stores/sessions";
 
 // 整体替换 IPC 客户端：只提供本测试触达的命令（其余导出是空 mock，
 // 防止经 toWire 依赖链引入真实实现）
@@ -26,7 +27,9 @@ vi.mock("@/ipc/client", () => ({
   startChat: vi.fn(),
   cancelRun: vi.fn(),
   loadToolOutcomes: vi.fn(),
-  listSessions: vi.fn(),
+  listSessions: vi.fn(async () => []),
+  // syncTreeBeforeSend 首次可见刷新经 sessions store 的 refresh 拉取
+  listProjects: vi.fn(async () => []),
 }));
 
 /** 造一条最小 ThreadMessage 测试样例（id/角色/文本即可驱动被测逻辑）。 */
@@ -127,6 +130,34 @@ describe("syncTreeBeforeSend（E_SESSION_REV 自愈）", () => {
     await expect(syncTreeBeforeSend("s1", [msg("u1", "user", "你好")])).rejects.toMatchObject({
       code: "E_STORAGE_IO",
     });
+  });
+
+  it("首次可见刷新：会话不在左栏列表时 save 成功后补 refresh；已在列表则不刷", async () => {
+    const listSessions = vi.mocked(client.listSessions);
+    // 会话已在列表（非空）：不再触发 refresh
+    useSessionsStore.setState({
+      sessions: [
+        {
+          id: "s1",
+          projectId: undefined,
+          title: "t",
+          createdAt: 0,
+          updatedAt: 0,
+          revision: 1,
+          messageCount: 2,
+          totalTokens: 0,
+        },
+      ],
+    });
+    vi.mocked(client.saveSessionTree).mockResolvedValue({ revision: 3 });
+    await syncTreeBeforeSend("s1", [msg("u1", "user", "你好")]);
+    expect(listSessions).not.toHaveBeenCalled();
+
+    // 空会话（列表无它）：save 成功 → refresh 让左栏即时出现
+    listSessions.mockClear();
+    useSessionsStore.setState(useSessionsStore.getInitialState());
+    await syncTreeBeforeSend("s1", [msg("u1", "user", "你好")]);
+    expect(listSessions).toHaveBeenCalledTimes(1);
   });
 });
 

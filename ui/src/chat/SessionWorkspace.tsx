@@ -22,7 +22,16 @@ import {
   useAuiState,
   useLocalRuntime,
 } from "@assistant-ui/react";
-import { CirclePlus, Folder, FolderPlus, LoaderCircle, PanelRight, Settings } from "lucide-react";
+import {
+  CirclePlus,
+  Folder,
+  FolderOpen,
+  FolderPlus,
+  LoaderCircle,
+  PanelRight,
+  Plus,
+  Settings,
+} from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AskPanel } from "@/chat/AskPanel";
 import { useBackendEvents } from "@/chat/event-bridge";
@@ -53,7 +62,7 @@ import type { PageKey } from "@/settings/registry";
 import { SettingsPage } from "@/settings/SettingsPage";
 import { useAskStore } from "@/stores/ask";
 import { loadHistory, useSessionPersistStore } from "@/stores/session";
-import { useSessionsStore } from "@/stores/sessions";
+import { findReusableEmptyTab, useSessionsStore } from "@/stores/sessions";
 
 // 正式工具卡装配（S1 实测钉死：Tools 是 resource 工厂，经 AuiConfig 注入；
 // config 为纯数据可提模块级，各 SessionTab 共用同一份）。
@@ -126,7 +135,7 @@ export function SessionWorkspace() {
       />
       {/* 会话区大圆角卡：上下与窗口边缘留缝（py-2），左右紧贴拖宽手柄 */}
       <div className="flex min-w-0 flex-1 flex-col py-2">
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)]">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--cw-bg-main)]">
           {/* 卡头：项目/标题（FR 拖拽区），右侧为右栏折叠钮 */}
           <div
             data-tauri-drag-region
@@ -334,6 +343,16 @@ function Sidebar({
   // 右键菜单（ZCode 列表级单例）：坐标 + 目标；重命名受控 id（菜单触发
   // 行内编辑态，替代已移除的 hover 内联钮——时间戳不再被挤）
   const [renamingId, setRenamingId] = useState<string | null>(null);
+  // 项目组折叠态（内存态，重启回全展开）：点击项目行切换名下会话列表显隐
+  const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => new Set());
+  const toggleProject = (id: string) => {
+    setCollapsedProjects((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
   const [menu, setMenu] = useState<{
     x: number;
     y: number;
@@ -433,8 +452,9 @@ function Sidebar({
                 />
               ))}
             </SectionBody>
-            {/* 项目组标题：与行文字同字号仅灰+medium（截图口径）；悬停露出「新建项目」 */}
-            <div className="group mt-3 flex h-7 items-center px-2 text-ui-base font-medium text-[var(--cw-dim)]">
+            {/* 项目组标题：ZCode purpose section 同款——同字号仅 medium + subtlest
+                最淡档（styles.css --foreground-subtlest）；悬停露出「新建项目」 */}
+            <div className="group mt-3 flex h-7 items-center px-2 text-ui-base font-medium text-[var(--foreground-subtlest)]">
               <span>项目</span>
               <button
                 type="button"
@@ -448,30 +468,38 @@ function Sidebar({
             </div>
             {projects.map((project) => {
               const list = byProject.get(project.id) ?? [];
+              const collapsed = collapsedProjects.has(project.id);
               return (
                 <div key={project.id} className="mb-1">
                   <ProjectRow
                     project={project}
                     editing={renamingId === project.id}
+                    collapsed={collapsed}
+                    onToggle={() => toggleProject(project.id)}
                     onRenameEnd={() => setRenamingId(null)}
+                    onAddSession={() => void createAndOpen(project.id)}
                     onContextMenu={(x, y) => setMenu({ x, y, kind: "project", id: project.id })}
                   />
-                  {/* 名下会话缩进一级：ZCode 为两层 pl-2（16px） */}
-                  <div className="ml-4 pt-1">
-                    <SectionBody>
-                      {list.map((meta) => (
-                        <SessionRow
-                          key={meta.id}
-                          meta={meta}
-                          active={meta.id === activeId}
-                          editing={renamingId === meta.id}
-                          onRenameEnd={() => setRenamingId(null)}
-                          onOpen={() => openTab(meta)}
-                          onContextMenu={(x, y) => setMenu({ x, y, kind: "session", id: meta.id })}
-                        />
-                      ))}
-                    </SectionBody>
-                  </div>
+                  {/* 名下会话缩进一级（ZCode 为两层 pl-2（16px)）；收起时不渲染 */}
+                  {!collapsed && (
+                    <div className="ml-4 pt-1">
+                      <SectionBody>
+                        {list.map((meta) => (
+                          <SessionRow
+                            key={meta.id}
+                            meta={meta}
+                            active={meta.id === activeId}
+                            editing={renamingId === meta.id}
+                            onRenameEnd={() => setRenamingId(null)}
+                            onOpen={() => openTab(meta)}
+                            onContextMenu={(x, y) =>
+                              setMenu({ x, y, kind: "session", id: meta.id })
+                            }
+                          />
+                        ))}
+                      </SectionBody>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -527,8 +555,18 @@ function Sidebar({
 
 // ---- 左栏数据操作（ IPC + store 同步；异常只 console——列表仍在） ----
 
-/** 新建会话并打开 Tab（可选挂在某项目下），随后刷新左栏列表。 */
+/** 新建会话并打开 Tab（可选挂在某项目下），随后刷新左栏列表；同项目域已有
+ *  「新建但未发送」的 Tab 时复用激活（空会话不进左栏列表，见 findReusableEmptyTab）。 */
 async function createAndOpen(projectId: string | undefined): Promise<void> {
+  const empty = findReusableEmptyTab(
+    useSessionsStore.getState().tabs,
+    useSessionPersistStore.getState().scopes,
+    projectId,
+  );
+  if (empty) {
+    useSessionsStore.getState().openTab(empty);
+    return;
+  }
   try {
     const meta = await createSession(projectId);
     useSessionsStore.getState().openTab(meta);
@@ -661,17 +699,27 @@ function SectionHeader({ title }: { title: string }) {
   return <div className="px-2.5 py-1 text-ui-base font-medium text-[var(--cw-dim)]">{title}</div>;
 }
 
-/** 左栏项目行：文件夹图标 + 项目名（前景色大字）；悬停露出改名/加会话/
- *  删项目，改名走内联输入框（Enter 提交，Esc 取消）。 */
-function ProjectRow({
+/** 左栏项目行：文件夹图标 + 项目名（前景色大字）。整行可点击展开/收起
+ *  名下会话（行尾方向指示，ZCode 项目树同款）；悬停露出「新建会话」钮
+ *  （高频入口的恢复——0d75ca0 曾把行内钮全收进右键菜单，但项目行没有
+ *  时间戳可挤），改名/删项目仍走右键菜单，改名走内联输入框（Enter 提交，
+ *  Esc 取消）。导出供测试（sidebar-overflow.test.tsx 同 MarqueeTitle 先例）。 */
+export function ProjectRow({
   project,
   editing,
+  collapsed,
+  onToggle,
   onRenameEnd,
+  onAddSession,
   onContextMenu,
 }: {
   project: ProjectMeta;
   editing: boolean;
+  /** 名下会话列表是否已收起（行尾方向指示与点击切换的数据面）。 */
+  collapsed: boolean;
+  onToggle: () => void;
   onRenameEnd: () => void;
+  onAddSession: () => void;
   onContextMenu: (x: number, y: number) => void;
 }) {
   const [name, setName] = useState(project.name);
@@ -713,19 +761,60 @@ function ProjectRow({
     );
   }
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: 右键菜单宿主行，交互语义由内部 button 承担
+    // biome-ignore lint/a11y/useSemanticElements: 行内嵌「新建会话」钮，button 不可嵌套 button
     <div
+      role="button"
+      tabIndex={0}
+      aria-expanded={!collapsed}
+      onClick={onToggle}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onToggle();
+        }
+      }}
       onContextMenu={(e) => {
         e.preventDefault();
         onContextMenu(e.clientX, e.clientY);
       }}
       className="group flex h-8 cursor-default select-none items-center gap-2 rounded-lg pr-1 pl-2.5 text-ui-base text-[var(--foreground)] hover:bg-[var(--selected)]"
     >
-      <Folder size={16} className="shrink-0" />
-      {/* 项目名比会话标题淡一档（ZCode subtle 层级：组容器弱于内容行） */}
-      <span className="min-w-0 flex-1 text-[var(--muted-foreground)]">
+      {/* 折叠状态指示（行尾不放箭头）：闭合=收起、打开=展开；与项目名同色
+          （ZCode ProjectFolderIcon 也是 text-foreground-subtle，行内单一灰阶） */}
+      {collapsed ? (
+        <Folder
+          size={16}
+          aria-hidden
+          data-testid="project-folder-icon"
+          className="shrink-0 text-[var(--foreground-subtle)]"
+        />
+      ) : (
+        <FolderOpen
+          size={16}
+          aria-hidden
+          data-testid="project-folder-icon"
+          className="shrink-0 text-[var(--foreground-subtle)]"
+        />
+      )}
+      {/* 项目名比会话标题淡一档（ZCode text-foreground-subtle 同款：60% 透明混合） */}
+      <span className="min-w-0 flex-1 text-[var(--foreground-subtle)]">
         <MarqueeTitle text={project.name} />
       </span>
+      {/* 悬停露出「新建会话」（ZCode 项目行同款）：样式对齐组头「新建项目」+ 钮 */}
+      <button
+        type="button"
+        data-testid={`project-add-session-${project.id}`}
+        aria-label={`在项目 ${project.name} 下新建会话`}
+        title="新建会话"
+        onClick={(e) => {
+          // 不冒泡给行：+ 钮只新建，不切换折叠
+          e.stopPropagation();
+          onAddSession();
+        }}
+        className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-[var(--muted-foreground)] opacity-0 transition-opacity hover:bg-[var(--accent)] hover:text-[var(--foreground)] group-hover:opacity-100"
+      >
+        <Plus size={14} aria-hidden />
+      </button>
     </div>
   );
 }

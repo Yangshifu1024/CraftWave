@@ -196,8 +196,11 @@ describe("createTauriChatAdapter：帧消费管线", () => {
       toolName?: string;
       result?: unknown;
     }[];
-    const text = parts.find((p) => p.type === "text");
-    expect(text?.text).toBe("你好读完了。");
+    // 交错时间线：正文两段按帧到达序分布在工具卡两侧（你好 → 工具 → 读完了。），
+    // 不再按类型归堆成单段 text
+    expect(parts.map((p) => p.type)).toEqual(["reasoning", "text", "tool-call", "text"]);
+    const texts = parts.filter((p) => p.type === "text");
+    expect(texts.map((p) => p.text)).toEqual(["你好", "读完了。"]);
     const reasoning = parts.find((p) => p.type === "reasoning");
     expect(reasoning?.text).toBe("想一下");
     const tool = parts.find((p) => p.type === "tool-call");

@@ -82,7 +82,7 @@ describe("cancel-bridge", () => {
 
     const snap = buffer.snapshot();
     expect(snap.started).toBe(true);
-    expect(snap.text).toBe("读到一半…");
+    expect(snap.segments).toEqual([{ kind: "text", text: "读到一半…" }]);
     expect(snap.ended?.reason).toBe("cancelled");
     expect(snap.ended?.durationMs).toBe(87);
     expect(invokeCalls).toEqual([{ cmd: "cancel_run", args: { sessionId: "s4" } }]);

@@ -12,6 +12,7 @@
 
 import { AssistantRuntimeProvider, AuiConfig, Tools, useLocalRuntime } from "@assistant-ui/react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ChatThread } from "../Thread";
 import { FrameBuffer, isArgsTextComplete, type MirrorFrame } from "./frames";
@@ -47,6 +48,20 @@ function sendFromComposer(text: string) {
   });
   // Send 带 aria-label「发送」（17 号票起 Composer 区还有回底按钮等，按名取）
   fireEvent.click(screen.getByRole("button", { name: "发送" }));
+}
+
+/** 过程区默认折叠（「先折叠过程，再输出结论」）会把工具卡收进摘要行；
+ *  管线用例靠它出现摘要行即自动点开，露出卡片验证状态机。点开后保持
+ *  展开态（无自动收起），后续轮询空转无副作用。 */
+function AutoExpand() {
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const summary = document.querySelector('[data-testid="run-summary"]');
+      if (summary) (summary as HTMLButtonElement).click();
+    }, 10);
+    return () => clearInterval(timer);
+  }, []);
+  return null;
 }
 
 describe("FrameBuffer 帧累积（纯逻辑）", () => {
@@ -104,7 +119,12 @@ describe("镜像工具桥接（真实渲染管线）", () => {
   });
 
   it("状态机流转：参数准备中(半截JSON可见) → 运行中 → 完成/错误；卡片不重挂载", async () => {
-    render(<TestHarness />);
+    render(
+      <>
+        <TestHarness />
+        <AutoExpand />
+      </>,
+    );
     sendFromComposer("开始剧本");
 
     // 1) 参数准备中：call-1 卡片先以 preparing 态出现，且半截 JSON 原文可见
@@ -153,7 +173,12 @@ describe("镜像工具桥接（真实渲染管线）", () => {
   });
 
   it("运行中不重挂载：中途与终态各采样一次，mount 计数不变", async () => {
-    render(<TestHarness />);
+    render(
+      <>
+        <TestHarness />
+        <AutoExpand />
+      </>,
+    );
     sendFromComposer("开始剧本");
 
     // 等到 call-2 出现且处于 running（参数一条到齐、结果未回的窗口）

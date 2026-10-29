@@ -110,7 +110,10 @@ export function messageToEntry(
   if (parentId !== null) entry.parentId = parentId;
   if (message.role === "assistant") {
     entry.status = message.status;
-    if (message.metadata.runId !== undefined) entry.runId = message.metadata.runId;
+    // runId 在 metadata.custom（adapter yield 写入）；旧数据顶层写法兜底兼容
+    const custom = message.metadata.custom as { runId?: string } | undefined;
+    const runId = custom?.runId ?? (message.metadata as { runId?: string }).runId;
+    if (runId !== undefined) entry.runId = runId;
   }
   return entry;
 }
@@ -232,6 +235,8 @@ function entryToMessageLike(entry: StoredMessageEntry): ThreadMessageLike {
   }
 
   const createdAt = new Date(entry.createdAt);
+  // 恢复走 MessageLike 转换：metadata 顶层 runId 会被保留
+  // （thread-message-like 的 runId 透传）；live run 的 runId 才走 custom。
   const metadata =
     entry.role === "assistant" && entry.runId !== undefined ? { runId: entry.runId } : undefined;
 

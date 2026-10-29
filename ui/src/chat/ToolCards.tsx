@@ -15,11 +15,15 @@ import {
   ChevronRight,
   CircleAlert,
   ClipboardList,
+  FileCode2,
+  FileCog,
+  FileJson2,
   FilePenLine,
+  FileText,
   FolderTree,
   MessageCircleQuestion,
   Search,
-  Terminal,
+  SquareTerminal,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useSessionScope } from "@/chat/session-scope";
@@ -48,8 +52,12 @@ interface CardProps extends ToolCallMessagePartProps<CardArgs, unknown> {
   /** 与侧栏一致的单色动作图标。 */
   icon: React.ReactNode;
   label: string;
-  /** 摘要行主文本（路径 / 命令 / 模式等，等宽字体截断）。 */
+  /** 运行中的动作词替换（ZCode 终端行「正在执行」同款；缺省沿用 label）。 */
+  runningLabel?: string;
+  /** 摘要行主文本（路径 / 命令 / 模式等），同时作悬浮提示。 */
   summary: string;
+  /** 摘要行主文本的富渲染（ZCode 蓝文件名 + 灰目录拆分）；缺省灰字 summary。 */
+  summaryNode?: React.ReactNode;
   /** 摘要行尾部徽标（如 +N/−N 统计，可选）。 */
   badges?: React.ReactNode;
 }
@@ -84,7 +92,9 @@ export const toolCardExpandedMemory = new Map<string, boolean>();
 function ToolCardShell({
   icon,
   label,
+  runningLabel,
   summary,
+  summaryNode,
   badges,
   children,
   ...props
@@ -128,37 +138,44 @@ function ToolCardShell({
       data-phase={phase}
       className="min-w-0 text-ui-base"
     >
-      {/* 摘要行：图标 + 主参数 + 徽标 + 状态（点击展开详情） */}
+      {/* 摘要行（ZCode ToolSummaryRow 同款）：整行 self-start 收缩宽度、gap-2、
+          无 hover 底色——运行指示在动作词流光，悬停只露出 chevron。点击展开详情 */}
       <button
         type="button"
         data-phase-label={phase}
         onClick={toggle}
-        className="group/tool flex max-w-full items-center gap-2 rounded-md px-1 py-1 text-left hover:bg-[var(--accent)]/60"
+        className="group/tool inline-flex max-w-full cursor-pointer items-center gap-2 self-start rounded-sm text-left transition-colors focus-visible:ring-2 focus-visible:ring-[var(--ring)]/30 focus-visible:outline-none"
         aria-expanded={open}
         title={summary}
       >
-        <span aria-hidden className="shrink-0 text-[var(--muted-foreground)]">
+        <span
+          aria-hidden
+          className="shrink-0 text-[var(--foreground-subtlest)] [&_svg]:text-[var(--foreground-subtlest)]"
+        >
           {icon}
         </span>
+        {/* 动作词：完成态最淡档 medium（不喧宾夺主），运行中流光扫动表达进行中 */}
         <span
-          className={`shrink-0 font-medium ${phase === "running" ? "cw-shimmer-text" : "text-[var(--muted-foreground)]"}`}
+          className={`shrink-0 font-medium whitespace-nowrap ${phase === "running" ? "cw-shimmer-text" : "text-[var(--foreground-subtlest)]"}`}
         >
-          {label}
+          {phase === "running" && runningLabel ? runningLabel : label}
         </span>
-        <span className="min-w-0 truncate text-[var(--muted-foreground)]">
-          {summary || "（等待参数…）"}
-        </span>
+        {summaryNode ?? (
+          <span className="min-w-0 truncate text-[var(--foreground-subtlest)]">
+            {summary || "（等待参数…）"}
+          </span>
+        )}
         {badges}
-        {/* 运行态：细进度条扫光（ZCode 同款，不用转圈 spinner） */}
+        {/* 运行态：细进度条扫光（不用转圈 spinner） */}
         {phase === "running" && (
           <span data-testid="tool-spinner" className="cw-progress h-1 w-16 shrink-0 rounded-full" />
         )}
         {phase === "preparing" && <span className="shrink-0 text-[var(--cw-dim)]">…</span>}
         {phase === "cancelled" && (
-          <span className="shrink-0 text-ui-sm text-[var(--muted-foreground)]">已中断</span>
+          <span className="shrink-0 text-ui-sm text-[var(--foreground-subtlest)]">已中断</span>
         )}
         {phase === "awaiting" && (
-          <span className="shrink-0 text-ui-sm text-[var(--muted-foreground)]">等待确认</span>
+          <span className="shrink-0 text-ui-sm text-[var(--foreground-subtlest)]">等待确认</span>
         )}
         {phase === "error" && (
           <span
@@ -170,9 +187,9 @@ function ToolCardShell({
           </span>
         )}
         <ChevronRight
-          size={12}
+          size={16}
           aria-hidden
-          className={`shrink-0 text-[var(--cw-dim)] transition-[transform,opacity] group-hover/tool:opacity-100 group-focus-visible/tool:opacity-100 ${open ? "rotate-90 opacity-100" : "opacity-0"}`}
+          className={`shrink-0 text-[var(--foreground-subtlest)] opacity-0 transition-[transform,opacity] duration-200 ease-out group-hover/tool:opacity-100 group-focus-visible/tool:opacity-100 ${open ? "rotate-90 opacity-100" : ""}`}
         />
       </button>
       {/* 详情区：参数原文 + 卡片专属排版 + 结果摘要 + 边车全量数据 */}
@@ -240,18 +257,51 @@ const num = (args: CardArgs, key: string): number | undefined =>
 /** 文本行数计数（空文本算 0 行），用于 +N/−N 徽标。 */
 const lineCount = (text: string): number => (text.length > 0 ? text.split("\n").length : 0);
 
-/** 增加行数徽标（绿底 +N）。 */
-const PlusBadge = ({ n }: { n: number }) => (
-  <span className="shrink-0 rounded bg-emerald-500/20 px-1 font-mono text-emerald-600 dark:text-emerald-300">
-    +{n}
-  </span>
-);
-/** 删除行数徽标（红底 −N）。 */
-const MinusBadge = ({ n }: { n: number }) => (
-  <span className="shrink-0 rounded bg-red-500/20 px-1 font-mono text-red-600 dark:text-red-300">
-    −{n}
-  </span>
-);
+/** diff 统计（ZCode renderDiffCount 同款）：等宽纯彩字、零值整项隐藏、
+ *  ASCII 减号；+N 增绿 / −N 删红。 */
+function DiffCount({ added, removed }: { added: number; removed: number }) {
+  if (added <= 0 && removed <= 0) return null;
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1 font-mono leading-none tabular-nums whitespace-nowrap">
+      {added > 0 && <span className="text-[var(--diff-added)]">+{added}</span>}
+      {removed > 0 && <span className="text-[var(--diff-removed)]">-{removed}</span>}
+    </span>
+  );
+}
+
+/** 文件类型图标（ZCode FileDisplayIcon 的轻量替代）：按扩展名换图标与色。 */
+function FileTypeIcon({ path }: { path: string }) {
+  const ext = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
+  if (ext === "rs")
+    return <FileCog size={16} aria-hidden className="size-4 shrink-0 text-[#deA584]" />;
+  if (ext === "ts" || ext === "tsx")
+    return <FileCode2 size={16} aria-hidden className="size-4 shrink-0 text-[#3178c6]" />;
+  if (ext === "js" || ext === "jsx" || ext === "mjs")
+    return <FileCode2 size={16} aria-hidden className="size-4 shrink-0 text-[#b8860b]" />;
+  if (ext === "json" || ext === "toml" || ext === "yaml" || ext === "yml")
+    return <FileJson2 size={16} aria-hidden className="size-4 shrink-0 text-[#b8860b]" />;
+  if (ext === "md")
+    return <FileText size={16} aria-hidden className="size-4 shrink-0 text-[#519aba]" />;
+  return <FileText size={16} aria-hidden className="size-4 shrink-0 text-[var(--cw-dim)]" />;
+}
+
+/** 文件 chip（ZCode ReadFileChip 同款）：彩色类型图标 + 文件名（subtle 中灰，
+ *  不是链接蓝）truncate；目录路径单独走次要槽。 */
+function FileChip({ path }: { path: string }) {
+  const sep = path.lastIndexOf("/");
+  const name = sep >= 0 ? path.slice(sep + 1) : path;
+  const dir = sep >= 0 ? path.slice(0, sep + 1) : "";
+  if (!name) {
+    return <span className="min-w-0 truncate text-[var(--foreground-subtlest)]">{path}</span>;
+  }
+  return (
+    <span className="inline-flex max-w-full min-w-0 items-center gap-1.5" title={path}>
+      <FileTypeIcon path={name} />
+      <span className="min-w-0 truncate text-[var(--foreground-subtle)]">{name}</span>
+      {dir && <span className="min-w-0 truncate text-[var(--foreground-subtlest)]">{dir}</span>}
+    </span>
+  );
+}
 
 /** read：路径 + 行区间（详情含区间说明）。 */
 export function ReadCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
@@ -263,7 +313,14 @@ export function ReadCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
       ? `（${offset ?? 1} 起${limit !== undefined ? ` · ${limit} 行` : ""}）`
       : "";
   return (
-    <ToolCardShell {...props} icon={<Search size={14} />} label="读取" summary={str(args, "path")}>
+    <ToolCardShell
+      {...props}
+      icon={<Search size={16} />}
+      label="读取"
+      runningLabel="正在读取"
+      summary={str(args, "path")}
+      summaryNode={<FileChip path={str(args, "path")} />}
+    >
       {range && <p className="text-[var(--muted-foreground)]">{range}</p>}
     </ToolCardShell>
   );
@@ -276,15 +333,17 @@ export function WriteCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
   return (
     <ToolCardShell
       {...props}
-      icon={<FilePenLine size={14} />}
+      icon={<FilePenLine size={16} />}
       label="写入"
+      runningLabel="正在写入"
       summary={str(args, "path")}
-      badges={<PlusBadge n={added} />}
+      summaryNode={<FileChip path={str(args, "path")} />}
+      badges={<DiffCount added={added} removed={0} />}
     />
   );
 }
 
-/** edit：路径 + +N/−N 徽标（newText/oldText 行数）。 */
+/** edit：路径 + +N/−N 统计（newText/oldText 行数）。 */
 export function EditCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
   const args = (props.args ?? {}) as CardArgs;
   const added = lineCount(str(args, "newText"));
@@ -292,15 +351,12 @@ export function EditCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
   return (
     <ToolCardShell
       {...props}
-      icon={<FilePenLine size={14} />}
+      icon={<FilePenLine size={16} />}
       label="编辑"
+      runningLabel="正在编辑"
       summary={str(args, "path")}
-      badges={
-        <>
-          <PlusBadge n={added} />
-          <MinusBadge n={removed} />
-        </>
-      }
+      summaryNode={<FileChip path={str(args, "path")} />}
+      badges={<DiffCount added={added} removed={removed} />}
     />
   );
 }
@@ -310,7 +366,13 @@ export function ListFilesCard(props: ToolCallMessagePartProps<CardArgs, unknown>
   const args = (props.args ?? {}) as CardArgs;
   const target = str(args, "path") || "（项目根）";
   return (
-    <ToolCardShell {...props} icon={<FolderTree size={14} />} label="列出文件" summary={target} />
+    <ToolCardShell
+      {...props}
+      icon={<FolderTree size={16} />}
+      label="列出文件"
+      runningLabel="正在列出文件"
+      summary={target}
+    />
   );
 }
 
@@ -324,8 +386,9 @@ export function GrepCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
   return (
     <ToolCardShell
       {...props}
-      icon={<Search size={14} />}
+      icon={<Search size={16} />}
       label="搜索"
+      runningLabel="正在搜索"
       summary={`/${pattern}/ ${suffix}`.trim()}
     >
       {suffix === "" && <p className="text-[var(--muted-foreground)]">（全项目搜索）</p>}
@@ -333,14 +396,16 @@ export function GrepCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
   );
 }
 
-/** command：命令行 monospace（摘要即命令文本）。 */
+/** command：命令行（摘要 = 命令文本 font-sans 截断）；动作词随状态切换
+ *  （ZCode 终端行同款：完成态「终端」、运行中「正在执行」）。 */
 export function CommandCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
   const args = (props.args ?? {}) as CardArgs;
   return (
     <ToolCardShell
       {...props}
-      icon={<Terminal size={14} />}
-      label="执行"
+      icon={<SquareTerminal size={16} />}
+      label="终端"
+      runningLabel="正在执行"
       summary={str(args, "command")}
     />
   );
@@ -366,7 +431,7 @@ export function PlanCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
   return (
     <ToolCardShell
       {...props}
-      icon={<ClipboardList size={14} />}
+      icon={<ClipboardList size={16} />}
       label="计划"
       summary={`任务计划（${done}/${items.length}）`}
     >
@@ -401,7 +466,7 @@ export function AskCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
   return (
     <ToolCardShell
       {...props}
-      icon={<MessageCircleQuestion size={14} />}
+      icon={<MessageCircleQuestion size={16} />}
       label="询问"
       summary={str(args, "title")}
     >

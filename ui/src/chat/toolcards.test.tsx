@@ -93,13 +93,16 @@ describe("工具卡渲染", () => {
     );
   }
 
-  it("read：摘要行路径 + 展开后行区间", () => {
+  it("read：摘要行路径拆分（蓝文件名 + 灰目录）+ 展开后行区间", () => {
     render(<ReadCard {...props({ path: "src/main.rs", offset: 10, limit: 50 })} />);
-    expect(screen.getByTestId("tool-card-c1").textContent).toContain("src/main.rs");
-    expect(screen.getByTestId("tool-card-c1").getAttribute("data-phase")).toBe("running");
+    // ZCode 工具行同款：文件名与目录拆开渲染（textContent 相连无分隔符）
+    const card = screen.getByTestId("tool-card-c1");
+    expect(card.textContent).toContain("main.rs");
+    expect(card.textContent).toContain("src/");
+    expect(card.getAttribute("data-phase")).toBe("running");
     expandCard();
-    expect(screen.getByTestId("tool-card-c1").textContent).toContain("10 起");
-    expect(screen.getByTestId("tool-card-c1").textContent).toContain("50 行");
+    expect(card.textContent).toContain("10 起");
+    expect(card.textContent).toContain("50 行");
   });
 
   it("write：+N 徽标按 content 行数", () => {
@@ -108,11 +111,11 @@ describe("工具卡渲染", () => {
     expect(screen.getByTestId("tool-card-c1").textContent).toContain("+3");
   });
 
-  it("edit：+N/−N 徽标按 newText/oldText 行数", () => {
+  it("edit：+N/−N 统计按 newText/oldText 行数（ZCode 纯彩字口径）", () => {
     render(<EditCard {...props({ path: "a.rs", oldText: "旧一\n旧二", newText: "新一" })} />);
     expect(screen.getByTestId("tool-card-c1").textContent).toContain("a.rs");
     expect(screen.getByTestId("tool-card-c1").textContent).toContain("+1");
-    expect(screen.getByTestId("tool-card-c1").textContent).toContain("−2");
+    expect(screen.getByTestId("tool-card-c1").textContent).toContain("-2");
   });
 
   it("command：命令行 monospace 展示", () => {
@@ -176,8 +179,8 @@ describe("复刻回归", () => {
   it("运行态使用单色 SVG 和扫光标签；失败到达后自动展开", () => {
     const { rerender } = render(<CommandCard {...props({ command: "cargo test" })} />);
     const card = screen.getByTestId("tool-card-c1");
-    expect(card.querySelector("svg.lucide-terminal")).toBeTruthy();
-    expect(card.querySelector(".cw-shimmer-text")?.textContent).toBe("执行");
+    expect(card.querySelector("svg.lucide-square-terminal")).toBeTruthy();
+    expect(card.querySelector(".cw-shimmer-text")?.textContent).toBe("正在执行");
     expect(card.querySelector("button")?.getAttribute("aria-expanded")).toBe("false");
     rerender(
       <CommandCard {...props({ command: "cargo test" }, resultOf("E_COMMAND: 退出码 1", true))} />,

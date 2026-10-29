@@ -64,11 +64,15 @@ it("建议填入实际 composer，真实 runtime 的 reasoning 状态传到思�
   const input = screen.getByRole("textbox") as HTMLTextAreaElement;
   expect(input.value).toBe("梳理当前项目的目录结构与关键模块");
   fireEvent.click(screen.getByRole("button", { name: "发送" }));
-  await waitFor(() =>
-    expect(screen.getByTestId("reasoning-preview").textContent).toBe("检查调用链"),
+  // 运行中过程区展开（ZCode 流程）：思考摘要行 + preview 流式跟随
+  // （真实 runtime 的流式推进受机器负载影响，waitFor 放宽到 3s）
+  await waitFor(
+    () => expect(screen.getByTestId("reasoning-preview").textContent).toBe("检查调用链"),
+    { timeout: 3000 },
   );
   finish();
-  await waitFor(() => expect(screen.getByText("思考过程 · 2s")).toBeTruthy());
+  await waitFor(() => expect(screen.getByText("思考")).toBeTruthy(), { timeout: 3000 });
+  expect(screen.getByText("持续了 2 秒")).toBeTruthy();
   expect(screen.queryByTestId("reasoning-preview")).toBeNull();
 });
 
@@ -104,4 +108,58 @@ it("错误后可继续发送，界面无再次生成入口，用户原文不被�
   fireEvent.change(input, { target: { value: "继续检查" } });
   fireEvent.click(screen.getByRole("button", { name: "发送" }));
   await waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+});
+
+it("运行中过程区展开实时流动，结束 3 秒后收起为摘要行（ZCode 流程）", async () => {
+  // shouldAdvanceTime：gate promise 走真实微任务，折叠的 3s 定时器可手动推进
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  let finish = () => {};
+  const gate = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const adapter: ChatModelAdapter = {
+    async *run() {
+      yield {
+        content: [
+          { type: "reasoning", text: "查看目录", status: { type: "complete" } },
+          { type: "text", text: "现在深入" },
+        ],
+      };
+      await gate;
+      yield {
+        content: [
+          { type: "reasoning", text: "查看目录", status: { type: "complete" } },
+          { type: "text", text: "现在深入" },
+          { type: "text", text: "这是最终答复" },
+        ],
+      };
+    },
+  };
+  render(<Harness adapter={adapter} />);
+  fireEvent.click(screen.getByRole("button", { name: "梳理当前项目的目录结构与关键模块" }));
+  fireEvent.click(screen.getByRole("button", { name: "发送" }));
+  // 运行中：过程区全量展开——思考摘要行（剧本 reasoning 已 complete →
+  // 「思考 · 持续了几秒」）与叙述段常显，无折叠摘要行
+  await waitFor(() => expect(screen.getByText("现在深入")).toBeTruthy());
+  expect(screen.getByText("思考")).toBeTruthy();
+  expect(screen.getByText("持续了几秒")).toBeTruthy();
+  expect(screen.queryByTestId("run-summary")).toBeNull();
+  finish();
+  await waitFor(() => expect(screen.getByText("这是最终答复")).toBeTruthy());
+  // 完成态思考行：「思考 · 持续了几秒」（剧本无 timing 不虚构时长）
+  expect(screen.getByText("思考")).toBeTruthy();
+  expect(screen.getByText("持续了几秒")).toBeTruthy();
+  // 结束 3 秒后收起：过程进摘要行，只留轮尾最终答复常显
+  act(() => vi.advanceTimersByTime(3100));
+  expect(screen.queryByText("现在深入")).toBeNull();
+  expect(screen.queryByText("思考")).toBeNull();
+  expect(screen.getByText("这是最终答复")).toBeTruthy();
+  expect(screen.getByTestId("run-summary")).toBeTruthy();
+  // 摘要行是 ZCode「已工作 + 时长」口径
+  expect(screen.getByText(/已工作/)).toBeTruthy();
+  // 点开摘要行回看完整过程
+  fireEvent.click(screen.getByTestId("run-summary"));
+  expect(screen.getByText("现在深入")).toBeTruthy();
+  expect(screen.getByText("思考")).toBeTruthy();
+  expect(screen.getByText("这是最终答复")).toBeTruthy();
 });

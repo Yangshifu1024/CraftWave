@@ -24,6 +24,7 @@ import { create } from "zustand";
 import { toWire } from "@/chat/runtime";
 import * as client from "@/ipc/client";
 import type { MessageEntry, SessionTreeData } from "@/ipc/types";
+import { useSessionsStore } from "./sessions";
 
 /** 每会话一份的运行态记账（16 号票多会话分桶）。 */
 export interface SessionPersistScope {
@@ -129,6 +130,10 @@ export function toSavePayload(
  * 发送前树同步（§6.3 双写的先手）：save 活动路径。E_SESSION_REV 时 load
  * 校正 revision 重试一次；再失败仅记 console（发送流程不因此中断——
  * Rust 侧 user 兜底会补落，分支拓扑延后到下次成功 save）。
+ *
+ * 首次可见刷新：save 成功推进索引 messageCount 后，若该会话此前不在左栏
+ * 列表（新建未发送的空会话），补一次 refresh 让它即时出现（FR-01-01：
+ * 会话发送后才进列表）。
  */
 export async function syncTreeBeforeSend(
   sessionId: string,
@@ -140,9 +145,20 @@ export async function syncTreeBeforeSend(
   if (payload.length === 0) return;
   const attempt = async (baseRevision: number) =>
     client.saveSessionTree({ sessionId, messages: payload, activeLeafId, baseRevision });
+  const refreshIfFirstVisible = () => {
+    const known = useSessionsStore.getState().sessions.some((m) => m.id === sessionId);
+    if (known) return;
+    void useSessionsStore
+      .getState()
+      .refresh()
+      .catch((err) => {
+        console.warn("[sessions] 发送后刷新列表失败（下次操作自愈）", err);
+      });
+  };
   try {
     const result = await attempt(revision);
     useSessionPersistStore.getState().setRevision(sessionId, result.revision);
+    refreshIfFirstVisible();
   } catch (err) {
     const ipcErr = client.toIpcError(err);
     if (ipcErr.code !== "E_SESSION_REV") throw err;
@@ -151,6 +167,7 @@ export async function syncTreeBeforeSend(
     useSessionPersistStore.getState().setRevision(sessionId, tree.revision);
     const result = await attempt(tree.revision);
     useSessionPersistStore.getState().setRevision(sessionId, result.revision);
+    refreshIfFirstVisible();
   }
 }
 

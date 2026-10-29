@@ -152,7 +152,10 @@ export function toWire(messages: readonly ThreadMessage[]): MessageEntry[] {
     };
     if (message.role === "assistant") {
       if (message.status !== undefined) entry.status = message.status;
-      if (message.metadata?.runId !== undefined) entry.runId = message.metadata.runId;
+      // runId 在 metadata.custom（yield 侧写入）；旧数据的顶层写法兜底兼容
+      const meta = message.metadata as { custom?: { runId?: string }; runId?: string } | undefined;
+      const runId = meta?.custom?.runId ?? meta?.runId;
+      if (runId !== undefined) entry.runId = runId;
     }
     return entry;
   });
@@ -312,6 +315,12 @@ export function createTauriChatAdapter(deps: TauriAdapterDeps): ChatModelAdapter
           yield {
             content: content.length > 0 ? content : [{ type: "text", text: "" }],
             ...(snapshot.ended ? { status: endStatus(snapshot.ended) } : {}),
+            // runId 进消息 metadata.custom（assistant-ui 把 custom 合到
+            // message.metadata.custom）：摘要行时长（run 收口表 / run-metrics
+            // 兜底）与保存链路的 entry.runId 都按它联接。
+            ...(snapshot.run !== null
+              ? { metadata: { custom: { runId: snapshot.run.runId } } }
+              : {}),
           };
         }
         // 命令失败已在上面合成终态帧收口；此处 rejection 无需再处理

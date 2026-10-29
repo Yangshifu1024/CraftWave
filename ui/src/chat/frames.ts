@@ -26,10 +26,24 @@ export interface RunInfo {
   model: string;
 }
 
+/**
+ * 快照中的一段时间线内容（按帧到达顺序排列）。模型的真实输出是交错的
+ * （思考 → 工具 → 旁白 → 工具 → 最终答案），旧实现把所有文本/思考各拼进
+ * 一个字符串，交错顺序在此丢失——显示上旁白全堆到消息开头、最终答案
+ * 永远排在工具卡之前。改为段列表后，每类增量只在「上一段同为该类型」
+ * 时续接，否则新开一段，快照即真实时间线。
+ * reasoning/text 段携带各自的累积文本；tool 段只记出现位置，调用状态在
+ * toolCalls 表（按 callId 关联）。
+ */
+export type SnapshotSegment =
+  | { kind: "reasoning"; text: string }
+  | { kind: "text"; text: string }
+  | { kind: "tool"; callId: string };
+
 /** 全量累计快照（assistant-ui 语义：替换而非增量）。 */
 export interface FrameSnapshot {
-  text: string;
-  reasoning: string;
+  /** 内容时间线（帧到达序）：toParts 按此展开成交错 parts。 */
+  segments: SnapshotSegment[];
   toolCalls: ToolCallState[];
   started: boolean;
   ended: null | {
@@ -66,8 +80,8 @@ export interface FrameArrival {
  * 帧累积器：parts 数组 + 乱序丢弃（§5.6 runEpoch 语义）+ 埋点。
  */
 export class FrameBuffer {
-  private text = "";
-  private reasoning = "";
+  /** 内容时间线：text/reasoning 增量续接同类末段或新开段，工具按 toolStarted 位置入列。 */
+  private segments: SnapshotSegment[] = [];
   private tools = new Map<string, ToolCallState>();
   private started = false;
   private ended: FrameSnapshot["ended"] = null;
@@ -106,22 +120,25 @@ export class FrameBuffer {
         this.started = true;
         this.run = { runId: frame.runId, model: frame.model };
         break;
-      case "textDelta":
-        this.text += frame.delta;
+      case "textDelta": {
+        this.appendSegment("text", frame.delta);
         // 首个正文帧 = 思考流结束点（帧序：思考 → 工具/正文）
         if (this.thinkingStartedAt !== null && this.thinkingEndedAt === null) {
           this.thinkingEndedAt = this.now();
         }
         break;
-      case "reasoningDelta":
-        this.reasoning += frame.delta;
+      }
+      case "reasoningDelta": {
+        this.appendSegment("reasoning", frame.delta);
         // 首帧思考 = 思考流起点
         if (this.thinkingStartedAt === null) {
           this.thinkingStartedAt = this.now();
         }
         break;
+      }
       case "toolStarted": {
         this.tools.set(frame.callId, { callId: frame.callId, name: frame.name, argsJson: "" });
+        this.segments.push({ kind: "tool", callId: frame.callId });
         // 首个工具帧同样收口思考流（思考后先调工具再出正文）
         if (this.thinkingStartedAt !== null && this.thinkingEndedAt === null) {
           this.thinkingEndedAt = this.now();
@@ -160,6 +177,20 @@ export class FrameBuffer {
     }
   }
 
+  /**
+   * 增量并入时间线：末段同为该类型则续接（同一发言块不拆段），否则新开一段。
+   * 空 delta 直接忽略，避免产出空段。
+   */
+  private appendSegment(kind: "text" | "reasoning", delta: string): void {
+    if (delta.length === 0) return;
+    const last = this.segments.at(-1);
+    if (last !== undefined && last.kind === kind) {
+      last.text += delta;
+    } else {
+      this.segments.push({ kind, text: delta });
+    }
+  }
+
   /** 参数是否仍在流式累积（半截 JSON 判定：解析失败即「参数准备中」）。 */
   static argsReady(argsJson: string): boolean {
     try {
@@ -173,8 +204,7 @@ export class FrameBuffer {
   /** 深拷贝当前累积态为一份完整快照（替换语义：每次都是全量内容）。 */
   snapshot(): FrameSnapshot {
     return {
-      text: this.text,
-      reasoning: this.reasoning,
+      segments: this.segments.map((seg) => ({ ...seg })),
       toolCalls: [...this.tools.values()].map((tool) => ({ ...tool })),
       started: this.started,
       ended: this.ended ? { ...this.ended } : null,
@@ -237,50 +267,72 @@ export function isArgsTextComplete(argsText: string): boolean {
 }
 
 /**
- * 快照 → content parts：text/reasoning → 对应 part；toolCalls → 镜像工具的
- * tool-call part（S1 结论：adapter 把 toolResult 帧直接写进 result/isError，
- * local runtime 无 execute 管线）。顺序 = 帧到达序（工具按 toolStarted 出现序，
- * 文本/思考在前）。
+ * 快照 → content parts：以工具为界把时间线分段——两次工具之间的 reasoning
+ * 全部并入组头思考段、text 全部并入组正文段（按到达序直接拼接）。
+ *
+ * 为什么合批：模型在两次工具之间会「想一下、说半句」反复多次，逐段展开的
+ * 话一句话会被思考行拦腰拆成几截（「我来帮你梳理」/「…首先查看」是同一句），
+ * 过程区全是碎片；同组合批后就是一条思考行 + 一句连贯的话 + 工具行。
+ * 顺序保持帧到达序，工具永远在两组之间作为分界。
  */
 export function toParts(snapshot: FrameSnapshot): ChatPart[] {
+  const toolById = new Map(snapshot.toolCalls.map((tool) => [tool.callId, tool]));
+  // 思考行状态面（run 级思考起止，合并后的思考段共用）：流式中 status=running
+  // （渲染「思考中」扫光），结束后 complete + 起止时刻（渲染「持续了 N 秒」）
+  const thinking = snapshot.thinking;
+  const reasoningState = {
+    status:
+      thinking !== null && thinking.endedAt === null ? { type: "running" } : { type: "complete" },
+    ...(thinking !== null
+      ? {
+          timing: {
+            startedAt: thinking.startedAt,
+            ...(thinking.endedAt !== null ? { completedAt: thinking.endedAt } : {}),
+          },
+        }
+      : {}),
+  } satisfies Pick<Extract<ChatPart, { type: "reasoning" }>, "status" | "timing">;
   const parts: ChatPart[] = [];
-  if (snapshot.reasoning.length > 0) {
-    // 思考行状态面：流式中 status=running（渲染「思考中」扫光），结束后
-    // complete + 起止时刻（渲染「持续了 N 秒」）
-    const thinking = snapshot.thinking;
-    parts.push({
-      type: "reasoning",
-      text: snapshot.reasoning,
-      status:
-        thinking !== null && thinking.endedAt === null ? { type: "running" } : { type: "complete" },
-      ...(thinking !== null
-        ? {
-            timing: {
-              startedAt: thinking.startedAt,
-              ...(thinking.endedAt !== null ? { completedAt: thinking.endedAt } : {}),
-            },
-          }
-        : {}),
-    });
+  let groupReasoning: string[] = [];
+  let groupText: string[] = [];
+  const flushGroup = () => {
+    const reasoningText = groupReasoning.join("\n\n");
+    if (reasoningText.length > 0) {
+      parts.push({ type: "reasoning", text: reasoningText, ...reasoningState });
+    }
+    const groupTextJoined = groupText.join("");
+    if (groupTextJoined.length > 0) {
+      parts.push({ type: "text", text: groupTextJoined });
+    }
+    groupReasoning = [];
+    groupText = [];
+  };
+  for (const seg of snapshot.segments) {
+    if (seg.kind === "reasoning") {
+      if (seg.text.length > 0) groupReasoning.push(seg.text);
+    } else if (seg.kind === "text") {
+      if (seg.text.length > 0) groupText.push(seg.text);
+    } else {
+      flushGroup();
+      const tool = toolById.get(seg.callId);
+      if (tool) {
+        parts.push({
+          type: "tool-call",
+          toolCallId: tool.callId,
+          toolName: tool.name,
+          argsText: tool.argsJson,
+          args: parsePartialJsonObject(tool.argsJson),
+          ...(tool.result
+            ? {
+                result: { ok: tool.result.ok, summary: tool.result.uiSummary },
+                isError: !tool.result.ok,
+              }
+            : {}),
+        });
+      }
+    }
   }
-  if (snapshot.text.length > 0) {
-    parts.push({ type: "text", text: snapshot.text });
-  }
-  for (const tool of snapshot.toolCalls) {
-    parts.push({
-      type: "tool-call",
-      toolCallId: tool.callId,
-      toolName: tool.name,
-      argsText: tool.argsJson,
-      args: parsePartialJsonObject(tool.argsJson),
-      ...(tool.result
-        ? {
-            result: { ok: tool.result.ok, summary: tool.result.uiSummary },
-            isError: !tool.result.ok,
-          }
-        : {}),
-    });
-  }
+  flushGroup();
   return parts;
 }
 

@@ -40,6 +40,13 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* lucide 图标线条全局收细（全应用统一视觉决策）：lucide-react 渲染的每个
+ * SVG 都带 lucide 类，CSS presentation 优先级高于组件默认的 stroke-width=2
+ * 属性——一处规则覆盖全部现有与新增图标；个别需要加粗时用 style 内联覆盖。 */
+svg.lucide {
+  stroke-width: 1;
+}
+
 /* ============================================================
  * 相对字阶：全部字号 = --ui-font-size 基准 + 偏移（ZCode 同款架构）。
  * 档位全集/偏移/命名与 ZCode 完全对齐（2xs -5 / xs -4 / sm -2 /
@@ -118,7 +125,7 @@ body {
   animation: cw-pop var(--t-fast) var(--ease-cw);
 }
 
-/* 运行态细进度条扫光（ZCode animated-gradient 同款，替代转圈 spinner） */
+/* 运行态细进度条扫光（替代转圈 spinner） */
 @keyframes cw-shimmer {
   to {
     background-position: 200% center;
@@ -129,18 +136,40 @@ body {
   background-size: 200% 100%;
   animation: cw-shimmer 1.2s linear infinite;
 }
+/* 运行态文案流光（ZCode animated-gradient-text 同款）：前景实色 ↔ 22% 透明，
+ * 300% 背景往返 4s；background-clip:text 上色。 */
+@keyframes gradient-flow {
+  0% {
+    background-position: 100% 0;
+  }
+  50% {
+    background-position: 0% 0;
+  }
+  100% {
+    background-position: 0% 0;
+  }
+}
 .cw-shimmer-text {
-  color: var(--muted-foreground);
+  --shimmer-strong: var(--foreground);
+  --shimmer-soft: color-mix(in srgb, var(--foreground) 22%, transparent);
+  display: inline-block;
   background: linear-gradient(
     90deg,
-    var(--muted-foreground) 25%,
-    var(--foreground) 50%,
-    var(--muted-foreground) 75%
+    var(--shimmer-strong) 0%,
+    var(--shimmer-strong) 34%,
+    var(--shimmer-soft) 50%,
+    var(--shimmer-strong) 66%,
+    var(--shimmer-strong) 100%
   );
-  background-size: 200% 100%;
+  background-size: 300% 100%;
   background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
   -webkit-text-fill-color: transparent;
-  animation: cw-shimmer 4s linear infinite;
+  animation: gradient-flow 4s linear infinite;
+  will-change: background-position;
+  transform: translateZ(0);
+  backface-visibility: hidden;
 }
 .cw-fade-inline {
   mask-image: linear-gradient(
@@ -228,11 +257,16 @@ body {
  *   md=6 菜单项与按钮；sm/最小用于行内小件。禁止跨级混用。
  * ============================================================ */
 :root {
-  /* 背景灰调（侧栏与窗口融为一体），卡片（会话区大圆角框）保持白。
+  /* 背景灰调（侧栏与窗口融为一体），中部会话区大圆角框比外围浅一档。
    * 边框用前景色 10% 透明混合（ZCode 同款）：亮暗一套 alpha 逻辑，
    * 随前景自动反相，新增灰档不再两头手调。 */
-  --background: #f5f6f8;
+  --background: #f3f3f2;
   --foreground: #1f2328;
+  /* 前景淡档（ZCode 同款口径，侧栏层级复刻）：subtle=60% 混合（项目名），
+   * subtlest=最淡（「项目」组标题）；暗色 subtlest 用 30%（ZCode .dark 同款）。
+   * 基色锚定本仓 --foreground（ZCode 四套主题的基色恰为其 foreground 同值）。 */
+  --foreground-subtle: color-mix(in oklab, var(--foreground) 60%, transparent);
+  --foreground-subtlest: color-mix(in oklab, var(--foreground) 40%, transparent);
   --card: #ffffff;
   --card-foreground: #1f2328;
   --muted: #eef0f3;
@@ -244,13 +278,16 @@ body {
   --accent: #e8eaee;
   --accent-foreground: #1f2328;
   --destructive: #dc2626;
+  /* 工具行 diff 统计（ZCode text-diff-added/removed 同口径） */
+  --diff-added: #16a34a;
+  --diff-removed: #dc2626;
   --warning: #b45309;
   --warning-foreground: #ffffff;
   --ring: #2563eb;
   /* 侧栏选中/悬停底（ZCode bg-selected 与 bg-surface-hover 同值口径） */
   --selected: rgba(13, 13, 13, 0.05);
-  --cw-bg-main: #ffffff;
-  --cw-bg-nav: #f5f6f8;
+  --cw-bg-main: #f8f8f8;
+  --cw-bg-nav: #f3f3f2;
   --cw-highlight: #e8eaee;
   --cw-text-1: #1f2328;
   --cw-text-2: #57606a;
@@ -268,6 +305,8 @@ body {
    * 侧栏，用户气泡 #262626；整套灰阶随锚点转纯中性（无蓝相）。 */
   --background: #272728;
   --foreground: #e8e8e9;
+  --foreground-subtle: color-mix(in oklab, var(--foreground) 60%, transparent);
+  --foreground-subtlest: color-mix(in oklab, var(--foreground) 30%, transparent);
   --card: #161616;
   --card-foreground: #e8e8e9;
   --muted: #262626;
@@ -279,6 +318,8 @@ body {
   --accent: #313133;
   --accent-foreground: #e8e8e9;
   --destructive: #ef4444;
+  --diff-added: #22c55e;
+  --diff-removed: #ef4444;
   --warning: #f59e0b;
   --warning-foreground: #17191c;
   --ring: #3b82f6;
@@ -1012,11 +1053,11 @@ body {
   font-weight: 500;
 }
 .cw-md p {
-  margin: 12px 0;
+  margin: 16px 0;
 }
 .cw-md ul,
 .cw-md ol {
-  margin: 12px 0;
+  margin: 16px 0;
   padding-left: 20px;
 }
 .cw-md ul {
@@ -1030,10 +1071,11 @@ body {
   padding-left: 4px;
 }
 .cw-md li::marker {
-  color: var(--muted-foreground);
+  color: var(--foreground-subtlest);
 }
 .cw-md li > p {
   margin: 0;
+  display: inline;
 }
 .cw-md li > ul,
 .cw-md li > ol {

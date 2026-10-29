@@ -598,3 +598,67 @@ fn delete_session_rejects_invalid_id() {
     let err = store.delete_session("../escape").unwrap_err();
     assert!(matches!(err, crate::storage::StorageError::InvalidArg(_)));
 }
+
+// ---- 空会话语义（发送即在左栏可见）：save 同步索引 ----
+
+// 断言：save 落盘新消息节点时同步索引（messageCount/revision 推进），索引缺
+// 条目时兜底建档（防御路径；正常协议 create_session 先建）。
+#[test]
+fn save_with_new_messages_syncs_index() {
+    let (store, _dir) = store();
+    store
+        .save_session_tree("s1", &[user("u1", None, "你好")], Some("u1"), 0)
+        .unwrap();
+    let meta = store.index().get("s1").expect("索引应有兜底条目");
+    assert_eq!(meta.message_count, 1);
+    assert_eq!(meta.revision, 1);
+}
+
+// 断言：索引已有条目（模拟 create_session 先建）时，save 只推进计数/修订/
+// updatedAt，project/title/createdAt/totalTokens 等域字段原样保留。
+#[test]
+fn save_syncs_index_but_preserves_registry_fields() {
+    let (store, _dir) = store();
+    store.index().upsert(crate::storage::SessionMeta {
+        id: "s1".to_string(),
+        project_id: Some("p1".to_string()),
+        title: "我的会话".to_string(),
+        created_at: 1000,
+        updated_at: 1000,
+        revision: 0,
+        message_count: 0,
+        total_tokens: 42,
+    }).unwrap();
+    store
+        .save_session_tree(
+            "s1",
+            &[user("u1", None, "你好"), assistant("a1", "u1", "回复")],
+            Some("a1"),
+            0,
+        )
+        .unwrap();
+    let meta = store.index().get("s1").unwrap();
+    assert_eq!(meta.message_count, 2);
+    assert_eq!(meta.revision, 1);
+    assert_eq!(meta.project_id.as_deref(), Some("p1"));
+    assert_eq!(meta.title, "我的会话");
+    assert_eq!(meta.created_at, 1000);
+    assert_eq!(meta.total_tokens, 42);
+    assert!(meta.updated_at >= 1000, "updatedAt 应推进到 save 时刻");
+}
+
+// 断言：幂等 save（无新节点，全量同步已存在内容）不推进 updatedAt（打开旧
+// 会话不发言不应让它跳到列表顶部）。
+#[test]
+fn idempotent_save_does_not_touch_index() {
+    let (store, _dir) = store();
+    store
+        .save_session_tree("s1", &[user("u1", None, "你好")], Some("u1"), 0)
+        .unwrap();
+    let before = store.index().get("s1").unwrap().updated_at;
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    store
+        .save_session_tree("s1", &[user("u1", None, "你好")], Some("u1"), 1)
+        .unwrap();
+    assert_eq!(store.index().get("s1").unwrap().updated_at, before);
+}

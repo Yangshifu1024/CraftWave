@@ -24,6 +24,7 @@ use super::entries::{MessageEntry, MessageRole, MetaEntry, SessionEntry, StoredE
 use super::index_store::SessionIndex;
 use super::locks::LockMap;
 use super::segment::SessionLog;
+use super::SessionMeta;
 
 /// 会话存储器：数据根 + 会话锁表 + 会话索引（由 Tauri `State` 托管为全局单例）。
 pub struct SessionStore {
@@ -173,6 +174,40 @@ impl SessionStore {
         }));
         log.append(&batch)
             .map_err(|e| StorageError::Io(e.to_string()))?;
+        // 有新消息节点落盘时同步索引（发送即在左栏可见的数据面）：index 的
+        // messageCount 原本只在 run 终态推进，发送到收口之间会话在列表侧
+        // 仍是"空会话"——前端按 messageCount 过滤空会话会误伤首条消息。
+        if batch.iter().any(|e| matches!(e, StoredEntry::Message(_))) {
+            let message_count = log
+                .entries()
+                .iter()
+                .filter(|e| matches!(e, StoredEntry::Message(_)))
+                .count() as u64;
+            let now = now_ms();
+            let synced = self
+                .index
+                .mutate(session_id, |m| {
+                    m.message_count = message_count.max(m.message_count);
+                    m.revision = revision;
+                    m.updated_at = now;
+                })
+                .map_err(|e| StorageError::Io(format!("{e:?}")))?;
+            if synced.is_none() {
+                // 索引缺条目（防御路径，正常协议 create_session 先建）：兜底建档
+                self.index
+                    .upsert(SessionMeta {
+                        id: session_id.to_string(),
+                        project_id: None,
+                        title: "新会话".to_owned(),
+                        created_at: now,
+                        updated_at: now,
+                        revision,
+                        message_count,
+                        total_tokens: 0,
+                    })
+                    .map_err(|e| StorageError::Io(format!("{e:?}")))?;
+            }
+        }
         Ok(revision)
     }
 

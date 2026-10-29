@@ -37,7 +37,6 @@ import {
   ShieldAlert,
   ShieldCheck,
   Square,
-  Wrench,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { ChatErrorBanner } from "@/chat/ChatErrorBanner";
@@ -51,7 +50,6 @@ import { useRunSummaries, useSessionScope } from "@/chat/session-scope";
 import { getConfig } from "@/ipc/client";
 import type { PermissionTier } from "@/ipc/types";
 import { matchGhost, useAskStore } from "@/stores/ask";
-import { useSessionsStore } from "@/stores/sessions";
 
 /** 消息区（FR-13-15 滚动跟随：Viewport autoScroll 内建「跟随最新 + 上滚
  *  暂停」；不在底部时显示回底按钮，17 号票）。内容列限宽居中（参考样式
@@ -66,7 +64,7 @@ export function ChatThread({ onOpenSettings }: { onOpenSettings?: () => void }) 
             <ThreadEmptyState />
           </AuiIf>
           {/* 内容列限宽居中（约 62%，A1）：消息与过程行统一宽度 */}
-          <div className="mx-auto min-w-0 w-full max-w-4xl space-y-4">
+          <div className="mx-auto min-w-0 w-full max-w-4xl space-y-4 2xl:max-w-6xl">
             <ThreadPrimitive.Messages>
               {({ message }) =>
                 // system = runMarker 等存储标记节点（custom 载荷保真，§6.2 跳过内容）——不渲染
@@ -96,7 +94,7 @@ export function ChatThread({ onOpenSettings }: { onOpenSettings?: () => void }) 
         {/* composer 固定底区：在滚动容器（Viewport）之外，不随内容滚动、
             内容也不会钻入其背后（sticky 方案的两个老问题一并消除） */}
         <div className="shrink-0 px-4 pb-3">
-          <div className="relative mx-auto w-full max-w-4xl">
+          <div className="relative mx-auto w-full max-w-4xl 2xl:max-w-6xl">
             {/* 回底按钮（FR-13-15）：已在底部时原语输出 disabled，用
                 disabled:hidden 隐藏；挂 composer 容器上方自适应其高度 */}
             <ThreadPrimitive.ScrollToBottom className="cw-pop-in absolute bottom-full left-1/2 z-20 mb-2 flex size-8 -translate-x-1/2 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--card)] text-[var(--muted-foreground)] shadow hover:text-[var(--foreground)] disabled:hidden">
@@ -158,7 +156,7 @@ function ThreadEmptyState() {
     return () => clearTimeout(timer);
   }, [now]);
   return (
-    <div className="cw-empty-state mx-auto flex w-full max-w-4xl flex-1 flex-col items-center justify-center gap-5 py-10">
+    <div className="cw-empty-state mx-auto flex w-full max-w-4xl 2xl:max-w-6xl flex-1 flex-col items-center justify-center gap-5 py-10">
       <div className="flex flex-col items-center gap-1.5">
         <p className="cw-greeting font-medium text-[var(--foreground)]">{greeting(now)}</p>
         <p className="text-ui-base text-[var(--muted-foreground)]">
@@ -264,22 +262,25 @@ function ComposerBar() {
           <TierMenu />
           <div className="ml-auto flex items-center gap-1.5">
             <ModelPicker />
-            {/* 发送恒显：运行中点击即入队（队列条展示，run 结束自动续发）——
-                故不与停止同位替换（ZCode 无排队面，两键并列是本应用的差异） */}
-            <ComposerPrimitive.Send
-              aria-label="发送"
-              className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90"
-            >
-              <ArrowUp size={16} aria-hidden className="shrink-0" />
-            </ComposerPrimitive.Send>
+            {/* 键位同位替换（ZCode 单键形态）：空闲=发送；运行中=停止（点击中断本轮）。
+                运行中排队不再占按钮：queue capability 打开时 Input 的 Enter 仍入队
+                （队列条照常展示）——按钮只承担「立即动作」（发送/停止），排队是键盘语义。 */}
             <AuiIf condition={(s) => s.thread.isRunning}>
               <ComposerPrimitive.Cancel
                 aria-label="停止"
                 title="停止（Esc）"
-                className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-[var(--muted)] text-[var(--foreground)] hover:opacity-90"
+                className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90"
               >
                 <Square size={14} aria-hidden fill="currentColor" className="shrink-0" />
               </ComposerPrimitive.Cancel>
+            </AuiIf>
+            <AuiIf condition={(s) => !s.thread.isRunning}>
+              <ComposerPrimitive.Send
+                aria-label="发送"
+                className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90"
+              >
+                <ArrowUp size={16} aria-hidden className="shrink-0" />
+              </ComposerPrimitive.Send>
             </AuiIf>
           </div>
         </div>
@@ -486,10 +487,12 @@ function ModelPicker() {
   );
 }
 
-/** 用户消息：右对齐浅底块（工作流风格 A1：弱化为 muted 底，不用主色）。 */
+/** 用户消息（ZCode group/user-row 同款）：右对齐浅底气泡，复制/编辑操作行
+ *  悬停才显（opacity-0 → group-hover 显），常显操作栏会把每条消息下方
+ *  都钉一行按钮。 */
 function UserMessage() {
   return (
-    <MessagePrimitive.Root className="flex flex-col items-end py-2">
+    <MessagePrimitive.Root className="group/user-row flex flex-col items-end py-2">
       {/* 气泡右上 2px 折角 + 1px 边框（ZCode 同款），与平铺的助手消息区分 */}
       <div className="min-w-0 max-w-full rounded-xl rounded-tr-xs border border-[var(--border)] bg-[var(--muted)] px-4 py-3 text-ui-base leading-6 text-[var(--foreground)] sm:max-w-xl">
         <MessagePrimitive.Parts>
@@ -500,58 +503,78 @@ function UserMessage() {
           }
         </MessagePrimitive.Parts>
       </div>
-      <BranchBar editOnly />
+      <div className="mt-1 flex items-center gap-1 opacity-0 transition-opacity group-focus-within/user-row:opacity-100 group-hover/user-row:opacity-100">
+        <BranchBar editOnly noTopGap />
+      </div>
     </MessagePrimitive.Root>
   );
 }
 
 /**
- * 折叠分组状态机（§10.4 / FR-01-10，17 号票）：
- *
- * - 运行中（thread.isRunning 且本消息是链上最后一条）：过程 parts（思考流/
- *   工具卡）全量实时展开——FR-01-10「不预先折叠」；
- * - run 结束后 3 秒收起为摘要行（自动折叠开关可关，ui-state）；
- * - 历史消息（挂载即非运行中）：默认收起；
- * - 点击摘要行随时展开/收起回看完整过程（过程数据由边车补全，FR-04-07）；
- * - 最终答复（text parts）始终保留在折叠区外常显。
+ * 折叠分组状态（§10.4）：运行中（链上最后一条消息）过程区全量实时展开；
+ * **最终答复开始输出的瞬间即折叠**（ZCode 的折叠发生在 run 结束，这里按
+ * 需求前移到总结出现——finalAnswerStarted 见 AssistantMessage）；纯问答
+ * （无工具、信号不触发）的 run 结束后留 3 秒兜底收起。摘要行是唯一出入口，
+ * 点击随时展开/收起回看完整过程（过程数据由边车补全，FR-04-07）。
  */
-function useRunCollapse(processCount: number): {
+function useRunCollapse(
+  processCount: number,
+  finalAnswerStarted: boolean,
+): {
   collapsed: boolean;
   toggle: () => void;
 } {
   const isRunning = useAuiState((s) => s.thread.isRunning);
   const isLast = useAuiState((s) => s.message.isLast);
-  const autoCollapse = useSessionsStore((s) => s.collapseRuns);
   const active = isRunning && isLast;
   const [expanded, setExpanded] = useState(() => active);
   const prevActive = useRef(active);
+  // 本轮 run 的自动折叠锁：总结信号只触发一次，避免后续状态变化反复开合
+  const autoCollapsed = useRef(false);
   useEffect(() => {
     if (active && !prevActive.current) {
-      // 新 run 开始：过程全部展开
+      // 新 run 开始：过程全部展开并复位折叠锁
+      autoCollapsed.current = false;
       setExpanded(true);
-    } else if (!active && prevActive.current && autoCollapse && processCount > 0) {
-      // run 刚结束：留 3 秒看完最后输出再收起（§10.4）
-      const timer = setTimeout(() => setExpanded(false), 3000);
-      prevActive.current = active;
-      return () => clearTimeout(timer);
+    } else if (!active && prevActive.current) {
+      // run 结束兜底（总结信号未触发的 run）：留 3 秒看完最后输出再收起
+      if (!autoCollapsed.current && processCount > 0 && expanded) {
+        const timer = setTimeout(() => setExpanded(false), 3000);
+        prevActive.current = active;
+        return () => clearTimeout(timer);
+      }
     }
     prevActive.current = active;
-  }, [active, autoCollapse, processCount]);
+  }, [active, processCount, expanded]);
+  useEffect(() => {
+    // 最终答复开始流式输出：立即折叠过程区，让总结独占视野
+    if (active && finalAnswerStarted && !autoCollapsed.current) {
+      autoCollapsed.current = true;
+      setExpanded(false);
+    }
+  }, [active, finalAnswerStarted]);
   return { collapsed: !expanded, toggle: () => setExpanded((v) => !v) };
 }
 
-/** 时长格式化（摘要行）：秒级一位小数，分钟级取整。 */
+/** 时长格式化（ZCode formatConversationWorkDuration 口径）：秒取整最少 1 秒，
+ *  中文单位，跨分钟带分。 */
 function formatDuration(ms: number): string {
-  const seconds = ms / 1000;
-  if (seconds < 60) return `${seconds.toFixed(1)}s`;
-  const minutes = Math.floor(seconds / 60);
-  return `${minutes}m${Math.round(seconds - minutes * 60)}s`;
+  const totalSeconds = Math.max(1, Math.round(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes <= 0) return `${totalSeconds} 秒`;
+  return seconds > 0 ? `${minutes} 分 ${seconds} 秒` : `${minutes} 分钟`;
 }
 
 /**
- * 助手消息：正文 text 常显；思考过程与工具卡（过程 parts）按 useRunCollapse
- * 的折叠状态决定显示；收起时展示「N 次工具调用 · 时长」摘要行，可点击展开。
- * 时长与中断态取自 run 收口摘要表（SessionTab 注入，见 tree-persistence）。
+ * 助手消息：轮尾最终答复常显（流式）；思考卡、工具卡与过程叙述段按
+ * useRunCollapse 的折叠状态显示，收起时展示「N 次工具调用 · 时长」摘要行
+ * （运行中带 spinner），可点击展开。时长与中断态取自 run 收口摘要表
+ * （SessionTab 注入，见 tree-persistence）。
+ *
+ * 折叠分界对齐 ZCode 轮渲染语义（latestAssistantTextRow）：工具调用之间的
+ * 叙述短句属于过程历史，折叠后一并收进摘要行，只保留最后一段非空 text
+ * （轮尾最终答复）常显——否则完成态仍散落着「现在深入」「：」这类碎片。
  */
 function AssistantMessage({ onOpenSettings }: { onOpenSettings?: () => void }) {
   const error = useAuiState((s) =>
@@ -561,13 +584,38 @@ function AssistantMessage({ onOpenSettings }: { onOpenSettings?: () => void }) {
   );
   const parts = useAuiState((s) => s.message.parts);
   const streaming = useAuiState((s) => s.message.status?.type === "running");
-  const runId = useAuiState((s) => (s.message.metadata as { runId?: string } | undefined)?.runId);
+  // runId：live run 在 metadata.custom（adapter yield 写入，chat adapter 路径
+  // 只进 custom）；历史恢复的消息在顶层（MessageLike 转换保留 runId）。两处都读。
+  const runId = useAuiState((s) => {
+    const meta = s.message.metadata as { runId?: string; custom?: { runId?: string } } | undefined;
+    return meta?.custom?.runId ?? meta?.runId;
+  });
   const summaries = useRunSummaries();
   const summary = runId !== undefined ? summaries.get(runId) : undefined;
-  // 过程 parts = 思考流 + 工具卡（text 恒常显）
+  // 过程 parts = 思考流 + 工具卡（最终答复 text 常显）
   const processParts = parts.filter((p) => p.type === "reasoning" || p.type === "tool-call");
-  const toolCount = parts.filter((p) => p.type === "tool-call").length;
-  const { collapsed, toggle } = useRunCollapse(processParts.length);
+  // 最终答复开始信号（ZCode latestAssistantTextRow 的协议适配）：合批后
+  // 「最后一次工具之后的第一个非空 text」= 总结开头（中间叙述都在工具之前，
+  // 工具分界是帧协议权威）。命中即折叠过程区，总结独占视野。
+  const finalAnswerStarted = (() => {
+    if (!streaming) return false;
+    let sawTool = false;
+    for (const part of parts) {
+      if (part.type === "tool-call") sawTool = true;
+      else if (part.type === "text" && part.text.length > 0 && sawTool) return true;
+    }
+    return false;
+  })();
+  const { collapsed, toggle } = useRunCollapse(processParts.length, finalAnswerStarted);
+  // 轮尾最终答复锚点：取最后一个非空 text 的内容做匹配（回调拿不到 part 序号，
+  // 内容重复的极端场景只会多显示一段，不会把最终答复误藏进折叠区）。
+  const finalText = (() => {
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const part = parts[i];
+      if (part.type === "text" && part.text.length > 0) return part.text;
+    }
+    return null;
+  })();
   const sessionId = useSessionScope();
   const lastRun = useSessionMetrics(sessionId).lastRun;
   // 时长优先取 marker 收口摘要；运行刚结束的 run 由 run-metrics 兜底（此时 marker 尚未收养）
@@ -579,41 +627,53 @@ function AssistantMessage({ onOpenSettings }: { onOpenSettings?: () => void }) {
 
   return (
     <MessagePrimitive.Root className="flex min-w-0 w-full flex-col items-start gap-2 py-1">
-      {/* 摘要行（§10.4，参考样式 A1 单行风）：过程存在且收起时显示；点击展开/收起 */}
+      {/* 摘要行（ZCode AssistantHistoryStatus 同款）：过程存在且收起时显示，
+          「已工作/工作中 + 时长」+ 底部分隔线；点击展开/收起回看完整过程 */}
       {collapsed && processParts.length > 0 && (
         <button
           type="button"
           data-testid="run-summary"
           onClick={toggle}
-          className="flex items-center gap-2 rounded px-1 py-0.5 text-ui-sm text-[var(--muted-foreground)] hover:bg-[var(--accent)]/60"
+          className="flex w-full items-center gap-2 rounded-sm border-b border-[var(--border)]/50 pb-2 text-left text-ui-base text-[var(--foreground-subtle)] transition-colors hover:text-[var(--foreground)]"
         >
-          <Wrench size={12} aria-hidden className="shrink-0" />
-          <span>
-            {summary?.toolCount ?? toolCount} 次工具调用
-            {durationMs !== undefined ? ` · ${formatDuration(durationMs)}` : ""}
+          {streaming && <LoaderCircle size={12} aria-hidden className="shrink-0 animate-spin" />}
+          <span className="min-w-0 truncate">
+            {streaming ? "工作中" : "已工作"}
+            {durationMs !== undefined ? ` ${formatDuration(durationMs)}` : ""}
           </span>
-          {interrupted && <span className="text-[var(--destructive)]">已中断</span>}
-          <span aria-hidden className="text-[var(--cw-dim)]">
-            ▸
-          </span>
+          {interrupted && <span className="shrink-0 text-[var(--destructive)]">已中断</span>}
+          <ChevronRight
+            size={16}
+            aria-hidden
+            className="shrink-0 text-[var(--foreground-subtlest)] opacity-70"
+          />
         </button>
       )}
-      {/* 工作流风格 A1：助手内容平铺（无气泡底色），与过程行同列 */}
-      <div className="min-w-0 w-full space-y-3 text-ui-base">
+      {/* 工作流风格 A1：助手内容平铺（无气泡底色），与过程行同列；
+          行距 16px 对齐 ZCode 过程区组容器（gap-4），正文/工具行/思考行同一节奏 */}
+      <div className="min-w-0 w-full space-y-4 text-ui-base">
         {/* 内联 render props（勿抽组件）：S1 实证 Parts 对 tool-call part 渲染
             null 时才 fallback 到注册的镜像工具卡；抽组件会让 fallback 判定失效。
             折叠态过程 part 返回隐藏空元素（非 null）以抑制 fallback 卡。 */}
         <MessagePrimitive.Parts>
           {({ part }) => {
             if (part.type === "text") {
-              return part.text.length === 0 ? (
-                <span hidden />
-              ) : (
-                // 流式 Markdown（FR-01-03）：Streamdown 增量解析全量累计快照
-                <Markdown streaming={streaming}>{part.text}</Markdown>
-              );
+              // 折叠态只保留轮尾最终答复；过程叙述短句随摘要行收起（ZCode 同款）
+              if (part.text.length === 0 || (collapsed && part.text !== finalText)) {
+                return <span hidden />;
+              }
+              // 流式 Markdown（FR-01-03）：Streamdown 增量解析全量累计快照
+              return <Markdown streaming={streaming}>{part.text}</Markdown>;
             }
-            if (collapsed) return <span hidden />;
+            if (collapsed) {
+              // 折叠不卸载只给工具卡（经注册渲染 part.toolUI 包 hidden 容器）：
+              // 展开/收起瞬时切换且不重挂，卡内状态机与入场动画不受折叠往返
+              // 影响；思考行无挂载语义，折叠即卸载（省计时与重渲染）
+              if (part.type === "tool-call") {
+                return <div hidden>{part.toolUI}</div>;
+              }
+              return <span hidden />;
+            }
             if (part.type === "reasoning") {
               return <ReasoningPart text={part.text} status={part.status} timing={part.timing} />;
             }
@@ -630,11 +690,14 @@ function AssistantMessage({ onOpenSettings }: { onOpenSettings?: () => void }) {
 }
 
 /** 保留历史分支切换、用户编辑重发和助手回复复制。 */
-function BranchBar({ editOnly }: { editOnly: boolean }) {
+function BranchBar({ editOnly, noTopGap }: { editOnly: boolean; noTopGap?: boolean }) {
   const btn =
     "flex size-7 items-center justify-center rounded-md text-ui-sm text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-30";
   return (
-    <div className="mt-0.5 flex items-center gap-0.5" data-testid="branch-bar">
+    <div
+      className={`flex items-center gap-0.5 ${noTopGap ? "" : "mt-0.5"}`}
+      data-testid="branch-bar"
+    >
       <BranchPickerPrimitive.Root hideWhenSingleBranch className="flex items-center gap-0.5">
         <BranchPickerPrimitive.Previous className={btn} aria-label="上一个分支">
           <ChevronLeft size={14} aria-hidden />
