@@ -2,7 +2,7 @@
  * 会话持久化的前端侧（15 号票，§6.3/§6.4 双写协议的发送方）。
  *
  * 双写协议：同一棵消息树由两端共同落盘——前端负责 save 用户操作造成的
- * 拓扑变化（编辑、分支、重生成），Rust 侧 RunRecorder 按帧落盘 run 产物
+ * 拓扑变化（编辑、分支切换），Rust 侧 RunRecorder 按帧落盘 run 产物
  * （canonical，即权威记录）。两边通过 revision（版本号，乐观并发）对齐：
  * save 必须带上次拿到的版本，版本不符会被拒绝（E_SESSION_REV）。
  *
@@ -13,7 +13,7 @@
  *   单消息，id 由 runtime 临时分配）不进 save 载荷——剔除并把引用改写为
  *   `{runId}:marker`（canonical 链尾）。
  * - **发送流程**：adapter run() 开头先 save（活动路径线性链 + 新 user 拓扑
- *   正确落盘）再 start_chat；分支操作（编辑/重生成/切换）的拓扑也在下一次
+ *   正确落盘）再 start_chat；分支操作（编辑/切换）的拓扑也在下一次
  *   save 自然同步。
  * - **E_SESSION_REV 自愈**：canonical 落盘推进了 revision 而本地基线过期时，
  *   load 拿新 revision 重试一次（§6.4 重载重试）。

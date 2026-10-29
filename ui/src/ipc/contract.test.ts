@@ -384,7 +384,7 @@ describe("§6.1 跨语言 fixture roundtrip（Rust serde 落盘 ↔ TS 镜像）
     // runMarker 链尾：a3 → marker（canonical 收口行，前端 custom 载荷保真）
     expect(parentOf("run-2:marker")).toBe("a3");
 
-    // 重生成兄弟分支：a2/a3 同父
+    // 历史兄弟分支：a2/a3 同父
     expect(parentOf("a2")).toBe(parentOf("a3"));
 
     // status 对象保真（complete/unknown 与 complete/stop 两种 reason），user 无 status

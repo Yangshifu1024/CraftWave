@@ -23,11 +23,15 @@ import {
   ArrowUp,
   Check,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Copy,
   File,
   Folder,
   Hand,
   Lightbulb,
   LoaderCircle,
+  Pencil,
   Plus,
   Shield,
   ShieldAlert,
@@ -36,9 +40,9 @@ import {
   Wrench,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { Streamdown } from "streamdown";
 import { ChatErrorBanner } from "@/chat/ChatErrorBanner";
 import { useComposerKeys } from "@/chat/composer-keys";
+import { Markdown } from "@/chat/Markdown";
 import { TIER_LABELS, usePermissionTierStore } from "@/chat/permission-tier";
 import { ReasoningPart } from "@/chat/ReasoningPart";
 import { useSessionMetrics } from "@/chat/run-metrics";
@@ -57,12 +61,12 @@ export function ChatThread({ onOpenSettings }: { onOpenSettings?: () => void }) 
     // 透明背景：透出承载它的大圆角卡（bg-card），自身不再铺底色
     <div className="flex h-full min-h-0 flex-1 flex-col text-[var(--foreground)]">
       <ThreadPrimitive.Root className="relative flex min-h-0 flex-1 flex-col">
-        <ThreadPrimitive.Viewport className="flex flex-1 flex-col overflow-y-auto p-4">
+        <ThreadPrimitive.Viewport className="flex min-w-0 flex-1 flex-col overflow-y-auto px-4 py-6">
           <AuiIf condition={(s) => s.thread.isEmpty}>
             <ThreadEmptyState />
           </AuiIf>
           {/* 内容列限宽居中（约 62%，A1）：消息与过程行统一宽度 */}
-          <div className="mx-auto w-full max-w-4xl">
+          <div className="mx-auto min-w-0 w-full max-w-4xl space-y-4">
             <ThreadPrimitive.Messages>
               {({ message }) =>
                 // system = runMarker 等存储标记节点（custom 载荷保真，§6.2 跳过内容）——不渲染
@@ -487,11 +491,11 @@ function UserMessage() {
   return (
     <MessagePrimitive.Root className="flex flex-col items-end py-2">
       {/* 气泡右上 2px 折角 + 1px 边框（ZCode 同款），与平铺的助手消息区分 */}
-      <div className="max-w-[85%] rounded-xl rounded-tr-xs border border-[var(--border)] bg-[var(--muted)] px-4 py-2.5 text-ui-base text-[var(--foreground)]">
+      <div className="min-w-0 max-w-full rounded-xl rounded-tr-xs border border-[var(--border)] bg-[var(--muted)] px-4 py-3 text-ui-base leading-6 text-[var(--foreground)] sm:max-w-xl">
         <MessagePrimitive.Parts>
           {({ part }) =>
             part.type === "text" && part.text.length > 0 ? (
-              <Streamdown className="cw-md">{part.text}</Streamdown>
+              <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">{part.text}</p>
             ) : null
           }
         </MessagePrimitive.Parts>
@@ -523,7 +527,7 @@ function useRunCollapse(processCount: number): {
   const prevActive = useRef(active);
   useEffect(() => {
     if (active && !prevActive.current) {
-      // 新 run 开始（含从本消息再次发起）：过程全部展开
+      // 新 run 开始：过程全部展开
       setExpanded(true);
     } else if (!active && prevActive.current && autoCollapse && processCount > 0) {
       // run 刚结束：留 3 秒看完最后输出再收起（§10.4）
@@ -556,6 +560,7 @@ function AssistantMessage({ onOpenSettings }: { onOpenSettings?: () => void }) {
       : "",
   );
   const parts = useAuiState((s) => s.message.parts);
+  const streaming = useAuiState((s) => s.message.status?.type === "running");
   const runId = useAuiState((s) => (s.message.metadata as { runId?: string } | undefined)?.runId);
   const summaries = useRunSummaries();
   const summary = runId !== undefined ? summaries.get(runId) : undefined;
@@ -573,7 +578,7 @@ function AssistantMessage({ onOpenSettings }: { onOpenSettings?: () => void }) {
   const interrupted = summary !== undefined && summary.endedAt === undefined;
 
   return (
-    <MessagePrimitive.Root className="flex w-full flex-col items-start py-1">
+    <MessagePrimitive.Root className="flex min-w-0 w-full flex-col items-start gap-2 py-1">
       {/* 摘要行（§10.4，参考样式 A1 单行风）：过程存在且收起时显示；点击展开/收起 */}
       {collapsed && processParts.length > 0 && (
         <button
@@ -594,7 +599,7 @@ function AssistantMessage({ onOpenSettings }: { onOpenSettings?: () => void }) {
         </button>
       )}
       {/* 工作流风格 A1：助手内容平铺（无气泡底色），与过程行同列 */}
-      <div className="w-full text-ui-base">
+      <div className="min-w-0 w-full space-y-3 text-ui-base">
         {/* 内联 render props（勿抽组件）：S1 实证 Parts 对 tool-call part 渲染
             null 时才 fallback 到注册的镜像工具卡；抽组件会让 fallback 判定失效。
             折叠态过程 part 返回隐藏空元素（非 null）以抑制 fallback 卡。 */}
@@ -605,7 +610,7 @@ function AssistantMessage({ onOpenSettings }: { onOpenSettings?: () => void }) {
                 <span hidden />
               ) : (
                 // 流式 Markdown（FR-01-03）：Streamdown 增量解析全量累计快照
-                <Streamdown className="cw-md">{part.text}</Streamdown>
+                <Markdown streaming={streaming}>{part.text}</Markdown>
               );
             }
             if (collapsed) return <span hidden />;
@@ -624,38 +629,37 @@ function AssistantMessage({ onOpenSettings }: { onOpenSettings?: () => void }) {
   );
 }
 
-/** 分支操作条（§6.3 树操作 API 的 UI 接地，15 号票）：上一/下一分支 +
- * 重生成（assistant）/ 编辑重发（user）/ 复制。官方原语自带禁用态。 */
+/** 保留历史分支切换、用户编辑重发和助手回复复制。 */
 function BranchBar({ editOnly }: { editOnly: boolean }) {
   const btn =
-    "rounded border border-transparent px-1.5 py-0.5 text-ui-sm text-[var(--muted-foreground)] hover:border-[var(--border)] hover:text-[var(--foreground)] disabled:opacity-30";
+    "flex size-7 items-center justify-center rounded-md text-ui-sm text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-30";
   return (
     <div className="mt-0.5 flex items-center gap-0.5" data-testid="branch-bar">
-      <BranchPickerPrimitive.Root className="flex items-center gap-0.5">
+      <BranchPickerPrimitive.Root hideWhenSingleBranch className="flex items-center gap-0.5">
         <BranchPickerPrimitive.Previous className={btn} aria-label="上一个分支">
-          ←
+          <ChevronLeft size={14} aria-hidden />
         </BranchPickerPrimitive.Previous>
         <span className="text-ui-sm text-[var(--cw-dim)]">
           <BranchPickerPrimitive.Count />
         </span>
         <BranchPickerPrimitive.Next className={btn} aria-label="下一个分支">
-          →
+          <ChevronRight size={14} aria-hidden />
         </BranchPickerPrimitive.Next>
       </BranchPickerPrimitive.Root>
       <ActionBarPrimitive.Root className="flex items-center gap-0.5">
         {editOnly ? (
           <ActionBarPrimitive.Edit className={btn} aria-label="编辑重发">
-            编辑
+            <Pencil size={14} aria-hidden />
           </ActionBarPrimitive.Edit>
         ) : (
-          <>
-            <ActionBarPrimitive.Reload className={btn} aria-label="重新生成">
-              重新生成
-            </ActionBarPrimitive.Reload>
-            <ActionBarPrimitive.Copy className={btn} aria-label="复制">
-              复制
-            </ActionBarPrimitive.Copy>
-          </>
+          <ActionBarPrimitive.Copy className={btn} aria-label="复制" title="复制回复">
+            <AuiIf condition={(s) => s.message.isCopied}>
+              <Check size={14} aria-hidden />
+            </AuiIf>
+            <AuiIf condition={(s) => !s.message.isCopied}>
+              <Copy size={14} aria-hidden />
+            </AuiIf>
+          </ActionBarPrimitive.Copy>
         )}
       </ActionBarPrimitive.Root>
     </div>

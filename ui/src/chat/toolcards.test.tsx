@@ -20,11 +20,13 @@ import {
   WriteCard,
 } from "./ToolCards";
 
+const toolStatus = vi.hoisted(() => ({ status: "running", argsStatus: "complete" }));
+
 vi.mock("@assistant-ui/react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@assistant-ui/react")>();
   return {
     ...actual,
-    useToolArgsStatus: () => ({ status: "running", argsStatus: "complete" }),
+    useToolArgsStatus: () => toolStatus,
   };
 });
 
@@ -32,6 +34,7 @@ afterEach(() => {
   cleanup();
   // 展开记忆是模块级 Map（跨用例持久），不清会污染后续用例的初值
   toolCardExpandedMemory.clear();
+  toolStatus.status = "running";
 });
 
 /** 卡片 props 的类型来源（以 ReadCard 的首参推导）。 */
@@ -61,7 +64,25 @@ describe("cardPhase 状态机（纯逻辑）", () => {
     expect(cardPhase("running", false, true)).toBe("running");
     expect(cardPhase("running", true, true)).toBe("done");
     expect(cardPhase("complete", true, true)).toBe("done");
+    expect(cardPhase("incomplete", false, true)).toBe("cancelled");
+    expect(cardPhase("complete", false, true)).toBe("cancelled");
+    expect(cardPhase("requires-action", false, true)).toBe("awaiting");
   });
+});
+
+it("取消和等待确认不再显示运行进度，展开后可读取完整调用参数", () => {
+  toolStatus.status = "incomplete";
+  const command = "echo 第一行\necho 第二行";
+  const { rerender } = render(<CommandCard {...props({ command })} />);
+  const card = screen.getByTestId("tool-card-c1");
+  expect(card.textContent).toContain("已中断");
+  expect(card.querySelector('[data-testid="tool-spinner"]')).toBeNull();
+  fireEvent.click(card.querySelector("button")!);
+  expect(card.querySelector("pre")?.textContent).toBe(JSON.stringify({ command }));
+  toolStatus.status = "requires-action";
+  rerender(<CommandCard {...props({ command })} />);
+  expect(card.textContent).toContain("等待确认");
+  expect(card.querySelector(".cw-progress")).toBeNull();
 });
 
 describe("工具卡渲染", () => {

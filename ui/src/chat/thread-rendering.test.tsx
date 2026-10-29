@@ -80,3 +80,28 @@ it("空状态跨时段自动更新问候语", () => {
   act(() => vi.advanceTimersByTime(1000));
   expect(screen.getByText("上午好")).toBeTruthy();
 });
+
+it("错误后可继续发送，界面无再次生成入口，用户原文不被解释成 Markdown", async () => {
+  const run = vi.fn(async function* () {
+    yield {
+      content: [{ type: "text" as const, text: "" }],
+      status: {
+        type: "incomplete" as const,
+        reason: "error" as const,
+        error: "E_NETWORK: 连接超时",
+      },
+    };
+  });
+  render(<Harness adapter={{ run }} />);
+  const input = screen.getByRole("textbox");
+  fireEvent.change(input, { target: { value: "# 原样显示\n**不加粗**" } });
+  fireEvent.click(screen.getByRole("button", { name: "发送" }));
+  await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());
+  expect(screen.queryByRole("heading", { name: "原样显示" })).toBeNull();
+  expect(screen.getByText(/# 原样显示/).textContent).toBe("# 原样显示\n**不加粗**");
+  expect(screen.queryByRole("button", { name: /再次生成|重新生成/ })).toBeNull();
+  expect(screen.getByRole("button", { name: "编辑重发" })).toBeTruthy();
+  fireEvent.change(input, { target: { value: "继续检查" } });
+  fireEvent.click(screen.getByRole("button", { name: "发送" }));
+  await waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+});

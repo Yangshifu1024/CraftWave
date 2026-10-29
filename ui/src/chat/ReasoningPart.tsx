@@ -51,10 +51,10 @@ export function ReasoningPart({ text, status, timing }: Omit<ReasoningMessagePar
         follow.current = true;
         setOpen(e.currentTarget.open);
       }}
-      className="group/reasoning min-w-0 text-ui-sm text-[var(--muted-foreground)]"
+      className="group/reasoning min-w-0 text-ui-base text-[var(--muted-foreground)]"
     >
       <summary className="flex min-w-0 cursor-pointer select-none items-center gap-2 rounded px-1 py-1 hover:bg-[var(--accent)]/60">
-        <Lightbulb size={14} aria-hidden className="shrink-0" />
+        <Lightbulb size={16} aria-hidden className="shrink-0" />
         <span className={`shrink-0 ${streaming ? "cw-shimmer-text" : ""}`}>
           {streaming ? "思考中" : "思考过程"}
           {seconds !== undefined ? ` · ${seconds}s` : ""}
@@ -80,7 +80,7 @@ export function ReasoningPart({ text, status, timing }: Omit<ReasoningMessagePar
           const el = e.currentTarget;
           follow.current = el.scrollHeight - el.clientHeight - el.scrollTop < 24;
         }}
-        className="my-1 ml-2 max-h-60 overflow-y-auto border-l border-[var(--border)] pl-3.5 whitespace-pre-wrap break-words"
+        className="my-2 ml-2 max-h-60 overflow-y-auto border-l border-[var(--border)] pl-3.5 text-ui-caption leading-[1.75] whitespace-pre-wrap [overflow-wrap:anywhere]"
       >
         {text}
       </p>

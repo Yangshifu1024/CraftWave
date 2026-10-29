@@ -3,7 +3,7 @@
  *
  * 测试面：用无界面（headless）的 LocalRuntime 跑剧本化对话，验证
  * 「assistant-ui 消息树 ↔ 存储条目 ↔ JSON/JSONL 落盘」三个方向往返后
- * 树结构逐节点一致（含分支编辑、重生成、分支切换、runMarker 收口摘要），
+ * 树结构逐节点一致（含分支编辑、历史分支切换、runMarker 收口摘要），
  * 并核对存储条目 schema 形状与 0.15.31 导出结构的字段面。
  */
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -236,43 +236,32 @@ describe("S4 roundtrip：编辑已发消息（新分支）", () => {
   });
 });
 
-describe("S4 roundtrip：重生成（reload）", () => {
-  it("reload 产生 assistant 兄弟分支，roundtrip 保留", async () => {
-    const thread = createRuntime([
-      { text: splitChunks("重生成前", 2) },
-      { text: splitChunks("重生成后", 2) },
-    ]);
-    await send(thread, "同一个问题");
-    const assistantV1 = thread.getState().messages[1]!.id;
-
-    thread.getMessageById(assistantV1).reload();
-    await waitForIdle(thread);
-
-    const exported = thread.export();
-    expect(exported.messages).toHaveLength(3); // user + assistant×2（兄弟）
-    const assistants = exported.messages.filter((m) => m.message.role === "assistant");
-    expect(assistants).toHaveLength(2);
-    for (const item of assistants) {
-      expect(item.parentId).toBe(exported.messages[0]?.message.id);
-    }
-    expect(exported.headId).not.toBe(assistantV1);
-
-    const { restored } = roundtripViaFile(exported, "sess-s4-reload", 2);
-    assertTreeEqual(exported, restored);
-  });
-});
-
 describe("S4 roundtrip：分支切换（switchToBranch）", () => {
   it("切回旧分支后 head 指向旧分支叶，roundtrip 保留 activeLeaf", async () => {
-    const thread = createRuntime([
-      { text: splitChunks("第一版", 2) },
-      { text: splitChunks("第二版", 2) },
-    ]);
+    const thread = createRuntime([{ text: splitChunks("第一版", 2) }]);
     await send(thread, "问题");
     const assistantV1 = thread.getState().messages[1]!.id;
-    thread.getMessageById(assistantV1).reload();
-    await waitForIdle(thread);
-    const assistantV2 = thread.export().headId!;
+    // 旧版本落盘的兄弟回复仍可恢复，不再调用已移除功能的 reload API。
+    const original = thread.export();
+    const first = original.messages.find((item) => item.message.id === assistantV1)!;
+    const assistantV2 = "legacy-assistant-v2";
+    thread.import({
+      messages: [
+        ...original.messages,
+        {
+          ...first,
+          message: {
+            ...first.message,
+            id: assistantV2,
+            content: [{ type: "text", text: "第二版" }],
+          },
+        },
+      ],
+      headId: assistantV2,
+    });
+    expect(thread.getState().messages[1]?.content[0]).toMatchObject({ text: "第二版" });
+    const legacy = roundtripViaFile(thread.export(), "sess-s4-legacy", 3);
+    assertTreeEqual(thread.export(), legacy.restored);
     expect(assistantV2).not.toBe(assistantV1);
 
     // 切回旧分支

@@ -127,7 +127,7 @@ fn export_ipc_manifest_and_cross_lang_fixture() {
     fs::write(target_dir().join("session-tree-fixture.jsonl"), text).unwrap();
 }
 
-/// 样例树：线性两轮 + 工具调用轮 + 重生成兄弟分支（覆盖 status/runId/toolCall 拆分/reasoning）。
+/// 样例树：线性两轮 + 工具调用轮 + 历史兄弟分支（覆盖 status/runId/toolCall 拆分/reasoning）。
 /// 与 `ui/src/ipc/contract.test.ts` 中 EXPECTED_ENTRIES 逐字段一致，改动必须双侧同步。
 fn fixture_entries() -> Vec<StoredEntry> {
     // 造一条用户消息条目的简写闭包（固定 role=User、单文本 part）。

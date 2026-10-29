@@ -143,7 +143,7 @@ export function toWire(messages: readonly ThreadMessage[]): MessageEntry[] {
     }
     if (parts.length === 0) parts.push({ type: "text", text: "" });
     const entry: MessageEntry = {
-      // assistant-ui 的 message.id 随树稳定（重生成分支各有 id），直接采用
+      // assistant-ui 的 message.id 随树稳定，直接采用
       id: message.id,
       role:
         message.role === "assistant" ? "assistant" : message.role === "system" ? "system" : "user",
@@ -259,20 +259,12 @@ export function createTauriChatAdapter(deps: TauriAdapterDeps): ChatModelAdapter
         return Promise.reject(new Error(`非桥接命令：${cmd}`));
       });
       try {
-        // 重新生成的自愈：连续失败的 run 会在树上留下空 assistant 消息，
-        // 使 reload 的消息序列末条非 user（后端 wire 校验拒绝 → 死锁）。
-        // 从尾部裁掉非 user 消息，始终从最近的 user 重发；正常发送序列
-        // 末条本就是 user，此裁剪不生效。
-        const trimmed = [...messages];
-        while (trimmed.length > 0 && trimmed[trimmed.length - 1]?.role !== "user") {
-          trimmed.pop();
-        }
         // 已见最大帧 seq（合成终态帧取 maxSeq+1，避免被丢序保护吞掉）
         let maxSeq = -1;
         const invokePromise = deps
           .startChat({
             sessionId: deps.sessionId,
-            messages: toWire(trimmed),
+            messages: toWire(messages),
             runConfig,
             onFrame: (frame: ChatFrame) => {
               maxSeq = Math.max(maxSeq, frame.seq);

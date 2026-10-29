@@ -32,9 +32,10 @@ export function cardPhase(
   statusType: "running" | "complete" | "incomplete" | "requires-action",
   hasResult: boolean,
   argsComplete: boolean,
-): "preparing" | "running" | "done" | "error" {
-  if (hasResult && statusType === "running") return "done";
+): "preparing" | "running" | "done" | "cancelled" | "awaiting" {
   if (hasResult) return "done";
+  if (statusType === "requires-action") return "awaiting";
+  if (statusType !== "running") return "cancelled";
   if (statusType === "running" && !argsComplete) return "preparing";
   return "running";
 }
@@ -122,17 +123,21 @@ function ToolCardShell({
     "";
 
   return (
-    <div data-testid={`tool-card-${toolCallId}`} data-phase={phase} className="my-0.5 text-ui-sm">
+    <div
+      data-testid={`tool-card-${toolCallId}`}
+      data-phase={phase}
+      className="min-w-0 text-ui-base"
+    >
       {/* 摘要行：图标 + 主参数 + 徽标 + 状态（点击展开详情） */}
       <button
         type="button"
         data-phase-label={phase}
         onClick={toggle}
-        className="flex w-full items-center gap-2 rounded px-1 py-0.5 text-left hover:bg-[var(--accent)]/60"
+        className="group/tool flex max-w-full items-center gap-2 rounded-md px-1 py-1 text-left hover:bg-[var(--accent)]/60"
         aria-expanded={open}
         title={summary}
       >
-        <span aria-hidden className="shrink-0">
+        <span aria-hidden className="shrink-0 text-[var(--muted-foreground)]">
           {icon}
         </span>
         <span
@@ -140,7 +145,7 @@ function ToolCardShell({
         >
           {label}
         </span>
-        <span className="min-w-0 flex-1 truncate font-mono text-[var(--foreground)]">
+        <span className="min-w-0 truncate text-[var(--muted-foreground)]">
           {summary || "（等待参数…）"}
         </span>
         {badges}
@@ -149,6 +154,12 @@ function ToolCardShell({
           <span data-testid="tool-spinner" className="cw-progress h-1 w-16 shrink-0 rounded-full" />
         )}
         {phase === "preparing" && <span className="shrink-0 text-[var(--cw-dim)]">…</span>}
+        {phase === "cancelled" && (
+          <span className="shrink-0 text-ui-sm text-[var(--muted-foreground)]">已中断</span>
+        )}
+        {phase === "awaiting" && (
+          <span className="shrink-0 text-ui-sm text-[var(--muted-foreground)]">等待确认</span>
+        )}
         {phase === "error" && (
           <span
             title={resultSummary || argsText}
@@ -161,20 +172,25 @@ function ToolCardShell({
         <ChevronRight
           size={12}
           aria-hidden
-          className={`shrink-0 text-[var(--cw-dim)] transition-transform ${open ? "rotate-90" : ""}`}
+          className={`shrink-0 text-[var(--cw-dim)] transition-[transform,opacity] group-hover/tool:opacity-100 group-focus-visible/tool:opacity-100 ${open ? "rotate-90 opacity-100" : "opacity-0"}`}
         />
       </button>
       {/* 详情区：参数原文 + 卡片专属排版 + 结果摘要 + 边车全量数据 */}
       {open && (
-        <div className="ml-6 mt-1 space-y-1 rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2">
+        <div className="mt-2 ml-2 min-w-0 space-y-2 border-l border-[var(--border)] pl-3.5 text-ui-caption leading-relaxed [overflow-wrap:anywhere]">
           {children}
-          {phase === "preparing" && (
-            <pre className="max-h-24 overflow-hidden whitespace-pre-wrap break-all text-[var(--muted-foreground)]">
+          <details open={phase === "preparing"}>
+            <summary className="cursor-pointer text-ui-sm text-[var(--muted-foreground)]">
+              调用参数
+            </summary>
+            <pre className="mt-1 max-h-60 overflow-auto whitespace-pre-wrap font-mono text-ui-sm text-[var(--muted-foreground)]">
               {argsText || "（等待参数…）"}
             </pre>
-          )}
+          </details>
           {hasResult && (
-            <p className={isError ? "text-[var(--destructive)]" : "text-[var(--muted-foreground)]"}>
+            <p
+              className={`max-h-60 overflow-auto whitespace-pre-wrap ${isError ? "text-[var(--destructive)]" : "text-[var(--muted-foreground)]"}`}
+            >
               {resultSummary}
             </p>
           )}
@@ -200,11 +216,11 @@ function ToolCardShell({
             </div>
           )}
           {detailJson !== null && detailJson !== "null" && (
-            <details className="rounded border border-[var(--border)] bg-[var(--background)]/60 px-2 py-1">
+            <details>
               <summary className="cursor-default select-none text-[var(--muted-foreground)]">
                 详细数据
               </summary>
-              <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all text-[var(--muted-foreground)]">
+              <pre className="mt-1 max-h-60 overflow-auto whitespace-pre-wrap font-mono text-ui-sm text-[var(--muted-foreground)]">
                 {outcome?.truncated ? "（结果超过 5MB，已截断——全量见 spill 文件）" : detailJson}
               </pre>
             </details>
@@ -248,7 +264,7 @@ export function ReadCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
       : "";
   return (
     <ToolCardShell {...props} icon={<Search size={14} />} label="读取" summary={str(args, "path")}>
-      <p className="text-[var(--muted-foreground)]">{range}</p>
+      {range && <p className="text-[var(--muted-foreground)]">{range}</p>}
     </ToolCardShell>
   );
 }

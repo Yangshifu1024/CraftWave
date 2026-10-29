@@ -131,6 +131,31 @@ function assistantMessage(text: string): MinimalMessage {
 }
 
 describe("createTauriChatAdapter：帧消费管线", () => {
+  it("失败后的新消息完整送到后端，发送前同步与实际请求保持同一条消息链", async () => {
+    const messages = [
+      msg("u1", "user", [{ type: "text", text: "检查配置" }]),
+      msg("a1", "assistant", []),
+      msg("u2", "user", [{ type: "text", text: "继续检查" }]),
+    ];
+    const syncTree = vi.fn(async () => {});
+    const startChat = vi.fn(async (args: { onFrame: (frame: ChatFrame) => void }) => {
+      args.onFrame(f({ type: "runEnded", reason: "done", durationMs: 0, toolCount: 0, turn: 1 }));
+      return { runId: "run-next" };
+    });
+    const adapter = createTauriChatAdapter({
+      sessionId: "sess-test",
+      runConfig: { tier: "autoEdit", maxTurns: 4, steer: false },
+      startChat,
+      cancelRun: async () => true,
+      syncTree,
+    });
+    for await (const _ of asAsync(adapter.run({ ...runOptions(), messages }))) void _;
+    expect(syncTree).toHaveBeenCalledExactlyOnceWith(messages);
+    expect(startChat).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ messages: toWire(messages) }),
+    );
+  });
+
   it("帧流 → 快照全量 yield（打字机），runEnded 后以终态 status 收口", async () => {
     const frames: ChatFrame[] = [
       f({ type: "runStarted", runId: "run-1", model: "gpt-4o-mock" }),

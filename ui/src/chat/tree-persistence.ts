@@ -12,7 +12,7 @@ type MessageLikeContent = Exclude<ThreadMessageLike["content"], string>;
  * - 存储条目 schema 见技术设计文档 §6.1（M1 子集：session/message/meta；
  *   compaction、branchSummary 属 M2，暂不实现）。
  * - 存储条目与 WirePart 类型是 Rust 契约镜像，单一事实源在 ui/src/ipc/types.ts（§2.4）。
- * - 条目内容不可变：编辑/重生成/分支一律追加新节点，本层是纯函数，无副作用。
+ * - 条目内容不可变：编辑/分支一律追加新节点，本层是纯函数，无副作用。
  *
  * 落盘由 Rust storage 模块承载（append-only 分段 JSONL）；
  * 本层条目数组逐行 `JSON.stringify` 即为 JSONL 行（serializeSessionJsonl，契约测试用）。

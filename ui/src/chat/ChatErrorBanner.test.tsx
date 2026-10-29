@@ -27,3 +27,12 @@ it("复制失败给出反馈；网络错误不引导修改模型", async () => {
   fireEvent.click(screen.getByRole("button", { name: "复制错误" }));
   await waitFor(() => expect(screen.getByRole("status").textContent).toContain("复制失败"));
 });
+
+it("长错误默认收成摘要，完整上下文仍可展开读取", () => {
+  const message = `E_NETWORK: 连接超时\n${"完整错误上下文".repeat(100)}`;
+  const { container } = render(<ChatErrorBanner message={message} />);
+  expect(container.querySelector("details")?.open).toBe(false);
+  expect(container.querySelector("summary")?.textContent).toBe("E_NETWORK: 连接超时");
+  expect(container.querySelector("pre")?.textContent).toBe(message);
+  expect(screen.getByLabelText("查看错误详情")).toBeTruthy();
+});

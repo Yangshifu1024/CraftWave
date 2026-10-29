@@ -12,6 +12,8 @@
   },
   "dependencies": {
     "@assistant-ui/react": "^0.15.31",
+    "@streamdown/cjk": "^1.0.4",
+    "@streamdown/code": "^2.0.0",
     "@tauri-apps/api": "^2.12.4",
     "assistant-stream": "^0.3.54",
     "lucide-react": "^1.62.0",
