@@ -154,7 +154,9 @@ fn select_dir() -> Option<String> {
         .map(|path| path.to_string_lossy().into_owned())
 }
 
-/// 激活覆盖式自绘标题栏；macOS 上按 40px 顶栏摆放交通灯（y=顶栏中线）。
+/// 激活覆盖式自绘标题栏；macOS 交通灯由自研模块摆到 ZCode 同款 (22, 23)
+/// （decoration 插件的 inset_y 是「上下边距」且容器改动受裁剪上限约束，
+/// 实测摆不出该位置——语义与绕开原因见 traffic_lights 模块注释）。
 #[tauri::command]
 async fn activate_custom_titlebar(window: WebviewWindow) -> Result<(), String> {
     window
@@ -162,10 +164,7 @@ async fn activate_custom_titlebar(window: WebviewWindow) -> Result<(), String> {
         .await
         .map_err(|e| e.to_string())?;
     #[cfg(target_os = "macos")]
-    window
-        .set_traffic_lights_inset(14.0, 20.0)
-        .await
-        .map_err(|e| e.to_string())?;
+    host::commands::traffic_lights::activate(&window)?;
     Ok(())
 }
 
@@ -173,6 +172,8 @@ async fn activate_custom_titlebar(window: WebviewWindow) -> Result<(), String> {
 /// 超时后的退化路径：放弃自绘标题栏，恢复系统原生标题栏。
 #[tauri::command]
 async fn restore_native_titlebar(window: WebviewWindow) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    host::commands::traffic_lights::deactivate();
     window.restore_decoration().await.map_err(|e| e.to_string())
 }
 
