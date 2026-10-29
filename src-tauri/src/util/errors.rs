@@ -131,6 +131,8 @@ pub const E_CONTEXT_OVERFLOW: &str = "E_CONTEXT_OVERFLOW";
 /// 同批 ask 互斥或同文件写冲突时未执行的调用——工具级失败回喂，模型据说明
 /// 重新决定或纠正（07 号票，§5.4/§8.4 步骤 4）。
 pub const E_TOOL_SKIPPED: &str = "E_TOOL_SKIPPED";
+/// 流停滞看门狗终止：模型流停滞超过阈值或重复失败/空转越界（§5.7，37 号票）。
+pub const E_RUN_STALLED: &str = "E_RUN_STALLED";
 
 /// IPC 命令统一错误负载（§3.1/§3.6，D14）：`{ code, message, detail? }`，camelCase。
 ///

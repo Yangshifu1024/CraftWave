@@ -29,7 +29,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use rig::completion::Message;
 use rig::run::response::PromptResponse;
@@ -39,6 +39,8 @@ use tokio_util::sync::CancellationToken;
 use super::frames::{ChatFrame, DeltaThrottler, EndReason, FrameError, FrameSink, UsageTotal};
 use super::rig_bridge::RigEventBridge;
 use super::turn::{StreamExit, TurnDriver, usage_total};
+use super::watchdog::{RunWatchdog, StallGuard, WatchdogAction, is_model_delta};
+use crate::util::errors::E_RUN_STALLED;
 
 /// 被取消工具的结果帧补挂的错误码（§3.4 toolResult.error.code 与 §3.6
 /// 错误码注册表中的取消错误）。
@@ -194,6 +196,10 @@ pub struct DriveState {
     pub last_turn: u32,
     /// 模型调用 id → 桥接帧面 id 映射（挂起时带出、恢复时播种新桥接器）。
     pub model_call_ids: HashMap<String, String>,
+    /// 监督看门狗状态（§5.7，37 号票）：工具结果滑动窗口 + 无进展计数 +
+    /// 各信号纠偏水位。挂在驱动状态上跨审批挂起延续——恢复不丢历史、
+    /// 重放批不重复计数（挂起时批内零执行，恢复后原样执行一次）。
+    pub watchdog: RunWatchdog,
 }
 
 /// 主循环的退出态。
@@ -208,6 +214,11 @@ pub enum RunExit {
     /// 恢复重放无重复副作用）。Box 收纳大负载（避免枚举整体变大，
     /// clippy large_enum_variant）。
     Suspended(Box<SuspendedInfo>),
+    /// 看门狗终止终态（§5.7，37 号票）：runEnded(error, E_RUN_STALLED) 已由
+    /// [`drive_run`] 发出（已输出内容与工具结果帧保留、不撤回，触发批的
+    /// 已执行工具不重放副作用）；message 说明停滞或重复失败原因，宿主随
+    /// `run:error` 事件带出、followUp 队列按失败暂停（§5.5）。
+    Stalled { message: String },
 }
 
 /// 挂起信息（[`RunExit::Suspended`] 的载体）。
@@ -250,6 +261,15 @@ pub trait SteerSource: Send + Sync {
 /// - CallModel（调模型）：发 stepStarted → 流式调用（增量经 64ms 节流器
 ///   出帧）→ 收口发 usage 帧（§10.5 累计口径，rate = 本轮输出速度，
 ///   token/秒）→ 收尾 flush；
+/// - **模型停滞看门狗（§5.7 计时边界，Q33，37 号票）**：停滞计时随单次模型
+///   请求生灭——`stall_timeout` 从请求发出起算，`select!` 让流式调用与停滞
+///   截止竞争，有效模型增量（三类增量帧）刷新计时，停滞胜出即丢弃在飞
+///   HTTP 流（与取消同形）按 E_RUN_STALLED 终止；工具执行、审批挂起等待、
+///   子代理等待不在计时生命周期内（各阶段 `drive_run` 已退出）；
+/// - **工具窗口看门狗（§5.7，37 号票）**：工具批收口（结果回喂前）把结果
+///   记入滑动窗口并做 turn 边界评估——纠偏注入 hidden system 提示（下一拍
+///   CallModel 的请求面 history，不落 canonical），终止按 E_RUN_STALLED
+///   收尾（runEnded(error) 只发一次，已输出内容与工具结果保留）；
 /// - **steer 消费（§5.5，06 号票）**：非首拍的 CallModel 前（即上一 turn
 ///   已收尾——工具批结果回喂后）经 `steer` 取一条插话，以 user 消息追加进
 ///   本拍请求的 history（落盘与回执副作用在宿主实现内）；
@@ -264,8 +284,8 @@ pub trait SteerSource: Send + Sync {
 ///   E_CANCELLED，全部收齐后才发终态帧；
 /// - Done：runEnded(done) 必为最后一帧。
 #[allow(clippy::too_many_arguments)]
-pub async fn drive_run(
-    driver: &TurnDriver,
+pub async fn drive_run<W, T>(
+    driver: &TurnDriver<W, T>,
     run: AgentRun,
     run_id: &str,
     model_name: &str,
@@ -275,7 +295,12 @@ pub async fn drive_run(
     sink: &mut dyn FrameSink,
     resume: Option<DriveState>,
     steer: Option<&dyn SteerSource>,
-) -> Result<RunExit, PromptError> {
+    stall_timeout: Duration,
+) -> Result<RunExit, PromptError>
+where
+    W: rig::wire::Wire<Op = rig::operation::Completion>,
+    T: rig::driver::Transport<W>,
+{
     let mut state = resume.unwrap_or_default();
     // 首次进入（无恢复状态）：记录开始时刻并发起手帧；恢复进入则跳过，
     // 不重发 runStarted。
@@ -293,6 +318,14 @@ pub async fn drive_run(
     // 首拍播种挂起前映射——恢复后重放的挂起批 toolResult 与挂起前三帧同源）。
     let mut bridge = RigEventBridge::new();
     bridge.seed_model_call_ids(state.model_call_ids.clone());
+
+    // 看门狗的跨拍状态（37 号票，§5.7）：
+    // - 纠偏提示待注入（上一工具批评估产生，下一拍 CallModel 注入请求面
+    //   history——hidden system 提示，不落 canonical、不进用户可见树）；
+    // - 本轮模型输出是否出现过正文增量（textDelta；无进展信号的数据源之一，
+    //   推理增量不算——向用户可见的输出才算进展）。
+    let mut pending_corrective: Option<String> = None;
+    let mut turn_had_text = false;
 
     let mut run = run;
     loop {
@@ -314,23 +347,56 @@ pub async fn drive_run(
                         content: vec![rig::message::UserContent::text(text)],
                     }));
                 }
+                // 纠偏注入（§5.7，37 号票）：上一工具批评估出的 hidden system
+                // 提示追加在本拍请求 history 末尾（紧跟工具结果，语义最近；
+                // 请求面生效、不入史册）。
+                if let Some(text) = pending_corrective.take() {
+                    history.push(Arc::new(Message::System { content: text }));
+                }
+                turn_had_text = false;
                 sink.send(ChatFrame::StepStarted { turn: turn as u32 });
                 let mut turn_bridge = RigEventBridge::new();
                 turn_bridge.seed_model_call_ids(bridge.model_call_ids().clone());
                 bridge = turn_bridge;
-                let mut on_frame = |frame: ChatFrame| ingest_delta(&mut throttler, sink, &frame);
+                // 模型停滞计时（§5.7 计时边界，Q33，37 号票）：随本拍请求生灭——
+                // armed 即"请求发出"；闭包内三类增量帧（有效模型增量）刷新；
+                // select! 与流式调用竞争，停滞胜出丢弃在飞 HTTP 流（select
+                // 丢弃 stream future 即关流）并按 E_RUN_STALLED 终止。工具
+                // 执行/审批/子代理等待不在本生命周期（那些阶段 drive_run 已
+                // 退出）；刷新点在流循环回调内、不经帧枢纽——前端帧/重连
+                // 不能续命。
+                let stall = StallGuard::armed(stall_timeout);
+                let mut on_frame = |frame: ChatFrame| {
+                    if is_model_delta(&frame) {
+                        stall.refresh();
+                        if matches!(frame, ChatFrame::TextDelta { .. }) {
+                            turn_had_text = true;
+                        }
+                    }
+                    ingest_delta(&mut throttler, sink, &frame);
+                };
                 let turn_started = Instant::now();
-                let outcome = driver
-                    .stream_turn_cancellable(
-                        &mut run,
-                        prompt,
-                        history,
-                        turn as u32,
-                        &token,
-                        &mut bridge,
-                        &mut on_frame,
-                    )
-                    .await?;
+                let outcome = tokio::select! {
+                    biased;
+                    _ = stall.expired() => {
+                        let message = format!(
+                            "模型流停滞：请求发出后 {} 秒内未收到有效模型增量（{E_RUN_STALLED}）；\
+                             已输出内容与工具结果均已保留",
+                            stall_timeout.as_secs().max(1)
+                        );
+                        return Ok(finish_stalled(sink, started_at, &state, message));
+                    }
+                    outcome = driver
+                        .stream_turn_cancellable(
+                            &mut run,
+                            prompt,
+                            history,
+                            turn as u32,
+                            &token,
+                            &mut bridge,
+                            &mut on_frame,
+                        ) => outcome?,
+                };
                 // turn 收尾 flush：窗口里的增量尾巴放行（取消路径也要收齐）
                 throttler.flush(sink);
                 match outcome.exit {
@@ -457,11 +523,14 @@ pub async fn drive_run(
 
                 let mut answers = Vec::new();
                 let mut cancel_seen = false;
+                // 看门狗入窗记录（§5.7，37 号票）：本批真正收到的结果
+                // （Completed 无论成败；取消补标记不入窗——run 即将终结）。
+                let mut records = Vec::new();
                 for (idx, call) in calls.into_iter().enumerate() {
                     let Some(exec) = outcomes[idx].take() else {
                         unreachable!("批内每个位置都已拼装结果");
                     };
-                    let (call_id, _name, _args_json) = pending_parts(&call);
+                    let (call_id, name, args_json) = pending_parts(&call);
                     state.tool_count += 1;
                     match exec {
                         ToolExecution::Completed {
@@ -470,6 +539,7 @@ pub async fn drive_run(
                             error,
                             model_text,
                         } => {
+                            records.push(super::watchdog::make_record(&name, &args_json, ok));
                             sink.send(ChatFrame::ToolResult {
                                 call_id: bridge.frame_call_id_for_model(&call_id),
                                 ok,
@@ -496,6 +566,18 @@ pub async fn drive_run(
                 if cancel_seen {
                     // 收齐后才发终态帧（§5.3 不变量：取消中工具收齐 → runEnded(cancelled)）
                     return Ok(finish_cancelled(sink, started_at, state));
+                }
+                // —— 工具窗口看门狗（§5.7，37 号票）：turn 边界评估（结果
+                // 回喂前）——纠偏留待下一拍 CallModel 注入；终止按
+                // E_RUN_STALLED 收尾：结果帧已发（保留不撤回）、本批不再
+                // 回喂模型，已执行的工具不重放副作用。
+                state.watchdog.record_step(records, turn_had_text);
+                match state.watchdog.evaluate() {
+                    WatchdogAction::None => {}
+                    WatchdogAction::Corrective(text) => pending_corrective = Some(text),
+                    WatchdogAction::Terminate(message) => {
+                        return Ok(finish_stalled(sink, started_at, &state, message));
+                    }
                 }
                 // 整批应答（按源序）回喂 run，驱动进入下一轮模型调用
                 run.answer_all(answers)?;
@@ -542,6 +624,25 @@ fn finish_cancelled(sink: &mut dyn FrameSink, started_at: Instant, state: DriveS
         error: None,
     });
     RunExit::Cancelled
+}
+
+/// 发出看门狗终止终态帧并返回停滞退出态（§5.7，37 号票）：
+/// runEnded(error, { code: E_RUN_STALLED, message }) 只发一次；终止前已发出
+/// 的文本增量与工具结果帧原样保留（不撤回），触发批已收齐的工具不重放。
+fn finish_stalled(
+    sink: &mut dyn FrameSink,
+    started_at: Instant,
+    state: &DriveState,
+    message: String,
+) -> RunExit {
+    sink.send(ChatFrame::RunEnded {
+        reason: EndReason::Error,
+        duration_ms: started_at.elapsed().as_millis() as u64,
+        tool_count: state.tool_count,
+        turn: state.last_turn,
+        error: Some(FrameError::new(E_RUN_STALLED, message.clone())),
+    });
+    RunExit::Stalled { message }
 }
 
 /// 被取消工具的 toolResult 帧：ok=false + error.code=E_CANCELLED（§3.4 error 面）。

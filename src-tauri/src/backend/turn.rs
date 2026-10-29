@@ -16,13 +16,14 @@ use futures::StreamExt;
 use rig::completion::Message;
 use rig::completion::Usage;
 use rig::completion::request::{CompletionRequest, ToolDefinition};
-use rig::driver::Model;
-use rig::providers::openai::wire::Chat;
+use rig::driver::{Model, Transport};
+use rig::operation::Completion;
 use rig::run::prepare::{PreparedRequest, prepare_request};
 use rig::run::spec::RunSpec;
 use rig::run::streamed::StreamedTurnAssembler;
 use rig::run::{AgentRun, ModelTurnOutcome, PromptError};
 use rig::streaming::Item;
+use rig::wire::Wire;
 use tokio_util::sync::CancellationToken;
 
 use super::frames::ChatFrame;
@@ -39,9 +40,20 @@ pub enum StreamExit {
 
 /// 单轮流式调用的驱动器：持有模型客户端、运行规格与工具表，完成
 /// "流式请求 → 事件装配 → 出帧 → 回喂 run"的整个过程。
-pub struct TurnDriver {
-    /// 模型客户端（rig 封装的 OpenAI 接口形态）。
-    model: Model<Chat>,
+///
+/// 模型端泛型化（37 号票）：`W: Wire<Op = Completion>` + `T: Transport<W>`
+/// 的任意组合——生产 = OpenAI Chat wire（`Model<Chat>`）；测试 = rig
+/// test_utils 的剧本模型（`MockCompletionModel`），供看门狗（37 号票）等
+/// 以"剧本假模型 + 假执行器"直驱 `drive_run` 全链。泛型只改客户端类型，
+/// 流事件面（`Item<StreamEvent>`）与响应面（`CompletionResponse`）对
+/// `Op = Completion` 的全部 wire 同形，方法体零改动。
+pub struct TurnDriver<W, T>
+where
+    W: Wire<Op = Completion>,
+    T: Transport<W>,
+{
+    /// 模型客户端（rig 封装的 completion 端点形态）。
+    model: Model<W, T>,
     /// 运行规格（rig 的 RunSpec：采样参数与执行策略）。
     spec: RunSpec,
     /// 本轮广播给模型的工具定义表。
@@ -58,9 +70,13 @@ pub struct TurnOutcome {
 }
 
 /// TurnDriver 的流式调用与一次性调用。
-impl TurnDriver {
+impl<W, T> TurnDriver<W, T>
+where
+    W: Wire<Op = Completion>,
+    T: Transport<W>,
+{
     /// 构造：给定模型客户端、运行规格与工具表。
-    pub fn new(model: Model<Chat>, spec: RunSpec, tools: Vec<Arc<ToolDefinition>>) -> Self {
+    pub fn new(model: Model<W, T>, spec: RunSpec, tools: Vec<Arc<ToolDefinition>>) -> Self {
         Self { model, spec, tools }
     }
 

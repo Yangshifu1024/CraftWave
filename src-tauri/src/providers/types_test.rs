@@ -272,3 +272,45 @@ fn tools_max_parallel_defaults_and_bounds() {
         );
     }
 }
+
+// 断言（37 号票）：watchdog.stallTimeoutSecs 的 normalize 与缺省——缺省 300、
+// 合法区间 5–3600，越界拒绝整份提交；旧配置无 watchdog 键容忍（回填默认）。
+#[test]
+fn watchdog_stall_timeout_defaults_and_bounds() {
+    // 缺省：WatchdogConfig::default() = 300（§3.2 watchdog 组/§5.7）
+    let mut config = AppConfig::default();
+    assert_eq!(
+        config.watchdog.stall_timeout_secs,
+        DEFAULT_STALL_TIMEOUT_SECS
+    );
+    config.normalize().unwrap();
+
+    // serde 缺省容忍：旧配置（无 watchdog 键）反序列化 → stallTimeoutSecs = 300
+    let raw = r#"{"schemaVersion":2,"providers":[],"approval":{"enabled":true,"autoConfirm":false,"commandAllowlist":[]},"ui":{"language":"zh-CN","theme":"system"},"log":{"level":"info"},"notifications":{"enabled":true,"interventionOnly":false}}"#;
+    let parsed: AppConfig = serde_json::from_str(raw).unwrap();
+    assert_eq!(
+        parsed.watchdog.stall_timeout_secs, 300,
+        "旧配置无 watchdog 键 → 缺省 300"
+    );
+
+    // 合法边界：5 与 3600 都通过，且 serde 往返保持 camelCase 键面
+    for ok in [5, 300, 3600] {
+        let mut config = AppConfig::default();
+        config.watchdog.stall_timeout_secs = ok;
+        config.normalize().unwrap();
+        let value = serde_json::to_value(&config).unwrap();
+        assert_eq!(value["watchdog"]["stallTimeoutSecs"], ok);
+        assert_eq!(serde_json::from_value::<AppConfig>(value).unwrap(), config);
+    }
+
+    // 非法：4（低于下限）与 3601（超上限）拒绝整份提交
+    for bad in [0, 4, 3601, 100_000] {
+        let mut config = AppConfig::default();
+        config.watchdog.stall_timeout_secs = bad;
+        assert_eq!(
+            config.normalize().unwrap_err().code,
+            E_INVALID_ARG,
+            "stallTimeoutSecs = {bad} 应拒绝"
+        );
+    }
+}

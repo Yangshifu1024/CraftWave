@@ -8,6 +8,7 @@ import type { ProviderConfig } from "./ProviderConfig";
 import type { ProxyConfig } from "./ProxyConfig";
 import type { ToolsConfig } from "./ToolsConfig";
 import type { UiConfig } from "./UiConfig";
+import type { WatchdogConfig } from "./WatchdogConfig";
 
 /**
  * 应用总配置，即 `~/.craftwave/config.json` 的载入/落盘结构：
@@ -57,4 +58,9 @@ compaction: CompactionConfig,
 /**
  * 工具批执行（FR-03-11/FR-04-04，07 号票；缺省值经 Default：并发上限 4）。
  */
-tools: ToolsConfig, };
+tools: ToolsConfig, 
+/**
+ * 监督看门狗（FR-03-07，37 号票；缺省值经 Default：停滞超时 300 秒。
+ * 旧配置无该组时 serde default 回填默认值）。
+ */
+watchdog: WatchdogConfig, };

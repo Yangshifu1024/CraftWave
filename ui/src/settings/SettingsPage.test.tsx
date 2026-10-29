@@ -41,6 +41,7 @@ const BASE_CONFIG: AppConfig = {
   notifications: { enabled: true, interventionOnly: false },
   compaction: { threshold: 0.6, timeoutSecs: 180 },
   tools: { maxParallel: 4 },
+  watchdog: { stallTimeoutSecs: 300 },
 };
 
 // 每个用例前：重置 mock、把 store 置为"草稿=基线"的干净状态（不脏）
@@ -315,5 +316,21 @@ describe("自定义提示词（03 号票 agent.customPrompt）", () => {
       expect(useSettingsStore.getState().config?.agent?.customPrompt).toBeUndefined(),
     );
     unmount();
+  });
+});
+
+describe("模型流停滞超时（37 号票 watchdog.stallTimeoutSecs）", () => {
+  it("工作区与智能体页数字输入进草稿，保存载荷携带 watchdog 字段", async () => {
+    render(<SettingsPage initialPage="agent" onClose={() => {}} />);
+    const input = await screen.findByTestId("watchdog-stall-timeout-input");
+    expect((input as HTMLInputElement).value).toBe("300");
+    // 改为 600：草稿更新 + 脏点出现
+    fireEvent.change(input, { target: { value: "600" } });
+    expect(useSettingsStore.getState().config?.watchdog.stallTimeoutSecs).toBe(600);
+    await waitFor(() => expect(screen.getAllByTitle("有未保存的改动").length).toBeGreaterThan(0));
+    saveConfigMock.mockImplementation(async (config) => structuredClone(config));
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(saveConfigMock).toHaveBeenCalled());
+    expect(saveConfigMock.mock.calls[0]?.[0].watchdog).toEqual({ stallTimeoutSecs: 600 });
   });
 });

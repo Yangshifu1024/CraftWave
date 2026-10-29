@@ -26,6 +26,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   notifications: { enabled: true, interventionOnly: false },
   compaction: { threshold: 0.6, timeoutSecs: 180 },
   tools: { maxParallel: 4 },
+  watchdog: { stallTimeoutSecs: 300 },
 };
 
 /** 设置状态仓库的形状：草稿/基线双份 + 读写动作（说明见各字段行内注释）。 */

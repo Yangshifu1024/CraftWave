@@ -127,6 +127,7 @@ export * from "./generated/ToolOutcome";
 export * from "./generated/ToolsConfig";
 export * from "./generated/UiConfig";
 export * from "./generated/UsageTotal";
+export * from "./generated/WatchdogConfig";
 export * from "./generated/WirePart";
 export * from "./generated/WorkspacePathHit";
 

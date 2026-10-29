@@ -78,7 +78,8 @@ function pageSlice(config: AppConfig, page: PageKey): unknown {
     case "security":
       return config.approval;
     case "agent":
-      return config.agent ?? null;
+      // 工作区与智能体页承载 agent + watchdog（37 号票）两组字段
+      return { agent: config.agent ?? null, watchdog: config.watchdog };
     case "logs":
       return config.log;
     default:
@@ -892,6 +893,9 @@ function LogsPage() {
  * 续票——10/04 号票——接入）：
  * - 自定义提示词（FR-09-06，agent.customPrompt）：多行文本，注入为每次对话
  *   的系统级前缀；空/未配置零注入；走草稿 + saveAll 提交，下次 run 生效；
+ * - 模型流停滞超时（FR-03-07，watchdog.stallTimeoutSecs，37 号票）：数字
+ *   输入（5–3600 秒，缺省 300）；按 run 装配驱动时读取生效（保存后下次
+ *   对话应用）；
  * - 打开项目数据目录（FR-14-07）：当前活跃 Tab 所属项目的 `<homeDir>/.craftwave`，
  *   无项目会话时按钮禁用并说明原因。
  */
@@ -906,6 +910,11 @@ function AgentPage() {
   const patchAgent = (patch: Partial<NonNullable<AppConfig["agent"]>>) =>
     patchConfig({
       agent: { ...config.agent, ...patch },
+    });
+  const stallTimeoutSecs = config.watchdog.stallTimeoutSecs;
+  const patchWatchdog = (patch: Partial<AppConfig["watchdog"]>) =>
+    patchConfig({
+      watchdog: { ...config.watchdog, ...patch },
     });
   // 当前项目：活跃 Tab 所属（无活跃 Tab 或临时会话 → 无项目数据目录可开）
   const activeTab = tabs.find((t) => t.id === activeId);
@@ -932,6 +941,32 @@ function AgentPage() {
               patchAgent({ customPrompt: e.target.value === "" ? undefined : e.target.value })
             }
           />
+        </SettingsRow>
+      </SettingsSection>
+      <SettingsSection title="运行监督">
+        <SettingsRow
+          title="模型流停滞超时（秒）"
+          description="模型请求发出后持续无输出达到该时长即终止本次运行（E_RUN_STALLED），已输出内容保留。合法范围 5–3600 秒，默认 300 秒；保存后下次对话生效。"
+        >
+          <label className="flex w-full items-center gap-3 text-ui-base">
+            <input
+              aria-label="模型流停滞超时秒数"
+              data-testid="watchdog-stall-timeout-input"
+              type="number"
+              min={5}
+              max={3600}
+              step={1}
+              value={stallTimeoutSecs}
+              onChange={(e) => {
+                const parsed = Number(e.target.value);
+                if (Number.isFinite(parsed) && parsed > 0) {
+                  patchWatchdog({ stallTimeoutSecs: parsed });
+                }
+              }}
+              className="w-32 rounded-[var(--cw-radius)] border border-[var(--cw-border)] bg-transparent px-3 py-2 text-ui-base tabular-nums outline-none focus:border-[var(--cw-focus)]"
+            />
+            <span className="shrink-0 text-ui-sm text-[var(--muted-foreground)]">5–3600 秒</span>
+          </label>
         </SettingsRow>
       </SettingsSection>
       <SettingsSection title="项目数据">

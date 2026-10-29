@@ -65,7 +65,7 @@ use crate::host::run_persistence::{PersistingSink, RunRecorder};
 use crate::providers::types::{ApiFormat, ProviderConfig, ProviderModel};
 use crate::safety::tier::PermissionTier;
 use crate::storage::{MessageEntry, MessageRole, StoredEntry};
-use crate::util::errors::{E_INTERNAL, IpcError};
+use crate::util::errors::{E_INTERNAL, E_RUN_STALLED, IpcError};
 use crate::util::events::EventSink;
 use crate::util::events::keys;
 
@@ -73,6 +73,42 @@ use crate::backend::run_loop::E_CANCELLED;
 
 /// autoConfirm 自动放行等待（§5.4：300s 超时自动选 recommended 项）。
 pub const AUTO_CONFIRM_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// run 失败终态信息（37 号票起带 code）：`code` 随 `run:error` 事件带出——
+/// 看门狗终止 = E_RUN_STALLED（§5.7），其余失败 E_INTERNAL 兜底（§11.3
+/// 分类器为 provider 适配层后续票）。
+#[derive(Debug, Clone)]
+pub(crate) struct RunFailure {
+    /// §3.6 错误码。
+    pub code: String,
+    /// 人类可读的失败原因（错误消息说明停滞或重复失败原因，§5.7）。
+    pub message: String,
+}
+
+/// run 终态 → followUp 队列收尾动作（§5.5，06 号票建面；37 号票抽纯函数
+/// 钉住看门狗终止的归属）：正常完成自动投递；失败（含看门狗终止
+/// E_RUN_STALLED）暂停并持久保留全部待发；取消（含审批拒绝）清空并返还草稿。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum QueueDisposition {
+    /// 正常完成：steer 残余转入队列尾，队列非空且未暂停即自动投递队头。
+    AutoDeliver,
+    /// 失败：队列暂停 + 持久保留全部待发（steer 残余交还草稿）。
+    PauseKeep,
+    /// 取消：清空队列（暂停态随清空复位）+ 全部文本交还草稿。
+    ClearReturn,
+}
+
+/// 队列收尾动作的判定（纯函数，单测钉住 E_RUN_STALLED 走失败暂停）。
+pub(crate) fn followup_disposition(
+    final_exit: &RunExit,
+    errored: &Option<RunFailure>,
+) -> QueueDisposition {
+    match (final_exit, errored) {
+        (RunExit::Done(_), _) => QueueDisposition::AutoDeliver,
+        (_, Some(_)) => QueueDisposition::PauseKeep,
+        _ => QueueDisposition::ClearReturn,
+    }
+}
 
 /// `start_chat` 参数契约（§3.3 #18；文档命名锚点，命令形参按字段平铺展开）。
 #[derive(Debug, Clone, Deserialize)]
@@ -754,14 +790,17 @@ fn denied_finish(sink: &mut dyn FrameSink, pending: &PendingCall, state: &DriveS
 
 /// suggest 后台小调用（C-9）：一次非流式补全 → run:suggestions；失败静默、
 /// 空文本静默；用量计入会话累计（tokens:update，不计 turnUsage——run 已终态）。
-fn spawn_suggest(
-    driver: TurnDriver,
+fn spawn_suggest<W, T>(
+    driver: TurnDriver<W, T>,
     events: Arc<dyn EventSink>,
     session_usage: Arc<Mutex<HashMap<String, UsageTotal>>>,
     session_id: String,
     run_id: String,
     context_tail: String,
-) {
+) where
+    W: rig::wire::Wire<Op = rig::operation::Completion>,
+    T: rig::driver::Transport<W>,
+{
     tokio::spawn(async move {
         if context_tail.trim().is_empty() {
             return;
@@ -945,16 +984,20 @@ pub(crate) fn estimate_after_compaction(
 /// 中途失败不提交条目、不推进边界（Q31 原子提交面），错误原样上抛由调用
 /// 方发 run:compact_failed 与兜底判定。
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn execute_compaction(
+pub(crate) async fn execute_compaction<W, T>(
     store: &Arc<crate::storage::SessionStore>,
     events: &Arc<dyn EventSink>,
     session_usage: &Mutex<HashMap<String, UsageTotal>>,
     session_id: &str,
     owner: &str,
     scope: &crate::backend::compaction::CompactionScope,
-    summary_driver: &TurnDriver,
+    summary_driver: &TurnDriver<W, T>,
     policy: &CompactionRuntimePolicy,
-) -> Result<CompactionOutcome, crate::backend::compaction::CompactionError> {
+) -> Result<CompactionOutcome, crate::backend::compaction::CompactionError>
+where
+    W: rig::wire::Wire<Op = rig::operation::Completion>,
+    T: rig::driver::Transport<W>,
+{
     let (summary, usages) = crate::backend::compaction::summarize(
         summary_driver,
         scope.old_summary.as_deref(),
@@ -997,17 +1040,21 @@ pub(crate) async fn execute_compaction(
 /// 压缩成功后的新边界立即生效于本次 run 的全部请求（§6.2 生效面定稿）；
 /// `summary_driver` 由调用方按配置解析（专用小模型或当前模型，§6.2）。
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn maybe_compact_before_run(
+pub(crate) async fn maybe_compact_before_run<W, T>(
     app: &AppState,
     session_id: &str,
     run_id: &str,
     messages: &[MessageEntry],
     tools: &[Arc<rig::completion::request::ToolDefinition>],
     policy: &CompactionRuntimePolicy,
-    summary_driver: &TurnDriver,
+    summary_driver: &TurnDriver<W, T>,
     sink: &mut dyn FrameSink,
     custom_prompt: Option<&str>,
-) -> Result<(Option<crate::backend::wire::CompactionBoundary>, u64), IpcError> {
+) -> Result<(Option<crate::backend::wire::CompactionBoundary>, u64), IpcError>
+where
+    W: rig::wire::Wire<Op = rig::operation::Completion>,
+    T: rig::driver::Transport<W>,
+{
     let overview = app
         .store
         .compaction_overview(session_id)
@@ -1160,7 +1207,7 @@ fn boundary_ref_slice<'a>(
 /// （落盘面优化不承载硬预算义务——硬预算判定在恢复后的请求面）。
 /// 存储器/事件汇/用量表为细粒度参数（spawn 闭包内无 AppState 整体）。
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn maybe_compact_after_ask(
+pub(crate) async fn maybe_compact_after_ask<W, T>(
     store: &Arc<crate::storage::SessionStore>,
     events: &Arc<dyn EventSink>,
     session_usage: &Mutex<HashMap<String, UsageTotal>>,
@@ -1170,8 +1217,11 @@ pub(crate) async fn maybe_compact_after_ask(
     state: &DriveState,
     tools: &[Arc<rig::completion::request::ToolDefinition>],
     policy: &CompactionRuntimePolicy,
-    summary_driver: &TurnDriver,
-) {
+    summary_driver: &TurnDriver<W, T>,
+) where
+    W: rig::wire::Wire<Op = rig::operation::Completion>,
+    T: rig::driver::Transport<W>,
+{
     let pending_tokens = crate::backend::estimator::estimate_text_tokens(&pending.args_json);
     let tool_tokens = crate::backend::estimator::estimate_tool_tokens(&tool_estimate_inputs(tools));
     let estimated = state.last_input + pending_tokens + tool_tokens + policy.reply_reserve;
@@ -1582,6 +1632,10 @@ pub async fn start_chat_core(
     ));
     let runs_for_task = runs.clone();
     let suggest_tail = context_tail(&messages);
+    // 模型停滞看门狗超时（§3.2 watchdog 组/§5.7，37 号票）：按 run 装配驱动时
+    // 读取生效（save_config 后下一次 start_chat 应用）。
+    let stall_timeout =
+        std::time::Duration::from_secs(u64::from(app.config.load()?.watchdog.stall_timeout_secs));
     let run_id_for_result = run_id.clone();
     // steer 插话源（06 号票，§5.5）：RunHandle 的插话队列 + 宿主副作用
     // （canonical 落盘 + run:inject 回执）收进 HostSteerSource，RunLoop 于
@@ -1624,9 +1678,10 @@ pub async fn start_chat_core(
         };
         let mut run = AgentRun::from_spec(&spec, (*prompt).clone(), Some(history));
         let mut resume_state: Option<DriveState> = None;
-        // 错误终态信息（§11.3 分类器为后续票，M1 统一 E_INTERNAL）：loop 内
-        // 记录、收尾随 run:error 事件发出（17 号票）
-        let mut errored: Option<String> = None;
+        // 错误终态信息（37 号票起带 code：看门狗终止 E_RUN_STALLED，其余
+        // E_INTERNAL 兜底——§11.3 分类器为后续票）：loop 内记录、收尾随
+        // run:error 事件发出（17 号票）
+        let mut errored: Option<RunFailure> = None;
         let final_exit: RunExit = loop {
             let attempt = drive_run(
                 &driver,
@@ -1639,13 +1694,18 @@ pub async fn start_chat_core(
                 &mut sink,
                 resume_state.take(),
                 Some(steer_source.as_ref()),
+                stall_timeout,
             )
             .await;
             match attempt {
                 Err(err) => {
-                    errored = Some(err.to_string());
+                    let message = err.to_string();
+                    errored = Some(RunFailure {
+                        code: E_INTERNAL.to_owned(),
+                        message: message.clone(),
+                    });
                     // 错误终态兜底：任何 rig 失败都以 runEnded(error) 收场（§5.3 终态不变量）
-                    send_error_ended(&mut sink, err.to_string());
+                    send_error_ended(&mut sink, message);
                     break RunExit::Cancelled;
                 }
                 Ok(RunExit::Suspended(info)) => {
@@ -1679,8 +1739,12 @@ pub async fn start_chat_core(
                                     continue;
                                 }
                                 Err(e) => {
-                                    errored = Some(format!("审批恢复失败：{e}"));
-                                    send_error_ended(&mut sink, format!("审批恢复失败：{e}"));
+                                    let message = format!("审批恢复失败：{e}");
+                                    errored = Some(RunFailure {
+                                        code: E_INTERNAL.to_owned(),
+                                        message: message.clone(),
+                                    });
+                                    send_error_ended(&mut sink, message);
                                     break RunExit::Cancelled;
                                 }
                             }
@@ -1690,6 +1754,16 @@ pub async fn start_chat_core(
                             break RunExit::Cancelled;
                         }
                     }
+                }
+                // 看门狗终止（§5.7，37 号票）：runEnded(error, E_RUN_STALLED)
+                // 已在 drive_run 内发出（结果保留、副作用不重放），这里记
+                // 失败终态供 run:error 事件与队列暂停分流。
+                Ok(RunExit::Stalled { message }) => {
+                    errored = Some(RunFailure {
+                        code: E_RUN_STALLED.to_owned(),
+                        message: message.clone(),
+                    });
+                    break RunExit::Stalled { message };
                 }
                 Ok(other) => break other,
             }
@@ -1708,16 +1782,17 @@ pub async fn start_chat_core(
         }
 
         // run 终态事件（§3.5，17 号票补实装）：前端 Tab 指示与系统通知门
-        // （TauriEventSink 旁路）共用这三个键；payload 口径照文档。
+        // （TauriEventSink 旁路）共用这三个键；payload 口径照文档。失败终态
+        // 的 code 从 RunFailure 带出（37 号票起看门狗终止 = E_RUN_STALLED）。
         let duration_ms = (now_ms() - handle.snapshot().started_at).max(0) as u64;
         match (&final_exit, &errored) {
             (RunExit::Done(_), _) => events.emit(
                 keys::RUN_DONE,
                 serde_json::json!({ "sessionId": session_id, "runId": run_id, "durationMs": duration_ms }),
             ),
-            (_, Some(message)) => events.emit(
+            (_, Some(failure)) => events.emit(
                 keys::RUN_ERROR,
-                serde_json::json!({ "sessionId": session_id, "runId": run_id, "code": "E_INTERNAL", "message": message }),
+                serde_json::json!({ "sessionId": session_id, "runId": run_id, "code": failure.code, "message": failure.message }),
             ),
             _ => events.emit(
                 keys::RUN_CANCELLED,
@@ -1726,7 +1801,7 @@ pub async fn start_chat_core(
         }
         runs_for_task.remove(&session_id, &run_id);
 
-        // —— followUp 队列收尾分流（§5.5，06 号票）——
+        // —— followUp 队列收尾分流（§5.5，06 号票建面；37 号票抽纯函数）——
         // 次序锚点：投递时机 = run 正常完成且终态处理完（runEnded 帧已发出 +
         // RunManager.remove 已摘除）。steer 未消费残余按终态分流：
         // Done → 转会话 followUp 队列尾（随下次投递发出）；取消/失败 →
@@ -1735,8 +1810,8 @@ pub async fn start_chat_core(
         let leftover_steer = drain_steer(&handle);
         let followups = &app_for_delivery.followups;
         let events_for_task = &events;
-        match (&final_exit, &errored) {
-            (RunExit::Done(_), _) => {
+        match followup_disposition(&final_exit, &errored) {
+            QueueDisposition::AutoDeliver => {
                 for text in leftover_steer {
                     let entry = followup_entry_from_text(&text, &run_config_for_delivery);
                     followups.push(&session_id, entry);
@@ -1749,15 +1824,15 @@ pub async fn start_chat_core(
                     emit_queue_state(events_for_task, &session_id, followups, Vec::new());
                 }
             }
-            // 失败终态（含 runEnded(error) 兜底）：暂停队列 + 持久保留全部待发，
-            // steer 残余交还（§5.5 失败暂停定案；E_RUN_STALLED 同此路径，37 号票）
-            (_, Some(_)) => {
+            // 失败终态（含看门狗终止 E_RUN_STALLED 与 runEnded(error) 兜底）：
+            // 暂停队列 + 持久保留全部待发，steer 残余交还（§5.5 失败暂停定案）
+            QueueDisposition::PauseKeep => {
                 followups.set_paused(&session_id, true);
                 emit_queue_state(events_for_task, &session_id, followups, leftover_steer);
             }
             // 取消终态（含审批 deny 收场）：清空队列 + 全部文本交还草稿
             // （FR-01-07 返还草稿；暂停态随清空一并复位）
-            _ => {
+            QueueDisposition::ClearReturn => {
                 let mut returned = followups.clear(&session_id);
                 returned.extend(leftover_steer);
                 emit_queue_state(events_for_task, &session_id, followups, returned);

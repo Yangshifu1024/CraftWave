@@ -183,6 +183,7 @@ async fn e2e_frame_fidelity_call_id_same_origin_throttle_nfr02() {
         &mut sink_handle,
         None,
         None,
+        std::time::Duration::from_secs(30),
     )
     .await
     .expect("RunLoop 应正常跑完");
@@ -343,6 +344,7 @@ async fn e2e_cancel_midstream_run_ended_last_frame_latency() {
             &mut *sink_box,
             None,
             None,
+            std::time::Duration::from_secs(30),
         )
         .await
     });
@@ -558,6 +560,7 @@ async fn e2e_tool_batch_cancel_keep_completed_mark_rest() {
             &mut *sink_box,
             None,
             None,
+            std::time::Duration::from_secs(30),
         )
         .await
     });
@@ -676,6 +679,7 @@ async fn e2e_approval_suspend_serialize_resume_done() {
         &mut sink1_handle,
         None,
         None,
+        std::time::Duration::from_secs(30),
     )
     .await
     .expect("挂起路径应正常返回");
@@ -724,6 +728,7 @@ async fn e2e_approval_suspend_serialize_resume_done() {
         &mut sink2_handle,
         Some(state),
         None,
+        std::time::Duration::from_secs(30),
     )
     .await
     .expect("恢复路径应跑到完成");
@@ -2750,6 +2755,7 @@ async fn parallel_batch_mixed_read_write_source_order() {
         &mut sink_handle,
         None,
         None,
+        std::time::Duration::from_secs(30),
     )
     .await
     .expect("跑完");
@@ -2826,6 +2832,7 @@ async fn parallel_batch_cancel_joins_both_commands_then_run_ended() {
             &mut sink_handle,
             None,
             None,
+            std::time::Duration::from_secs(30),
         )
         .await
     });

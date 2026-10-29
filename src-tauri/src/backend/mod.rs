@@ -24,7 +24,10 @@
 //! - [`estimator`]：请求 token 估算器（§6.2 每请求预算检查的估算面，
 //!   Q18：宁高勿低启发式，不依赖 usage 帧）；
 //! - [`compaction`]：上下文压缩编排（FR-03-05，04 号票）——阈值判定、
-//!   压缩范围计算、增量/分块摘要（Q31/Q38 共用总超时）与原子提交。
+//!   压缩范围计算、增量/分块摘要（Q31/Q38 共用总超时）与原子提交；
+//! - [`watchdog`]：监督看门狗（FR-03-07，37 号票，§5.7）——工具结果滑动
+//!   窗口与四类信号的 turn 边界评估（重复失败/空转的纠偏与终止）、模型流
+//!   停滞计时（仅请求阶段计时、有效增量刷新，Q33 边界）。
 
 pub mod ask;
 pub mod compaction;
@@ -35,6 +38,7 @@ pub mod gate;
 pub mod rig_bridge;
 pub mod run_loop;
 pub mod turn;
+pub mod watchdog;
 pub mod wire;
 
 // 以下为各子模块的测试文件挂载：测试代码在独立文件中，仅 cargo test 时编译。

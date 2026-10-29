@@ -313,6 +313,40 @@ pub const DEFAULT_MAX_PARALLEL: u32 = 4;
 /// maxParallel 合法区间上限（§3.2 tools 组注记：1–16）。
 pub const MAX_PARALLEL_LIMIT: u32 = 16;
 
+/// 模型流停滞超时的缺省秒数（§3.2 watchdog 组/§5.7：300 秒）。
+pub const DEFAULT_STALL_TIMEOUT_SECS: u32 = 300;
+/// stallTimeoutSecs 合法区间下限（§5.7：5 秒）。
+pub const MIN_STALL_TIMEOUT_SECS: u32 = 5;
+/// stallTimeoutSecs 合法区间上限（§5.7：3600 秒）。
+pub const MAX_STALL_TIMEOUT_SECS: u32 = 3600;
+
+/// 监督看门狗配置（§3.2 watchdog 组，FR-03-07，37 号票实装）。
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WatchdogConfig {
+    /// 模型流停滞超时秒数（§5.7 计时边界：仅模型请求阶段计时）：单次模型请求
+    /// 自发出起无有效模型增量达到该时长即终止 run（E_RUN_STALLED）；缺省 300，
+    /// 合法区间 5–3600；按 run 装配驱动时读取生效（save_config 后下一次
+    /// start_chat 应用）。
+    #[serde(default = "default_stall_timeout_secs")]
+    pub stall_timeout_secs: u32,
+}
+
+/// serde 缺省值函数：模型流停滞超时缺省 300 秒（§5.7）。
+fn default_stall_timeout_secs() -> u32 {
+    DEFAULT_STALL_TIMEOUT_SECS
+}
+
+// WatchdogConfig 的缺省值：停滞超时 300 秒（§5.7）。
+impl Default for WatchdogConfig {
+    fn default() -> Self {
+        Self {
+            stall_timeout_secs: DEFAULT_STALL_TIMEOUT_SECS,
+        }
+    }
+}
+
 /// 工具批执行配置（§3.2 tools 组，FR-03-11/FR-04-04，07 号票实装）。
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -382,6 +416,10 @@ pub struct AppConfig {
     /// 工具批执行（FR-03-11/FR-04-04，07 号票；缺省值经 Default：并发上限 4）。
     #[serde(default)]
     pub tools: ToolsConfig,
+    /// 监督看门狗（FR-03-07，37 号票；缺省值经 Default：停滞超时 300 秒。
+    /// 旧配置无该组时 serde default 回填默认值）。
+    #[serde(default)]
+    pub watchdog: WatchdogConfig,
 }
 
 /// serde 缺省值函数：schemaVersion 字段缺省时取当前版本号 2。
@@ -445,6 +483,7 @@ impl Default for AppConfig {
             agent: None,
             compaction: CompactionConfig::default(),
             tools: ToolsConfig::default(),
+            watchdog: WatchdogConfig::default(),
         }
     }
 }
@@ -485,6 +524,17 @@ impl AppConfig {
             return Err(IpcError::invalid_arg(format!(
                 "tools.maxParallel 必须在 1–{MAX_PARALLEL_LIMIT} 内（实际 {}）",
                 self.tools.max_parallel
+            )));
+        }
+        // watchdog.stallTimeoutSecs：合法区间 5–3600 秒（§3.2 watchdog 组/§5.7——
+        // 过短会对慢模型/长首包误杀，过长失去停滞检测意义；越界视为配置错误
+        // 拒绝整份提交）。
+        if !(MIN_STALL_TIMEOUT_SECS..=MAX_STALL_TIMEOUT_SECS)
+            .contains(&self.watchdog.stall_timeout_secs)
+        {
+            return Err(IpcError::invalid_arg(format!(
+                "watchdog.stallTimeoutSecs 必须在 {MIN_STALL_TIMEOUT_SECS}–{MAX_STALL_TIMEOUT_SECS} 秒内（实际 {}）",
+                self.watchdog.stall_timeout_secs
             )));
         }
         self.compaction.model_id = self

@@ -94,6 +94,10 @@ tokio = { version = "1", features = ["full"] }
 # cargo test 导出 ui/src/ipc/generated/（生成物进 git，cargo build 不依赖生成步骤）。
 # serde-compat 为默认 feature（解析 serde 属性）；serde-json-impl 让 Value 可导出。
 ts-rs = { version = "12.0.1", features = ["serde-json-impl"] }
+# 37 号票（看门狗）：rig 剧本假模型（test_utils 的 MockCompletionModel）——
+# 以"剧本流 + 假执行器"直驱 drive_run 全链验证 E_RUN_STALLED 终态；仅测试
+# 构建启用（feature unification：cargo build 不含 test-utils，生产面不变）。
+rig = { version = "0.45.0", features = ["test-utils"] }
 
 [profile.release]
 codegen-units = 1

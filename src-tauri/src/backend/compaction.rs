@@ -200,13 +200,17 @@ pub struct SummaryCall {
 /// 调用，输入 = 上次摘要（或旧摘要/首次占位）+ 当前块；全部调用共用
 /// `timeout` 总预算——**任一块开始前检查剩余时间，耗尽即 TimedOut**，
 /// 不能按块重置。返回最终摘要与全部调用的用量列表（供调用方计入会话）。
-pub async fn summarize(
-    driver: &TurnDriver,
+pub async fn summarize<W, T>(
+    driver: &TurnDriver<W, T>,
     old_summary: Option<&str>,
     entries: &[MessageEntry],
     summary_window_tokens: u64,
     timeout: Duration,
-) -> Result<(String, Vec<Usage>), CompactionError> {
+) -> Result<(String, Vec<Usage>), CompactionError>
+where
+    W: rig::wire::Wire<Op = rig::operation::Completion>,
+    T: rig::driver::Transport<W>,
+{
     let deadline = Instant::now() + timeout;
     let blocks = plan_blocks(
         entries.iter().map(entry_to_block).collect(),
