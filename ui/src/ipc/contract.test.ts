@@ -218,10 +218,10 @@ describe("§12.3 manifest 双向扫描", () => {
     expect(offenders, `未知 invoke 命令：\n${offenders.join("\n")}`).toEqual([]);
   });
 
-  it("manifest.frames 覆盖 §3.4 P0 全集 9 帧 + M2 压缩帧", () => {
-    // 帧清单必须恰好是 P0 全集 9 帧 + 04 号票 compactDone：一个不能少
-    //（且不允许混入未知帧）
-    expect(manifest.frames).toHaveLength(10);
+  it("manifest.frames 覆盖 §3.4 P0 全集 9 帧 + M2 压缩帧/摘要帧", () => {
+    // 帧清单必须恰好是 P0 全集 9 帧 + 04 号票 compactDone + 05 号票 runSnapshot：
+    // 一个不能少（且不允许混入未知帧）
+    expect(manifest.frames).toHaveLength(11);
     for (const frame of [
       "runStarted",
       "stepStarted",
@@ -233,6 +233,7 @@ describe("§12.3 manifest 双向扫描", () => {
       "usage",
       "runEnded",
       "compactDone",
+      "runSnapshot",
     ]) {
       expect(manifest.frames).toContain(frame);
     }
@@ -297,6 +298,61 @@ describe("§12.3 manifest 双向扫描", () => {
     });
     // 双向：client.ts 已接线（禁止只注册不使用）
     expect(Object.values(COMMANDS)).toContain("compact_session");
+  });
+
+  it("帧重放与热重连三命令（05 号票，§3.3 #20/#57/#59c）在两侧接线", () => {
+    const find = (name: string) => {
+      const command = manifest.commands.find((c) => c.name === name);
+      expect(command, `manifest 缺命令 ${name}`).toBeDefined();
+      return command!;
+    };
+    // attach_run（#57）：帧重放重连，幂等空重放语义
+    expect(find("attach_run")).toMatchObject({
+      args_type: "AttachRunArgs",
+      ret_type: "AttachRunResult",
+    });
+    // session_run_snapshot（#20）：对账快照，无活跃 run → null（Option）
+    expect(find("session_run_snapshot")).toMatchObject({
+      args_type: "SessionRunSnapshotArgs",
+      ret_type: "Option<RunSnapshot>",
+    });
+    // session_pending_ask（#59c）：待审批恢复查询，无未决 ask → null（Option）
+    expect(find("session_pending_ask")).toMatchObject({
+      args_type: "SessionPendingAskArgs",
+      ret_type: "Option<SessionPendingAsk>",
+    });
+    // 双向：client.ts 已接线（禁止只注册不使用）
+    for (const name of ["attach_run", "session_run_snapshot", "session_pending_ask"]) {
+      expect(Object.values(COMMANDS), `${name} 应在 client.ts 接线`).toContain(name);
+    }
+  });
+
+  it("runSnapshot 摘要帧（05 号票，§3.4）与 RunSnapshot 类型生成物同源", async () => {
+    // 帧面 runSnapshot 的负载对齐 §3.2 RunSnapshot（chat/frames.ts 消费面）
+    type ChatFrame = import("./generated/ChatFrame").ChatFrame;
+    type RunSnapshotFrame = Extract<ChatFrame, { type: "runSnapshot" }>;
+    const sample: RunSnapshotFrame = {
+      type: "runSnapshot",
+      status: "running",
+      runId: "r1",
+      startedAt: 1,
+      turn: 1,
+      toolCount: 0,
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      lastSeq: 0,
+    };
+    expect(sample.status).toBe("running");
+    // RunSnapshot 契约类型（命令返回 Option<RunSnapshot>，生成物已再导出）
+    const snapshot: import("./generated/RunSnapshot").RunSnapshot = {
+      status: "running",
+      runId: "r1",
+      startedAt: 1,
+      turn: 1,
+      toolCount: 0,
+      usage: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 },
+      lastSeq: 0,
+    };
+    expect(snapshot.lastSeq).toBe(0);
   });
 });
 

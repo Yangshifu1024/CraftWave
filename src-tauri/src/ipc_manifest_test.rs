@@ -76,7 +76,13 @@ fn export_contract_types_and_match_manifest() {
     // 须显式补根。
     <crate::backend::frames::ChatFrame as ts_rs::TS>::export_all(&cfg).unwrap();
     <crate::backend::frames::SequencedFrame as ts_rs::TS>::export_all(&cfg).unwrap();
+    // 运行快照（05 号票，§3.2/§3.4）：session_run_snapshot 返回 Option<RunSnapshot>
+    // 与 runSnapshot 摘要帧负载都是非名义根（Option<_>/帧内 flatten），显式补根
+    <crate::backend::frames::RunSnapshot as ts_rs::TS>::export_all(&cfg).unwrap();
     <crate::backend::ask::AskPayload as ts_rs::TS>::export_all(&cfg).unwrap();
+    // 待审批/询问恢复查询（05 号票，§3.3 #59c）：返回 Option<SessionPendingAsk>
+    // 非名义，显式补根导出类型声明
+    <crate::host::commands::chat::SessionPendingAsk as ts_rs::TS>::export_all(&cfg).unwrap();
     <crate::storage::StoredEntry as ts_rs::TS>::export_all(&cfg).unwrap();
     <crate::host::commands::workspace::WorkspacePathHit as ts_rs::TS>::export_all(&cfg).unwrap();
     <crate::util::errors::IpcError as ts_rs::TS>::export_all(&cfg).unwrap();
@@ -227,6 +233,22 @@ fn export_ipc_manifest_and_cross_lang_fixture() {
     // 手动压缩命令（04 号票，§3.3 #59b）
     assert_eq!(find("compact_session").args_type, "CompactSessionArgs");
     assert_eq!(find("compact_session").ret_type, "CompactSessionResult");
+    // 帧重放与热重连三命令（05 号票，§3.3 #20/#57/#59c）
+    assert_eq!(find("attach_run").args_type, "AttachRunArgs");
+    assert_eq!(find("attach_run").ret_type, "AttachRunResult");
+    assert_eq!(
+        find("session_run_snapshot").args_type,
+        "SessionRunSnapshotArgs"
+    );
+    assert_eq!(find("session_run_snapshot").ret_type, "Option<RunSnapshot>");
+    assert_eq!(
+        find("session_pending_ask").args_type,
+        "SessionPendingAskArgs"
+    );
+    assert_eq!(
+        find("session_pending_ask").ret_type,
+        "Option<SessionPendingAsk>"
+    );
     // 标题栏命令（骨架既有）仍在注册表
     assert!(
         commands
@@ -251,7 +273,7 @@ fn export_ipc_manifest_and_cross_lang_fixture() {
             }))
             .collect::<Vec<_>>(),
     });
-    assert_eq!(manifest["frames"].as_array().unwrap().len(), 10);
+    assert_eq!(manifest["frames"].as_array().unwrap().len(), 11);
     // 事件键：14 号票 5 键 + 17 号票 5 键（run 终态三键 + notify/退出两键）
     // + 04 号票压缩三键（run:compacting/compacted/compact_failed）
     assert_eq!(manifest["events"].as_array().unwrap().len(), 13);

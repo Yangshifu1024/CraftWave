@@ -32,12 +32,14 @@ import {
   Plus,
   Settings,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AskPanel } from "@/chat/AskPanel";
 import { useCompactionStore } from "@/chat/compaction-store";
 import { useBackendEvents } from "@/chat/event-bridge";
 import { Inspector } from "@/chat/Inspector";
+import { ReconnectOverlay } from "@/chat/ReconnectOverlay";
 import { useRunMetricsStore } from "@/chat/run-metrics";
+import { reconnectIfNeeded, useRunReconnectStore } from "@/chat/run-reconnect";
 import { sessionAdapter } from "@/chat/runtime";
 import { RunSummariesContext, SessionScopeContext } from "@/chat/session-scope";
 import { ChatThread } from "@/chat/Thread";
@@ -269,30 +271,53 @@ function SessionTab({
   const runtime = useLocalRuntime(adapter, { unstable_enableMessageQueue: true });
   // run 收口摘要（17 号票折叠分组数据面）：历史收养后按 runMarker 推导
   const [summaries, setSummaries] = useState<Map<string, RunSummary>>(() => new Map());
+  // 树收养（历史恢复 + 观察态收口共用）：load → import → 摘要/压缩投影刷新
+  const adoptTree = useCallback(
+    async (tree: NonNullable<Awaited<ReturnType<typeof loadHistory>>>) => {
+      runtime.thread.import(loadedTreeToExported(tree));
+      setSummaries(deriveRunSummaries(tree.messages));
+      // 压缩边界投影（04 号票，§6.3：compaction 条目不进树，store 承载）
+      useCompactionStore.getState().setCompactions(sessionId, tree.compactions ?? []);
+    },
+    [runtime, sessionId],
+  );
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
         const tree = await loadHistory(sessionId);
         if (cancelled || tree === null) return;
-        runtime.thread.import(loadedTreeToExported(tree));
-        setSummaries(deriveRunSummaries(tree.messages));
-        // 压缩边界投影（04 号票，§6.3：compaction 条目不进树，store 承载）
-        useCompactionStore.getState().setCompactions(sessionId, tree.compactions ?? []);
+        await adoptTree(tree);
       } catch (err) {
         console.warn("[session] 历史收养失败（以空会话继续）", err);
       }
     })();
+    // 重连观察态（05 号票，§5.8）：WebView 重载/崩溃后 Rust run 仍存活时
+    // 恢复实时流——快照 running → attach 重放续流；runEnded（或无帧兜底）
+    // 收口后经本回调重载 canonical 树（含观察期间落盘的全部产物）
+    void reconnectIfNeeded(sessionId, {
+      onEnded: async () => {
+        try {
+          const tree = await loadHistory(sessionId);
+          if (!cancelled && tree !== null) await adoptTree(tree);
+        } catch (err) {
+          console.warn("[session] 观察态收口树重载失败", err);
+        }
+      },
+    });
     return () => {
       cancelled = true;
     };
-  }, [runtime, sessionId]);
+  }, [sessionId, adoptTree]);
   return (
     <div className={active ? "absolute inset-0 flex" : "hidden"}>
       <AssistantRuntimeProvider runtime={runtime} config={cwAuiConfig}>
         <SessionScopeContext.Provider value={sessionId}>
           <RunSummariesContext.Provider value={summaries}>
-            <ChatThread onOpenSettings={onOpenSettings} />
+            <div className="relative flex min-h-0 w-full">
+              <ChatThread onOpenSettings={onOpenSettings} />
+              <ReconnectOverlay sessionId={sessionId} />
+            </div>
             <AskPanel />
             <RunningReporter sessionId={sessionId} />
             <DraftRestorer sessionId={sessionId} />
@@ -670,7 +695,7 @@ function NewProjectDialog({ open, onClose }: { open: boolean; onClose: () => voi
   );
 }
 
-/** 删除会话并收尾：关 Tab + 清各 store 里该会话的分桶（持久化/指标/ask）。 */
+/** 删除会话并收尾：关 Tab + 清各 store 里该会话的分桶（持久化/指标/ask/重连观察态）。 */
 async function deleteSessionAndClose(sessionId: string): Promise<void> {
   try {
     await deleteSession(sessionId);
@@ -683,6 +708,7 @@ async function deleteSessionAndClose(sessionId: string): Promise<void> {
   useRunMetricsStore.getState().forgetSession(sessionId);
   useAskStore.getState().forgetSession(sessionId);
   useCompactionStore.getState().forgetSession(sessionId);
+  useRunReconnectStore.getState().forgetSession(sessionId);
   await useSessionsStore.getState().refresh();
 }
 

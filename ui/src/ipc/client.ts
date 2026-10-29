@@ -17,6 +17,7 @@ import { listen } from "@tauri-apps/api/event";
 import type {
   AppConfig,
   AskAnswer,
+  AttachRunResult,
   CompactSessionArgs,
   CompactSessionResult,
   DeleteProviderArgs,
@@ -26,6 +27,7 @@ import type {
   ProjectMeta,
   ProviderConfig,
   ReadWorkspaceResult,
+  RunSnapshot,
   SaveConfigArgs,
   SaveProjectArgs,
   SaveProviderArgs,
@@ -33,6 +35,7 @@ import type {
   SaveSessionTreeResult,
   SequencedFrame,
   SessionMeta,
+  SessionPendingAsk,
   SessionTreeData,
   StartChatArgs,
   StartChatResult,
@@ -63,6 +66,9 @@ export const COMMANDS = {
   resolveAsk: "resolve_ask",
   approvePlan: "approve_plan",
   compactSession: "compact_session",
+  attachRun: "attach_run",
+  sessionRunSnapshot: "session_run_snapshot",
+  sessionPendingAsk: "session_pending_ask",
   listProjects: "list_projects",
   saveProject: "save_project",
   deleteProject: "delete_project",
@@ -227,6 +233,34 @@ export function compactSession(sessionId: string): Promise<CompactSessionResult>
   return invoke<CompactSessionResult>(COMMANDS.compactSession, {
     sessionId,
   } satisfies CompactSessionArgs);
+}
+
+/** §3.3 #57：attach_run 帧重放重连（§5.8，05 号票）。重放 (sinceSeq, 当前头]
+ *  区间帧（经 onFrame 回调逐帧到达）并把帧通道热切换到新 channel；重放窗口
+ *  耗尽时补发一次 runSnapshot 摘要帧（负载见 ChatFrame）。无活跃 run /
+ *  sessionId 未知 → { replayed: 0 }（runId 省略，幂等查询语义）。 */
+export function attachRun(
+  sessionId: string,
+  onFrame: (frame: SequencedFrame) => void,
+  sinceSeq = 0,
+): Promise<AttachRunResult> {
+  const channel = new Channel<SequencedFrame>();
+  channel.onmessage = onFrame;
+  return invoke<AttachRunResult>(COMMANDS.attachRun, { sessionId, sinceSeq, channel });
+}
+
+/** §3.3 #20：session_run_snapshot 运行快照（§5.6 对账，05 号票）。会话有
+ *  活跃 run → 快照（status/usage/lastSeq）；无活跃 run / sessionId 未知
+ *  → null（幂等查询语义）。 */
+export function sessionRunSnapshot(sessionId: string): Promise<RunSnapshot | null> {
+  return invoke<RunSnapshot | null>(COMMANDS.sessionRunSnapshot, { sessionId });
+}
+
+/** §3.3 #59c：待审批/询问恢复查询（§5.6，05 号票）。返回该会话仍有效的
+ *  未决 ask（原始载荷随行，供重连后恢复 AskPanel）；无未决 ask / sessionId
+ *  未知 → null（幂等查询语义）。 */
+export function sessionPendingAsk(sessionId: string): Promise<SessionPendingAsk | null> {
+  return invoke<SessionPendingAsk | null>(COMMANDS.sessionPendingAsk, { sessionId });
 }
 
 /** 把 invoke 失败抛出的错误归一为 §3.1 统一错误负载（{code, message, detail?}）。

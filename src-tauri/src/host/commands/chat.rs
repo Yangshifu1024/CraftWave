@@ -11,8 +11,11 @@
 //!   usage/计数不回退）；deny/取消 → 挂起调用补拒绝结果帧 + runEnded(cancelled)；
 //! - **suggest 后台小调用**（C-9）：run Done 后以同模型一次非流式调用生成
 //!   建议提示词 → `run:suggestions` 事件；失败静默、用量计入会话累计；
-//! - 帧出口：tauri `Channel` 适配为 `FrameSink`（seq + ts），外包事件层
-//!   （usage 帧 → 会话累计 + `tokens:update` 事件全量校正）；
+//! - 帧出口（§5.8，05 号票）：tauri `Channel` 适配为已序列化帧下发端，seq
+//!   递增 + 环形缓冲（512 帧）+ 下发收进 agent 层 `FrameHub` 枢纽，外包事件
+//!   层（usage 帧 → RunState 同步 + tokens:update 事件全量校正）与 canonical
+//!   落盘层；`attach_run`/`session_run_snapshot`/`session_pending_ask`
+//!   （#57/#20/#59c）承载 WebView 重载后的帧重放续流与状态对账；
 //! - provider 只接 openai_chat 方言（§11.1），Key 经 keyring 读取；
 //! - 错误终态兜底：RunLoop 内部失败（PromptError）由 run 任务发
 //!   `runEnded(error)`（§11.3 分类器为 provider 适配层后续票，本票 E_INTERNAL）。
@@ -30,14 +33,15 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 use tauri::ipc::Channel;
 
-use crate::agent::{RunHandle, RunManager};
+use crate::agent::{FrameHub, HubSink, RunHandle, RunManager};
 use crate::backend::ask::{
     ApprovalDiff, AskAnswer, AskMode, AskOption, AskPayload, AskSlot, DiffHunk, DiffLine,
     DiffLineKind,
 };
 use crate::backend::exec::{ExecutorEnv, ToolsetExecutor};
 use crate::backend::frames::{
-    ChatFrame, EndReason, FrameError, FrameSink, SequencedFrame, UsageTotal,
+    ChatFrame, EndReason, FrameError, FrameSink, RunSnapshot, SequencedFrame, SequencedSink,
+    UsageTotal,
 };
 use crate::backend::gate::ApprovalGate;
 use crate::backend::run_loop::{DriveState, PendingCall, RunExit, drive_run, resume_run};
@@ -205,36 +209,34 @@ fn to_rig_tool_definitions(
         .collect()
 }
 
-/// tauri `Channel` → `FrameSink` 适配（§3.4 帧基座出口：seq 递增 + ts = epoch ms）。
+/// tauri `Channel` → 已序列化帧下发端（§3.4 帧基座出口）：seq/ts 由
+/// `FrameHub` 统一填写（§5.8，05 号票），本适配器只负责把帧推入 webview
+/// 通道。前端掉线（webview 重载）时发送失败：帧已入环形缓冲，可被
+/// `attach_run` 重放（M1 的直接丢弃语义升级为可重放续流）。
 struct ChannelSink {
     channel: Channel<SequencedFrame>,
-    seq: u64,
 }
 
-impl FrameSink for ChannelSink {
-    fn send(&mut self, frame: ChatFrame) {
-        let seq = self.seq;
-        self.seq += 1;
-        let sequenced = SequencedFrame {
-            seq,
-            ts: Some(now_ms()),
-            frame,
-        };
-        // 前端掉线（webview 重载）时 Channel 发送失败：M1 只读快照语义（§5.6），
-        // run 继续执行，帧丢弃。
-        let _ = self.channel.send(sequenced);
+impl SequencedSink for ChannelSink {
+    fn send_seq(&mut self, frame: SequencedFrame) {
+        let _ = self.channel.send(frame);
     }
 }
 
 /// 帧出口的事件层（14 号票）：usage 帧增量折算 → 会话累计 →
 /// `tokens:update` 全量校正事件（§3.5/§10.5：sessionUsage 以事件为准）。
 /// usage 帧载荷是 run 内累计值，须减去上一帧的 run 累计得本轮增量。
+/// 05 号票增补：同一处同步 RunHandle 的运行时状态（RunState）——turn 取
+/// stepStarted 帧、工具计数按收到的工具结果帧递增、usage 取 usage 帧的
+/// 运行累计载荷；`session_run_snapshot` / attach 摘要帧据此对账（§5.6）。
 struct EventfulSink {
     inner: Box<dyn FrameSink>,
     events: Arc<dyn EventSink>,
     session_id: String,
     last_run_total: UsageTotal,
     session_usage: Arc<Mutex<HashMap<String, UsageTotal>>>,
+    /// 所属 run 的句柄（运行时状态同步目标；测试直驱路径可为 None）。
+    handle: Option<Arc<RunHandle>>,
 }
 
 impl EventfulSink {
@@ -253,6 +255,30 @@ impl EventfulSink {
             serde_json::json!({ "sessionId": self.session_id, "usage": snapshot }),
         );
     }
+
+    /// 把帧面的运行时进度同步进 RunHandle 的 RunState（§5.6 对账数据源）。
+    /// tool_count 口径 = 已收到的工具结果帧数（含硬拦/取消的补发结果帧，
+    /// 与 RunLoop 的 DriveState 计数同面；审批拒绝的补发结果帧也计数——
+    /// 语义为"该调用已被处理"）。
+    fn sync_run_state(&self, frame: &ChatFrame, run_total: Option<UsageTotal>) {
+        let Some(handle) = &self.handle else {
+            return;
+        };
+        let mut state = handle
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match frame {
+            ChatFrame::StepStarted { turn } => state.turn = *turn,
+            ChatFrame::ToolResult { .. } => state.tool_count = state.tool_count.saturating_add(1),
+            ChatFrame::Usage { .. } => {
+                if let Some(total) = run_total {
+                    state.usage = total;
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 impl FrameSink for EventfulSink {
@@ -260,7 +286,11 @@ impl FrameSink for EventfulSink {
         if let ChatFrame::Usage { usage, .. } = &frame {
             let delta = sub_usage(usage, &self.last_run_total);
             self.last_run_total = *usage;
+            // usage 帧载荷即运行累计值：先同步状态再发事件（快照与帧面一致）
+            self.sync_run_state(&frame, Some(*usage));
             self.send_tokens_update(&delta);
+        } else {
+            self.sync_run_state(&frame, None);
         }
         self.inner.send(frame);
     }
@@ -411,6 +441,7 @@ async fn wait_approval(
 ) -> ApprovalResolution {
     let (tx, rx) = tokio::sync::oneshot::channel::<AskAnswer>();
     let ask_id = uuid::Uuid::new_v4().to_string();
+    let payload = build_approval_payload(pending);
     {
         let mut slot = handle
             .ask
@@ -425,10 +456,12 @@ async fn wait_approval(
             session_id: handle.session_id.clone(),
             run_id: handle.run_id.clone(),
             kind: "approval",
+            // 原始载荷留存：重连后的待审批恢复查询（§5.6 #59c）据此展示
+            // 原始操作及参数（diff/命令/围栏原因与选项）
+            payload: payload.clone(),
             tx,
         });
     }
-    let payload = build_approval_payload(pending);
     events.emit(
         keys::ASK_OPENED,
         serde_json::json!({
@@ -1197,9 +1230,14 @@ fn persist_user_fallback(app: &AppState, session_id: &str, messages: &[MessageEn
 }
 
 /// start_chat 主体（命令薄包装转调；公开给集成测试注入内存 keyring + 临时
-/// config 与测试 FrameSink——不经 tauri 运行时）。`auto_confirm` 为
+/// config 与测试 sink——不经 tauri 运行时）。`auto_confirm` 为
 /// AppConfig.approval.autoConfirm 的入口快照（§5.4：挂起 300s 超时自动
 /// 选 recommended 项；M1 单会话入口读一次）。
+///
+/// 帧出口（§5.8，05 号票）：入参 sink（生产 = tauri Channel 适配器，测试 =
+/// 收集器）作为 [`FrameHub`] 的初始下发端——seq 递增、环形缓冲（512 帧）
+/// 与下发收进枢纽；压缩编排帧与 run 帧共用同一出口，重载后 `attach_run`
+/// 可重放（含 compactDone）。
 #[allow(clippy::too_many_arguments)]
 pub async fn start_chat_core(
     app: &AppState,
@@ -1207,7 +1245,7 @@ pub async fn start_chat_core(
     session_id: String,
     messages: Vec<MessageEntry>,
     run_config: RunConfig,
-    mut sink: Box<dyn FrameSink>,
+    sink: Box<dyn SequencedSink>,
     auto_confirm: bool,
 ) -> Result<StartChatResult, IpcError> {
     if session_id.trim().is_empty() {
@@ -1242,8 +1280,9 @@ pub async fn start_chat_core(
     let tools = to_rig_tool_definitions(tool_specs)?;
 
     // ④ 同会话互斥预检（E_SESSION_RUNNING 快速失败；正式互斥仍由
-    //    RunManager::start 兜底）→ run 开始前压缩（§6.2 触发点①：首个模型
-    //    调用前完成摘要与落盘，新边界立即生效于本次 run 全部请求）
+    //    RunManager::start 兜底）→ 帧枢纽就位 → run 开始前压缩（§6.2 触发
+    //    点①：首个模型调用前完成摘要与落盘，新边界立即生效于本次 run 全部
+    //    请求；compactDone 帧经枢纽入环，重载后 attach 可重放）
     if runs.get(&session_id).is_some() {
         return Err(IpcError::session_running(format!(
             "会话已有活跃 run：{session_id}"
@@ -1253,6 +1292,7 @@ pub async fn start_chat_core(
     // user 条目幂等兜底提前到压缩前（§7.3 首行）：输入先落盘再谈压缩——
     // 压缩失败/E_CONTEXT_OVERFLOW 暂停时「输入已保留」在史册面成立
     persist_user_fallback(app, &session_id, &messages);
+    let hub = Arc::new(FrameHub::new(sink));
     let (boundary, estimated_after) = maybe_compact_before_run(
         app,
         &session_id,
@@ -1261,7 +1301,7 @@ pub async fn start_chat_core(
         &tools,
         &policy,
         &summary_driver,
-        sink.as_mut(),
+        &mut HubSink { hub: hub.clone() },
         custom_prompt.as_deref(),
     )
     .await?;
@@ -1278,8 +1318,8 @@ pub async fn start_chat_core(
         [custom_prompt.as_deref(), compaction_summary.as_deref()],
     );
 
-    // ⑥ 注册 run（同会话互斥 E_SESSION_RUNNING）
-    let handle = runs.start(&session_id, run_id.clone(), now_ms())?;
+    // ⑥ 注册 run（同会话互斥 E_SESSION_RUNNING；帧枢纽随句柄挂载）
+    let handle = runs.start(&session_id, run_id.clone(), now_ms(), hub)?;
 
     // ⑤ spawn RunLoop 任务（帧生产 + 审批挂起恢复 + 取消 + 终态摘除）。
     let spec = RunSpec {
@@ -1335,14 +1375,20 @@ pub async fn start_chat_core(
     let store_for_task = app.store.clone();
     let recorder = RunRecorder::new(app.store.clone(), session_id.clone(), run_id.clone());
     tokio::spawn(async move {
-        // 帧出口 = 事件层（usage → tokens:update）包 canonical 落盘器（§7.3）
-        // 包 Channel/测试 sink
+        // 帧出口 = 事件层（usage → tokens:update + RunState 同步）包 canonical
+        // 落盘器（§7.3）包帧枢纽（§5.8：seq 递增 → 入环 → 下发）
         let mut sink = EventfulSink {
-            inner: Box::new(PersistingSink::new(recorder, sink)),
+            inner: Box::new(PersistingSink::new(
+                recorder,
+                Box::new(HubSink {
+                    hub: handle.hub.clone(),
+                }),
+            )),
             events: events.clone(),
             session_id: session_id.clone(),
             last_run_total: UsageTotal::default(),
             session_usage: session_usage.clone(),
+            handle: Some(handle.clone()),
         };
         let mut run = AgentRun::from_spec(&spec, (*prompt).clone(), Some(history));
         let mut resume_state: Option<DriveState> = None;
@@ -1469,7 +1515,7 @@ pub(crate) async fn start_chat(
         messages,
         run_config,
     };
-    let sink = Box::new(ChannelSink { channel, seq: 0 });
+    let sink = Box::new(ChannelSink { channel });
     let auto_confirm = app
         .config
         .load()
@@ -1558,4 +1604,142 @@ pub(crate) async fn approve_plan(
     session_id: String,
 ) -> Result<(), IpcError> {
     approve_plan_core(&runs, &session_id)
+}
+
+// ---- 帧重放与热重连（§5.8/D16，§3.3 #20/#57/#59c，05 号票） ----
+
+/// `attach_run` 参数契约（§3.3 #57；文档命名锚点，channel 由 tauri 平铺形参注入）。
+#[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct AttachRunArgs {
+    pub session_id: String,
+    pub since_seq: u64,
+}
+
+/// `attach_run` 返回契约（§3.3 #57）：runId 省略 = 无活跃 run（空重放）。
+#[derive(Debug, Clone, Serialize, Default, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct AttachRunResult {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub run_id: Option<String>,
+    pub replayed: u64,
+}
+
+/// `session_run_snapshot` 参数契约（§3.3 #20）。
+#[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct SessionRunSnapshotArgs {
+    pub session_id: String,
+}
+
+/// `session_pending_ask` 参数契约（§3.3 #59c）。
+#[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct SessionPendingAskArgs {
+    pub session_id: String,
+}
+
+/// §3.3 #59c 的返回体：仍有效的未决询问/审批（原始载荷随行，§5.6）。
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct SessionPendingAsk {
+    pub ask_id: String,
+    pub run_id: String,
+    /// 载荷形态（"question" / "approval"）。
+    pub kind: String,
+    /// 开启时的原始载荷（approval 含 diff/命令/围栏原因与选项）。
+    pub payload: AskPayload,
+}
+
+/// attach_run 主体（§3.3 #57，§5.8）：重放 `(sinceSeq, 当前头]` 区间帧并
+/// 把帧通道热切换到新下发端（重放窗口耗尽时补一次 runSnapshot 摘要帧）。
+/// 幂等查询语义（§3.3 注记）：无活跃 run / sessionId 未知 → 空重放
+/// （runId 省略），不报 E_NOT_FOUND。
+pub fn attach_run_core(
+    runs: &RunManager,
+    session_id: &str,
+    since_seq: u64,
+    out: Box<dyn SequencedSink>,
+) -> AttachRunResult {
+    let Some(handle) = runs.get(session_id) else {
+        return AttachRunResult::default();
+    };
+    let outcome = handle.attach(since_seq, out);
+    AttachRunResult {
+        run_id: Some(handle.run_id.clone()),
+        replayed: outcome.replayed,
+    }
+}
+
+/// session_run_snapshot 主体（§3.3 #20，§5.6 对账）：会话有活跃 run →
+/// 运行时快照；无活跃 run / sessionId 未知 → null（幂等查询语义）。
+pub fn session_run_snapshot_core(runs: &RunManager, session_id: &str) -> Option<RunSnapshot> {
+    runs.get(session_id).map(|handle| handle.run_snapshot())
+}
+
+/// session_pending_ask 主体（§3.3 #59c，§5.6 待审批恢复）：返回该会话仍
+/// 有效的未决询问/审批（原始载荷随行）；有效性以后端 ask 槽为权威——
+/// 槽位收口（已答/已取消/超时）即查不到；无未决 ask / sessionId 未知 →
+/// null（幂等查询语义）。
+pub fn session_pending_ask_core(runs: &RunManager, session_id: &str) -> Option<SessionPendingAsk> {
+    let handle = runs.get(session_id)?;
+    let slot = handle
+        .ask
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let ask = slot.as_ref()?;
+    Some(SessionPendingAsk {
+        ask_id: ask.ask_id.clone(),
+        run_id: ask.run_id.clone(),
+        kind: ask.kind.to_owned(),
+        payload: ask.payload.clone(),
+    })
+}
+
+/// attach_run 命令（§3.3 #57）。
+#[tauri::command]
+pub(crate) async fn attach_run(
+    runs: State<'_, RunManager>,
+    session_id: String,
+    since_seq: u64,
+    channel: Channel<SequencedFrame>,
+) -> Result<AttachRunResult, IpcError> {
+    // 契约命名单一事实源：平铺形参回组为文档契约结构（channel 不可序列化，
+    // 不进 args 结构体）
+    let args = AttachRunArgs {
+        session_id,
+        since_seq,
+    };
+    Ok(attach_run_core(
+        &runs,
+        &args.session_id,
+        args.since_seq,
+        Box::new(ChannelSink { channel }),
+    ))
+}
+
+/// session_run_snapshot 命令（§3.3 #20）。
+#[tauri::command]
+pub(crate) async fn session_run_snapshot(
+    runs: State<'_, RunManager>,
+    session_id: String,
+) -> Result<Option<RunSnapshot>, IpcError> {
+    let args = SessionRunSnapshotArgs { session_id };
+    Ok(session_run_snapshot_core(&runs, &args.session_id))
+}
+
+/// session_pending_ask 命令（§3.3 #59c）。
+#[tauri::command]
+pub(crate) async fn session_pending_ask(
+    runs: State<'_, RunManager>,
+    session_id: String,
+) -> Result<Option<SessionPendingAsk>, IpcError> {
+    let args = SessionPendingAskArgs { session_id };
+    Ok(session_pending_ask_core(&runs, &args.session_id))
 }

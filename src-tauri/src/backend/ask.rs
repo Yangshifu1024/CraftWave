@@ -202,7 +202,9 @@ pub enum AskAnswer {
 
 /// 未决 ask 槽（§5.1 中 RunHandle.ask 存放的元素）：记录询问的元信息，
 /// 并持有 oneshot 通道的发送端（一次性异步通道的发送侧），应答到达时
-/// 用它唤醒等待中的 run。
+/// 用它唤醒等待中的 run。`payload` 留存开启时的原始载荷——WebView 重连
+/// 后的待审批/询问恢复查询（§5.6，§3.3 #59c `session_pending_ask`）据此
+/// 展示原始操作及参数（05 号票）。
 #[derive(Debug)]
 pub struct AskSlot {
     /// 本次询问的唯一 id（resolve_ask 命令按它路由应答）。
@@ -213,6 +215,9 @@ pub struct AskSlot {
     pub run_id: String,
     /// 载荷形态（question/approval），关闭事件与前端界面路由用。
     pub kind: &'static str,
+    /// 开启时的原始载荷（approval 含 diff/命令/围栏原因与选项，question
+    /// 含问卷）；恢复查询的原样返回面。
+    pub payload: AskPayload,
     /// oneshot 通道发送端：把用户应答发回等待中的 run。
     pub tx: oneshot::Sender<AskAnswer>,
 }

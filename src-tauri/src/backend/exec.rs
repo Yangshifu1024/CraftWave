@@ -211,6 +211,8 @@ impl ToolsetExecutor {
                 session_id: env.session_id.clone(),
                 run_id: env.run_id.clone(),
                 kind: "question",
+                // 原始载荷留存：重连后的待审批/询问恢复查询（§5.6 #59c）据此展示
+                payload: payload.clone(),
                 tx,
             });
         }

@@ -5,12 +5,16 @@
  *
  * 事件驱动：ask:opened 置 store.current、ask:closed 清除（App.tsx 事件桥）。
  * 后端默认无限等待，autoConfirm 300s 由 Rust 侧兜底（前端无需计时）。
+ *
+ * 失效面（05 号票，§5.6 待审批恢复）：重连后恢复的审批可能在重连期间已被
+ * 解决/取消——resolveAsk 返回 E_NOT_FOUND 时按 askId 关闭弹窗（不残留可
+ * 操作面板）；其余错误原位显示可重试。
  */
 
 import { CircleAlert } from "lucide-react";
 import { useState } from "react";
 import { useSessionScope } from "@/chat/session-scope";
-import { resolveAsk } from "@/ipc/client";
+import { resolveAsk, toIpcError } from "@/ipc/client";
 import type { AskPayload, DiffLine } from "@/ipc/types";
 import { useAskStore } from "@/stores/ask";
 
@@ -26,19 +30,27 @@ export function AskPanel() {
       className="fixed inset-x-4 bottom-4 z-50 mx-auto max-w-xl rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 shadow-2xl"
     >
       {current.payload.kind === "question" ? (
-        <QuestionForm askId={current.askId} payload={current.payload} />
+        <QuestionForm sessionId={sessionId} askId={current.askId} payload={current.payload} />
       ) : (
-        <ApprovalForm askId={current.askId} payload={current.payload} />
+        <ApprovalForm sessionId={sessionId} askId={current.askId} payload={current.payload} />
       )}
     </div>
   );
 }
 
 /** 应答提交的共享错误面：resolveAsk 失败（槽失效/IPC 异常）时在卡片内
- *  原位显示错误——点击无反馈会让审批永远卡死，静默失败不可接受。 */
-function useSubmitError(): [string | null, (err: unknown) => void, () => void] {
+ *  原位显示错误——点击无反馈会让审批永远卡死，静默失败不可接受。
+ *  E_NOT_FOUND（询问已失效——重连期间已被解决/取消）例外：按 askId 关闭
+ *  弹窗，不残留可操作面板（§5.6，05 号票）。 */
+function useSubmitError(sessionId: string): [string | null, (err: unknown) => void, () => void] {
   const [error, setError] = useState<string | null>(null);
   const report = (err: unknown) => {
+    const ipcErr = toIpcError(err);
+    if (ipcErr.code === "E_NOT_FOUND") {
+      const askId = useAskStore.getState().bySession[sessionId]?.askId;
+      if (askId !== undefined) useAskStore.getState().close(sessionId, askId);
+      return;
+    }
     const message = err instanceof Error ? err.message : String(err);
     console.error("[ask] 应答提交失败", err);
     setError(message || "应答提交失败");
@@ -48,14 +60,16 @@ function useSubmitError(): [string | null, (err: unknown) => void, () => void] {
 
 /** 问卷表单：逐题点选选项 / 填自由文本，全部作答后可提交（resolveAsk）。 */
 function QuestionForm({
+  sessionId,
   askId,
   payload,
 }: {
+  sessionId: string;
   askId: string;
   payload: Extract<AskPayload, { kind: "question" }>;
 }) {
   const [answers, setAnswers] = useState<Record<string, string>>({});
-  const [error, reportError, clearError] = useSubmitError();
+  const [error, reportError, clearError] = useSubmitError(sessionId);
   const complete = payload.questions.every(
     (q) => answers[q.id] !== undefined && answers[q.id] !== "",
   );
@@ -121,13 +135,15 @@ function QuestionForm({
 
 /** 审批表单：命令行与 diff 预览 + 允许/拒绝按钮（点击即提交所选选项）。 */
 function ApprovalForm({
+  sessionId,
   askId,
   payload,
 }: {
+  sessionId: string;
   askId: string;
   payload: Extract<AskPayload, { kind: "approval" }>;
 }) {
-  const [error, reportError, clearError] = useSubmitError();
+  const [error, reportError, clearError] = useSubmitError(sessionId);
   const submit = (optionId: string) => {
     clearError();
     resolveAsk(askId, { kind: "approval", optionId }).catch(reportError);

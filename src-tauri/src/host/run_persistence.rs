@@ -182,6 +182,8 @@ impl RunRecorder {
             // 压缩完成帧（04 号票）：通知面透传，不落 canonical 条目
             //（compaction 条目由压缩编排经 append_compaction 落盘，§7.3）
             ChatFrame::CompactDone { .. } => {}
+            // runState 摘要帧（05 号票）：attach 对账辅助，无 canonical 产物
+            ChatFrame::RunSnapshot { .. } => {}
             ChatFrame::RunEnded {
                 duration_ms,
                 tool_count,

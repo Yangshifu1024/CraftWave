@@ -108,6 +108,14 @@ pub enum ChatFrame {
         tokens_before: u64,
         tokens_after: u64,
     },
+    /// runState 摘要帧（§3.4【M2】增补帧，05 号票）：`attach_run` 重放窗口
+    /// 耗尽时补发一次，前端据此整体对账。负载对齐 §3.2 RunSnapshot 的运行中
+    /// 形态；不进环形缓冲（幂等对账辅助帧）。
+    RunSnapshot {
+        /// 展平注入帧基座（序列化后即 `{ type:"runSnapshot", status, …, lastSeq }`）。
+        #[serde(flatten)]
+        snapshot: RunSnapshot,
+    },
 }
 
 /// run 结束原因。
@@ -121,6 +129,48 @@ pub enum EndReason {
     Error,
     /// 用户取消。
     Cancelled,
+}
+
+/// §3.2 RunSnapshot 的运行状态（本阶段实装恒为 Running——命令面无活跃 run
+/// 时返回 null 而非 idle 快照，Idle 变体按 §3.2 契约保留）。
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "snake_case")]
+pub enum RunSnapshotStatus {
+    /// 空闲（无活跃 run；按 §3.3 #20 幂等语义由 null 承载，保留契约变体）。
+    Idle,
+    /// 运行中。
+    Running,
+}
+
+/// §3.2 RunSnapshot（session_run_snapshot 返回与 runSnapshot 摘要帧负载，
+/// FR-03-08 对账用，05 号票实装）。
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct RunSnapshot {
+    /// 运行状态（命令面实装恒为 running，见 [`RunSnapshotStatus`]）。
+    pub status: RunSnapshotStatus,
+    /// 本次 run 的唯一标识（§3.2 可选字段——idle 形态省略）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub run_id: Option<String>,
+    /// run 开始时刻（Unix 纪元毫秒）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub started_at: Option<i64>,
+    /// 当前轮次编号。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub turn: Option<u32>,
+    /// 已执行的工具调用次数。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub tool_count: Option<u32>,
+    /// 本 run 的 token 用量累计（帧面 usage 口径）。
+    pub usage: UsageTotal,
+    /// 已发出的最大帧序号（前端对账基准）。
+    pub last_seq: u64,
 }
 
 /// 帧错误面（§3.4 `error?: { code, message }`，§3.6 错误码注册表）。
@@ -151,6 +201,44 @@ impl FrameError {
 pub trait FrameSink: Send {
     /// 发出一帧（由实现负责填 seq/ts 并送达目的地）。
     fn send(&mut self, frame: ChatFrame);
+}
+
+/// 已序列化帧的下发端（§5.8 FrameHub 的续流/重放出口，05 号票）：收到的是
+/// 已填 seq/ts 的帧（序号由 FrameHub 统一递增）。生产适配器为 tauri
+/// `Channel`，测试用 [`SeqCollectingSink`]——抽成 trait 使 FrameHub 不依赖
+/// tauri 运行时。
+pub trait SequencedSink: Send {
+    /// 下发一帧（原样转发已序列化帧；实现不改动 seq/ts）。
+    fn send_seq(&mut self, frame: SequencedFrame);
+}
+
+/// 已序列化帧的收集器（测试用）：按到达顺序保存全部帧（含 seq），供
+/// `FrameHub` 下发端注入与重放断言。
+#[derive(Default)]
+pub struct SeqCollectingSink {
+    /// 按到达顺序收集的帧。
+    pub frames: std::sync::Mutex<Vec<SequencedFrame>>,
+}
+
+/// 收集器对已序列化帧下发端的实现（测试用；发送失败面不存在，直接入列）。
+impl SequencedSink for SeqCollectingSink {
+    fn send_seq(&mut self, frame: SequencedFrame) {
+        self.frames
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(frame);
+    }
+}
+
+/// SeqCollectingSink 的只读快照（按 seq 升序克隆，测试断言用）。
+impl SeqCollectingSink {
+    /// 克隆当前收集的全部帧。
+    pub fn snapshot(&self) -> Vec<SequencedFrame> {
+        self.frames
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
 }
 
 /// 带序号与出口时刻的帧（序列化后即 §3.4 的 `{ seq, type, ts?, ...}` 基座）。

@@ -17,4 +17,7 @@
 
 pub mod run_manager;
 
-pub use run_manager::{RunHandle, RunManager, RunState, RunStatus};
+pub use run_manager::{
+    AttachOutcome, FRAME_BUFFER_CAPACITY, FrameHub, HubSink, RunHandle, RunManager, RunState,
+    RunStatus,
+};

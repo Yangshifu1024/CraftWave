@@ -25,7 +25,9 @@ use common::mock_openai::{
     done_marker, finish_chunk, tool_args_delta, tool_open, usage_event,
 };
 use craftwave_lib::agent::RunManager;
-use craftwave_lib::backend::frames::{ChatFrame, EndReason, FrameSink, SequencedFrame};
+use craftwave_lib::backend::frames::{
+    ChatFrame, EndReason, FrameSink, RunSnapshotStatus, SequencedFrame, SequencedSink,
+};
 use craftwave_lib::backend::run_loop::{
     AllowAllGate, CancellableExecutor, GateVerdict, RunExit, ToolExecution, ToolGate, drive_run,
     resume_run,
@@ -66,7 +68,11 @@ struct TimedFrame {
     frame: SequencedFrame,
 }
 
-/// 共享收集 sink（出口填 seq；时序单独记录）。
+/// 共享收集 sink。双实现：
+/// - `FrameSink`：RunLoop 直驱路径（`drive_run`）——出口填 seq（本实现按
+///   到达序自填）；
+/// - `SequencedSink`：`start_chat_core` 命令面路径——seq 由 `FrameHub`
+///   统一递增后下发（§5.8，05 号票），本实现原样收帧。
 #[derive(Default, Clone)]
 struct SharedSink(Arc<Mutex<Vec<TimedFrame>>>);
 
@@ -81,6 +87,15 @@ impl FrameSink for SharedSink {
                 ts: None,
                 frame,
             },
+        });
+    }
+}
+
+impl SequencedSink for SharedSink {
+    fn send_seq(&mut self, frame: SequencedFrame) {
+        self.0.lock().unwrap().push(TimedFrame {
+            at: Instant::now(),
+            frame,
         });
     }
 }
@@ -1355,6 +1370,323 @@ mod command_face {
         assert_eq!(last_tokens["usage"]["input"], 360, "{last_tokens}");
         assert_eq!(last_tokens["usage"]["output"], 144);
         let _ = mock.sent_chunks().await; // 保持 sent 记录引用（Drop 语义锚点）
+    }
+
+    // ---- 帧重放与热重连（05 号票，§5.8/D16）：中途 attach 续流 / 终态空重放 /
+    // 快照对账 / 审批挂起中 attach 与待审批恢复查询 / 窗口耗尽摘要帧 ----
+
+    /// 等待帧数达到 n（命令面任务异步产帧）。
+    async fn wait_frame_count(sink: &SharedSink, n: usize, timeout: Duration) {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if sink.frames().len() >= n {
+                return;
+            }
+            assert!(Instant::now() < deadline, "等待 {n} 帧超时");
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }
+
+    /// 断言：run 中途以第二下发端 attach → 收到全部重放帧 + 后续增量只走
+    /// 新端（旧端断流），runEnded 在新端收口；重放帧与续流帧 seq 连续无重复。
+    #[tokio::test]
+    async fn attach_mid_run_replays_and_hot_switches_channel() {
+        // 长流让 run 保持 running 足够久
+        let mut script: Vec<(&'static str, String)> = Vec::new();
+        for i in 0..60 {
+            script.push(content_delta(&format!("第{i}段。")));
+        }
+        script.push(finish_chunk("stop"));
+        script.push(usage_event());
+        script.push(done_marker());
+        let mock = MockOpenAI::start_with_turn1(script).await;
+        let app = app_fixture(&mock);
+        let runs = RunManager::new();
+        let session = "sess-attach";
+        let old_sink = SharedSink::default();
+
+        craftwave_lib::host::commands::chat::start_chat_core(
+            &app,
+            &runs,
+            session.to_owned(),
+            vec![user_entry("长输出任务")],
+            run_config(),
+            Box::new(old_sink.clone()),
+            false,
+        )
+        .await
+        .expect("启动成功");
+        // 等 run 注册（帧面尚未结束）
+        while runs.get(session).is_none() {
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+        wait_frame_count(&old_sink, 4, Duration::from_secs(5)).await;
+
+        // —— 中途 attach（重载模拟：新下发端 + sinceSeq=0 全量重放）——
+        let new_sink = SharedSink::default();
+        let result = craftwave_lib::host::commands::chat::attach_run_core(
+            &runs,
+            session,
+            0,
+            Box::new(new_sink.clone()),
+        );
+        let replayed = result.replayed;
+        assert!(result.run_id.is_some(), "活跃 run attach 带 runId");
+        let old_before = old_sink.frames().len();
+        assert_eq!(
+            replayed, old_before as u64,
+            "重放 = attach 时已发出的全部帧"
+        );
+        let replayed_seqs: Vec<u64> = new_sink.frames().iter().map(|t| t.frame.seq).collect();
+        assert_eq!(
+            replayed_seqs,
+            (0..old_before as u64).collect::<Vec<_>>(),
+            "重放帧原样携带 seq（0 起连续）"
+        );
+
+        // —— 续流：新帧只走新端，旧端断流 ——
+        let ended = wait_ended(&new_sink, Duration::from_secs(10)).await;
+        assert!(matches!(
+            ended,
+            ChatFrame::RunEnded {
+                reason: EndReason::Done,
+                ..
+            }
+        ));
+        let old_after = old_sink.frames().len();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(
+            old_sink.frames().len(),
+            old_after,
+            "热切换后旧端断流（§5.8）"
+        );
+        let new_frames = new_sink.frames();
+        assert!(
+            new_frames.len() > replayed as usize,
+            "新端 = 重放 + 续流增量"
+        );
+        // 帧序严格递增无重复（§3.4 排序规则：重放帧先于新帧）
+        for (i, t) in new_frames.iter().enumerate() {
+            assert_eq!(t.frame.seq, i as u64, "新端帧序连续：位置 {i}");
+        }
+    }
+
+    /// 断言：run 结束（收尾摘除）后 attach → 空重放且 runId 省略；
+    /// session_run_snapshot → null（§3.3 #57/#20 幂等查询语义）。
+    #[tokio::test]
+    async fn attach_after_run_end_returns_empty_replay_and_null_snapshot() {
+        let mock = MockOpenAI::start().await;
+        let app = app_fixture(&mock);
+        let runs = RunManager::new();
+        let session = "sess-attach-end";
+        let sink = SharedSink::default();
+        craftwave_lib::host::commands::chat::start_chat_core(
+            &app,
+            &runs,
+            session.to_owned(),
+            vec![user_entry("快速任务")],
+            run_config(),
+            Box::new(sink.clone()),
+            false,
+        )
+        .await
+        .unwrap();
+        wait_ended(&sink, Duration::from_secs(10)).await;
+        // 等收尾摘除
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while runs.get(session).is_some() {
+            assert!(Instant::now() < deadline, "run 应收尾摘除");
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        let result = craftwave_lib::host::commands::chat::attach_run_core(
+            &runs,
+            session,
+            0,
+            Box::new(SharedSink::default()),
+        );
+        assert_eq!(result.replayed, 0, "无活跃 run → 空重放");
+        assert!(result.run_id.is_none(), "runId 省略");
+        assert!(
+            craftwave_lib::host::commands::chat::session_run_snapshot_core(&runs, session)
+                .is_none(),
+            "无活跃 run → 快照 null"
+        );
+        // 未知 sessionId 同语义（幂等，不报 E_NOT_FOUND）
+        let missing = craftwave_lib::host::commands::chat::attach_run_core(
+            &runs,
+            "sess-nope",
+            0,
+            Box::new(SharedSink::default()),
+        );
+        assert_eq!(missing.replayed, 0);
+        assert!(missing.run_id.is_none());
+    }
+
+    /// 断言：session_run_snapshot 与帧面一致（running 态 lastSeq=已发出最大
+    /// 帧序号、usage=最后 usage 帧累计、runId 对上）；审批挂起中 attach 仍可
+    /// 重放且 resolve_ask 照常恢复（帧重放不改变 run 生命周期或审批决定）；
+    /// session_pending_ask 恢复查询在挂起中返回原始载荷、解决后返回 null。
+    #[tokio::test]
+    async fn snapshot_matches_frames_and_attach_during_approval_pending() {
+        let mock = MockOpenAI::start_with_turn1(tool_turn1(
+            "需要跑个命令。",
+            "command",
+            r#"{"command":"echo attach-ok"}"#,
+        ))
+        .await;
+        let (app, events) = app_fixture_with_events(&mock);
+        let runs = RunManager::new();
+        let session = "sess-attach-ask";
+        let sink = SharedSink::default();
+        craftwave_lib::host::commands::chat::start_chat_core(
+            &app,
+            &runs,
+            session.to_owned(),
+            vec![user_entry("跑个命令")],
+            run_config_tier(craftwave_lib::safety::tier::PermissionTier::ConfirmEach),
+            Box::new(sink.clone()),
+            false,
+        )
+        .await
+        .unwrap();
+        let opened = wait_event(&events, "ask:opened", Duration::from_secs(5)).await;
+        let ask_id = opened["askId"].as_str().unwrap().to_owned();
+
+        // —— 审批挂起中：快照与帧面对账 ——
+        let snapshot =
+            craftwave_lib::host::commands::chat::session_run_snapshot_core(&runs, session)
+                .expect("活跃 run 快照存在");
+        assert_eq!(snapshot.status, RunSnapshotStatus::Running);
+        let frames = sink.frames();
+        let max_seq = frames.last().expect("有帧").frame.seq;
+        assert_eq!(snapshot.last_seq, max_seq, "lastSeq = 已发出最大帧序号");
+        let last_usage = frames.iter().rev().find_map(|t| match &t.frame.frame {
+            ChatFrame::Usage { usage, .. } => Some(*usage),
+            _ => None,
+        });
+        assert_eq!(
+            snapshot.usage,
+            last_usage.expect("挂起前已有 usage 帧"),
+            "usage 与帧面最后 usage 帧一致"
+        );
+        assert_eq!(
+            snapshot.run_id.as_deref(),
+            runs.get(session).as_ref().map(|h| h.run_id.as_str()),
+            "runId 对上注册表"
+        );
+
+        // —— 待审批恢复查询（§5.6 #59c）：原始操作及参数随行 ——
+        let pending = craftwave_lib::host::commands::chat::session_pending_ask_core(&runs, session)
+            .expect("挂起中的审批应可查");
+        assert_eq!(pending.ask_id, ask_id);
+        assert_eq!(pending.kind, "approval");
+        let payload = serde_json::to_value(&pending.payload).unwrap();
+        assert_eq!(payload["kind"], "approval");
+        assert_eq!(payload["command"], "echo attach-ok", "原始命令参数随行");
+
+        // —— 挂起中 attach：重放照常，run 生命周期不变 ——
+        let replay_sink = SharedSink::default();
+        let result = craftwave_lib::host::commands::chat::attach_run_core(
+            &runs,
+            session,
+            0,
+            Box::new(replay_sink.clone()),
+        );
+        assert!(result.run_id.is_some(), "挂起中的 run 仍可 attach");
+        assert!(result.replayed > 0, "挂起前帧面非空可重放");
+        assert!(
+            runs.get(session).is_some(),
+            "attach 不改变 run 生命周期（不摘除不重启）"
+        );
+
+        // —— 批准 → 恢复 Done；解决后待审批查询为 null（槽位已收口）——
+        craftwave_lib::host::commands::chat::resolve_ask_core(
+            &runs,
+            &ask_id,
+            craftwave_lib::backend::ask::AskAnswer::Approval {
+                option_id: "allow_once".to_owned(),
+                edited_command: None,
+            },
+        )
+        .await
+        .expect("挂起中 attach 不影响 resolve_ask");
+        let ended = wait_ended(&replay_sink, Duration::from_secs(10)).await;
+        assert!(matches!(
+            ended,
+            ChatFrame::RunEnded {
+                reason: EndReason::Done,
+                ..
+            }
+        ));
+        assert!(
+            craftwave_lib::host::commands::chat::session_pending_ask_core(&runs, session).is_none(),
+            "已解决的审批不再返回（有效性以 ask 槽为权威）"
+        );
+        // 过期 askId 的 resolve 照常 E_NOT_FOUND（重连竞态拒绝面）
+        let err = craftwave_lib::host::commands::chat::resolve_ask_core(
+            &runs,
+            &ask_id,
+            craftwave_lib::backend::ask::AskAnswer::Approval {
+                option_id: "deny".to_owned(),
+                edited_command: None,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code, "E_NOT_FOUND", "过期请求操作被拒绝");
+    }
+
+    /// 断言：重放窗口耗尽（人为构造 dropped>0）→ attach_run_core 补发
+    /// runSnapshot 摘要帧（末帧、占用新 seq 号、lastSeq=摘要帧之前最大序号）。
+    #[tokio::test]
+    async fn attach_replay_window_exhausted_sends_snapshot_frame() {
+        // 人为构造溢出：直驱枢纽推 514 帧（mock 流出 514 帧耗时过长，
+        // 环容量为常量 512，直驱与命令面等价——attach_run_core 走同一枢纽）
+        let runs = RunManager::new();
+        let session = "sess-overflow";
+        let old_sink = SharedSink::default();
+        let hub = Arc::new(craftwave_lib::agent::FrameHub::new(Box::new(
+            old_sink.clone(),
+        )));
+        runs.start(session, "run-ovf".to_owned(), 1, hub.clone())
+            .unwrap();
+        for i in 0..(craftwave_lib::agent::FRAME_BUFFER_CAPACITY + 2) {
+            hub.push(ChatFrame::TextDelta {
+                turn: 1,
+                delta: format!("第{i}段"),
+            });
+        }
+
+        let new_sink = SharedSink::default();
+        let result = craftwave_lib::host::commands::chat::attach_run_core(
+            &runs,
+            session,
+            0,
+            Box::new(new_sink.clone()),
+        );
+        // 重放 = 环内 512 帧（seq 2..=513）；摘要帧补发
+        assert!(result.replayed == craftwave_lib::agent::FRAME_BUFFER_CAPACITY as u64);
+        let frames = new_sink.frames();
+        let last = frames.last().expect("有帧");
+        let ChatFrame::RunSnapshot { snapshot } = &last.frame.frame else {
+            panic!("末帧应为 runSnapshot 摘要帧，实际 {:?}", last.frame.frame);
+        };
+        assert_eq!(snapshot.status, RunSnapshotStatus::Running);
+        assert_eq!(
+            snapshot.run_id.as_deref(),
+            Some("run-ovf"),
+            "摘要帧负载对齐 §3.2 RunSnapshot（runId 随行）"
+        );
+        assert_eq!(
+            snapshot.last_seq,
+            (craftwave_lib::agent::FRAME_BUFFER_CAPACITY + 1) as u64,
+            "lastSeq = 摘要帧之前的最大帧序号"
+        );
+        assert_eq!(
+            last.frame.seq,
+            (craftwave_lib::agent::FRAME_BUFFER_CAPACITY + 2) as u64,
+            "摘要帧占用新 seq 号，后续帧连续"
+        );
     }
 
     // ---- 上下文压缩（04 号票，FR-03-05）：跨阈值自动压缩 / 失败兜底 /

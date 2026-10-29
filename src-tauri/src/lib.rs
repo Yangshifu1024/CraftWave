@@ -34,10 +34,13 @@ pub mod util;
 // 类型名字符串），测试构建由 export_contract_ts 真实解析（ts-rs 导出）——
 // 后者仅在 cfg(test) 存在，故非测试构建下编译器仍视为未用。
 #[allow(unused_imports)]
+use backend::frames::RunSnapshot;
+#[allow(unused_imports)]
 use host::commands::chat::{
-    ApprovePlanArgs, CancelRunArgs, CompactSessionArgs, CompactSessionResult, ResolveAskArgs,
-    RunConfig, StartChatArgs, StartChatResult, approve_plan, cancel_run, compact_session,
-    resolve_ask, start_chat,
+    ApprovePlanArgs, AttachRunArgs, AttachRunResult, CancelRunArgs, CompactSessionArgs,
+    CompactSessionResult, ResolveAskArgs, RunConfig, SessionPendingAsk, SessionPendingAskArgs,
+    SessionRunSnapshotArgs, StartChatArgs, StartChatResult, approve_plan, attach_run, cancel_run,
+    compact_session, resolve_ask, session_pending_ask, session_run_snapshot, start_chat,
 };
 #[allow(unused_imports)]
 use host::commands::config::{SaveConfigArgs, get_config, save_config};
@@ -175,6 +178,9 @@ ipc_commands! {
     host::commands::chat::resolve_ask => args: ResolveAskArgs, ret: ();
     host::commands::chat::approve_plan => args: ApprovePlanArgs, ret: ();
     host::commands::chat::compact_session => args: CompactSessionArgs, ret: CompactSessionResult;
+    host::commands::chat::attach_run => args: AttachRunArgs, ret: AttachRunResult;
+    host::commands::chat::session_run_snapshot => args: SessionRunSnapshotArgs, ret: Option<RunSnapshot>;
+    host::commands::chat::session_pending_ask => args: SessionPendingAskArgs, ret: Option<SessionPendingAsk>;
     host::commands::system::resolve_exit_request => args: ResolveExitRequestArgs, ret: ();
     host::commands::system::notification_permission_status => args: (), ret: NotificationPermissionStatus;
     host::commands::system::open_notification_settings => args: (), ret: ();
