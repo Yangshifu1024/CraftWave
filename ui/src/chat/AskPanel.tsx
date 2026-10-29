@@ -34,6 +34,18 @@ export function AskPanel() {
   );
 }
 
+/** 应答提交的共享错误面：resolveAsk 失败（槽失效/IPC 异常）时在卡片内
+ *  原位显示错误——点击无反馈会让审批永远卡死，静默失败不可接受。 */
+function useSubmitError(): [string | null, (err: unknown) => void, () => void] {
+  const [error, setError] = useState<string | null>(null);
+  const report = (err: unknown) => {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[ask] 应答提交失败", err);
+    setError(message || "应答提交失败");
+  };
+  return [error, report, () => setError(null)];
+}
+
 /** 问卷表单：逐题点选选项 / 填自由文本，全部作答后可提交（resolveAsk）。 */
 function QuestionForm({
   askId,
@@ -43,12 +55,14 @@ function QuestionForm({
   payload: Extract<AskPayload, { kind: "question" }>;
 }) {
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [error, reportError, clearError] = useSubmitError();
   const complete = payload.questions.every(
     (q) => answers[q.id] !== undefined && answers[q.id] !== "",
   );
 
   const submit = () => {
-    void resolveAsk(askId, { kind: "question", answers });
+    clearError();
+    resolveAsk(askId, { kind: "question", answers }).catch(reportError);
   };
 
   return (
@@ -93,6 +107,14 @@ function QuestionForm({
       >
         提交回答
       </button>
+      {error !== null && (
+        <p
+          data-testid="ask-error"
+          className="rounded border border-[var(--destructive)]/30 bg-[var(--destructive)]/5 px-2 py-1 text-ui-sm text-[var(--destructive)]"
+        >
+          应答提交失败：{error}（可重试）
+        </p>
+      )}
     </div>
   );
 }
@@ -105,8 +127,10 @@ function ApprovalForm({
   askId: string;
   payload: Extract<AskPayload, { kind: "approval" }>;
 }) {
+  const [error, reportError, clearError] = useSubmitError();
   const submit = (optionId: string) => {
-    void resolveAsk(askId, { kind: "approval", optionId });
+    clearError();
+    resolveAsk(askId, { kind: "approval", optionId }).catch(reportError);
   };
   return (
     <div className="space-y-3">
@@ -140,6 +164,14 @@ function ApprovalForm({
           </button>
         ))}
       </div>
+      {error !== null && (
+        <p
+          data-testid="ask-error"
+          className="rounded border border-[var(--destructive)]/30 bg-[var(--destructive)]/5 px-2 py-1 text-ui-sm text-[var(--destructive)]"
+        >
+          应答提交失败：{error}（可重试；若反复失败请停止该任务）
+        </p>
+      )}
     </div>
   );
 }

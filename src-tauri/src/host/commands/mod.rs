@@ -13,6 +13,10 @@ pub mod system;
 pub mod ui_state;
 pub mod workspace;
 
+/// macOS 交通灯精确摆位（依赖 AppKit，仅桌面 mac 编译）。
+#[cfg(target_os = "macos")]
+pub mod traffic_lights;
+
 #[cfg(test)]
 #[path = "chat_test.rs"]
 mod chat_test;

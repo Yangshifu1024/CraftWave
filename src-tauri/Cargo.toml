@@ -66,13 +66,19 @@ windows-sys = { version = "0.59", features = [
 # 源码核实），拿不到 macOS 真实授权态，故在此直查。
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6"
-objc2-app-kit = { version = "0.3", features = [
+# 【交通灯精确摆位】host/commands/traffic_lights.rs：绕过 decoration 插件
+# inset_y 的裁剪上限，setFrameOrigin 摆到 ZCode 同款 (22, 23)。objc2 系已在
+# 依赖树内（插件同款版本，锁面一致，不新增下载）。
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+    "std",
     "NSButton",
+    "NSControl",
     "NSResponder",
     "NSView",
     "NSWindow",
 ] }
-objc2-foundation = { version = "0.3", features = ["NSBundle"] }
+objc2-foundation = { version = "0.3", features = ["NSBundle", "NSGeometry"] }
 objc2-user-notifications = { version = "0.3", features = [
     "UNUserNotificationCenter",
     "UNNotificationSettings",

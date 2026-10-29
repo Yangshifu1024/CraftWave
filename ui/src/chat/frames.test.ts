@@ -202,4 +202,41 @@ describe("FrameBuffer 本票增量（13 号票）", () => {
     expect(tool.argsText.endsWith("}")).toBe(true);
     expect(() => JSON.parse(tool.argsText)).not.toThrow();
   });
+
+  it("toParts：思考行带扫光态与时长（status/timing 随思考起止流转）", () => {
+    // 注入可控时钟：思考起止的确定性断言（FrameBuffer.now 可注入）
+    let t = 1000;
+    const buffer = new FrameBuffer(() => t);
+    type DistributiveOmit<T, K extends keyof never> = T extends unknown ? Omit<T, K> : never;
+    const f = (frame: DistributiveOmit<ChatFrame, "seq">): ChatFrame =>
+      ({ seq: buffer.arrivals.length, ...frame }) as ChatFrame;
+    buffer.push(f({ type: "runStarted", runId: "run-9", model: "glm-mock" }));
+    t = 1100;
+    buffer.push(f({ type: "reasoningDelta", turn: 1, delta: "想一下…" }));
+    // 思考流进行中：status=running（渲染「思考中」扫光），timing 无终点
+    const live = toParts(buffer.snapshot())[0]!;
+    if (live.type !== "reasoning") throw new Error("应为 reasoning");
+    expect(live.status).toEqual({ type: "running" });
+    expect(live.timing?.startedAt).toBe(1100);
+    expect(live.timing?.completedAt).toBeUndefined();
+    t = 1350;
+    buffer.push(f({ type: "textDelta", turn: 1, delta: "开始回答" }));
+    // 正文首帧收口思考流：status=complete + 起止时刻（渲染「持续了 1 秒」）
+    const settled = toParts(buffer.snapshot())[0]!;
+    if (settled.type !== "reasoning") throw new Error("应为 reasoning");
+    expect(settled.status).toEqual({ type: "complete" });
+    expect(settled.timing).toEqual({ startedAt: 1100, completedAt: 1350 });
+  });
+
+  it("toParts：无思考流的 run 不产出 reasoning part", () => {
+    const buffer = new FrameBuffer(() => 500);
+    type DistributiveOmit<T, K extends keyof never> = T extends unknown ? Omit<T, K> : never;
+    const f = (frame: DistributiveOmit<ChatFrame, "seq">): ChatFrame =>
+      ({ seq: buffer.arrivals.length, ...frame }) as ChatFrame;
+    buffer.push(f({ type: "runStarted", runId: "run-x", model: "glm-mock" }));
+    buffer.push(f({ type: "textDelta", turn: 1, delta: "直接回答" }));
+    buffer.push(f({ type: "runEnded", reason: "done", durationMs: 10, toolCount: 0, turn: 1 }));
+    const parts = toParts(buffer.snapshot());
+    expect(parts.map((p) => p.type)).toEqual(["text"]);
+  });
 });

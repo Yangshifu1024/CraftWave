@@ -45,6 +45,12 @@ export interface FrameSnapshot {
   usage: { input: number; output: number; cacheRead: number; cacheWrite: number };
   /** 最近一次 usage 帧的输出速率（tok/s；无则 null）。 */
   rate: number | null;
+  /**
+   * 思考流的起止时刻（performance.now() 毫秒）：首帧 reasoningDelta 记起点，
+   * 首帧 textDelta / toolStarted / runEnded 记终点——null = 本 run 没有思考流。
+   * 思考行「思考中」扫光态与「持续了 N 秒」的数据面。
+   */
+  thinking: { startedAt: number; endedAt: number | null } | null;
 }
 
 /** 单帧到达的埋点记录（NFR-02 前端侧）。 */
@@ -73,6 +79,8 @@ export class FrameBuffer {
     cacheWrite: 0,
   };
   private rate: number | null = null;
+  private thinkingStartedAt: number | null = null;
+  private thinkingEndedAt: number | null = null;
   private maxSeq = -1;
   /** 乱序/重复帧丢弃计数（对账协议的健康度）。 */
   droppedSeq = 0;
@@ -100,12 +108,24 @@ export class FrameBuffer {
         break;
       case "textDelta":
         this.text += frame.delta;
+        // 首个正文帧 = 思考流结束点（帧序：思考 → 工具/正文）
+        if (this.thinkingStartedAt !== null && this.thinkingEndedAt === null) {
+          this.thinkingEndedAt = this.now();
+        }
         break;
       case "reasoningDelta":
         this.reasoning += frame.delta;
+        // 首帧思考 = 思考流起点
+        if (this.thinkingStartedAt === null) {
+          this.thinkingStartedAt = this.now();
+        }
         break;
       case "toolStarted": {
         this.tools.set(frame.callId, { callId: frame.callId, name: frame.name, argsJson: "" });
+        // 首个工具帧同样收口思考流（思考后先调工具再出正文）
+        if (this.thinkingStartedAt !== null && this.thinkingEndedAt === null) {
+          this.thinkingEndedAt = this.now();
+        }
         break;
       }
       case "toolArgs": {
@@ -130,6 +150,10 @@ export class FrameBuffer {
           toolCount: frame.toolCount,
           error: frame.error,
         };
+        // 只有思考没有正文/工具的 run：思考流在 runEnded 收口
+        if (this.thinkingStartedAt !== null && this.thinkingEndedAt === null) {
+          this.thinkingEndedAt = this.now();
+        }
         break;
       default:
         break;
@@ -157,6 +181,10 @@ export class FrameBuffer {
       run: this.run ? { ...this.run } : null,
       usage: { ...this.usage },
       rate: this.rate,
+      thinking:
+        this.thinkingStartedAt === null
+          ? null
+          : { startedAt: this.thinkingStartedAt, endedAt: this.thinkingEndedAt },
     };
   }
 
@@ -182,10 +210,20 @@ export class FrameBuffer {
 
 import type { ToolCallMessagePart } from "@assistant-ui/react";
 
-/** assistant-ui 消息 part 的可序列化子集（ChatModelRunResult.content 用）。 */
+/** assistant-ui 消息 part 的可序列化子集（ChatModelRunResult.content 用）。
+ *  reasoning 的 status/timing 对齐 ReasoningMessagePart 可选字段（思考行
+ *  「思考中」扫光态与「持续了 N 秒」的数据面）。 */
 export type ChatPart =
-  | { type: "text"; text: string }
-  | { type: "reasoning"; text: string }
+  | {
+      type: "text";
+      text: string;
+    }
+  | {
+      type: "reasoning";
+      text: string;
+      status?: { type: "running" | "complete" };
+      timing?: { startedAt: number; completedAt?: number };
+    }
   | ToolCallMessagePart;
 
 /** argsText 是否已是完整 JSON（「参数准备中」→「运行中」的判定）。 */
@@ -207,7 +245,23 @@ export function isArgsTextComplete(argsText: string): boolean {
 export function toParts(snapshot: FrameSnapshot): ChatPart[] {
   const parts: ChatPart[] = [];
   if (snapshot.reasoning.length > 0) {
-    parts.push({ type: "reasoning", text: snapshot.reasoning });
+    // 思考行状态面：流式中 status=running（渲染「思考中」扫光），结束后
+    // complete + 起止时刻（渲染「持续了 N 秒」）
+    const thinking = snapshot.thinking;
+    parts.push({
+      type: "reasoning",
+      text: snapshot.reasoning,
+      status:
+        thinking !== null && thinking.endedAt === null ? { type: "running" } : { type: "complete" },
+      ...(thinking !== null
+        ? {
+            timing: {
+              startedAt: thinking.startedAt,
+              ...(thinking.endedAt !== null ? { completedAt: thinking.endedAt } : {}),
+            },
+          }
+        : {}),
+    });
   }
   if (snapshot.text.length > 0) {
     parts.push({ type: "text", text: snapshot.text });

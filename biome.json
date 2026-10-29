@@ -16,15 +16,15 @@
       "!src-tauri/icons/ios"
     ]
   },
-  "formatter": {
-    "enabled": true,
-    "indentStyle": "space",
-    "lineWidth": 100
-  },
   "css": {
     "parser": {
       "tailwindDirectives": true
     }
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "lineWidth": 100
   },
   "javascript": {
     "formatter": {

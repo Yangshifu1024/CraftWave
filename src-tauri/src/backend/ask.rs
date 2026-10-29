@@ -20,7 +20,11 @@ use tokio::sync::oneshot;
 /// 询问/审批载荷（§3.2；当前阶段实装 question/approval 两种形态，
 /// mcpTrust/projectTrust 信任询问属后续阶段）。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum AskPayload {
     /// ask 工具的问卷（一组带选项的问题）。
     Question {
@@ -160,7 +164,11 @@ impl AskPayload {
 
 /// 询问/审批应答（§3.2 AskAnswer）。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum AskAnswer {
     /// 问卷应答：问题 id → 选中的选项 id 或自由输入的文本。
     Question {

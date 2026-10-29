@@ -20,6 +20,19 @@ if (!container) {
   throw new Error("缺少 #root 挂载点");
 }
 
+// 平台 class（React 挂载前执行，styles.css 的 platform-* custom-variant 消费）：
+// macOS 交通灯让位 / 窗控排布等平台差异按此区分（对照 ZCode renderer main.tsx:104）
+const userAgent = navigator.userAgent;
+document.documentElement.classList.toggle("platform-mac-desktop", userAgent.includes("Mac"));
+document.documentElement.classList.toggle(
+  "platform-windows-desktop",
+  userAgent.includes("Windows"),
+);
+document.documentElement.classList.toggle(
+  "platform-linux-desktop",
+  !userAgent.includes("Mac") && !userAgent.includes("Windows"),
+);
+
 // StrictMode 是 React 的开发期检查模式：会故意重复执行一次渲染与副作用，
 // 用来暴露缺清理的订阅、定时器等隐患；生产构建下不会带来额外开销
 createRoot(container).render(
