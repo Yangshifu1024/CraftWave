@@ -178,3 +178,34 @@ describe("通知授权引导（19 号票）", () => {
     expect(screen.queryByTestId("open-notification-settings")).toBeNull();
   });
 });
+
+describe("字号与错误恢复入口", () => {
+  it("错误恢复可直接打开供应商页", () => {
+    render(<SettingsPage initialPage="providers" onClose={() => {}} />);
+    expect(screen.getByRole("tab", { name: "模型与供应商" }).getAttribute("aria-selected")).toBe(
+      "true",
+    );
+  });
+
+  it("字号即时预览；保存进入配置，取消关闭后回到基线", async () => {
+    const close = vi.fn();
+    const { unmount } = render(<SettingsPage onClose={close} />);
+    const slider = await screen.findByRole("slider", { name: "界面字号" });
+    fireEvent.change(slider, { target: { value: "18" } });
+    await waitFor(() =>
+      expect(document.documentElement.style.getPropertyValue("--ui-font-size")).toBe("18px"),
+    );
+    expect(useSettingsStore.getState().config?.ui.fontSize).toBe(18);
+    saveConfigMock.mockImplementation(async (config) => structuredClone(config));
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(saveConfigMock).toHaveBeenCalled());
+    expect(saveConfigMock.mock.calls[0]?.[0].ui.fontSize).toBe(18);
+    await waitFor(() => expect(useSettingsStore.getState().baseline?.ui.fontSize).toBe(18));
+    getConfigMock.mockResolvedValue(structuredClone(useSettingsStore.getState().baseline!));
+    fireEvent.change(slider, { target: { value: "12" } });
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    await waitFor(() => expect(close).toHaveBeenCalledOnce());
+    unmount();
+    expect(document.documentElement.style.getPropertyValue("--ui-font-size")).toBe("18px");
+  });
+});

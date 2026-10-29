@@ -186,6 +186,9 @@ pub struct UiConfig {
     /// 模型回复语言（可空 = 跟随用户输入）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ai_language: Option<String>,
+    /// 界面基准字号（12–18px；缺省沿用 14px，不缩放布局）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_size: Option<u8>,
 }
 
 /// 日志级别（serilog 风格，低到高）。
@@ -298,6 +301,7 @@ impl Default for UiConfig {
             language: Language::ZhCn,
             theme: Theme::System,
             ai_language: None,
+            font_size: None,
         }
     }
 }
@@ -334,6 +338,13 @@ impl AppConfig {
     /// - activeModelId 悬空（无对应模型）→ 自愈为 None；
     /// - apiKey 空白归一为 None。
     pub fn normalize(&mut self) -> Result<(), IpcError> {
+        if self
+            .ui
+            .font_size
+            .is_some_and(|size| !(12..=18).contains(&size))
+        {
+            return Err(IpcError::invalid_arg("界面字号必须在 12–18px 之间"));
+        }
         if self.schema_version != SCHEMA_VERSION {
             return Err(IpcError::invalid_arg(format!(
                 "不支持的 schemaVersion：{}（当前仅支持 {SCHEMA_VERSION}）",

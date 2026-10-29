@@ -173,3 +173,20 @@ fn official_base_url_by_dialect() {
         "https://api.openai.com/v1"
     );
 }
+
+#[test]
+fn ui_font_size_roundtrip_and_bounds() {
+    let mut config = AppConfig::default();
+    assert_eq!(config.ui.font_size, None, "旧配置沿用默认字号");
+    for size in [12, 14, 18] {
+        config.ui.font_size = Some(size);
+        config.normalize().unwrap();
+        let value = serde_json::to_value(&config).unwrap();
+        assert_eq!(value["ui"]["fontSize"], size);
+        assert_eq!(serde_json::from_value::<AppConfig>(value).unwrap(), config);
+    }
+    for size in [0, 11, 19, 255] {
+        config.ui.font_size = Some(size);
+        assert_eq!(config.normalize().unwrap_err().code, E_INVALID_ARG);
+    }
+}

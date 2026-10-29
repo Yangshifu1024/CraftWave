@@ -1,5 +1,23 @@
 @import "tailwindcss";
 
+/* Streamdown 自带控件的工具类位于依赖内，Tailwind 默认不会扫描。 */
+@source "../node_modules/streamdown/dist/*.js";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--cw-bg-nav);
+}
+
 /* 全局字体：UI 走系统栈（macOS SF / Windows 雅黑，中文显式回落 PingFang/雅黑）。
  * --font-mono 同时供代码/路径/徽标与 tailwind 的 font-mono 工具类消费
  * （未分层 :root 变量优先于 tailwind @layer theme 的同名变量，两处同源）。 */
@@ -44,6 +62,13 @@ body {
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
+}
+/* Chromium 的标准滚动条属性会覆盖 WebKit 细节，在支持时只用后者。 */
+@supports selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: auto;
+    scrollbar-color: auto;
+  }
 }
 ::-webkit-scrollbar {
   width: 14px;
@@ -101,6 +126,34 @@ body {
   background-size: 200% 100%;
   animation: cw-shimmer 1.2s linear infinite;
 }
+.cw-shimmer-text {
+  color: var(--muted-foreground);
+  background: linear-gradient(
+    90deg,
+    var(--muted-foreground) 25%,
+    var(--foreground) 50%,
+    var(--muted-foreground) 75%
+  );
+  background-size: 200% 100%;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: cw-shimmer 4s linear infinite;
+}
+.cw-fade-inline {
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    black 16px,
+    black calc(100% - 16px),
+    transparent
+  );
+}
+.cw-empty-state {
+  container-type: inline-size;
+}
+.cw-greeting {
+  font-size: clamp(calc(var(--ui-font-size) + 6px), 5cqi, calc(var(--ui-font-size) + 16px));
+}
 
 /* 推荐项瀑布入场（空状态建议 chips）：逐个下落，delay 由内联指定 */
 @keyframes cw-rise {
@@ -119,13 +172,16 @@ body {
   display: block;
   overflow: hidden;
   white-space: nowrap;
+}
+.cw-marquee[data-overflow="true"] {
   mask-image: linear-gradient(to right, black calc(100% - 1.5rem), transparent);
 }
 .cw-marquee-track {
   display: inline-flex;
   gap: 24px;
 }
-.group:hover .cw-marquee-track {
+.group:hover .cw-marquee[data-overflow="true"] .cw-marquee-track,
+.group:focus-within .cw-marquee[data-overflow="true"] .cw-marquee-track {
   animation: cw-marquee-scroll var(--marquee-duration, 8s) linear 1s infinite;
 }
 @keyframes cw-marquee-scroll {
@@ -140,9 +196,18 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .cw-pop-in,
   .cw-progress,
+  .cw-shimmer-text,
   .cw-rise,
   .settings-dialog,
   .settings-dialog-mask {
+    animation: none;
+  }
+  .cw-shimmer-text {
+    -webkit-text-fill-color: currentColor;
+  }
+  .group:hover .cw-marquee[data-overflow="true"] .cw-marquee-track,
+  .group:focus-within .cw-marquee[data-overflow="true"] .cw-marquee-track,
+  .animate-spin {
     animation: none;
   }
 }
@@ -383,14 +448,14 @@ body {
 .settings-pane-body {
   box-sizing: border-box;
   width: 100%;
-  min-width: 480px;
+  min-width: 0;
   padding: 36px 32px 72px;
 }
 
 /* 页体内容列：占右栏 50% 宽居中（照抄 CodeWave .settings-pane-inner） */
 .settings-pane-inner {
   box-sizing: border-box;
-  width: 50%;
+  width: max(50%, min(100%, 560px));
   max-width: 100%;
   margin-inline: auto;
 }
@@ -464,6 +529,12 @@ body {
 
 /* 窄容器（页体 50% 列 < 680px）时行堆叠：说明在上、控件整行 */
 @container settings-pane (max-width: 680px) {
+  .settings-pane-body {
+    padding: 24px 20px 48px;
+  }
+  .settings-pane .settings-choice-list {
+    grid-template-columns: 1fr;
+  }
   .settings-row {
     flex-direction: column;
     align-items: stretch;
@@ -920,7 +991,8 @@ body {
   font-size: 1em;
 }
 /* strong 降为 medium，不与标题抢层级 */
-.cw-md strong {
+.cw-md strong,
+.cw-md [data-streamdown="strong"] {
   font-weight: 500;
 }
 .cw-md p {
@@ -946,7 +1018,8 @@ body {
   border-left: 3px solid var(--border);
   color: var(--muted-foreground);
 }
-.cw-md a {
+.cw-md a,
+.cw-md [data-streamdown="link"] {
   color: var(--cw-focus);
   text-decoration: underline dotted;
   text-underline-offset: 4px;
@@ -979,6 +1052,22 @@ body {
   border-radius: 0;
   font-size: inherit;
 }
+/* Streamdown 已提供代码容器，避免通用 pre 规则再套一层卡片。 */
+.cw-md [data-streamdown="code-block"] {
+  font-size: 0.92em;
+}
+.cw-md [data-streamdown="code-block-header"] {
+  font-size: var(--text-ui-sm);
+}
+.cw-md [data-streamdown="code-block-body"] {
+  font-size: inherit;
+}
+.cw-md [data-streamdown="code-block"] pre {
+  margin: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: inherit;
+}
 .cw-md table {
   margin: 0.6em 0;
   border-collapse: collapse;
@@ -997,4 +1086,13 @@ body {
 .cw-md img {
   max-width: 100%;
   border-radius: 6px;
+}
+
+/* 放在自定义过渡之后，确保系统的减少动态效果偏好覆盖组件过渡。 */
+@media (prefers-reduced-motion: reduce) {
+  :root *,
+  :root *::before,
+  :root *::after {
+    transition-duration: 0s;
+  }
 }

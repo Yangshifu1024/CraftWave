@@ -49,6 +49,7 @@ import {
   selectDir,
 } from "@/ipc/client";
 import type { ProjectMeta, SessionMeta } from "@/ipc/types";
+import type { PageKey } from "@/settings/registry";
 import { SettingsPage } from "@/settings/SettingsPage";
 import { useAskStore } from "@/stores/ask";
 import { loadHistory, useSessionPersistStore } from "@/stores/session";
@@ -80,7 +81,7 @@ export function SessionWorkspace() {
   const inspectorOpen = useSessionsStore((s) => s.inspectorOpen);
   const setInspectorOpen = useSessionsStore((s) => s.setInspectorOpen);
   // 设置页浮层（17 号后从 App 顶层挪入工作区；入口在左栏底部）
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsPage, setSettingsPage] = useState<PageKey | null>(null);
   // 侧栏宽度为局部态不落盘（重启回初始宽；持久化的是开合状态）
   const [leftWidth, setLeftWidth] = useState(SIDEBAR_MIN_WIDTH);
   const [rightWidth, setRightWidth] = useState(INSPECTOR_MIN_WIDTH);
@@ -109,7 +110,11 @@ export function SessionWorkspace() {
   return (
     <div className="flex h-dvh bg-[var(--background)] pr-2 text-[var(--foreground)]">
       {/* pr-2：右栏收起（右手柄不渲染）时卡片右侧仍留与底部一致的缝 */}
-      <Sidebar width={leftWidth} animate={!resizing} onOpenSettings={() => setSettingsOpen(true)} />
+      <Sidebar
+        width={leftWidth}
+        animate={!resizing}
+        onOpenSettings={() => setSettingsPage("appearance")}
+      />
       {/* 手柄贴卡片边框，留缝留在手柄外侧（ml-2/mr-2） */}
       <ResizeHandle
         label="左侧栏宽度"
@@ -145,7 +150,12 @@ export function SessionWorkspace() {
           </div>
           <div className="relative min-h-0 flex-1">
             {tabs.map((tab) => (
-              <SessionTab key={tab.id} sessionId={tab.id} active={tab.id === activeId} />
+              <SessionTab
+                key={tab.id}
+                sessionId={tab.id}
+                active={tab.id === activeId}
+                onOpenSettings={() => setSettingsPage("providers")}
+              />
             ))}
           </div>
         </div>
@@ -171,7 +181,9 @@ export function SessionWorkspace() {
         </>
       )}
       {exitDialog}
-      {settingsOpen && <SettingsPage onClose={() => setSettingsOpen(false)} />}
+      {settingsPage && (
+        <SettingsPage initialPage={settingsPage} onClose={() => setSettingsPage(null)} />
+      )}
     </div>
   );
 }
@@ -231,7 +243,15 @@ function ExitConfirmDialog({ open, onClose }: { open: boolean; onClose: () => vo
 }
 
 /** 单会话 Tab 面（keep-mounted：非活跃 display:none，运行态与帧流不断）。 */
-function SessionTab({ sessionId, active }: { sessionId: string; active: boolean }) {
+function SessionTab({
+  sessionId,
+  active,
+  onOpenSettings,
+}: {
+  sessionId: string;
+  active: boolean;
+  onOpenSettings: () => void;
+}) {
   const adapter = useMemo(() => sessionAdapter(sessionId), [sessionId]);
   // unstable_enableMessageQueue（实验性消息队列，FR-01-07 排队面）：运行中
   // 发送的消息先入 composer 队列展示，当前 run 结束后自动依次发送——
@@ -260,7 +280,7 @@ function SessionTab({ sessionId, active }: { sessionId: string; active: boolean 
       <AssistantRuntimeProvider runtime={runtime} config={cwAuiConfig}>
         <SessionScopeContext.Provider value={sessionId}>
           <RunSummariesContext.Provider value={summaries}>
-            <ChatThread />
+            <ChatThread onOpenSettings={onOpenSettings} />
             <AskPanel />
             <RunningReporter sessionId={sessionId} />
             <DraftRestorer sessionId={sessionId} />
@@ -743,7 +763,7 @@ const FADE_MASK: Record<ScrollFade, string> = {
   both: "[mask-image:linear-gradient(to_bottom,transparent_0,black_24px,black_calc(100%-24px),transparent_100%)]",
 };
 
-function useScrollFade() {
+export function useScrollFade() {
   const ref = useRef<HTMLDivElement>(null);
   const [fade, setFade] = useState<ScrollFade>("none");
   useEffect(() => {
@@ -758,7 +778,17 @@ function useScrollFade() {
     el.addEventListener("scroll", update, { passive: true });
     const ro = new ResizeObserver(update);
     ro.observe(el);
+    const observeChildren = () => {
+      ro.disconnect();
+      ro.observe(el);
+      for (const child of el.children) ro.observe(child);
+      update();
+    };
+    const mutations = new MutationObserver(observeChildren);
+    mutations.observe(el, { childList: true, subtree: true, characterData: true });
+    observeChildren();
     return () => {
+      mutations.disconnect();
       el.removeEventListener("scroll", update);
       ro.disconnect();
     };
@@ -768,8 +798,9 @@ function useScrollFade() {
 
 /** 走马灯标题（ZCode TaskTitleOverflowText 同款）：溢出才滚动——
  *  hover 1s 后以 40px/s 平移，副本间隔 24px；未溢出为静态文本。 */
-function MarqueeTitle({ text }: { text: string }) {
+export function MarqueeTitle({ text }: { text: string }) {
   const ref = useRef<HTMLDivElement>(null);
+  const textRef = useRef<HTMLSpanElement>(null);
   const [overflow, setOverflow] = useState(false);
   const [shift, setShift] = useState(0);
   // text 变化需重测溢出（ResizeObserver 只感知容器尺寸，不感知 scrollWidth）
@@ -778,29 +809,32 @@ function MarqueeTitle({ text }: { text: string }) {
     const el = ref.current;
     if (!el) return;
     const check = () => {
-      const over = el.scrollWidth - el.clientWidth;
-      setOverflow(over > 1);
-      setShift(over);
+      const width = textRef.current?.getBoundingClientRect().width ?? 0;
+      setOverflow(width > el.clientWidth + 1);
+      setShift(width + 24);
     };
     check();
     const ro = new ResizeObserver(check);
     ro.observe(el);
+    if (textRef.current) ro.observe(textRef.current);
     return () => ro.disconnect();
   }, [text]);
   return (
-    <div ref={ref} className="cw-marquee">
+    <div ref={ref} className="cw-marquee" data-overflow={overflow}>
       <span
         className="cw-marquee-track"
         style={
           overflow
             ? ({
-                "--marquee-shift": `${-shift - 24}px`,
-                animationDuration: `${(shift + 24) / 40}s`,
+                "--marquee-shift": `${-shift}px`,
+                "--marquee-duration": `${shift / 40}s`,
               } as React.CSSProperties)
             : undefined
         }
       >
-        <span className="shrink-0">{text}</span>
+        <span ref={textRef} className="shrink-0">
+          {text}
+        </span>
         {overflow && (
           <span aria-hidden className="shrink-0">
             {text}

@@ -2,7 +2,7 @@
  * 正式工具卡片（§10.3 规格，14 号票；17 号后按参考样式改版）：
  * toolkit 条目的 render 组件，统一为「单行摘要 + 点击展开详情」的工作流
  * 风格——摘要行 = 动作图标 + 主参数（路径/命令/模式）+ diff 统计徽标 +
- * 状态（运行中转圈 / 错误感叹 / 静默完成）；详情区（点击展开）承载参数
+ * 状态（运行中文案扫光 / 错误感叹 / 静默完成）；详情区（点击展开）承载参数
  * 全文、结果摘要与 toolres 边车（§7.5）的完整数据。错误态默认展开。
  *
  * 数据源：part props（args/result/isError）+ useToolArgsStatus（S1 钉死）。
@@ -11,9 +11,19 @@
  */
 
 import { type ToolCallMessagePartProps, useToolArgsStatus } from "@assistant-ui/react";
-import { CircleAlert } from "lucide-react";
+import {
+  ChevronRight,
+  CircleAlert,
+  ClipboardList,
+  FilePenLine,
+  FolderTree,
+  MessageCircleQuestion,
+  Search,
+  Terminal,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import { useSessionScope } from "@/chat/session-scope";
+import { Button } from "@/components/ui/button";
 import * as client from "@/ipc/client";
 import type { ToolOutcomeJson } from "@/ipc/types";
 
@@ -34,8 +44,9 @@ type CardArgs = Record<string, unknown>;
 
 /** 卡片通用 props：assistant-ui 传入的工具调用 part 数据 + 摘要行内容。 */
 interface CardProps extends ToolCallMessagePartProps<CardArgs, unknown> {
-  /** 摘要行的动作图标（emoji，与参考界面口径一致）。 */
-  icon: string;
+  /** 与侧栏一致的单色动作图标。 */
+  icon: React.ReactNode;
+  label: string;
   /** 摘要行主文本（路径 / 命令 / 模式等，等宽字体截断）。 */
   summary: string;
   /** 摘要行尾部徽标（如 +N/−N 统计，可选）。 */
@@ -71,6 +82,7 @@ export const toolCardExpandedMemory = new Map<string, boolean>();
 /** 单行摘要壳：整行可点击展开/收起；详情区含参数全文、结果与边车数据。 */
 function ToolCardShell({
   icon,
+  label,
   summary,
   badges,
   children,
@@ -86,21 +98,27 @@ function ToolCardShell({
   const [open, setOpen] = useState(
     () => toolCardExpandedMemory.get(toolCallId) ?? phase === "error",
   );
+  useEffect(() => {
+    if (phase === "error" && !toolCardExpandedMemory.has(toolCallId)) setOpen(true);
+  }, [phase, toolCallId]);
   const toggle = () =>
     setOpen((v) => {
       toolCardExpandedMemory.set(toolCallId, !v);
       return !v;
     });
   const outcome = useToolOutcomeDetail(toolCallId, settled);
+  const [copyState, setCopyState] = useState("");
   const detailJson = outcome
     ? JSON.stringify(outcome.detail ?? outcome.data ?? null, null, 2)
     : null;
 
   const resultSummary =
     outcome?.uiSummary ||
-    (result !== undefined && typeof result === "object" && result !== null
-      ? String((result as { summary?: string }).summary ?? "")
-      : "") ||
+    (typeof result === "string"
+      ? result
+      : result !== undefined && typeof result === "object" && result !== null
+        ? String((result as { summary?: string }).summary ?? "")
+        : "") ||
     "";
 
   return (
@@ -112,9 +130,15 @@ function ToolCardShell({
         onClick={toggle}
         className="flex w-full items-center gap-2 rounded px-1 py-0.5 text-left hover:bg-[var(--accent)]/60"
         aria-expanded={open}
+        title={summary}
       >
         <span aria-hidden className="shrink-0">
           {icon}
+        </span>
+        <span
+          className={`shrink-0 font-medium ${phase === "running" ? "cw-shimmer-text" : "text-[var(--muted-foreground)]"}`}
+        >
+          {label}
         </span>
         <span className="min-w-0 flex-1 truncate font-mono text-[var(--foreground)]">
           {summary || "（等待参数…）"}
@@ -134,9 +158,11 @@ function ToolCardShell({
             失败
           </span>
         )}
-        <span aria-hidden className="shrink-0 text-[var(--cw-dim)]">
-          {open ? "▾" : "▸"}
-        </span>
+        <ChevronRight
+          size={12}
+          aria-hidden
+          className={`shrink-0 text-[var(--cw-dim)] transition-transform ${open ? "rotate-90" : ""}`}
+        />
       </button>
       {/* 详情区：参数原文 + 卡片专属排版 + 结果摘要 + 边车全量数据 */}
       {open && (
@@ -151,6 +177,27 @@ function ToolCardShell({
             <p className={isError ? "text-[var(--destructive)]" : "text-[var(--muted-foreground)]"}>
               {resultSummary}
             </p>
+          )}
+          {phase === "error" && resultSummary && (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(resultSummary);
+                    setCopyState("已复制");
+                  } catch {
+                    setCopyState("复制失败，请选择错误文本复制");
+                  }
+                }}
+              >
+                复制错误
+              </Button>
+              <span role="status" className="text-[var(--muted-foreground)]">
+                {copyState}
+              </span>
+            </div>
           )}
           {detailJson !== null && detailJson !== "null" && (
             <details className="rounded border border-[var(--border)] bg-[var(--background)]/60 px-2 py-1">
@@ -200,7 +247,7 @@ export function ReadCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
       ? `（${offset ?? 1} 起${limit !== undefined ? ` · ${limit} 行` : ""}）`
       : "";
   return (
-    <ToolCardShell {...props} icon="🔍" summary={str(args, "path")}>
+    <ToolCardShell {...props} icon={<Search size={14} />} label="读取" summary={str(args, "path")}>
       <p className="text-[var(--muted-foreground)]">{range}</p>
     </ToolCardShell>
   );
@@ -213,7 +260,8 @@ export function WriteCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
   return (
     <ToolCardShell
       {...props}
-      icon="✏️"
+      icon={<FilePenLine size={14} />}
+      label="写入"
       summary={str(args, "path")}
       badges={<PlusBadge n={added} />}
     />
@@ -228,7 +276,8 @@ export function EditCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
   return (
     <ToolCardShell
       {...props}
-      icon="✏️"
+      icon={<FilePenLine size={14} />}
+      label="编辑"
       summary={str(args, "path")}
       badges={
         <>
@@ -244,7 +293,9 @@ export function EditCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
 export function ListFilesCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
   const args = (props.args ?? {}) as CardArgs;
   const target = str(args, "path") || "（项目根）";
-  return <ToolCardShell {...props} icon="📂" summary={target} />;
+  return (
+    <ToolCardShell {...props} icon={<FolderTree size={14} />} label="列出文件" summary={target} />
+  );
 }
 
 /** grep：正则模式 + glob 过滤 + 搜索起点。 */
@@ -255,7 +306,12 @@ export function GrepCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
     .filter(Boolean)
     .join(" ");
   return (
-    <ToolCardShell {...props} icon="🔍" summary={`/${pattern}/ ${suffix}`.trim()}>
+    <ToolCardShell
+      {...props}
+      icon={<Search size={14} />}
+      label="搜索"
+      summary={`/${pattern}/ ${suffix}`.trim()}
+    >
       {suffix === "" && <p className="text-[var(--muted-foreground)]">（全项目搜索）</p>}
     </ToolCardShell>
   );
@@ -264,7 +320,14 @@ export function GrepCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
 /** command：命令行 monospace（摘要即命令文本）。 */
 export function CommandCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
   const args = (props.args ?? {}) as CardArgs;
-  return <ToolCardShell {...props} icon="▣" summary={str(args, "command")} />;
+  return (
+    <ToolCardShell
+      {...props}
+      icon={<Terminal size={14} />}
+      label="执行"
+      summary={str(args, "command")}
+    />
+  );
 }
 
 /** plan 工具 items 参数里单个条目的形状。 */
@@ -285,7 +348,12 @@ export function PlanCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
     completed: "已完成",
   };
   return (
-    <ToolCardShell {...props} icon="📋" summary={`任务计划（${done}/${items.length}）`}>
+    <ToolCardShell
+      {...props}
+      icon={<ClipboardList size={14} />}
+      label="计划"
+      summary={`任务计划（${done}/${items.length}）`}
+    >
       <ul className="space-y-0.5">
         {items.map((item) => (
           <li key={item.id} className="flex items-start gap-1.5">
@@ -315,7 +383,12 @@ export function PlanCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
 export function AskCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
   const args = (props.args ?? {}) as CardArgs;
   return (
-    <ToolCardShell {...props} icon="❓" summary={str(args, "title")}>
+    <ToolCardShell
+      {...props}
+      icon={<MessageCircleQuestion size={14} />}
+      label="询问"
+      summary={str(args, "title")}
+    >
       <p className="text-[var(--muted-foreground)]">回答在下方询问面板中进行</p>
     </ToolCardShell>
   );

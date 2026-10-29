@@ -210,6 +210,7 @@ export interface UiConfig {
   language: Language;
   theme: ThemeName;
   aiLanguage?: string;
+  fontSize?: number;
 }
 
 /** 日志级别（由低到高：debug < info < warn < error，高级别包含低级别）。 */

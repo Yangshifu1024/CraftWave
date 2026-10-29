@@ -12,7 +12,6 @@ import {
   AuiIf,
   BranchPickerPrimitive,
   ComposerPrimitive,
-  ErrorPrimitive,
   MessagePrimitive,
   QueueItemPrimitive,
   ThreadPrimitive,
@@ -24,7 +23,6 @@ import {
   ArrowUp,
   Check,
   ChevronDown,
-  CircleAlert,
   File,
   Folder,
   Hand,
@@ -39,8 +37,10 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
+import { ChatErrorBanner } from "@/chat/ChatErrorBanner";
 import { useComposerKeys } from "@/chat/composer-keys";
 import { TIER_LABELS, usePermissionTierStore } from "@/chat/permission-tier";
+import { ReasoningPart } from "@/chat/ReasoningPart";
 import { useSessionMetrics } from "@/chat/run-metrics";
 import { useSessionModelStore } from "@/chat/session-model";
 import { useRunSummaries, useSessionScope } from "@/chat/session-scope";
@@ -52,7 +52,7 @@ import { useSessionsStore } from "@/stores/sessions";
 /** 消息区（FR-13-15 滚动跟随：Viewport autoScroll 内建「跟随最新 + 上滚
  *  暂停」；不在底部时显示回底按钮，17 号票）。内容列限宽居中（参考样式
  *  A1：工作流风格平铺，不占满整屏宽）。 */
-export function ChatThread() {
+export function ChatThread({ onOpenSettings }: { onOpenSettings?: () => void }) {
   return (
     // 透明背景：透出承载它的大圆角卡（bg-card），自身不再铺底色
     <div className="flex h-full min-h-0 flex-1 flex-col text-[var(--foreground)]">
@@ -69,7 +69,7 @@ export function ChatThread() {
                 message.role === "system" ? null : message.role === "user" ? (
                   <UserMessage />
                 ) : (
-                  <AssistantMessage />
+                  <AssistantMessage onOpenSettings={onOpenSettings} />
                 )
               }
             </ThreadPrimitive.Messages>
@@ -122,8 +122,8 @@ function TierMenuIcon({ tier }: { tier: PermissionTier }) {
 }
 
 /** 时段问候（B1 空状态，六档边界 5/9/12/14/18/23 与 ZCode 同口径）。 */
-function greeting(): string {
-  const hour = new Date().getHours();
+function greeting(date: Date): string {
+  const hour = date.getHours();
   if (hour < 5) return "夜深了";
   if (hour < 9) return "早上好";
   if (hour < 12) return "上午好";
@@ -145,10 +145,18 @@ const EMPTY_STATE_SUGGESTIONS = [
  *  chips 逐个下落入场（cw-rise，delay 内联 ×65ms，reduced-motion 关闭）。 */
 function ThreadEmptyState() {
   const aui = useAui();
+  const [now, setNow] = useState(() => new Date());
+  // 跨小时保持问候准确，不要求用户重新打开空会话。
+  useEffect(() => {
+    const next = new Date(now);
+    next.setHours(now.getHours() + 1, 0, 0, 0);
+    const timer = setTimeout(() => setNow(new Date()), Math.max(1, next.getTime() - now.getTime()));
+    return () => clearTimeout(timer);
+  }, [now]);
   return (
-    <div className="mx-auto flex w-full max-w-4xl flex-1 flex-col items-center justify-center gap-5 py-10">
+    <div className="cw-empty-state mx-auto flex w-full max-w-4xl flex-1 flex-col items-center justify-center gap-5 py-10">
       <div className="flex flex-col items-center gap-1.5">
-        <p className="text-ui-xl font-medium text-[var(--foreground)]">{greeting()}</p>
+        <p className="cw-greeting font-medium text-[var(--foreground)]">{greeting(now)}</p>
         <p className="text-ui-base text-[var(--muted-foreground)]">
           开始新对话，或从下面的建议开始
         </p>
@@ -158,7 +166,7 @@ function ThreadEmptyState() {
           <button
             key={text}
             type="button"
-            className="cw-rise h-8 rounded-lg border border-[var(--border)] px-3 text-ui-sm text-[var(--muted-foreground)] transition-colors hover:border-[var(--ring)] hover:text-[var(--foreground)]"
+            className="cw-rise min-h-8 max-w-full rounded-lg py-1.5 border border-[var(--border)] px-3 text-ui-sm text-[var(--muted-foreground)] transition-colors hover:border-[var(--ring)] hover:text-[var(--foreground)]"
             style={{ animationDelay: `${index * 65}ms` }}
             onClick={() => aui.composer.setText(text, { origin: "user" })}
           >
@@ -229,7 +237,7 @@ function ComposerBar() {
       {/* 输入壳（ZCode 同款结构）：p-3 卡，输入框与工具栏/状态栏纵向 gap-2；
           hover 边框提亮一档（--input），focus-within 蓝边呼应聚焦令牌；
           底色用 --composer-bg（暗色 #272728 亮于中部卡，亮色同卡白） */}
-      <ComposerPrimitive.Root className="flex flex-col gap-2 rounded-2xl border border-[var(--border)] bg-[var(--composer-bg)] p-3 shadow-sm transition-colors hover:border-[var(--input)] focus-within:border-[var(--cw-focus)]">
+      <ComposerPrimitive.Root className="flex flex-col gap-2 rounded-2xl border border-[var(--border)] bg-[var(--composer-bg)] p-3 transition-colors hover:border-[var(--input)] focus-within:border-[var(--cw-focus)]">
         <ComposerPrimitive.Input
           minRows={2}
           placeholder="发一条消息，运行中的消息将自动排队…"
@@ -541,7 +549,12 @@ function formatDuration(ms: number): string {
  * 的折叠状态决定显示；收起时展示「N 次工具调用 · 时长」摘要行，可点击展开。
  * 时长与中断态取自 run 收口摘要表（SessionTab 注入，见 tree-persistence）。
  */
-function AssistantMessage() {
+function AssistantMessage({ onOpenSettings }: { onOpenSettings?: () => void }) {
+  const error = useAuiState((s) =>
+    s.message.status?.type === "incomplete" && s.message.status.reason === "error"
+      ? String(s.message.status.error ?? "运行失败，请重试")
+      : "",
+  );
   const parts = useAuiState((s) => s.message.parts);
   const runId = useAuiState((s) => (s.message.metadata as { runId?: string } | undefined)?.runId);
   const summaries = useRunSummaries();
@@ -597,41 +610,13 @@ function AssistantMessage() {
             }
             if (collapsed) return <span hidden />;
             if (part.type === "reasoning") {
-              // 思考过程单行摘要（A2）：与工具行同风格，点击展开全文
-              return (
-                <details className="text-ui-sm text-[var(--muted-foreground)]">
-                  <summary className="flex w-fit cursor-default select-none items-center gap-2 rounded px-1 py-0.5 hover:bg-[var(--accent)]/60">
-                    <Lightbulb
-                      size={12}
-                      aria-hidden
-                      className="inline-block shrink-0 align-[-1px]"
-                    />
-                    <span>思考过程</span>
-                    <span aria-hidden className="text-[var(--cw-dim)]">
-                      ▸
-                    </span>
-                  </summary>
-                  <p className="text-ui-sm my-1 ml-2 max-h-60 overflow-y-auto border-l border-[var(--border)] pl-3.5 whitespace-pre-wrap text-[var(--muted-foreground)]">
-                    {part.text}
-                  </p>
-                </details>
-              );
+              return <ReasoningPart text={part.text} status={part.status} timing={part.timing} />;
             }
             return null;
           }}
         </MessagePrimitive.Parts>
         <MessagePrimitive.Error>
-          <ErrorPrimitive.Root className="mt-1 flex w-full items-start gap-2 rounded-lg border border-[var(--destructive)]/30 bg-[var(--destructive)]/5 px-3 py-2.5">
-            <CircleAlert
-              size={14}
-              aria-hidden
-              className="mt-0.5 shrink-0 text-[var(--destructive)]"
-            />
-            <div className="min-w-0 text-ui-sm">
-              <div className="font-medium text-[var(--destructive)]">运行出错</div>
-              <ErrorPrimitive.Message className="mt-0.5 break-words text-[var(--muted-foreground)]" />
-            </div>
-          </ErrorPrimitive.Root>
+          <ChatErrorBanner message={error} onOpenSettings={onOpenSettings} />
         </MessagePrimitive.Error>
       </div>
       <BranchBar editOnly={false} />
@@ -695,7 +680,7 @@ function ComposerStatusBar() {
   return (
     <div
       data-testid="composer-status"
-      className="flex items-center gap-3 text-ui-sm tabular-nums text-[var(--cw-dim)]"
+      className="flex flex-wrap items-center gap-x-3 gap-y-1 text-ui-sm tabular-nums text-[var(--cw-dim)]"
     >
       {thinkingSince !== null && (
         <span data-testid="metric-thinking" className="text-[var(--muted-foreground)]">

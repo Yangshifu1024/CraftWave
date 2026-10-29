@@ -235,7 +235,7 @@ describe("createTauriChatAdapter：帧消费管线", () => {
     expect(yields.at(-1)!.status).toEqual({
       type: "incomplete",
       reason: "error",
-      error: "未指定模型：RunConfig.modelId 与 activeModelId 均为空",
+      error: "E_INVALID_ARG: 未指定模型：RunConfig.modelId 与 activeModelId 均为空",
     });
   });
 });

@@ -188,7 +188,7 @@ function endStatus(ended: NonNullable<FrameSnapshot["ended"]>): ChatModelRunResu
       return {
         type: "incomplete",
         reason: "error",
-        ...(ended.error ? { error: ended.error.message } : {}),
+        ...(ended.error ? { error: `${ended.error.code}: ${ended.error.message}` } : {}),
       };
     default:
       return { type: "complete", reason: "stop" };

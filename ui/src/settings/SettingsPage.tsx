@@ -48,6 +48,7 @@ import {
 } from "@/settings/registry";
 import { useSettingsStore } from "@/stores/settings";
 import { applyTheme } from "@/theme";
+import { applyUiFontSize } from "@/ui-font-size";
 
 /** 页图标（线性、跟随文本色，与 CodeWave 口径一致） */
 const PAGE_ICON: Record<PageKey, (props: { className?: string }) => ReactNode> = {
@@ -115,7 +116,13 @@ type LeaveIntent = { kind: "tab"; tab: PageKey } | { kind: "leave" };
  * 设置页容器组件：全屏浮层（onClose 由父层用于退出浮层）。
  * 内部管理当前页、搜索词、离开拦截三选态；数据面接 settings store 草稿。
  */
-export function SettingsPage({ onClose }: { onClose: () => void }) {
+export function SettingsPage({
+  onClose,
+  initialPage = DEFAULT_PAGE,
+}: {
+  onClose: () => void;
+  initialPage?: PageKey;
+}) {
   const config = useSettingsStore((s) => s.config);
   const baseline = useSettingsStore((s) => s.baseline);
   const loading = useSettingsStore((s) => s.loading);
@@ -124,8 +131,22 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
   const load = useSettingsStore((s) => s.load);
   const saveAll = useSettingsStore((s) => s.saveAll);
   const resetDraft = useSettingsStore((s) => s.resetDraft);
+  // 预览归工作区设置容器管理：切页不失效，关闭时按保存基线复位。
+  useEffect(() => {
+    if (!config) return;
+    applyTheme(config.ui.theme);
+    applyUiFontSize(config.ui.fontSize);
+  }, [config]);
+  useEffect(
+    () => () => {
+      const ui = useSettingsStore.getState().baseline?.ui;
+      applyTheme(ui?.theme ?? "system");
+      applyUiFontSize(ui?.fontSize);
+    },
+    [],
+  );
 
-  const [tab, setTab] = useState<PageKey>(DEFAULT_PAGE);
+  const [tab, setTab] = useState<PageKey>(initialPage);
   const [query, setQuery] = useState("");
   const [leaveIntent, setLeaveIntent] = useState<LeaveIntent | null>(null);
 
@@ -546,11 +567,6 @@ function AppearancePage() {
   const config = useSettingsStore((s) => s.config);
   const patchConfig = useSettingsStore((s) => s.patchConfig);
   const permission = useNotificationPermission();
-  // 主题草稿即时预览（FR-13-03）：草稿变化即应用；丢弃草稿/保存都会令
-  // config 回到基线，本副作用随之回滚——无需额外的取消预览逻辑
-  useEffect(() => {
-    if (config?.ui?.theme) applyTheme(config.ui.theme);
-  }, [config?.ui?.theme]);
   if (!config) return null;
   const patchUi = (patch: Partial<AppConfig["ui"]>) =>
     patchConfig({ ui: { ...config.ui, ...patch } });
@@ -583,6 +599,26 @@ function AppearancePage() {
             />
           </div>
         </div>
+      </SettingsSection>
+      <SettingsSection title="字号">
+        <SettingsRow
+          title="界面字号"
+          description="即时预览文字大小，保存后在下次启动时生效。默认 14px。"
+        >
+          <label className="flex w-full items-center gap-3 text-ui-base">
+            <input
+              aria-label="界面字号"
+              type="range"
+              min={12}
+              max={18}
+              step={1}
+              value={config.ui.fontSize ?? 14}
+              onChange={(e) => patchUi({ fontSize: Number(e.target.value) })}
+              className="min-w-0 flex-1 accent-[var(--cw-focus)]"
+            />
+            <span className="shrink-0 tabular-nums">{config.ui.fontSize ?? 14}px</span>
+          </label>
+        </SettingsRow>
       </SettingsSection>
       <SettingsSection title="系统通知">
         {permission !== null &&

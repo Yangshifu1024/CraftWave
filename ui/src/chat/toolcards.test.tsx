@@ -150,3 +150,41 @@ describe("工具卡渲染", () => {
     expect(screen.getByTestId("tool-card-c1").textContent).toContain("E_FENCE_BLOCKED");
   });
 });
+
+describe("复刻回归", () => {
+  it("运行态使用单色 SVG 和扫光标签；失败到达后自动展开", () => {
+    const { rerender } = render(<CommandCard {...props({ command: "cargo test" })} />);
+    const card = screen.getByTestId("tool-card-c1");
+    expect(card.querySelector("svg.lucide-terminal")).toBeTruthy();
+    expect(card.querySelector(".cw-shimmer-text")?.textContent).toBe("执行");
+    expect(card.querySelector("button")?.getAttribute("aria-expanded")).toBe("false");
+    rerender(
+      <CommandCard {...props({ command: "cargo test" }, resultOf("E_COMMAND: 退出码 1", true))} />,
+    );
+    expect(card.querySelector("button")?.getAttribute("aria-expanded")).toBe("true");
+    expect(card.textContent).toContain("E_COMMAND: 退出码 1");
+    expect(card.querySelector(".cw-shimmer-text")).toBeNull();
+  });
+
+  it("用户已手动收起的失败卡不会被后续更新反复打开", () => {
+    const { rerender } = render(<CommandCard {...props({ command: "ls" })} />);
+    const toggle = screen.getByTestId("tool-card-c1").querySelector("button")!;
+    fireEvent.click(toggle);
+    fireEvent.click(toggle);
+    rerender(<CommandCard {...props({ command: "ls" }, resultOf("失败", true))} />);
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  });
+});
+
+it("历史工具结果是纯字符串时仍显示失败原因并可复制", async () => {
+  const copy = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+  render(
+    <CommandCard
+      {...props({ command: "ls" }, { result: "E_COMMAND: 目录不存在", isError: true })}
+    />,
+  );
+  expect(screen.getByText("E_COMMAND: 目录不存在")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "复制错误" }));
+  expect(copy).toHaveBeenCalledWith("E_COMMAND: 目录不存在");
+  copy.mockRestore();
+});

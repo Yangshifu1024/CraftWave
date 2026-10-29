@@ -125,6 +125,7 @@ fn save_config_returns_normalized_and_config_file_0600() {
     let store = fixture(dir.path());
     let mut config = AppConfig::default();
     config.providers.push(demo_provider("p9", "m"));
+    config.ui.font_size = Some(18);
     let saved = save_config(&store, config).unwrap();
     // demo_provider 的 maxTokens=8192 非零，归一化保留；0→默认由 types_test 覆盖
     assert_eq!(saved.providers[0].models[0].max_tokens, 8192);
@@ -133,6 +134,11 @@ fn save_config_returns_normalized_and_config_file_0600() {
 
     let loaded = get_config(&store).unwrap();
     assert_eq!(loaded.providers.len(), 1);
+    assert_eq!(
+        loaded.ui.font_size,
+        Some(18),
+        "字号经真实配置文件保存后可读回"
+    );
 }
 
 // 断言：8 线程并发 save_provider 全部落盘成功、无互相覆盖丢失

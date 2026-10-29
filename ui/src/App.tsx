@@ -12,6 +12,7 @@ import { useEffect } from "react";
 import { MirrorDemo } from "@/chat/mirror/MirrorDemo";
 import { SessionWorkspace } from "@/chat/SessionWorkspace";
 import { applyTheme } from "@/theme";
+import { applyUiFontSize } from "@/ui-font-size";
 
 /** decoration 插件激活成功后在 <html> 上打的标志属性名（出现即表示自绘标题栏就绪）。 */
 const ACTIVATION_FLAG = "data-tauri-plugin-decoration-active";
@@ -26,9 +27,12 @@ const ACTIVATION_TIMEOUT_MS = 5000;
 function useThemeBoot() {
   useEffect(() => {
     let cancelled = false;
-    void invoke<{ ui?: { theme?: "light" | "dark" | "system" } }>("get_config")
+    void invoke<{ ui?: { theme?: "light" | "dark" | "system"; fontSize?: number } }>("get_config")
       .then((config) => {
-        if (!cancelled) applyTheme(config.ui?.theme ?? "system");
+        if (!cancelled) {
+          applyTheme(config.ui?.theme ?? "system");
+          applyUiFontSize(config.ui?.fontSize);
+        }
       })
       .catch(() => {
         // 纯浏览器/IPC 异常：维持默认 system
