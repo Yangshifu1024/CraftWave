@@ -41,6 +41,7 @@ CraftWave M1 MVP 出口准则达成：P0 需求全集实现，NFR-01/02/06/09/12
 - [决策：C-8 临时会话 roots 边界安全复判](tasks/20-grilling-c8-roots-boundary.md)：推翻「维持 PRD 定义」——agent roots 收窄为「项目主目录 + `<data_root>/workspace/` 子目录」，存储内部文件退出可见面；command 旁路（读 Key 类）记为已声明风险（审批档兜底 + full_access 自担，写向纵深归 P1 FR-05-08）；GLOSSARY.md 首建；文档 v2.9。
 - [实现：CI/平台欠账收敛](tasks/19-impl-platform-debts.md)：批取消 e2e Windows JobGuard 路径实跑（CI 实证 `e2e_tool_batch_cancel` windows 绿）；通知授权自建查询（插件桌面端 permission_state 恒 Granted，直查 UNUserNotificationCenter）+ 设置页引导条 + 打开系统设置深链；退出确认 10s 超时兜底（ExitConfirm 状态机）；托盘左键经 tauri 源码核实**本已三平台一致**（17 号票保守记录修正，零代码变更）。
 - [实现：agent roots 收窄落地](tasks/21-impl-roots-narrowing.md)：单落点 `resolve_session_roots`——临时会话两根=项目会话第二根=workspace 子目录，PathGuard 与 @ 补全自动收窄；`config.json` 相对/绝对双攻击向不可达断言入测；宿主侧边车仍挂存储根不受影响。
+- **【终局关】1 周真实使用验收——用户强制决策收官（2026-10-29）**：用户宣布 M1 完结（原话"M1 完结是我的强制决策"），不以验收剧本通过为关图条件，acceptance-log 未开记；M1 全部 21 票已关，本图就此关闭，M2 另立图承接后续。
 
 ## Not yet specified
 
