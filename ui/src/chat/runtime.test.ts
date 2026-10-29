@@ -1,6 +1,6 @@
 import type { ChatModelAdapter, ChatModelRunResult, ThreadMessage } from "@assistant-ui/react";
 import { describe, expect, it, vi } from "vitest";
-import type { ChatFrame, RunConfig } from "@/ipc/types";
+import type { RunConfig, SequencedFrame } from "@/ipc/types";
 import { tierOf } from "./permission-tier";
 import { createTauriChatAdapter, toWire } from "./runtime";
 import { modelOf, useSessionModelStore } from "./session-model";
@@ -110,13 +110,13 @@ function runOptions(signal = new AbortController().signal) {
 /** 帧序号自增分配器：给无 seq 的帧载荷编号（对齐真实后端行为）。 */
 let seq = 0;
 type DistributiveOmit<T, K extends keyof never> = T extends unknown ? Omit<T, K> : never;
-function f(frame: DistributiveOmit<ChatFrame, "seq">): ChatFrame {
-  return { seq: seq++, ...frame } as ChatFrame;
+function f(frame: DistributiveOmit<SequencedFrame, "seq">): SequencedFrame {
+  return { seq: seq++, ...frame } as SequencedFrame;
 }
 
 /** 剧本化 startChat fake：收到的 onmessage 按序喂帧，invoke 完成后 resolve。 */
-function fakeStartChat(frames: ChatFrame[], sent: ChatFrame[]) {
-  return vi.fn(async (args: { onFrame: (frame: ChatFrame) => void }) => {
+function fakeStartChat(frames: SequencedFrame[], sent: SequencedFrame[]) {
+  return vi.fn(async (args: { onFrame: (frame: SequencedFrame) => void }) => {
     for (const frame of frames) {
       sent.push(frame);
       args.onFrame(frame);
@@ -138,7 +138,7 @@ describe("createTauriChatAdapter：帧消费管线", () => {
       msg("u2", "user", [{ type: "text", text: "继续检查" }]),
     ];
     const syncTree = vi.fn(async () => {});
-    const startChat = vi.fn(async (args: { onFrame: (frame: ChatFrame) => void }) => {
+    const startChat = vi.fn(async (args: { onFrame: (frame: SequencedFrame) => void }) => {
       args.onFrame(f({ type: "runEnded", reason: "done", durationMs: 0, toolCount: 0, turn: 1 }));
       return { runId: "run-next" };
     });
@@ -157,7 +157,7 @@ describe("createTauriChatAdapter：帧消费管线", () => {
   });
 
   it("帧流 → 快照全量 yield（打字机），runEnded 后以终态 status 收口", async () => {
-    const frames: ChatFrame[] = [
+    const frames: SequencedFrame[] = [
       f({ type: "runStarted", runId: "run-1", model: "gpt-4o-mock" }),
       f({ type: "stepStarted", turn: 1 }),
       f({ type: "reasoningDelta", turn: 1, delta: "想一下" }),
@@ -173,7 +173,7 @@ describe("createTauriChatAdapter：帧消费管线", () => {
       f({ type: "textDelta", turn: 1, delta: "读完了。" }),
       f({ type: "runEnded", reason: "done", durationMs: 640, toolCount: 1, turn: 1 }),
     ];
-    const sent: ChatFrame[] = [];
+    const sent: SequencedFrame[] = [];
     const adapter = createTauriChatAdapter({
       sessionId: "sess-test",
       runConfig: { tier: "autoEdit", maxTurns: 4, steer: false },
@@ -214,12 +214,12 @@ describe("createTauriChatAdapter：帧消费管线", () => {
 
   it("取消：abortSignal 触发 → cancel_run 被调用（fire-and-forget）；runEnded(cancelled) 终态", async () => {
     const controller = new AbortController();
-    const frames: ChatFrame[] = [
+    const frames: SequencedFrame[] = [
       f({ type: "runStarted", runId: "run-2", model: "m" }),
       f({ type: "textDelta", turn: 1, delta: "写到一半" }),
       f({ type: "runEnded", reason: "cancelled", durationMs: 30, toolCount: 0, turn: 1 }),
     ];
-    const sent: ChatFrame[] = [];
+    const sent: SequencedFrame[] = [];
     const cancelRun = vi.fn(async () => true);
     const adapter = createTauriChatAdapter({
       sessionId: "sess-test",
@@ -273,15 +273,17 @@ describe("createTauriChatAdapter：帧消费管线", () => {
 describe("sessionAdapter：会话内存态 runConfig", () => {
   it("会话覆盖的模型 id 与权限档在发送时带入 start_chat；未覆盖时省略 modelId", async () => {
     const sentArgs: { runConfig: RunConfig }[] = [];
-    const frames: ChatFrame[] = [
+    const frames: SequencedFrame[] = [
       f({ type: "runStarted", runId: "run-1", model: "m" }),
       f({ type: "runEnded", reason: "done", durationMs: 10, toolCount: 0, turn: 1 }),
     ];
-    const fake = vi.fn(async (args: { runConfig: RunConfig; onFrame: (f: ChatFrame) => void }) => {
-      sentArgs.push({ runConfig: args.runConfig });
-      for (const frame of frames) args.onFrame(frame);
-      return { runId: "run-fake" };
-    });
+    const fake = vi.fn(
+      async (args: { runConfig: RunConfig; onFrame: (f: SequencedFrame) => void }) => {
+        sentArgs.push({ runConfig: args.runConfig });
+        for (const frame of frames) args.onFrame(frame);
+        return { runId: "run-fake" };
+      },
+    );
     // 直接注入 fake 的方式与生产 sessionAdapter 无缝衔接：经 deps 替换 startChat
     const adapter = createTauriChatAdapter({
       sessionId: "sess-model",

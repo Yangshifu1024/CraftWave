@@ -11,7 +11,7 @@
  */
 
 import { create } from "zustand";
-import type { ChatFrame, UsageTotal } from "@/ipc/types";
+import type { SequencedFrame, UsageTotal } from "@/ipc/types";
 
 /** 单会话的三数与终态摘要。 */
 export interface SessionMetrics {
@@ -68,7 +68,7 @@ export interface RunMetricsStore {
   /** 按会话分桶的指标表（sessionId → 指标），跨 Tab 并行运行互不串扰。 */
   bySession: Record<string, SessionMetrics>;
   /** 帧入口：adapter 的 channel.onmessage 转发（帧不带 sessionId，入口补） */
-  ingest: (sessionId: string, frame: ChatFrame) => void;
+  ingest: (sessionId: string, frame: SequencedFrame) => void;
   /** tokens:update 事件入口（Rust 会话累计全量；replace 语义，含后台小调用，C-9） */
   applyTokensUpdate: (sessionId: string, usage: UsageTotal) => void;
   /** 会话删除后清桶。 */

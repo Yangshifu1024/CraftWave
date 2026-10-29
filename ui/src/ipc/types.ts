@@ -1,397 +1,122 @@
 /**
- * IPC 契约镜像（§2.4 ipc/types.ts）：与 Rust 侧契约类型"逐字段照抄"的 TS 副本
- * （D14 命名纪律：两侧类型同名同结构，方便逐个对照；wire 指线上传输格式，
- * 即数据跨进程传输时的形态）。
+ * IPC 契约类型出口（§2.4 ipc/types.ts）。
  *
- * - 存储条目/WirePart 镜像 src-tauri/src/storage/entries.rs；
- * - 会话树命令负载镜像 src-tauri/src/host/commands/session_tree.rs；
- * - provider/settings 域（CW schema v2）镜像 src-tauri/src/providers/types.rs；
- * - 契约一致性由 §12.3 manifest + 跨语言 fixture 校验（ui/src/ipc/contract.test.ts；
- *   fixture 指测试用的固定样例数据文件，由 cargo test 产出，运行前端测试前
- *   先跑 cargo test）。
+ * 02 号票起（C-2 定案）payload 类型的单一来源切换为 ts-rs 生成物：Rust 契约
+ * 类型 derive(TS) 后由 cargo test 统一导出到 `./generated/`（生成物进 git，
+ * 见 src-tauri/src/ipc_manifest_test.rs 的导出面），本文件只做再导出
+ * （re-export）——禁止在本文件手写 payload 类型，防止双源漂移。
+ *
+ * 纪律说明：
+ * - 生成物按 Rust 类型一文件一名（D14 两侧同名）；字段可缺省（`?`）即 serde
+ *   Option/缺省字段，线上传输时该键可省略；
+ * - 历史手写镜像别名已收编为 Rust 同名：ToolOutcomeJson→ToolOutcome、
+ *   ThemeName→Theme、WorkspaceReadRange→ReadRange；无消费面的
+ *   NotificationPermission 镜像已删除（status 字段为 string，与 Rust 发射面一致）；
+ * - 仅存的手写面是 §3.5 事件载荷族（Rust 侧以 json! 字面量发射、无结构体
+ *   来源，随对应功能票收编），其引用的类型仍来自生成物。
+ *
+ * 键面不动：client.ts 的 COMMANDS/EVENT_KEYS 注册表与 manifest 双向扫描照旧
+ * （§12.3，C-2 明文）；生成物 ↔ 再导出面的一致性由 contract.test 扫描钉住。
  */
 
-import type { MessageStatus } from "@assistant-ui/react";
-
-// ---- §3.2 WirePart（M1 子集；image 属 M2）----
-
-/** 消息角色：用户 / 助手 / 系统。 */
-export type MessageRole = "user" | "assistant" | "system";
-
-/** 计划条目：模型执行计划中的一步，带状态（待办/进行中/已完成）。 */
-export type PlanItem = {
-  id: string;
-  text: string;
-  status: "pending" | "in_progress" | "completed";
-};
-
-/** 消息内容分片（线上传输形态）：一段文本/思考/工具调用/工具结果/计划快照/run 标记，
- *  一条消息由若干分片按顺序组成。 */
-export type WirePart =
-  | { type: "text"; text: string }
-  | { type: "reasoning"; text: string }
-  | { type: "toolCall"; callId: string; name: string; argsJson: string }
-  | { type: "toolResult"; callId: string; ok: boolean; summary: string }
-  | { type: "planSnapshot"; items: PlanItem[] }
-  | {
-      type: "runMarker";
-      runId: string;
-      startedAt: number;
-      endedAt?: number;
-      durationMs?: number;
-      toolCount?: number;
-    };
-
-// ---- §6.1 存储条目（serde tag=kind 的 TS 镜像）----
-
-/** message 条目载荷：同时是 save_session_tree 的 messages 元素形态（§6.3，parentId null→省略） */
-export type MessageEntry = {
-  id: string;
-  parentId?: string;
-  role: MessageRole;
-  parts: WirePart[];
-  createdAt: number;
-  runId?: string;
-  /** S4 增补（§6.1）：仅 assistant，保留导出时的 MessageStatus（M1 只落 complete） */
-  status?: MessageStatus;
-};
-
-/** 落盘后的 message 条目：MessageEntry 加上 kind 判别字段（serde tag=kind）。 */
-export type StoredMessageEntry = MessageEntry & { kind: "message" };
-
-/** 落盘后的 meta 条目：会话级元信息（活跃叶子节点、标题、版本号）。 */
-export type StoredMetaEntry = {
-  kind: "meta";
-  activeLeafId?: string;
-  title?: string;
-  revision: number;
-};
-
-/** 落盘后的 session 条目：会话头（结构版本 v=1、会话 id、创建时间）。 */
-export type StoredSessionEntry = {
-  kind: "session";
-  v: 1;
-  id: string;
-  createdAt: number;
-};
-
-/** 存储条目全集：会话 JSONL 文件的每一行是其中一种（判别字段 kind）。 */
-export type StoredEntry = StoredSessionEntry | StoredMessageEntry | StoredMetaEntry;
-
-// ---- 会话树命令（§3.3 #26 / §6.3 / §6.4）----
-
-/** save_session_tree 参数（命令形参平铺，本结构为文档命名锚点） */
-export type SaveSessionTreeArgs = {
-  sessionId: string;
-  messages: MessageEntry[];
-  activeLeafId?: string;
-  baseRevision: number;
-};
-
-/** save_session_tree 返回 */
-export type SaveSessionTreeResult = { revision: number };
-
-/** load_session_tree 返回（§6.1 定稿结构：headId=activeLeafId + messages 含 status?） */
-export type SessionTreeData = {
-  sessionId: string;
-  messages: MessageEntry[];
-  activeLeafId?: string;
-  revision: number;
-};
-
-// ---- 会话索引与 toolres 边车（§3.3 #14/#29，15 号票）----
-
-/** §3.2 SessionMeta（index.json 元素与 list_sessions 返回） */
-export interface SessionMeta {
-  id: string;
-  projectId?: string;
-  title: string;
-  createdAt: number;
-  updatedAt: number;
-  revision: number;
-  messageCount: number;
-  totalTokens: number;
-}
-
-// ---- 项目注册表与 workspace 只读（§3.3 #10–12/#27/#28，16 号票）----
-
-/** §3.2 ProjectMeta（directories.json 元素与 list_projects 返回） */
-export interface ProjectMeta {
-  id: string;
-  name: string;
-  homeDir: string;
-  createdAt: number;
-}
-
-/** §3.3 #11 save_project 参数（新建/更新） */
-export type SaveProjectArgs = { project: { id?: string; name: string; homeDir: string } };
-
-/** §3.3 #27 search_workspace_paths 命中条目 */
-export type WorkspacePathHit = { path: string; kind: "file" | "dir" };
-
-/** §3.3 #28 read_workspace_file 行区间 */
-export type WorkspaceReadRange = { offset: number; limit: number };
-
-/** §3.3 #28 read_workspace_file 返回 */
-export type ReadWorkspaceResult = { content: string; truncated: boolean };
-
-/** load_tool_outcomes 返回（边车 ToolOutcome 全量 JSON；缺文件调用不在表中） */
-export type ToolOutcomeJson = {
-  ok: boolean;
-  data?: unknown;
-  error?: { code: string; message: string };
-  uiSummary: string;
-  detail?: unknown;
-  truncated?: boolean;
-};
-
-// ---- 供应商（CW schema v2，实现 FR-02-01/06/07）----
-
-/** API 格式（请求协议）：决定请求体怎么拼、响应怎么解析，对应不同服务商的接口风格。 */
-export type ApiFormat = "openai_chat" | "anthropic_messages" | "openai_responses";
-
-/** 推理力度档位：控制模型思考的深浅；未设置时用服务端默认。 */
-export type ReasoningEffort = "default" | "low" | "medium" | "high" | "max";
-
-/** 供应商名下的一个模型定义（前端手工配置，无内置目录）。 */
-export interface ProviderModel {
-  /** uuid，activeModelId 指向它 */
-  id: string;
-  /** wire id，即显示名 */
-  model: string;
-  /** default 32768 */
-  maxTokens: number;
-  /** default 128000 */
-  contextWindow: number;
-  reasoningEffort?: ReasoningEffort;
-  vision?: boolean;
-}
-
-/** 一个模型供应商的完整配置：端点 + 凭据 + 模型列表。 */
-export interface ProviderConfig {
-  /** uuid */
-  id: string;
-  name: string;
-  apiFormat: ApiFormat;
-  /** 缺省按 apiFormat 用官方缺省地址；自定义 OpenAI 兼容端点在此覆写 */
-  baseUrl?: string;
-  /** API Key 明文（用户决策废除 keyring：存 config.json，文件权限 0600） */
-  apiKey?: string;
-  models: ProviderModel[];
-  headers?: Record<string, string>;
-}
-
-// ---- 应用配置（实现 FR-14）----
-
-/** 代理模式：不走代理 / 跟随系统设置 / 手动指定地址。 */
-export type ProxyMode = "none" | "system" | "manual";
-
-/** 网络代理配置（manual 模式下 url 必填）。 */
-export interface ProxyConfig {
-  mode: ProxyMode;
-  url?: string;
-}
-
-/** 审批策略：敏感操作（写文件、执行命令等）是否先询问用户再执行。 */
-export interface ApprovalConfig {
-  enabled: boolean;
-  autoConfirm: boolean;
-  commandAllowlist: string[];
-}
-
-/** 主题三态：浅色 / 深色 / 跟随系统（与 theme.ts 的 ThemeMode 同口径）。 */
-export type ThemeName = "light" | "dark" | "system";
-
-/** 界面显示语言。 */
-export type Language = "zh-CN" | "en-US";
-
-/** 界面偏好（显示语言、主题、AI 回复语言）。 */
-export interface UiConfig {
-  language: Language;
-  theme: ThemeName;
-  aiLanguage?: string;
-  fontSize?: number;
-}
-
-/** 日志级别（由低到高：debug < info < warn < error，高级别包含低级别）。 */
-export type LogLevel = "debug" | "info" | "warn" | "error";
-
-/** 日志配置。 */
-export interface LogConfig {
-  level: LogLevel;
-}
-
-/** 系统通知偏好（FR-13-06 设置项，17 号票；Rust 侧 NotificationConfig 镜像）。 */
-export interface NotificationConfig {
-  enabled: boolean;
-  interventionOnly: boolean;
-}
-
-/** 通知授权态（§9.6，19 号票；notification_permission_status 返回镜像）。
- *  granted 可送达 / denied 被拒 / prompt 未决定 / unknown 查不出（dev 裸进程）。 */
-export type NotificationPermission = "granted" | "denied" | "prompt" | "unknown";
-
-/** notification_permission_status 返回：授权态 + 平台是否有系统设置入口。 */
-export interface NotificationPermissionStatus {
-  status: NotificationPermission;
-  hasSettingsEntry: boolean;
-}
-
-/** 应用配置根：config.json 的完整结构（schemaVersion=2）。 */
-export interface AppConfig {
-  schemaVersion: 2;
-  providers: ProviderConfig[];
-  activeModelId?: string;
-  proxy?: ProxyConfig;
-  approval: ApprovalConfig;
-  ui: UiConfig;
-  log: LogConfig;
-  notifications?: NotificationConfig;
-}
-
-// ---- provider/config 命令锚点（§3.3 #6–9，镜像 host/commands/{config,provider}.rs）----
-
-/** save_config 参数（命令形参平铺，本结构为文档命名锚点） */
-export type SaveConfigArgs = { config: AppConfig };
-
-/** save_provider 参数（newKey 有值时走 keyring 提交协议 §9.4） */
-export type SaveProviderArgs = { provider: ProviderConfig; newKey?: string };
-
-/** delete_provider 参数 */
-export type DeleteProviderArgs = { providerId: string };
-
-// ---- 运行配置与用量（§3.2；start_chat，13 号票）----
-
-/** 权限四档（§8.5 矩阵；serde camelCase 口径，与 Rust safety/tier.rs 一致） */
-export type PermissionTier = "plan" | "confirmEach" | "autoEdit" | "fullAccess";
-
-/** §3.2 RunConfig */
-export interface RunConfig {
-  /** 会话级覆盖；缺省全局 active */
-  modelId?: string;
-  tier: PermissionTier;
-  /** default 24 */
-  maxTurns: number;
-  /** 本次发送是否为 steer 注入（M1 前端恒 false，§5.5） */
-  steer: boolean;
-}
-
-/** §3.2 UsageTotal（usage 帧/事件载荷）：token 用量汇总（输入/输出/缓存读写）。 */
-export interface UsageTotal {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-}
-
-/** start_chat 参数（命令形参平铺，本结构为文档命名锚点） */
-export type StartChatArgs = {
-  sessionId: string;
-  messages: MessageEntry[];
-  runConfig: RunConfig;
-  /** tauri ipc Channel<ChatFrame>（@tauri-apps/api/core 的 Channel 实例） */
-  channel: unknown;
-};
-
-/** start_chat 返回 */
-export type StartChatResult = { runId: string };
-
-// ---- §3.4 Channel 帧（P0 全集 9 帧；Rust 镜像 src-tauri/src/backend/frames.rs）----
-
-/** 帧基座：所有帧带 Rust 端递增的 seq；ts = Rust 出口 epoch ms（可选，S2 实证）。 */
-type Sequenced = {
-  seq: number;
-  ts?: number;
-};
-
-/** run 期间 Channel 推送的全部帧型（判别字段 type，P0 全集 9 帧）。 */
-export type ChatFrame =
-  | (Sequenced & { type: "runStarted"; runId: string; model: string })
-  | (Sequenced & { type: "stepStarted"; turn: number })
-  | (Sequenced & { type: "textDelta"; turn: number; delta: string })
-  | (Sequenced & { type: "reasoningDelta"; turn: number; delta: string })
-  | (Sequenced & { type: "toolStarted"; callId: string; name: string })
-  | (Sequenced & { type: "toolArgs"; callId: string; chunk: string })
-  | (Sequenced & {
-      type: "toolResult";
-      callId: string;
-      ok: boolean;
-      uiSummary: string;
-      error?: { code: string; message: string };
-    })
-  | (Sequenced & { type: "usage"; usage: UsageTotal; rate?: number })
-  | (Sequenced & {
-      type: "runEnded";
-      reason: "done" | "error" | "cancelled";
-      durationMs: number;
-      toolCount: number;
-      turn: number;
-      error?: { code: string; message: string };
-    });
-
-// ---- D14 统一错误形状（§3.1：命令失败统一 reject {code, message, detail?}）----
-
-/** 统一错误负载（D14）：命令失败一律 reject 此结构，code 见 §3.1 错误码表。 */
-export type IpcError = {
-  code: string;
-  message: string;
-  detail?: unknown;
-};
-
-// ---- 询问/审批（§3.2 AskPayload/AskAnswer，14 号票；镜像 backend/ask.rs）----
-
-/** 询问问题的一个候选选项。 */
-export type AskChoice = { id: string; label: string };
-
-/** 询问面板的一问：可带候选选项，可允许自由输入文本。 */
-export type AskQuestion = {
-  id: string;
-  text: string;
-  options?: AskChoice[];
-  allowFreeText: boolean;
-};
-
-/** diff（差异对比）中的一行：新增 / 删除 / 上下文（未变的对照行）。 */
-export type DiffLine = { kind: "add" | "del" | "ctx"; text: string };
-
-/** diff 的一个 hunk（连续变更块）：头行说明位置，后跟各行。 */
-export type DiffHunk = { header: string; lines: DiffLine[] };
-
-/** 审批载荷携带的文件 diff：目标路径 + 变更块列表。 */
-export type ApprovalDiff = { path: string; hunks: DiffHunk[] };
-
-/** 审批选项：可带推荐标记与授权模式（本次允许 / 本会话总允许 / 拒绝）。 */
-export type AskOption = {
-  id: string;
-  label: string;
-  recommended?: boolean;
-  mode?: "allow_once" | "always_session" | "deny";
-};
-
-/** §3.2 AskPayload（M1 实装 question/approval 两形态） */
-export type AskPayload =
-  | { kind: "question"; title: string; questions: AskQuestion[] }
-  | {
-      kind: "approval";
-      title: string;
-      diff?: ApprovalDiff;
-      command?: string;
-      fenceReason?: string;
-      options: AskOption[];
-    };
-
-/** §3.2 AskAnswer */
-export type AskAnswer =
-  | { kind: "question"; answers: Record<string, string> }
-  | { kind: "approval"; optionId: string; editedCommand?: string };
-
-/** resolve_ask 参数（命令形参平铺，本结构为文档命名锚点） */
-export type ResolveAskArgs = { askId: string; answer: AskAnswer };
-
-/** approve_plan 参数（§3.3 #26c，14 号票增补） */
-export type ApprovePlanArgs = { sessionId: string };
-
-// ---- §3.5 事件载荷（14 号票实装 5 键；镜像 util/events.rs 与 host 发射面）----
+// ---- 生成物再导出（与 ui/src/ipc/generated/ 一一对应）----
+// 本文件后半的事件载荷族与收窄别名引用生成物类型，本地可见性走显式 import
+// （`export *` 只转发、不引入模块作用域）。
+import type { AskPayload } from "./generated/AskPayload";
+import type { PlanItem } from "./generated/PlanItem";
+import type { StoredEntry } from "./generated/StoredEntry";
+import type { UsageTotal } from "./generated/UsageTotal";
+
+export * from "./generated/ApiFormat";
+export * from "./generated/AppConfig";
+export * from "./generated/ApprovalConfig";
+export * from "./generated/ApprovalDiff";
+export * from "./generated/ApprovePlanArgs";
+export * from "./generated/AskAnswer";
+export * from "./generated/AskChoice";
+export * from "./generated/AskMode";
+export * from "./generated/AskOption";
+export * from "./generated/AskPayload";
+export * from "./generated/AskQuestion";
+export * from "./generated/CancelRunArgs";
+export * from "./generated/ChatFrame";
+export * from "./generated/CompleteReason";
+export * from "./generated/CreateSessionArgs";
+export * from "./generated/DeleteProjectArgs";
+export * from "./generated/DeleteProviderArgs";
+export * from "./generated/DeleteSessionArgs";
+export * from "./generated/DiffHunk";
+export * from "./generated/DiffLine";
+export * from "./generated/DiffLineKind";
+export * from "./generated/EndReason";
+export * from "./generated/FrameError";
+export * from "./generated/GetUiStateArgs";
+export * from "./generated/IncompleteReason";
+export * from "./generated/IpcError";
+export * from "./generated/Language";
+export * from "./generated/ListSessionsArgs";
+export * from "./generated/LoadSessionTreeArgs";
+export * from "./generated/LoadToolOutcomesArgs";
+export * from "./generated/LogConfig";
+export * from "./generated/LogLevel";
+export * from "./generated/MessageEntry";
+export * from "./generated/MessageRole";
+export * from "./generated/MessageStatus";
+export * from "./generated/MetaEntry";
+export * from "./generated/NewProjectInput";
+export * from "./generated/NotificationConfig";
+export * from "./generated/NotificationPermissionStatus";
+export * from "./generated/PermissionTier";
+export * from "./generated/PlanItem";
+export * from "./generated/PlanItemStatus";
+export * from "./generated/ProjectMeta";
+export * from "./generated/ProviderConfig";
+export * from "./generated/ProviderModel";
+export * from "./generated/ProxyConfig";
+export * from "./generated/ProxyMode";
+export * from "./generated/ReadRange";
+export * from "./generated/ReadWorkspaceFileArgs";
+export * from "./generated/ReadWorkspaceResult";
+export * from "./generated/ReasoningEffort";
+export * from "./generated/RenameSessionArgs";
+export * from "./generated/RequiresActionReason";
+export * from "./generated/ResolveAskArgs";
+export * from "./generated/ResolveExitRequestArgs";
+export * from "./generated/RunConfig";
+export * from "./generated/SaveConfigArgs";
+export * from "./generated/SaveProjectArgs";
+export * from "./generated/SaveProviderArgs";
+export * from "./generated/SaveSessionTreeArgs";
+export * from "./generated/SaveSessionTreeResult";
+export * from "./generated/SearchWorkspacePathsArgs";
+export * from "./generated/SequencedFrame";
+export * from "./generated/SessionEntry";
+export * from "./generated/SessionMeta";
+export * from "./generated/SessionTreeData";
+export * from "./generated/SetUiStateArgs";
+export * from "./generated/StartChatArgs";
+export * from "./generated/StartChatResult";
+export * from "./generated/StoredEntry";
+export * from "./generated/serde_json/JsonValue";
+export * from "./generated/Theme";
+export * from "./generated/ToolError";
+export * from "./generated/ToolOutcome";
+export * from "./generated/UiConfig";
+export * from "./generated/UsageTotal";
+export * from "./generated/WirePart";
+export * from "./generated/WorkspacePathHit";
+
+/** message 存储条目 = StoredEntry 的 message 变体（kind 判别收窄，§6.1）。
+ *  类型级派生别名，非手写镜像。 */
+export type StoredMessageEntry = Extract<StoredEntry, { kind: "message" }>;
+
+/** meta 存储条目 = StoredEntry 的 meta 变体（会话级元信息，§6.1）。 */
+export type StoredMetaEntry = Extract<StoredEntry, { kind: "meta" }>;
+
+/** session 存储条目 = StoredEntry 的 session 变体（会话头，§6.1）。 */
+export type StoredSessionEntry = Extract<StoredEntry, { kind: "session" }>;
+
+// ---- §3.5 事件载荷族（手写聚合面：Rust 发射点为 json! 字面量，无结构体来源）----
 
 /** ask:opened 事件载荷：后端打开了询问/审批，前端应弹出对应面板。 */
 export type AskOpenedEvent = {

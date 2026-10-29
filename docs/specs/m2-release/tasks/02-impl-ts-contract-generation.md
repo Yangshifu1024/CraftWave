@@ -1,7 +1,7 @@
 # 实现：ts-rs 12 契约生成落地与错误码补行
 
 Type: task
-Status: open
+Status: resolved
 
 Blocked by: 01
 
@@ -16,7 +16,7 @@ Blocked by: 01
 - 引入 ts-rs 12.0.1（01 号票定案版本，stable、不加 specta 双 derive）为 dev-dependency + derive feature。
 - 对 §3.2/§3.4 契约结构体/枚举 derive `TS` 并 `#[ts(export)]`，按现有镜像面逐域覆盖：
   - `providers/types.rs`：AppConfig/ProviderConfig/ProviderModel（含 Proxy/Approval/Ui/Log/Notification 子配置——§3.2 供应商与应用配置域）；
-  - `storage/entries.rs`：WirePart/MessageEntry/MetaEntry/SessionEntry/SessionMeta/SessionTreeData/PlanItem（serde `tag = "kind"` + `rename_all = "camelCase"` 的判别联合形态须由 ts-rs 的 serde 兼容属性保真）；
+  - `storage/entries.rs`：WirePart/MessageEntry/MetaEntry/SessionEntry/SessionTreeData/PlanItem（serde `tag = "kind"` + `rename_all = "camelCase"` 的判别联合形态须由 ts-rs 的 serde 兼容属性保真）；
   - `backend/frames.rs`：ChatFrame 9 变体/UsageTotal/SequencedFrame（§3.4 帧基座）；
   - `backend/ask.rs`：AskPayload/AskAnswer/AskQuestion/AskChoice/AskOption/ApprovalDiff 及子类型（§3.2 询问/审批域）；
   - `host/commands/` 各域 Args/Result 负载（SaveSessionTreeArgs/StartChatArgs/ReadWorkspaceResult 等——manifest 里 args_type/ret_type 点名的全部类型）。
@@ -59,8 +59,19 @@ Blocked by: 01
 
 ## 验收
 
-- [ ] `ui/src/ipc/generated/` 生成物进 git，`types.ts` 无手写 payload 类型（仅 re-export），typecheck/test 全绿。
-- [ ] 故意改 Rust 侧任一契约字段不同步 TS，contract.test 或 typecheck 变红（漂移面收窄为单源的实证）。
-- [ ] manifest 的 args_type/ret_type 与生成物一一对应有测试钉住。
-- [ ] §3.6 增 E_IO 行、附录变更记录已回写；E_STORAGE_IO 行核对无出入。
-- [ ] 键面双向扫描（COMMANDS/EVENT_KEYS/toolSpecs）机制原样保留且全绿。
+- [x] `ui/src/ipc/generated/` 生成物进 git（78 文件），`types.ts` 无手写 payload 类型（仅 re-export），typecheck/test 全绿。
+- [x] 故意改 Rust 侧任一契约字段不同步 TS，contract.test 或 typecheck 变红（漂移面收窄为单源的实证）——实测：AskChoice.label 改名 label_x → cargo test 重新生成 → vitest typecheck 立即在 AskPanel/ask-panel.test 红；回滚后全绿。
+- [x] manifest 的 args_type/ret_type 与生成物一一对应有测试钉住（Rust ipc_manifest_test 正向 + 前端 contract.test 名义类型扫描）。
+- [x] §3.6 增 E_IO 行、附录变更记录已回写（v2.10）；E_STORAGE_IO 行核对无出入（util/errors.rs 常量与 storage_io() 语义一致）。
+- [x] 键面双向扫描（COMMANDS/EVENT_KEYS/toolSpecs）机制原样保留且全绿。
+
+## 决议记录（2026-10-30 实施）
+
+1. **导出驱动方式改为"清单宏统一导出"而非每类型 `#[ts(export)]`**：`#[ts(export)]` 会给每个类型生成独立导出测试，与 manifest 一致性测试在同一测试二进制内并行执行存在读写竞态；改为 `ipc_commands!` 宏扩展出 `export_contract_ts()`（宏内对每条 args/ret 直接调 `<T as ts_rs::TS>::export_all`，连带依赖闭包），由 `ipc_manifest_test::export_contract_types_and_match_manifest` 单点驱动。清单全集（含 `()`/bool/Vec<_>/Option<_>/HashMap<_,_>）在 ts-rs 12 均有 TS 实现，非名义类型导出自身时返回 `CannotBeExported` 占位、由测试按名义名单甄别。**「双向一致」的反向半边（生成物 ⊆ 消费面，防孤儿文件）落点在前端 contract.test**（票面「测试」节原写在 Rust 侧）：孤儿文件的清理动作发生在前端再导出列表，放在消费侧红得更准，且 vitest 在 CI 顺序上后于 cargo test，无读写竞态。
+2. **派生写法**：`#[cfg_attr(test, derive(ts_rs::TS))]`（非测试构建完全不见派生，ts-rs 保持 dev-dependency，cargo build 不依赖生成步骤）；Option 且 serde skip_serializing_if 的字段加 `#[cfg_attr(test, ts(optional))]` 渲染 `field?: T`（ts-rs 默认 `T | null` 不符合线上"键省略"语义）。与手写镜像的两处有意出入（生成物更贴 Rust wire 实际形状）：`AppConfig.notifications` Rust 侧无 skip 恒序列化 → 生成必填（旧镜像误标可选，前端默认值补齐对齐 Rust `AppConfig::default`）；`schemaVersion` Rust 侧 u32 → 生成 `number`（旧镜像为字面量 `2`）。另有 `StartChatArgs` 生成物不含 `channel` 字段：Rust 命令的 channel 是 tauri `Channel<SequencedFrame>` 平铺形参（非结构体字段），前端 client.ts 已单独传参，旧镜像的 `channel: unknown` 文档锚点职责由 client.ts 注释承接。
+3. **整数渲染**：ts-rs 12 默认 i64/u64 → bigint，与镜像 number 冲突；经 `ts_rs::Config::default().with_large_int("number")` 统一修正（导出测试内显式构造，无环境变量依赖）。
+4. **补充导出根**：帧面（ChatFrame/SequencedFrame）、询问面（AskPayload）、存储信封（StoredEntry）、错误面（IpcError）、边车面（ToolOutcome）不经命令清单，且 `export_all` 对非名义根不递归依赖——显式补根（含只藏身 Vec<WorkspacePathHit> 的 WorkspacePathHit）。
+5. **线帧类型对齐**：手写镜像把 seq/ts 并进 ChatFrame，生成物如实拆为 `SequencedFrame = {seq, ts?} & ChatFrame`（与 Rust `Channel<SequencedFrame>` 同名）——前端边界消费类型统一改为 SequencedFrame（frames.ts/runtime.ts/run-metrics.ts/client.ts 及测试），FrameBuffer 分发逻辑不变。
+6. **镜像别名收编**（D14 两侧同名）：ToolOutcomeJson→ToolOutcome（client.ts/ToolCards.tsx 消费点改名）、ThemeName→Theme、WorkspaceReadRange→ReadRange；无消费面的 NotificationPermission 镜像删除（契约 status 为 string，设置页引导组件放宽为 string 按字面量比较）；StoredMessageEntry/StoredMetaEntry/StoredSessionEntry 以 `Extract<StoredEntry, {kind}>` 派生别名承载。ToolOutcome 收编 truncated 字段（原边车超限占位是绕过结构体的手拼 JSON；None 不序列化，线上字节不变）。
+7. **残留手写面**（票内派生域清单未含，无 Rust 结构体来源）：§3.5 事件载荷族 5 个（AskOpenedEvent 等，Rust 发射点为 json! 字面量，随对应功能票收编）；MessageStatus 的 incomplete.error 在 assistant-ui（ReadonlyJSONValue）与生成物（JsonValue）间因 readonly 数组结构差异不可直接互赋，在 runtime.ts/tree-persistence.ts 两处边界显式收口（注释注明）。
+8. **既有抖动（非本票引入）**：`thread-rendering.test.tsx`「建议填入实际 composer」用例在 main 基线即偶发失败（本分支 stash 验证复现），与本票无关，建议另立小票。

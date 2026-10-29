@@ -1,15 +1,15 @@
 /**
  * 帧消费层（§3.4 帧 + §10.2 累积器语义）。
  *
- * ChatFrame 契约类型已归位 `ipc/types.ts`（§3.4 与 Rust backend/frames.rs 镜像，
- * 本文件 re-export 保持既有引用不破坏）。技术设计文档 §10.2：channel.onmessage
- * 把帧推入 FrameBuffer，消费侧以 64ms 节流快照迭代器取全量累计快照 yield 给
- * assistant-ui（替换语义）。本文件同时承担 NFR-02 前端侧延迟埋点（帧到达 →
- * 快照产出）。
+ * SequencedFrame 契约类型的单一来源是 ts-rs 生成物（02 号票：Rust backend/frames.rs
+ * derive(TS) → ipc/generated/，本文件 re-export 保持既有引用不破坏）。技术设计
+ * 文档 §10.2：channel.onmessage 把帧推入 FrameBuffer，消费侧以 64ms 节流快照
+ * 迭代器取全量累计快照 yield 给 assistant-ui（替换语义）。本文件同时承担
+ * NFR-02 前端侧延迟埋点（帧到达 → 快照产出）。
  */
-import type { ChatFrame } from "@/ipc/types";
+import type { SequencedFrame } from "@/ipc/generated/SequencedFrame";
 
-export type { ChatFrame };
+export type { SequencedFrame };
 
 /** 一次工具调用的累积态（镜像工具卡渲染面，§10.3）。 */
 export interface ToolCallState {
@@ -107,7 +107,7 @@ export class FrameBuffer {
    * 重复或倒退的帧直接丢弃（后端一次只发一个 run 的帧，序号单调递增）。
    * 每帧同时记录到达时刻埋点（供延迟统计）。
    */
-  push(frame: ChatFrame): void {
+  push(frame: SequencedFrame): void {
     // §5.6：前端持有 runEpoch，seq 必须 > 已见最大，否则丢弃
     if (frame.seq <= this.maxSeq) {
       this.droppedSeq += 1;

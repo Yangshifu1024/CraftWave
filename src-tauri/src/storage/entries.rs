@@ -6,9 +6,11 @@
 //! serde 派生后，序列化结果就是日志文件的行格式，不需要手写转换代码。
 //!
 //! 命名纪律（D14 + §3.1）：条目判别键用 `kind`（JSON 里靠这个字段区分行类型），
-//! 负载字段用 camelCase（驼峰命名）；前端 TypeScript 侧的同形状定义在
-//! `ui/src/ipc/types.ts`（「TS 镜像」），跨语言一致性由 §12.3 契约测试守护
-//! （「契约测试」指用同一批样例数据在两种语言间往返序列化、比对字节是否一致的测试）。
+//! 负载字段用 camelCase（驼峰命名）；前端 TypeScript 侧的同形状定义由 ts-rs
+//! 生成（02 号票：`#[cfg_attr(test, derive(ts_rs::TS))]` → ui/src/ipc/generated/，
+//! `?` 可选字段 = serde Option/缺省字段，线上可省略），跨语言一致性由 §12.3
+//! 契约测试守护（「契约测试」指用同一批样例数据在两种语言间往返序列化、
+//! 比对字节是否一致的测试）。
 //! 条目内容不可变（§6.1 追加规则）：编辑消息、切换分支一律追加新行，
 //! 本层不提供任何改写历史行的原语——这是崩溃恢复与多进程安全的基础。
 
@@ -16,8 +18,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 // ---- §3.2 WirePart（M1 子集；image 属 M2）----
+//
+// 契约类型的 TS 声明由 ts-rs 生成（02 号票，C-2 定案）：测试构建下派生 TS 并
+// 由 ipc_manifest_test 的导出面统一写出 ui/src/ipc/generated/（cargo build 不
+// 依赖生成步骤）。`#[cfg_attr(test, derive(ts_rs::TS), ts(...))]` 是统一写法：
+// 非测试构建完全不见该派生，ts-rs 因此只需 dev-dependency。
 
 /// 计划条目（planSnapshot part 载荷，FR-06）。
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlanItem {
@@ -27,6 +35,7 @@ pub struct PlanItem {
 }
 
 /// 计划条目状态（§3.2：pending/in_progress/completed）。
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PlanItemStatus {
@@ -37,6 +46,7 @@ pub enum PlanItemStatus {
 
 /// wire 中立 part（§3.2 D8 载体）：消息内容的组成片段，前端与后端共用同一形状。
 /// camelCase 变体名与字段名对齐 TS 镜像。
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(
     tag = "type",
@@ -67,16 +77,20 @@ pub enum WirePart {
         run_id: String,
         started_at: i64,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(optional))]
         ended_at: Option<i64>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(optional))]
         duration_ms: Option<i64>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(optional))]
         tool_count: Option<u32>,
     },
 }
 
 /// assistant 消息状态（assistant-ui 0.15.x `MessageStatus` 判别联合的镜像，§6.1 `status?`）。
 /// M1 只写入 complete（S4 实测：导入 running/requires-action 状态时前端会改写消息，complete 稳定）。
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(
     tag = "type",
@@ -94,11 +108,13 @@ pub enum MessageStatus {
     Incomplete {
         reason: IncompleteReason,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(optional))]
         error: Option<Value>,
     },
 }
 
 /// requires-action 的原因（kebab-case：tool-calls / interrupt）。
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum RequiresActionReason {
@@ -107,6 +123,7 @@ pub enum RequiresActionReason {
 }
 
 /// complete 的原因（kebab-case：stop / unknown）。
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum CompleteReason {
@@ -115,6 +132,7 @@ pub enum CompleteReason {
 }
 
 /// incomplete 的原因（kebab-case：cancelled/tool-calls/length/content-filter/other/error）。
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum IncompleteReason {
@@ -129,6 +147,7 @@ pub enum IncompleteReason {
 // ---- §6.1 存储条目 ----
 
 /// 消息角色（§3.2）。
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MessageRole {
@@ -139,34 +158,42 @@ pub enum MessageRole {
 
 /// message 条目载荷（§6.1）。同时是 `save_session_tree` 的 messages 元素形态
 /// （§6.3：前端树同步载荷，`parentId` null→省略字段，`status?` 仅 assistant）。
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MessageEntry {
     pub id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub parent_id: Option<String>,
     pub role: MessageRole,
     pub parts: Vec<WirePart>,
     pub created_at: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub run_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub status: Option<MessageStatus>,
 }
 
 /// meta 条目（§6.1）：会话的轻量元数据行，追加在段尾或重要事件之后。
 /// 采用追加式「最新赢」——不删除旧 meta 行，读取时以最后一条 meta 为准。
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MetaEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub active_leaf_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub title: Option<String>,
     pub revision: u64,
 }
 
 /// session 头条目（§6.1：会话首行）。
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionEntry {
@@ -177,6 +204,7 @@ pub struct SessionEntry {
 
 /// §6.1 存储条目（会话 JSONL 每行一个，serde tag=kind）。
 /// compaction / branchSummary 属 M2，暂不定义变体（未知 kind 读入即报损坏，M1 无前向兼容负担）。
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum StoredEntry {

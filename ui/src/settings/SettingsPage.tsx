@@ -524,12 +524,14 @@ function useNotificationPermission(): NotificationPermissionStatus | null {
 }
 
 /** 通知授权引导条（19 号票，macOS 为主）：未授权/被拒时提示 + 打开系统
- *  设置深链；授权后（或 unknown 查不出）不渲染，不打扰。 */
+ *  设置深链；授权后（或 unknown 查不出）不渲染，不打扰。
+ *  status 为生成物契约里的自由字符串（Rust 发射面取值 granted/denied/
+ *  prompt/unknown 四字面量，见 system.rs 文档），组件内部按字面量比较。 */
 function NotificationPermissionNotice({
   status,
   hasSettingsEntry,
 }: {
-  status: "prompt" | "denied";
+  status: string;
   hasSettingsEntry: boolean;
 }) {
   return (

@@ -21,6 +21,7 @@ impl ConfigPayload for Value {
 
 /// `get_ui_state` 参数契约（§3.3 #30：`{}`）。
 #[derive(Debug, Clone, Default, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct GetUiStateArgs {}
 
@@ -34,6 +35,7 @@ pub(crate) async fn get_ui_state(app: State<'_, AppState>) -> Result<Value, IpcE
 
 /// `set_ui_state` 参数契约（§3.3 #31：`{ state: unknown }`）。
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct SetUiStateArgs {
     pub state: Value,

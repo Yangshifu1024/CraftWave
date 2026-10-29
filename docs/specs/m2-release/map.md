@@ -47,6 +47,7 @@ CraftWave M2（正式版 1.0）出口：**用户的日常刚需全部可用**—
 
 <!-- 索引：一行一张已关闭票，足够判断相关性，详情点进票看 -->
 
+- [实现：ts-rs 12 契约生成落地与错误码补行（02）](tasks/02-impl-ts-contract-generation.md)：payload 类型单一来源切换 ts-rs 12 生成物（`ui/src/ipc/generated/` 78 文件进 git，cargo test 经清单宏统一导出，types.ts 只再导出）；线帧类型前端对齐 SequencedFrame（生成物如实拆 seq/ts 基座）；镜像别名 ToolOutcomeJson/ThemeName/WorkspaceReadRange 收编为 Rust 同名；漂移演练实证单源（Rust 改字段 → 重新生成 → typecheck 红）；§3.6 补 E_IO 行、变更记录 v2.10；事件载荷族 5 类型仍手写（无 Rust 结构体来源，随对应功能票收编）。检查链七项全绿。
 - [调研：tauri-specta M2 复评（C-2 收口）](tasks/01-research-tauri-specta-recheck.md)：维持"ts-rs 12 生成 payload + 手写键面 manifest"不变，M2 不引入 tauri-specta——2.0 线 RC 已 25 个月未 stable（2.0.0-rc.26/27，specta 同为 RC），是整套契约体系的替代而非补充，不在契约面扩张最大破坏面上动刀；再评触发 = specta 2.0 stable 发布或 M3+ 命令面再翻倍。02 号票按 ts-rs 12.0.1 stable 直接落地，payload 不加 specta 双 derive。
 - [调研：Office/PDF 解析 crate 选型](tasks/15-research-doc-crates.md)：三格式首选全纯 Rust、MIT 兼容、dmg 增量约 1–2MB——xlsx→calamine 0.37（回退 umya-spreadsheet）、docx→docx-rs read_docx（回退 docx-rust，兜底 zip+quick-xml）、pdf→pdf-extract 0.12（回退 pdfium-render，其按平台 3.4–3.7MB 动态库仅作质量逃生口）。16 号票三大风险：docx-rs 读侧开放缺陷 #873/#933 须真实样本回归+降级路径；pdf-extract 对不可信输入可能 panic（工具边界 catch_unwind）且非恒等 CMap 中文 PDF 可能乱码（#103）；纯 Rust 无 PDF 表格重建，v1 按线性文本交付。
 - [调研：web_search SearchProvider 选型（C-12）](tasks/11-research-web-search-provider.md)：**用户定案（2026-10-29，两轮决策）：本地优先混合三通道**——① 设置页独立 SearXNG 配置组（启用/地址/连通测试），启用且探活成功走本地 JSON API；② 未启用或失败默认内置 DuckDuckGo HTML 直接抓取（走代理）；③ Tavily BYOK 随 13 号票一并实现（免费 1000 credits/月不绑卡、大陆可直连，Key 已配才参与）。优先级钉死 ①→②→③；Brave 留位不实现；MCP 搜索通道随 08 号票共存。

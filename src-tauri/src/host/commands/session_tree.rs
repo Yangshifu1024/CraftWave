@@ -16,16 +16,19 @@ use crate::storage::{MessageEntry, SessionMeta, SessionStore, SessionTreeData, l
 
 /// `save_session_tree` 参数契约（§3.3 #26；文档命名锚点，命令形参按字段平铺展开）。
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct SaveSessionTreeArgs {
     pub session_id: String,
     pub messages: Vec<MessageEntry>,
+    #[cfg_attr(test, ts(optional))]
     pub active_leaf_id: Option<String>,
     pub base_revision: u64,
 }
 
 /// `save_session_tree` 返回契约（§3.3 #26：`{ revision }`）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct SaveSessionTreeResult {
     pub revision: u64,
@@ -33,6 +36,7 @@ pub struct SaveSessionTreeResult {
 
 /// `load_session_tree` 参数契约。
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct LoadSessionTreeArgs {
     pub session_id: String,
@@ -75,9 +79,11 @@ pub(crate) async fn load_session_tree(
 
 /// `list_sessions` 参数契约（§3.3 #14）。
 #[derive(Debug, Clone, Default, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct ListSessionsArgs {
     #[serde(default)]
+    #[cfg_attr(test, ts(optional))]
     pub project_id: Option<String>,
 }
 
@@ -101,6 +107,7 @@ pub(crate) async fn list_sessions(
 
 /// `load_tool_outcomes` 参数契约（§3.3 #29）。
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct LoadToolOutcomesArgs {
     pub session_id: String,

@@ -3,9 +3,12 @@
 //! 1. 遍历注册命令（`ipc_commands!` 单一事实源）落盘 `target/ipc-manifest.json`；
 //! 2. 落盘跨语言 roundtrip fixture `target/session-tree-fixture.jsonl`
 //!    （serde 序列化字节即 SegmentLog 落盘行格式），供前端
-//!    `ui/src/ipc/contract.test.ts` 做 TS 镜像比对与树还原校验。
+//!    `ui/src/ipc/contract.test.ts` 做 TS 镜像比对与树还原校验；
+//! 3. 导出契约负载类型的 TS 声明到 `ui/src/ipc/generated/`（02 号票，C-2
+//!    定案：ts-rs 12 生成物进 git，cargo build 不依赖生成步骤，导出由本测试
+//!    统一驱动——宏清单按类型统一调用，避免每类型散落导出测试）。
 //!
-//! 前端消费两文件前必须先跑 `cargo test`（§12.3 CI 顺序）。
+//! 前端消费产物前必须先跑 `cargo test`（§12.3 CI 顺序）。
 
 use std::fs;
 use std::path::PathBuf;
@@ -19,6 +22,129 @@ use crate::storage::segment::entry_line;
 /// 测试产物输出目录：crate 的 target/（与前端的比对脚本约定一致）。
 fn target_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target")
+}
+
+/// 契约 TS 生成物目录（进 git；types.ts 逐文件 re-export，前端单一来源）。
+fn generated_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../ui/src/ipc/generated")
+}
+
+/// 递归列出目录下全部 .ts 文件（相对 generated_dir 的斜杠路径，含 serde_json/ 子目录）。
+fn list_generated_files(dir: &std::path::Path, base: &std::path::Path, out: &mut Vec<String>) {
+    for entry in fs::read_dir(dir).unwrap_or_else(|e| panic!("读生成目录失败：{e}")) {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            list_generated_files(&path, base, out);
+        } else if path.extension().and_then(|e| e.to_str()) == Some("ts") {
+            out.push(
+                path.strip_prefix(base)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/"),
+            );
+        }
+    }
+}
+
+/// 02 号票：契约负载类型的 ts-rs 导出 + manifest ↔ 生成物正向一致 + 冒烟。
+/// 正向（manifest 名义类型 ⊆ 生成文件）在本测试钉住；反向（生成文件 ⊆
+/// types.ts 再导出面，防类型删除后遗留孤儿文件）由前端 contract.test 扫描
+/// ——cargo test → vitest 的 CI 顺序保证本测试先更新生成物、前端再校验。
+#[test]
+fn export_contract_types_and_match_manifest() {
+    let out_dir = generated_dir();
+    let cfg = ts_rs::Config::default()
+        .with_large_int("number") // i64/u64 等按镜像口径渲染 number（时间戳/计数均安全整数内）
+        .with_out_dir(out_dir.clone());
+
+    // ① 宏清单驱动导出：命令名义负载连带依赖闭包写出；非名义类型
+    //    （bool/String/Vec<_>/Option<_>/HashMap<_,_> 等）无独立生成文件，
+    //    返回 CannotBeExported 占位；() 直接成功跳过。
+    for (name, result) in crate::export_contract_ts(&cfg) {
+        match result {
+            Ok(()) => {}
+            Err(ts_rs::ExportError::CannotBeExported(_)) => {}
+            Err(e) => panic!("契约类型 {name} 的 TS 导出失败：{e}"),
+        }
+    }
+    // 帧面/询问面/错误面/边车面补充根：不经命令清单（帧经 Channel 推送、
+    // 询问载荷经事件推送、错误面与边车形状是命令负载的组成部分）；存储
+    // 信封 StoredEntry（session/message/meta 全集）也不在命令负载闭包内
+    // （命令走 MessageEntry/SessionTreeData），但它与子类型是 fixture 与
+    // 前端树持久化层的直接消费面。WorkspacePathHit 只出现在非名义清单类型
+    // Vec<WorkspacePathHit> 内，而 export_all 对非名义根类型不递归访问依赖，
+    // 须显式补根。
+    <crate::backend::frames::ChatFrame as ts_rs::TS>::export_all(&cfg).unwrap();
+    <crate::backend::frames::SequencedFrame as ts_rs::TS>::export_all(&cfg).unwrap();
+    <crate::backend::ask::AskPayload as ts_rs::TS>::export_all(&cfg).unwrap();
+    <crate::storage::StoredEntry as ts_rs::TS>::export_all(&cfg).unwrap();
+    <crate::host::commands::workspace::WorkspacePathHit as ts_rs::TS>::export_all(&cfg).unwrap();
+    <crate::util::errors::IpcError as ts_rs::TS>::export_all(&cfg).unwrap();
+    <crate::tools::ToolOutcome as ts_rs::TS>::export_all(&cfg).unwrap();
+
+    // ② 冒烟 + 关键类型存在
+    let mut files = Vec::new();
+    list_generated_files(&out_dir, &out_dir, &mut files);
+    files.sort();
+    assert!(
+        files.len() >= 40,
+        "生成物目录异常偏少（{} 个文件）：{:?}",
+        files.len(),
+        files
+    );
+    for key in [
+        "WirePart.ts",
+        "MessageEntry.ts",
+        "StoredEntry.ts",
+        "SessionTreeData.ts",
+        "SessionMeta.ts",
+        "AppConfig.ts",
+        "ProviderConfig.ts",
+        "RunConfig.ts",
+        "StartChatArgs.ts",
+        "ChatFrame.ts",
+        "SequencedFrame.ts",
+        "AskPayload.ts",
+        "AskAnswer.ts",
+        "IpcError.ts",
+        "ToolOutcome.ts",
+        "serde_json/JsonValue.ts",
+    ] {
+        assert!(
+            files.iter().any(|f| f == key),
+            "生成物缺关键类型 {key}（现有：{files:?}）"
+        );
+    }
+
+    // ③ 正向一致：manifest 每个名义 args_type/ret_type 必须有同名生成文件。
+    //    非名义类型（()、bool、Vec<_>、Option<_>、HashMap<_,_>）无独立文件，
+    //    天然跳过；清单里的 `Value` 是 serde_json::Value 的短名，其 TS 形状
+    //    由 serde_json/JsonValue.ts 承载，同样豁免。
+    for command in crate::ipc_manifest() {
+        for (label, ty) in [
+            ("&args", command.args_type.as_str()),
+            ("&ret", command.ret_type.as_str()),
+        ] {
+            let trimmed = ty.trim();
+            // 名义判定与前端 contract.test 同口径：字母/下划线开头、后随
+            // 字母/数字/下划线的单标识符（排除 ()、bool、Vec<_>、Value 等）
+            let nominal = !trimmed.is_empty()
+                && trimmed != "bool"
+                && trimmed != "Value"
+                && trimmed.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+                && trimmed
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_');
+            if nominal {
+                let expected = format!("{trimmed}.ts");
+                assert!(
+                    files.contains(&expected),
+                    "manifest 命令 {} 的 {label} 类型 {trimmed} 缺生成物 {expected}（现有：{files:?}）",
+                    command.name
+                );
+            }
+        }
+    }
 }
 
 /// 契约导出主测试：先校验 manifest 的不变式（命令名唯一且 snake_case）与

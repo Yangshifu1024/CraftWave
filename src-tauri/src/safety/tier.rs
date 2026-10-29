@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 /// 权限四档（FR-05-01）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum PermissionTier {
     /// 计划档：只读白名单，FileWrite/Network 工具从工具表过滤。

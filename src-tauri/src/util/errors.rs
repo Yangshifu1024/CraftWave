@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// 工具/安全层错误的统一载体：`code` 必须取自 §3.6 错误码注册表。
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolError {
@@ -128,11 +129,13 @@ pub const E_TOOL_BLOCKED: &str = "E_TOOL_BLOCKED";
 /// 前端 reject。与 `ToolError` 的分工：IpcError 走 IPC 边界（可带 `detail`、
 /// 需要 Deserialize 供测试/工具回放），ToolError 承载于 ToolOutcome。
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct IpcError {
     pub code: String,
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub detail: Option<Value>,
 }
 

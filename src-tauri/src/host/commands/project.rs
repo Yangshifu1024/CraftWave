@@ -13,6 +13,7 @@ use crate::storage::{ProjectError, ProjectMeta};
 
 /// `save_project` 参数契约（§3.3 #11：`{ project: { id?, name, homeDir } }`）。
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct SaveProjectArgs {
     pub project: NewProjectInput,
@@ -20,9 +21,11 @@ pub struct SaveProjectArgs {
 
 /// 项目新建/更新的入参形态。
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct NewProjectInput {
     #[serde(default)]
+    #[cfg_attr(test, ts(optional))]
     pub id: Option<String>,
     pub name: String,
     pub home_dir: String,
@@ -30,6 +33,7 @@ pub struct NewProjectInput {
 
 /// `delete_project` 参数契约（§3.3 #12）。
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct DeleteProjectArgs {
     pub project_id: String,

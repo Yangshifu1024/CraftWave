@@ -92,6 +92,7 @@ pub struct ToolSpec {
 
 /// 工具结果（§3.2 ToolOutcomeJson 镜像）：一次工具调用的返回，
 /// 同时承载模型通道（data/error）与 UI 通道（ui_summary/detail）。
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolOutcome {
@@ -99,15 +100,24 @@ pub struct ToolOutcome {
     pub ok: bool,
     /// 成功时的结构化数据（进模型文本与边车）。
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub data: Option<serde_json::Value>,
     /// 失败时的错误（错误码 + 人话消息）。
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub error: Option<ToolError>,
     /// 一行人话（UI 通道，不进模型文本）。
     pub ui_summary: String,
     /// 全量细节（toolres 边车；warnings 仅 UI 显示不进模型文本，§8.2）。
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub detail: Option<serde_json::Value>,
+    /// 截断标记（02 号票收编：toolres 超限占位载荷此前是绕过本结构体的
+    /// 手拼 JSON，字段收编后边车文件形状单一来源；正常结果恒 None 不序列化，
+    /// 线上字节不变）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub truncated: Option<bool>,
 }
 
 // ToolOutcome 的构造方法：成功/失败/附带 detail。
@@ -120,6 +130,7 @@ impl ToolOutcome {
             error: None,
             ui_summary: ui_summary.into(),
             detail: None,
+            truncated: None,
         }
     }
 
@@ -131,6 +142,7 @@ impl ToolOutcome {
             error: Some(err),
             ui_summary: ui_summary.into(),
             detail: None,
+            truncated: None,
         }
     }
 

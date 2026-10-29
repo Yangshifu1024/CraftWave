@@ -619,16 +619,19 @@ fn save_with_new_messages_syncs_index() {
 #[test]
 fn save_syncs_index_but_preserves_registry_fields() {
     let (store, _dir) = store();
-    store.index().upsert(crate::storage::SessionMeta {
-        id: "s1".to_string(),
-        project_id: Some("p1".to_string()),
-        title: "我的会话".to_string(),
-        created_at: 1000,
-        updated_at: 1000,
-        revision: 0,
-        message_count: 0,
-        total_tokens: 42,
-    }).unwrap();
+    store
+        .index()
+        .upsert(crate::storage::SessionMeta {
+            id: "s1".to_string(),
+            project_id: Some("p1".to_string()),
+            title: "我的会话".to_string(),
+            created_at: 1000,
+            updated_at: 1000,
+            revision: 0,
+            message_count: 0,
+            total_tokens: 42,
+        })
+        .unwrap();
     store
         .save_session_tree(
             "s1",

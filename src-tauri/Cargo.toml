@@ -89,6 +89,10 @@ objc2-user-notifications = { version = "0.3", features = [
 # 本地 OpenAI 兼容 mock SSE 服务（S2 流保真 / S3 工具循环测试用，不进产物）
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
+# 02 号票（C-2 定案）：契约负载类型的 TS 声明生成器——测试构建下 derive(TS)，
+# cargo test 导出 ui/src/ipc/generated/（生成物进 git，cargo build 不依赖生成步骤）。
+# serde-compat 为默认 feature（解析 serde 属性）；serde-json-impl 让 Value 可导出。
+ts-rs = { version = "12.0.1", features = ["serde-json-impl"] }
 
 [profile.release]
 codegen-units = 1

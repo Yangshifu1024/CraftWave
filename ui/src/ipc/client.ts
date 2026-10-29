@@ -17,7 +17,6 @@ import { listen } from "@tauri-apps/api/event";
 import type {
   AppConfig,
   AskAnswer,
-  ChatFrame,
   DeleteProviderArgs,
   IpcError,
   NotificationPermissionStatus,
@@ -29,11 +28,12 @@ import type {
   SaveProviderArgs,
   SaveSessionTreeArgs,
   SaveSessionTreeResult,
+  SequencedFrame,
   SessionMeta,
   SessionTreeData,
   StartChatArgs,
   StartChatResult,
-  ToolOutcomeJson,
+  ToolOutcome,
   WorkspacePathHit,
 } from "./types";
 
@@ -140,7 +140,7 @@ export function listSessions(projectId?: string): Promise<SessionMeta[]> {
 export function loadToolOutcomes(
   sessionId: string,
   callIds: string[],
-): Promise<Record<string, ToolOutcomeJson>> {
+): Promise<Record<string, ToolOutcome>> {
   return invoke(COMMANDS.loadToolOutcomes, { sessionId, callIds });
 }
 
@@ -169,15 +169,15 @@ export async function deleteProvider(providerId: DeleteProviderArgs["providerId"
 }
 
 /** §3.3 #18：启动一次 run（一轮模型对话）。channel 由调用方建立：Channel 是
- *  Tauri 提供的流式通道——后端把逐帧产出（文本增量、工具调用等 ChatFrame）
+ *  Tauri 提供的流式通道——后端把逐帧产出（文本增量、工具调用等 SequencedFrame）
  *  连续推给 onmessage 回调，Promise 本身只在 run 结束时兑现。 */
 export function startChat(args: {
   sessionId: string;
   messages: StartChatArgs["messages"];
   runConfig: StartChatArgs["runConfig"];
-  onFrame: (frame: ChatFrame) => void;
+  onFrame: (frame: SequencedFrame) => void;
 }): Promise<StartChatResult> {
-  const channel = new Channel<ChatFrame>();
+  const channel = new Channel<SequencedFrame>();
   channel.onmessage = args.onFrame;
   return invoke<StartChatResult>(COMMANDS.startChat, {
     sessionId: args.sessionId,

@@ -26,6 +26,7 @@ use crate::util::atomic::write_atomic;
 use crate::util::ids::new_uuid;
 
 /// §3.2 ProjectMeta（directories.json 元素与 list_projects 返回）。
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectMeta {

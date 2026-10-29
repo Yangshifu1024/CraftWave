@@ -26,7 +26,11 @@ import type { MessageEntry, StoredEntry, StoredMessageEntry } from "./types";
  *    manifest.events 覆盖 §3.5 实装键且与 EVENT_KEYS 一致；
  * 4. 跨语言 fixture（fixture：测试用的固定样例数据文件）：cargo test 产出的
  *    session-tree-fixture.jsonl（Rust serde 序列化落盘字节，即 storage 分段
- *    JSONL 行格式）——TS 镜像期望值逐条目比对 + 树还原校验。
+ *    JSONL 行格式）——TS 镜像期望值逐条目比对 + 树还原校验；
+ * 5. 契约生成物（02 号票，C-2 定案）：payload 类型单一来源 = ts-rs 生成物
+ *    ui/src/ipc/generated/（Rust ipc_manifest_test 统一导出、进 git）——
+ *    manifest 名义类型 ↔ 生成文件正向一致 + 生成文件 ↔ types.ts 再导出面
+ *    反向一致（类型删除后遗留的孤儿生成物在这里红）。
  *
  * 两个产物文件由 `cargo test`（src-tauri/）生成；CI 顺序 = cargo test → vitest
  * （§12.3），缺文件即红（契约不齐不允许静默跳过）。
@@ -456,5 +460,71 @@ describe("§6.1 跨语言 fixture roundtrip（Rust serde 落盘 ↔ TS 镜像）
         },
       ],
     });
+  });
+});
+
+// ---- 契约生成物（02 号票，C-2 定案）：payload 类型单一来源 = ts-rs 生成物 ----
+
+describe("§12.3 契约生成物：ts-rs generated/ ↔ manifest ↔ types.ts 再导出面", () => {
+  /** 生成物目录（cargo test 统一导出、进 git；types.ts 逐文件再导出）。 */
+  const generatedDir = resolve(import.meta.dirname, "./generated");
+
+  /** 递归列出 generated/ 下全部 .ts（posix 相对路径，含 serde_json/JsonValue.ts）。 */
+  function listGenerated(dir: string = generatedDir): string[] {
+    const out: string[] = [];
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        out.push(...listGenerated(full));
+      } else if (entry.name.endsWith(".ts")) {
+        out.push(path.relative(generatedDir, full).split(path.sep).join("/"));
+      }
+    }
+    return out.sort();
+  }
+
+  /** types.ts 声明的再导出面（export * from "./generated/X" 的 X 集合）。 */
+  function reExportedNames(): string[] {
+    const source = readFileSync(resolve(import.meta.dirname, "./types.ts"), "utf8");
+    return [...source.matchAll(/export \* from "\.\/generated\/(.+?)";/g)].map((m) => m[1]!);
+  }
+
+  it("manifest 每条名义 args_type/ret_type 在 generated/ 有同名导出（防生成物缺失）", () => {
+    const files = new Set(listGenerated());
+    for (const command of manifest.commands) {
+      // 名义类型 = 单个标识符；()、bool、Vec<_>、Option<_>、HashMap<_,_> 等
+      // 非名义类型无独立生成文件；Value（serde_json::Value 短名）的形状由
+      // serde_json/JsonValue.ts 承载。与 Rust 侧 ipc_manifest_test 同口径。
+      for (const ty of [command.args_type, command.ret_type]) {
+        const trimmed = ty.trim();
+        const nominal =
+          trimmed !== "" &&
+          trimmed !== "bool" &&
+          trimmed !== "Value" &&
+          /^[A-Za-z_][A-Za-z0-9_]*$/.test(trimmed);
+        if (nominal) {
+          expect(
+            files.has(`${trimmed}.ts`),
+            `manifest 命令 ${command.name} 的契约类型 ${trimmed} 缺生成物`,
+          ).toBe(true);
+        }
+      }
+    }
+  });
+
+  it("generated/ 与 types.ts 再导出面双向一致（孤儿生成物/漏再导出即红）", () => {
+    const files = new Set(listGenerated());
+    const exported = new Set(reExportedNames());
+    expect(exported.size, "types.ts 应逐文件再导出生成物").toBeGreaterThan(0);
+    for (const file of files) {
+      // serde_json/JsonValue.ts 以 "serde_json/JsonValue" 名义再导出
+      expect(
+        exported.has(file.replace(/\.ts$/, "")),
+        `生成物 ${file} 未被 types.ts 再导出（Rust 类型删除后的孤儿文件？）`,
+      ).toBe(true);
+    }
+    for (const name of exported) {
+      expect(files.has(`${name}.ts`), `types.ts 再导出了不存在的生成物 ${name}.ts`).toBe(true);
+    }
   });
 });

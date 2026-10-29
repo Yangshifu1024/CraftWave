@@ -23,6 +23,7 @@ pub const THROTTLE_INTERVAL: Duration = Duration::from_millis(64);
 /// §3.2 UsageTotal（帧面 usage 载荷，即模型的 token 用量统计；字段名的
 /// camelCase 由 serde 层统一转换）。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct UsageTotal {
     /// 输入消耗的 token 数（token = 模型处理文本的最小单位）。
@@ -49,6 +50,7 @@ impl UsageTotal {
 /// ChatFrame：帧协议全集 9 帧（§3.4）。帧类型名与字段名均按 §3.1 契约：
 /// type 值是 camelCase，字段名也是 camelCase。
 #[derive(Debug, Clone, Serialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(
     rename_all = "camelCase",
     rename_all_fields = "camelCase",
@@ -75,6 +77,7 @@ pub enum ChatFrame {
         /// 错误面（§3.4 `error?`）：被取消的工具补 E_CANCELLED（§5.3），
         /// 其余情况为 None。
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(optional))]
         error: Option<FrameError>,
     },
     /// 用量统计（本轮收口与 run 累计值，可带输出速度）。
@@ -83,6 +86,7 @@ pub enum ChatFrame {
         /// 输出速度，单位 token/秒（FR-01-13）；主循环按"本轮输出 token 数
         /// ÷ 本轮流式调用耗时"计算。
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(optional))]
         rate: Option<f64>,
     },
     /// run 结束（终态帧，必为最后一帧）：正常完成/出错/用户取消三种原因。
@@ -94,12 +98,14 @@ pub enum ChatFrame {
         /// 错误终态面（§3.4 `error?`）：reason=error 时承载（§11.3 的错误
         /// 分类器属 provider 适配层的后续工单，本阶段以 E_INTERNAL 兜底）。
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(optional))]
         error: Option<FrameError>,
     },
 }
 
 /// run 结束原因。
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum EndReason {
     /// 自然完成（模型给出最终答复）。
@@ -112,6 +118,7 @@ pub enum EndReason {
 
 /// 帧错误面（§3.4 `error?: { code, message }`，§3.6 错误码注册表）。
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct FrameError {
     /// 错误码（如 E_CANCELLED、E_INTERNAL）。
@@ -141,11 +148,13 @@ pub trait FrameSink: Send {
 
 /// 带序号与出口时刻的帧（序列化后即 §3.4 的 `{ seq, type, ts?, ...}` 基座）。
 #[derive(Debug, Clone, Serialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct SequencedFrame {
     /// 帧序号（出口递增，与发送顺序一致）。
     pub seq: u64,
     /// Rust 出口时刻的 Unix 毫秒（可选；测试注入的出口可缺省）。
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub ts: Option<i64>,
     /// 帧本体（序列化时展平到基座上）。
     #[serde(flatten)]

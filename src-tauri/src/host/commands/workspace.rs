@@ -51,16 +51,19 @@ fn to_ipc_error(err: ToolError) -> IpcError {
 
 /// `search_workspace_paths` 参数契约（§3.3 #27）。
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct SearchWorkspacePathsArgs {
     pub session_id: String,
     pub query: String,
     #[serde(default)]
+    #[cfg_attr(test, ts(optional))]
     pub limit: Option<usize>,
 }
 
 /// 路径命中条目（§3.3 #27：`{ path, kind }`）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspacePathHit {
     pub path: String,
@@ -190,16 +193,19 @@ fn display_path(path: &Path, project_root: &Path) -> String {
 
 /// `read_workspace_file` 参数契约（§3.3 #28：range 按行翻页）。
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct ReadWorkspaceFileArgs {
     pub session_id: String,
     pub path: String,
     #[serde(default)]
+    #[cfg_attr(test, ts(optional))]
     pub range: Option<ReadRange>,
 }
 
 /// 行区间（offset=起始行 0 基，limit=行数）。
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct ReadRange {
     pub offset: u64,
@@ -208,6 +214,7 @@ pub struct ReadRange {
 
 /// `read_workspace_file` 返回契约（§3.3 #28：`{ content, truncated }`）。
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct ReadWorkspaceResult {
     pub content: String,

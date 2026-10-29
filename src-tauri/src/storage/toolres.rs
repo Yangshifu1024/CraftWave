@@ -49,11 +49,14 @@ pub fn write_outcome(data_root: &Path, session_id: &str, call_id: &str, outcome:
     let path = call_file(&dir, call_id);
     let payload = match serde_json::to_vec(outcome) {
         Ok(bytes) if bytes.len() <= TOOLRES_MAX_BYTES => bytes,
-        _ => serde_json::to_vec(&serde_json::json!({
-            "ok": outcome.ok,
-            "uiSummary": outcome.ui_summary,
-            "truncated": true,
-        }))
+        _ => serde_json::to_vec(&ToolOutcome {
+            ok: outcome.ok,
+            data: None,
+            error: None,
+            ui_summary: outcome.ui_summary.clone(),
+            detail: None,
+            truncated: Some(true),
+        })
         .unwrap_or_default(),
     };
     // 边车属尽力而为通道：失败记日志不中断执行（帧面 summary 仍可用）

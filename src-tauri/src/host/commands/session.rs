@@ -18,9 +18,11 @@ pub(crate) const DEFAULT_SESSION_TITLE: &str = "新会话";
 
 /// `create_session` 参数契约（§3.3 #13）。
 #[derive(Debug, Clone, Default, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct CreateSessionArgs {
     #[serde(default)]
+    #[cfg_attr(test, ts(optional))]
     pub project_id: Option<String>,
 }
 
@@ -65,6 +67,7 @@ pub(crate) async fn create_session(
 
 /// `delete_session` 参数契约（§3.3 #16）。
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct DeleteSessionArgs {
     pub session_id: String,
@@ -100,6 +103,7 @@ pub(crate) async fn delete_session(
 
 /// `rename_session` 参数契约（§3.3 #17）。
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct RenameSessionArgs {
     pub session_id: String,

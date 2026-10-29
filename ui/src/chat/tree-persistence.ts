@@ -109,7 +109,11 @@ export function messageToEntry(
   };
   if (parentId !== null) entry.parentId = parentId;
   if (message.role === "assistant") {
-    entry.status = message.status;
+    // 契约 MessageStatus（生成物）与 assistant-ui MessageStatus 互为镜像；
+    // assistant-ui 的 incomplete.error 是 ReadonlyJSONValue，其 readonly 数组
+    // 按 TS 结构规则不可直接赋给生成物侧 JsonValue——边界处显式收口
+    //（共两处：此处与 runtime.ts 的消息导出面）。
+    entry.status = message.status as StoredMessageEntry["status"];
     // runId 在 metadata.custom（adapter yield 写入）；旧数据顶层写法兜底兼容
     const custom = message.metadata.custom as { runId?: string } | undefined;
     const runId = custom?.runId ?? (message.metadata as { runId?: string }).runId;

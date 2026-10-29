@@ -29,11 +29,13 @@ const MAX_INDEX_ENTRIES: usize = 2000;
 /// 单条会话元数据（§3.2 SessionMeta）：既是 index.json 里 sessions 数组的元素，
 /// 也是 `list_sessions` 命令返回给前端的条目形状。revision 是只增不减的修订号，
 /// 用来识别同一会话的哪个版本最新。
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionMeta {
     pub id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub project_id: Option<String>,
     pub title: String,
     pub created_at: i64,

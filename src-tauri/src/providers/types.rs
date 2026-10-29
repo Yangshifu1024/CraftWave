@@ -23,6 +23,7 @@ pub const MAX_KEYS_PER_PROVIDER: usize = 10;
 // ---- 供应商（CW schema v2，实现 FR-02-01/06/07）----
 
 /// apiFormat：决定 rig Model 构造方言（§11.1）。
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApiFormat {
@@ -48,6 +49,7 @@ impl ApiFormat {
 
 /// reasoning 映射档位（§11.4）：控制模型思考力度的档位值，
 /// 序列化为 snake_case 透传给供应商 API。
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReasoningEffort {
@@ -64,6 +66,7 @@ pub enum ReasoningEffort {
 }
 
 /// 单个供应商的完整配置（对应设置页里的一个供应商卡片）。
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderConfig {
@@ -75,19 +78,23 @@ pub struct ProviderConfig {
     pub api_format: ApiFormat,
     /// 缺省按 apiFormat 用官方缺省地址（§3.2）；自定义 OpenAI 兼容端点在此覆写。
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub base_url: Option<String>,
     /// API Key 明文（用户决策废除 keyring，2026-10-28：Key 存 config.json，
     /// 文件权限 0600 收紧；§9.4 已改写）。空串归一为 None。
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub api_key: Option<String>,
     /// 该供应商下的模型清单（至少一个，归一化强制）。
     pub models: Vec<ProviderModel>,
     /// 追加请求头（M2 per-provider headers 正式启用；字段 M1 就位）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub headers: Option<BTreeMap<String, String>>,
 }
 
 /// 供应商下的单个模型条目（含窗口参数与能力开关）。
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderModel {
@@ -103,15 +110,18 @@ pub struct ProviderModel {
     pub context_window: u32,
     /// reasoning 档位（可空 = 不传给供应商）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub reasoning_effort: Option<ReasoningEffort>,
     /// 是否支持图片输入（可空 = 未知）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub vision: Option<bool>,
 }
 
 // ---- 应用配置（实现 FR-14）----
 
 /// 代理模式：不走代理 / 跟随系统代理 / 手动指定代理地址。
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProxyMode {
@@ -124,6 +134,7 @@ pub enum ProxyMode {
 }
 
 /// 代理配置（manual 模式下必须给 url）。
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProxyConfig {
@@ -131,10 +142,12 @@ pub struct ProxyConfig {
     pub mode: ProxyMode,
     /// 手动代理地址（仅 manual 模式有意义）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub url: Option<String>,
 }
 
 /// 审批门配置（控制高危动作是否需要用户确认）。
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApprovalConfig {
@@ -150,6 +163,7 @@ pub struct ApprovalConfig {
 }
 
 /// 界面主题。
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Theme {
@@ -163,6 +177,7 @@ pub enum Theme {
 }
 
 /// 界面语言。
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Language {
     /// 简体中文（缺省）。
@@ -174,6 +189,7 @@ pub enum Language {
 }
 
 /// 界面偏好设置。
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UiConfig {
@@ -185,13 +201,16 @@ pub struct UiConfig {
     pub theme: Theme,
     /// 模型回复语言（可空 = 跟随用户输入）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub ai_language: Option<String>,
     /// 界面基准字号（12–18px；缺省沿用 14px，不缩放布局）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub font_size: Option<u8>,
 }
 
 /// 日志级别（serilog 风格，低到高）。
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LogLevel {
@@ -206,6 +225,7 @@ pub enum LogLevel {
 }
 
 /// 日志设置。
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LogConfig {
@@ -215,6 +235,7 @@ pub struct LogConfig {
 }
 
 /// 系统通知偏好（FR-13-06 设置项，17 号票）。
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NotificationConfig {
@@ -238,6 +259,7 @@ impl Default for NotificationConfig {
 
 /// 应用总配置，即 `~/.craftwave/config.json` 的载入/落盘结构：
 /// 一个 JSON 文件承载全部设置（供应商、激活模型、代理、审批、界面、日志、通知）。
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppConfig {
@@ -249,9 +271,11 @@ pub struct AppConfig {
     pub providers: Vec<ProviderConfig>,
     /// 当前选中的模型 id（指向某个 ProviderModel.id；悬空时归一化为 None）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub active_model_id: Option<String>,
     /// 代理设置（可空 = 未配置）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub proxy: Option<ProxyConfig>,
     /// 审批门设置。
     #[serde(default)]

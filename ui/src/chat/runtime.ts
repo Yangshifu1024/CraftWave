@@ -17,7 +17,7 @@
  */
 import type { ChatModelAdapter, ChatModelRunResult, ThreadMessage } from "@assistant-ui/react";
 import * as client from "@/ipc/client";
-import type { ChatFrame, MessageEntry, RunConfig } from "@/ipc/types";
+import type { MessageEntry, RunConfig, SequencedFrame } from "@/ipc/types";
 import { syncTreeBeforeSend, useSessionPersistStore } from "@/stores/session";
 import { bindCancelToRun } from "./cancel-bridge";
 import { type ChatPart, FrameBuffer, type FrameSnapshot, toParts } from "./frames";
@@ -151,7 +151,13 @@ export function toWire(messages: readonly ThreadMessage[]): MessageEntry[] {
       createdAt: message.createdAt.getTime(),
     };
     if (message.role === "assistant") {
-      if (message.status !== undefined) entry.status = message.status;
+      // 契约 MessageStatus（生成物）与 assistant-ui MessageStatus 互为镜像；
+      // assistant-ui 的 incomplete.error 是 ReadonlyJSONValue，其 readonly 数组
+      // 按 TS 结构规则不可直接赋给生成物侧 JsonValue——边界处显式收口
+      //（共两处：此处与 tree-persistence.ts 的落盘导出面）。
+      if (message.status !== undefined) {
+        entry.status = message.status as MessageEntry["status"];
+      }
       // runId 在 metadata.custom（yield 侧写入）；旧数据的顶层写法兜底兼容
       const meta = message.metadata as { custom?: { runId?: string }; runId?: string } | undefined;
       const runId = meta?.custom?.runId ?? meta?.runId;
@@ -169,7 +175,7 @@ export interface TauriAdapterDeps {
   startChat: typeof client.startChat;
   cancelRun: (sessionId: string) => Promise<boolean>;
   /** 帧旁路（生产：runMetrics.ingest；§10.2 onmessage 双写） */
-  onFrame?: (frame: ChatFrame) => void;
+  onFrame?: (frame: SequencedFrame) => void;
   /** 发送前树同步（15 号票；测试注入 no-op 绕开 IPC）。 */
   syncTree?: (messages: readonly ThreadMessage[]) => Promise<void>;
 }
@@ -269,7 +275,7 @@ export function createTauriChatAdapter(deps: TauriAdapterDeps): ChatModelAdapter
             sessionId: deps.sessionId,
             messages: toWire(messages),
             runConfig,
-            onFrame: (frame: ChatFrame) => {
+            onFrame: (frame: SequencedFrame) => {
               maxSeq = Math.max(maxSeq, frame.seq);
               if (import.meta.env.DEV && frame.type === "runEnded" && frame.reason === "error") {
                 console.error("[run] 错误终态：", frame.error);

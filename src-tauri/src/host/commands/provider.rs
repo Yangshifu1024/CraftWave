@@ -12,14 +12,17 @@ use crate::util::errors::IpcError;
 
 /// `save_provider` 参数契约（§3.3 #8；文档命名锚点，命令形参按字段平铺展开）。
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct SaveProviderArgs {
     pub provider: ProviderConfig,
+    #[cfg_attr(test, ts(optional))]
     pub new_key: Option<String>,
 }
 
 /// `delete_provider` 参数契约（§3.3 #9；文档命名锚点，命令形参按字段平铺展开）。
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct DeleteProviderArgs {
     pub provider_id: String,

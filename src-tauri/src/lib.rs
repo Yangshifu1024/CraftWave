@@ -30,8 +30,9 @@ pub mod storage;
 pub mod tools;
 pub mod util;
 
-// 契约类型仅在 `ipc_commands!` 清单中经 stringify! 引用（manifest 的 args_type/ret_type 名），
-// 实际类型面由命令形参承载；这些导入为清单可读性服务，编译器视为未用。
+// 契约类型在 `ipc_commands!` 清单中被两处引用：非测试构建经 stringify!（仅取
+// 类型名字符串），测试构建由 export_contract_ts 真实解析（ts-rs 导出）——
+// 后者仅在 cfg(test) 存在，故非测试构建下编译器仍视为未用。
 #[allow(unused_imports)]
 use host::commands::chat::{
     ApprovePlanArgs, CancelRunArgs, ResolveAskArgs, RunConfig, StartChatArgs, StartChatResult,
@@ -40,9 +41,13 @@ use host::commands::chat::{
 #[allow(unused_imports)]
 use host::commands::config::{SaveConfigArgs, get_config, save_config};
 #[allow(unused_imports)]
+use host::commands::project::{DeleteProjectArgs, SaveProjectArgs};
+#[allow(unused_imports)]
 use host::commands::provider::{
     DeleteProviderArgs, SaveProviderArgs, delete_provider, save_provider,
 };
+#[allow(unused_imports)]
+use host::commands::session::{CreateSessionArgs, DeleteSessionArgs, RenameSessionArgs};
 #[allow(unused_imports)]
 use host::commands::session_tree::{
     ListSessionsArgs, LoadSessionTreeArgs, LoadToolOutcomesArgs, SaveSessionTreeArgs,
@@ -50,13 +55,21 @@ use host::commands::session_tree::{
 };
 use host::commands::session_tree::{load_session_tree, save_session_tree};
 #[allow(unused_imports)]
-use host::commands::system::{NotificationPermissionStatus, resolve_exit_request};
+use host::commands::system::{NotificationPermissionStatus, ResolveExitRequestArgs};
+#[allow(unused_imports)]
+use host::commands::ui_state::{GetUiStateArgs, SetUiStateArgs};
+#[allow(unused_imports)]
+use host::commands::workspace::{
+    ReadWorkspaceFileArgs, ReadWorkspaceResult, SearchWorkspacePathsArgs, WorkspacePathHit,
+};
 #[allow(unused_imports)]
 use providers::types::{AppConfig, ProviderConfig};
 #[allow(unused_imports)]
 use serde_json::Value;
 #[allow(unused_imports)]
 use std::collections::HashMap;
+#[allow(unused_imports)]
+use storage::ProjectMeta;
 #[allow(unused_imports)]
 use storage::SessionMeta;
 #[allow(unused_imports)]
@@ -101,6 +114,29 @@ macro_rules! ipc_commands {
                     ret_type: stringify!($ret).to_string(),
                 },
             )* ]
+        }
+
+        /// 测试构建专用：按命令清单导出全部契约负载类型的 TS 声明（02 号票，
+        /// C-2 定案）——名义类型经 ts-rs 连带依赖闭包写出 ui/src/ipc/generated/
+        /// （生成物进 git，cargo build 不依赖生成步骤）；非名义类型（bool、
+        /// Vec<_>、Option<_>、HashMap<_,_> 等，含空参命令的 `()`）无独立生成
+        /// 文件，返回 CannotBeExported 占位，由调用方按名义名单甄别。
+        /// push 而非 vec![]：cfg 属性只能挂在语句上（dev-only 命令按构建
+        /// 配置同源进退）。
+        #[cfg(test)]
+        #[allow(clippy::vec_init_then_push)]
+        pub fn export_contract_ts(
+            cfg: &ts_rs::Config,
+        ) -> Vec<(&'static str, Result<(), ts_rs::ExportError>)> {
+            #[allow(unused_mut)]
+            let mut results: Vec<(&'static str, Result<(), ts_rs::ExportError>)> = Vec::new();
+            $(
+                $(#[$cfg])*
+                results.push((stringify!($args), <$args as ts_rs::TS>::export_all(cfg)));
+                $(#[$cfg])*
+                results.push((stringify!($ret), <$ret as ts_rs::TS>::export_all(cfg)));
+            )*
+            results
         }
     };
 }

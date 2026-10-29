@@ -293,6 +293,7 @@ async fn run_prepared(
             ))),
             ui_summary,
             detail: None,
+            truncated: None,
         }));
     }
     let ok = exit_code == Some(0);
@@ -309,6 +310,7 @@ async fn run_prepared(
         },
         ui_summary,
         detail: None,
+        truncated: None,
     }))
 }
 

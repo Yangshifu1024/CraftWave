@@ -58,6 +58,7 @@ pub const AUTO_CONFIRM_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// `start_chat` 参数契约（§3.3 #18；文档命名锚点，命令形参按字段平铺展开）。
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct StartChatArgs {
     pub session_id: String,
@@ -67,10 +68,12 @@ pub struct StartChatArgs {
 
 /// §3.2 RunConfig（Rust 侧镜像）。
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct RunConfig {
     /// 会话级覆盖；缺省全局 active。
     #[serde(default)]
+    #[cfg_attr(test, ts(optional))]
     pub model_id: Option<String>,
     pub tier: PermissionTier,
     #[serde(default = "default_max_turns")]
@@ -87,6 +90,7 @@ fn default_max_turns() -> u32 {
 
 /// `cancel_run` 参数契约（§3.3 #19）。
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct CancelRunArgs {
     pub session_id: String,
@@ -94,6 +98,7 @@ pub struct CancelRunArgs {
 
 /// `resolve_ask` 参数契约（§3.3 #22）。
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct ResolveAskArgs {
     pub ask_id: String,
@@ -102,6 +107,7 @@ pub struct ResolveAskArgs {
 
 /// `approve_plan` 参数契约（§3.3 #26c，14 号票增补：计划门批准快照冻结）。
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct ApprovePlanArgs {
     pub session_id: String,
@@ -109,6 +115,7 @@ pub struct ApprovePlanArgs {
 
 /// `start_chat` 返回契约（§3.3 #18：`{ runId }`）。
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct StartChatResult {
     pub run_id: String,

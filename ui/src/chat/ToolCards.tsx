@@ -29,7 +29,7 @@ import { useEffect, useState } from "react";
 import { useSessionScope } from "@/chat/session-scope";
 import { Button } from "@/components/ui/button";
 import * as client from "@/ipc/client";
-import type { ToolOutcomeJson } from "@/ipc/types";
+import type { ToolOutcome } from "@/ipc/types";
 
 /** 卡片通用状态判定（与 mirror 原型同口径，供测试直接断言）。 */
 export function cardPhase(
@@ -63,9 +63,9 @@ interface CardProps extends ToolCallMessagePartProps<CardArgs, unknown> {
 }
 
 /** 终态卡片的边车 detail（§7.5）：按 callId 拉一次，缺文件静默（summary 降级）。 */
-function useToolOutcomeDetail(toolCallId: string, settled: boolean): ToolOutcomeJson | null {
+function useToolOutcomeDetail(toolCallId: string, settled: boolean): ToolOutcome | null {
   const sessionId = useSessionScope();
-  const [outcome, setOutcome] = useState<ToolOutcomeJson | null>(null);
+  const [outcome, setOutcome] = useState<ToolOutcome | null>(null);
   useEffect(() => {
     if (!settled) return;
     let cancelled = false;

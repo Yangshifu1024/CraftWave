@@ -20,6 +20,7 @@ use tokio::sync::oneshot;
 /// 询问/审批载荷（§3.2；当前阶段实装 question/approval 两种形态，
 /// mcpTrust/projectTrust 信任询问属后续阶段）。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(
     tag = "kind",
     rename_all = "camelCase",
@@ -39,12 +40,15 @@ pub enum AskPayload {
         title: String,
         /// 改动预览（diff = 逐行对比的新旧差异；写文件类审批展示）。
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(optional))]
         diff: Option<ApprovalDiff>,
         /// 待批准的命令（命令类审批展示）。
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(optional))]
         command: Option<String>,
         /// 围栏要求确认的原因（如"命令含写信号"）。
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(optional))]
         fence_reason: Option<String>,
         /// 用户可选的操作列表（如仅本次允许/拒绝）。
         options: Vec<AskOption>,
@@ -53,6 +57,7 @@ pub enum AskPayload {
 
 /// 单个问题（§3.2 question.questions 元素）。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct AskQuestion {
     /// 问题 id（应答按它对号入座）。
@@ -61,6 +66,7 @@ pub struct AskQuestion {
     pub text: String,
     /// 可选的候选项列表（None = 纯自由文本题）。
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub options: Option<Vec<AskChoice>>,
     /// 是否允许在选项之外自由输入文字。
     pub allow_free_text: bool,
@@ -68,6 +74,7 @@ pub struct AskQuestion {
 
 /// 问题选项（id + 展示文案）。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct AskChoice {
     /// 选项 id（应答回传它）。
@@ -78,6 +85,7 @@ pub struct AskChoice {
 
 /// 审批选项（§3.2 approval.options 元素）。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct AskOption {
     /// 选项 id（应答回传它，如 allow_once/deny）。
@@ -86,14 +94,17 @@ pub struct AskOption {
     pub label: String,
     /// 是否为推荐选项（自动确认超时时默认选它）。
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub recommended: Option<bool>,
     /// 选该项后生效的模式（仅本次放行/本会话总放行/拒绝）。
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub mode: Option<AskMode>,
 }
 
 /// 审批动作模式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum AskMode {
     /// 仅本次放行。
@@ -107,6 +118,7 @@ pub enum AskMode {
 
 /// 改动预览（§3.2 approval.diff；write = 新文件全部为新增行，edit = 单段替换）。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct ApprovalDiff {
     /// 目标文件路径。
@@ -117,6 +129,7 @@ pub struct ApprovalDiff {
 
 /// diff 中的一段连续改动（hunk = 差异对比里带上下文的一小块）。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct DiffHunk {
     /// 段头（形如 `@@ -1,3 +1,4 @@` 的位置信息）。
@@ -127,6 +140,7 @@ pub struct DiffHunk {
 
 /// diff 中的单行。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct DiffLine {
     /// 行类别（新增/删除/上下文）。
@@ -137,6 +151,7 @@ pub struct DiffLine {
 
 /// diff 行类别。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum DiffLineKind {
     /// 新增行。
@@ -164,6 +179,7 @@ impl AskPayload {
 
 /// 询问/审批应答（§3.2 AskAnswer）。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(
     tag = "kind",
     rename_all = "camelCase",
@@ -179,6 +195,7 @@ pub enum AskAnswer {
     Approval {
         option_id: String,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(optional))]
         edited_command: Option<String>,
     },
 }

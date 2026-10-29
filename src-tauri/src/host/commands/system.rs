@@ -21,6 +21,7 @@ use crate::util::errors::E_INTERNAL;
 
 /// `resolve_exit_request` 参数契约（§9.6：`{ accepted: boolean }`）。
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct ResolveExitRequestArgs {
     /// true = 确认退出（结束活跃 run 并退出）；false = 取消退出。
@@ -56,6 +57,7 @@ pub(crate) async fn resolve_exit_request(
 
 /// `notification_permission_status` 返回契约（§9.6，19 号票）。
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct NotificationPermissionStatus {
     /// 授权态：granted（可送达）/ denied（被拒）/ prompt（未决定）/

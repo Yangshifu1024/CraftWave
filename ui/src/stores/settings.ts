@@ -23,6 +23,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   approval: { enabled: true, autoConfirm: false, commandAllowlist: [] },
   ui: { language: "zh-CN", theme: "system" },
   log: { level: "info" },
+  notifications: { enabled: true, interventionOnly: false },
 };
 
 /** 设置状态仓库的形状：草稿/基线双份 + 读写动作（说明见各字段行内注释）。 */

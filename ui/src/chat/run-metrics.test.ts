@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import type { ChatFrame } from "@/ipc/types";
+import type { SequencedFrame } from "@/ipc/types";
 import { contextProgress, useRunMetricsStore } from "./run-metrics";
 
 /**
@@ -13,8 +13,8 @@ import { contextProgress, useRunMetricsStore } from "./run-metrics";
 /** 帧序号自增分配器：给无 seq 的帧载荷编号（对齐真实后端行为）。 */
 let seq = 0;
 type DistributiveOmit<T, K extends keyof never> = T extends unknown ? Omit<T, K> : never;
-function f(frame: DistributiveOmit<ChatFrame, "seq">): ChatFrame {
-  return { seq: seq++, ...frame } as ChatFrame;
+function f(frame: DistributiveOmit<SequencedFrame, "seq">): SequencedFrame {
+  return { seq: seq++, ...frame } as SequencedFrame;
 }
 
 /** 每条用例前把 store 重置回初始空桶（用例间互不影响）。 */

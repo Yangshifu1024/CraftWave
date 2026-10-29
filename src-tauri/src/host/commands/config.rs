@@ -12,6 +12,7 @@ use crate::util::errors::IpcError;
 
 /// `save_config` 参数契约（§3.3 #7；文档命名锚点，命令形参按字段平铺展开）。
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct SaveConfigArgs {
     pub config: AppConfig,

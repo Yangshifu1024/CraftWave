@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type ChatFrame, FrameBuffer, type FrameSnapshot, toParts } from "./frames";
+import { FrameBuffer, type FrameSnapshot, type SequencedFrame, toParts } from "./frames";
 
 /**
  * 【S2 Spike】前端帧管线测试：保真（无丢失无乱序）、半截 JSON「参数准备中」、
@@ -7,12 +7,12 @@ import { type ChatFrame, FrameBuffer, type FrameSnapshot, toParts } from "./fram
  */
 
 /** 复刻 Rust S2 集成测试的直通帧序列（两轮 + 工具调用 + 半截 JSON 分段）。 */
-function scriptedFrames(): ChatFrame[] {
+function scriptedFrames(): SequencedFrame[] {
   let seq = 0;
   // 联合分发 Omit：保留每个帧变体自己的字段面
   type DistributiveOmit<T, K extends keyof never> = T extends unknown ? Omit<T, K> : never;
-  type FrameArg = DistributiveOmit<ChatFrame, "seq">;
-  const f = (frame: FrameArg): ChatFrame => ({ seq: seq++, ...frame }) as ChatFrame;
+  type FrameArg = DistributiveOmit<SequencedFrame, "seq">;
+  const f = (frame: FrameArg): SequencedFrame => ({ seq: seq++, ...frame }) as SequencedFrame;
   return [
     f({ type: "runStarted", runId: "run-1", model: "gpt-4o-mock" }),
     f({ type: "stepStarted", turn: 1 }),
@@ -173,14 +173,14 @@ describe("FrameBuffer 本票增量（13 号票）", () => {
       seq: 99,
       usage: { input: 120, output: 48, cacheRead: 0, cacheWrite: 0 },
       rate: 121,
-    } as ChatFrame);
+    } as SequencedFrame);
     buffer.push({
       ...frames[0]!,
       type: "usage",
       seq: 100,
       usage: { input: 240, output: 96, cacheRead: 4, cacheWrite: 0 },
       rate: 130,
-    } as ChatFrame);
+    } as SequencedFrame);
     const snap = buffer.snapshot();
     expect(snap.usage).toEqual({ input: 240, output: 96, cacheRead: 4, cacheWrite: 0 });
     expect(snap.rate).toBe(130);
@@ -230,8 +230,8 @@ describe("FrameBuffer 本票增量（13 号票）", () => {
     let t = 1000;
     const buffer = new FrameBuffer(() => t);
     type DistributiveOmit<T, K extends keyof never> = T extends unknown ? Omit<T, K> : never;
-    const f = (frame: DistributiveOmit<ChatFrame, "seq">): ChatFrame =>
-      ({ seq: buffer.arrivals.length, ...frame }) as ChatFrame;
+    const f = (frame: DistributiveOmit<SequencedFrame, "seq">): SequencedFrame =>
+      ({ seq: buffer.arrivals.length, ...frame }) as SequencedFrame;
     buffer.push(f({ type: "runStarted", runId: "run-9", model: "glm-mock" }));
     t = 1100;
     buffer.push(f({ type: "reasoningDelta", turn: 1, delta: "想一下…" }));
@@ -254,8 +254,8 @@ describe("FrameBuffer 本票增量（13 号票）", () => {
     // 形态：思考 → 工具 → 旁白（第二段思考）→ 工具 → 最终答案
     const buffer = new FrameBuffer();
     type DistributiveOmit<T, K extends keyof never> = T extends unknown ? Omit<T, K> : never;
-    const f = (frame: DistributiveOmit<ChatFrame, "seq">): ChatFrame =>
-      ({ seq: buffer.arrivals.length, ...frame }) as ChatFrame;
+    const f = (frame: DistributiveOmit<SequencedFrame, "seq">): SequencedFrame =>
+      ({ seq: buffer.arrivals.length, ...frame }) as SequencedFrame;
     buffer.push(f({ type: "runStarted", runId: "run-2", model: "glm-mock" }));
     buffer.push(f({ type: "reasoningDelta", turn: 1, delta: "先查目录，" }));
     buffer.push(f({ type: "toolStarted", callId: "c1", name: "list_dir" }));
@@ -285,8 +285,8 @@ describe("FrameBuffer 本票增量（13 号票）", () => {
   it("toParts：无思考流的 run 不产出 reasoning part", () => {
     const buffer = new FrameBuffer(() => 500);
     type DistributiveOmit<T, K extends keyof never> = T extends unknown ? Omit<T, K> : never;
-    const f = (frame: DistributiveOmit<ChatFrame, "seq">): ChatFrame =>
-      ({ seq: buffer.arrivals.length, ...frame }) as ChatFrame;
+    const f = (frame: DistributiveOmit<SequencedFrame, "seq">): SequencedFrame =>
+      ({ seq: buffer.arrivals.length, ...frame }) as SequencedFrame;
     buffer.push(f({ type: "runStarted", runId: "run-x", model: "glm-mock" }));
     buffer.push(f({ type: "textDelta", turn: 1, delta: "直接回答" }));
     buffer.push(f({ type: "runEnded", reason: "done", durationMs: 10, toolCount: 0, turn: 1 }));
@@ -300,8 +300,8 @@ describe("FrameBuffer 本票增量（13 号票）", () => {
     // 一个 reasoning part + 一个 text part（ZCode 过程组同款观感）。
     const buffer = new FrameBuffer();
     type DistributiveOmit<T, K extends keyof never> = T extends unknown ? Omit<T, K> : never;
-    const f = (frame: DistributiveOmit<ChatFrame, "seq">): ChatFrame =>
-      ({ seq: buffer.arrivals.length, ...frame }) as ChatFrame;
+    const f = (frame: DistributiveOmit<SequencedFrame, "seq">): SequencedFrame =>
+      ({ seq: buffer.arrivals.length, ...frame }) as SequencedFrame;
     buffer.push(f({ type: "runStarted", runId: "run-3", model: "glm-mock" }));
     buffer.push(f({ type: "reasoningDelta", turn: 1, delta: "想一下" }));
     buffer.push(f({ type: "textDelta", turn: 1, delta: "我来帮你梳理" }));

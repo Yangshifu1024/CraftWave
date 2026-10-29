@@ -20,11 +20,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
+use super::SessionMeta;
 use super::entries::{MessageEntry, MessageRole, MetaEntry, SessionEntry, StoredEntry, WirePart};
 use super::index_store::SessionIndex;
 use super::locks::LockMap;
 use super::segment::SessionLog;
-use super::SessionMeta;
 
 /// 会话存储器：数据根 + 会话锁表 + 会话索引（由 Tauri `State` 托管为全局单例）。
 pub struct SessionStore {
@@ -50,12 +50,14 @@ pub enum StorageError {
 }
 
 /// `load_session_tree` 返回（§6.1 定稿结构：headId=activeLeafId + messages 含 `status?`）。
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionTreeData {
     pub session_id: String,
     pub messages: Vec<MessageEntry>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub active_leaf_id: Option<String>,
     pub revision: u64,
 }
