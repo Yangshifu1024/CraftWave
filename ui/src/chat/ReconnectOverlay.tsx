@@ -29,10 +29,10 @@ export function ReconnectOverlay({ sessionId }: { sessionId: string }) {
   // 用类别+序号——快照段是纯追加式时间线（FrameBuffer 只追加不重排不删除），
   // index key 无重渲染风险
   const rows = snapshot.segments.map((segment, index) => {
-    let key = `tool:${segment.callId}`;
-    if (segment.kind !== "tool") {
-      key = `${segment.kind}:${index}`;
-    }
+    // 快照段列表的 key：tool 段用 callId（同调用跨帧稳定）；text/reasoning 段
+    // 用类别+序号——快照段是纯追加式时间线（FrameBuffer 只追加不重排不删除），
+    // index key 无重渲染风险
+    const key = segment.kind === "tool" ? `tool:${segment.callId}` : `${segment.kind}:${index}`;
     return (
       <SnapshotRow
         key={key}
