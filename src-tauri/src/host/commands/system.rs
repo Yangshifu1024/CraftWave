@@ -11,13 +11,20 @@
 //! `notification_permission_status` 返回真实授权态（插件自带的
 //! permission_state 桌面端恒 Granted，不可用），`open_notification_settings`
 //! 打开系统设置的通知面板。
+//!
+//! 数据目录入口（03 号票，FR-14-07，§3.3 #3）：`open_dir` 以固定白名单
+//! （数据目录 / 日志目录 / 已注册项目的项目数据目录，§7.1）校验入参路径
+//! 后交系统打开——排障第一入口（查看 config.json、日志、project.json）。
+
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::host::AppState;
 use crate::host::IpcError;
-use crate::util::errors::E_INTERNAL;
+use crate::safety::safe_join::PathGuard;
+use crate::util::errors::{E_INTERNAL, E_INVALID_ARG, E_IO, E_NOT_FOUND};
 
 /// `resolve_exit_request` 参数契约（§9.6：`{ accepted: boolean }`）。
 #[derive(Debug, Clone, Deserialize)]
@@ -140,4 +147,98 @@ pub(crate) fn open_notification_settings() -> Result<(), IpcError> {
     {
         Err(IpcError::new(E_INTERNAL, "该平台没有统一的通知设置入口"))
     }
+}
+
+/// `open_dir` 参数契约（§3.3 #3：`{ path: string }`）。
+#[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct OpenDirArgs {
+    /// 要打开的目录绝对路径（必须落在白名单内，见 [`open_dir_roots`]）。
+    pub path: String,
+}
+
+/// `open_dir` 白名单根集合（§7.1 目录布局）：数据目录 `~/.craftwave/`、
+/// 日志目录 `~/.craftwave/logs/`、各注册项目的项目数据目录
+/// `<项目主目录>/.craftwave/`（save_project 注册即建，必存在）。
+/// 日志目录应用启动不预建，此处幂等补建——白名单校验（PathGuard）要求
+/// 根真实存在，且"打开日志目录"按钮的语义就是目录没建也能点开。
+fn open_dir_roots(app: &AppState) -> Result<Vec<PathBuf>, IpcError> {
+    let data_root = app.store.root().to_path_buf();
+    let logs = data_root.join("logs");
+    let _ = std::fs::create_dir_all(&logs);
+    let mut roots = vec![data_root, logs];
+    let projects = app
+        .projects
+        .list()
+        .map_err(|e| IpcError::internal(format!("读取项目注册表失败：{e:?}")))?;
+    for project in projects {
+        roots.push(PathBuf::from(project.home_dir).join(".craftwave"));
+    }
+    // PathGuard::new 要求根可 canonicalize（真实存在）；项目主目录被用户
+    // 手动删除等残缺场景下该根自动退出白名单（校验报越界，不 panic）。
+    Ok(roots.into_iter().filter(|r| r.exists()).collect())
+}
+
+/// ToolError → IpcError（code 原样透传：E_PATH_OUTSIDE_ROOTS / E_INVALID_ARG）。
+fn tool_error_to_ipc(err: crate::util::errors::ToolError) -> IpcError {
+    IpcError::new(err.code, err.message)
+}
+
+/// 展开 "~" 前缀为用户主目录（unix HOME / windows USERPROFILE）。前端不知
+/// 道数据目录的绝对路径（§7.1 固定在 `~/.craftwave/`），入口按钮以 `~/`
+/// 语义路径传参，后端展开后照常走白名单校验；无 "~" 前缀（如项目数据目录
+/// 的绝对路径）原样返回。环境变量缺失时原样返回，交白名单校验拒绝。
+pub(crate) fn expand_home_prefix(path: &str) -> String {
+    let Some(rest) = path.strip_prefix('~') else {
+        return path.to_owned();
+    };
+    // 仅支持 "~" 与 "~/…"；"~user" 形态不支持，原样返回交白名单拒绝
+    if !rest.is_empty() && !rest.starts_with('/') && !rest.starts_with('\\') {
+        return path.to_owned();
+    }
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .unwrap_or_default();
+    format!("{home}{rest}")
+}
+
+/// `open_dir` 校验主体（headless 可测，无系统副作用）：白名单校验 → 目录
+/// 存在性校验，返回解析后的目录路径。越界 E_PATH_OUTSIDE_ROOTS；路径不
+/// 存在/不是目录 E_NOT_FOUND。表驱动测试见 system_test.rs。
+pub(crate) fn resolve_open_dir(app: &AppState, path: &str) -> Result<PathBuf, IpcError> {
+    if path.trim().is_empty() {
+        return Err(IpcError::new(E_INVALID_ARG, "path 不能为空"));
+    }
+    // "~" 语义路径展开为绝对路径后再校验（前端不感知 home 位置）
+    let expanded = expand_home_prefix(path);
+    let guard =
+        PathGuard::new(open_dir_roots(app)?).map_err(|e| IpcError::new(e.code, e.message))?;
+    let resolved = guard.resolve(&expanded).map_err(tool_error_to_ipc)?;
+    // 命令名义是 open_dir：只放行目录，文件路径不开放（防误传文件走默认应用打开）
+    if !resolved.is_dir() {
+        return Err(IpcError::new(
+            E_NOT_FOUND,
+            format!("目标不是目录：{}", resolved.display()),
+        ));
+    }
+    Ok(resolved)
+}
+
+/// `open_dir` 主体（§3.3 #3）：校验 → 交系统打开。OS 打开失败归 E_IO（§3.6）。
+pub(crate) fn open_dir_core(app: &AppState, path: &str) -> Result<(), IpcError> {
+    let resolved = resolve_open_dir(app, path)?;
+    // 脱离进程打开（macOS /usr/bin/open 即交即返；Windows/Linux 不等待
+    // 文件管理器退出），失败归 E_IO
+    open::that_detached(&resolved)
+        .map_err(|e| IpcError::new(E_IO, format!("系统打开目录失败：{e}")))
+}
+
+/// 系统打开目录（§3.3 #3，03 号票，FR-14-07）：设置页"打开数据/日志/项目
+/// 数据目录"三入口的统一承载。
+#[tauri::command]
+pub(crate) async fn open_dir(app: State<'_, AppState>, path: String) -> Result<(), IpcError> {
+    // 契约命名单一事实源：文档契约结构占位
+    let _args = OpenDirArgs { path: path.clone() };
+    open_dir_core(&app, &path)
 }

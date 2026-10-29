@@ -116,6 +116,22 @@ pub fn rebuild_message_stream(entries: &[MessageEntry]) -> Result<Vec<Arc<Messag
     Ok(out)
 }
 
+/// 系统级前缀注入（§6.2 注入次序首位，03 号票）：`agent.customPrompt`
+/// （FR-09-06）非空白时作为 history 首条 system 消息插入（层叠次序
+/// customPrompt → 压缩 summary → 当前计划，后两层随对应票在同一切入点续接）；
+/// 空/未配置零注入（原样返回）。注入不进消息史册，只在模型请求面生效。
+pub fn with_system_prefix(history: Vec<Arc<Message>>, prefix: Option<&str>) -> Vec<Arc<Message>> {
+    let Some(text) = prefix.map(str::trim).filter(|t| !t.is_empty()) else {
+        return history;
+    };
+    let mut out = Vec::with_capacity(history.len() + 1);
+    out.push(Arc::new(Message::System {
+        content: text.to_owned(),
+    }));
+    out.extend(history);
+    out
+}
+
 /// 单条消息 → rig 的 user 消息（user 消息不允许携带 toolCall，遇到即报错；
 /// 空内容时补一个空文本，避免无效消息）。
 fn to_rig_user(entry: &MessageEntry) -> Result<Message, WireError> {

@@ -111,6 +111,7 @@ describe("§12.3 manifest 双向扫描", () => {
       "save_config",
       "save_provider",
       "delete_provider",
+      "open_dir",
       "start_chat",
       "cancel_run",
       "resolve_ask",
@@ -151,6 +152,11 @@ describe("§12.3 manifest 双向扫描", () => {
     });
     expect(find("delete_provider")).toMatchObject({
       args_type: "DeleteProviderArgs",
+      ret_type: "()",
+    });
+    // 数据目录入口（03 号票，§3.3 #3）
+    expect(find("open_dir")).toMatchObject({
+      args_type: "OpenDirArgs",
       ret_type: "()",
     });
     // 核心链路两命令（13 号票，§3.3 #18/#19）

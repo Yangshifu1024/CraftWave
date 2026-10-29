@@ -4,6 +4,13 @@
 //! 常识性静态数据：slug 是前端稳定键；模型仅作"开箱建议值"，用户可增删改。
 //! 自定义 OpenAI 兼容端点不走预设（设置页直接空表单，apiFormat=openai_chat
 //! + baseUrl 覆写）。
+//!
+//! 单源口径（03 号票定稿，§3.3 注记）：本清单是预设的唯一权威——类型
+//! derive(TS) 后由 cargo test 统一导出类型声明与清单常量进
+//! `ui/src/ipc/generated/`（02 号票 ts-rs 机制），前端 re-export 消费，
+//! 不设 list_presets 命令、无前端副本。
+
+use serde::Serialize;
 
 use crate::providers::types::{ApiFormat, ProviderConfig, ProviderModel};
 use crate::util::ids::new_uuid;
@@ -11,6 +18,9 @@ use crate::util::ids::new_uuid;
 /// 预设建议模型（wire id + 建议窗口参数）。
 ///
 /// wire id 指模型在 API 请求体 `model` 字段里的取值（如 "deepseek-chat"）。
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PresetModel {
     /// 模型的 wire id（API 请求中的标识）。
     pub model: &'static str,
@@ -23,6 +33,9 @@ pub struct PresetModel {
 }
 
 /// 内置供应商预设。
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ProviderPreset {
     /// 前端稳定键（如 "deepseek"），前端路由/存储引用它而非展示名。
     pub slug: &'static str,
@@ -116,12 +129,26 @@ pub fn builtin_presets() -> &'static [ProviderPreset] {
             name: "智谱 GLM",
             api_format: ApiFormat::OpenaiChat,
             base_url: "https://open.bigmodel.cn/api/paas/v4",
-            models: &[PresetModel {
-                model: "glm-4.6",
-                context_window: 200_000,
-                max_tokens: 128_000,
-                vision: true,
-            }],
+            models: &[
+                PresetModel {
+                    model: "glm-5.3",
+                    context_window: 200_000,
+                    max_tokens: 128_000,
+                    vision: true,
+                },
+                PresetModel {
+                    model: "glm-5.3-flash",
+                    context_window: 200_000,
+                    max_tokens: 32_768,
+                    vision: true,
+                },
+                PresetModel {
+                    model: "glm-4.6",
+                    context_window: 200_000,
+                    max_tokens: 128_000,
+                    vision: true,
+                },
+            ],
         },
         ProviderPreset {
             slug: "openrouter",

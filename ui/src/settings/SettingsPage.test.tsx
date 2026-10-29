@@ -7,7 +7,8 @@
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AppConfig, NotificationPermissionStatus } from "@/ipc/types";
+import type { AppConfig, NotificationPermissionStatus, ProjectMeta } from "@/ipc/types";
+import { useSessionsStore } from "@/stores/sessions";
 import { useSettingsStore } from "@/stores/settings";
 import { SettingsPage } from "./SettingsPage";
 
@@ -16,7 +17,8 @@ const getConfigMock = vi.fn<() => Promise<AppConfig>>();
 const saveConfigMock = vi.fn<(config: AppConfig) => Promise<AppConfig>>();
 const permissionStatusMock = vi.fn<() => Promise<NotificationPermissionStatus>>();
 const openSettingsMock = vi.fn<() => Promise<void>>();
-// 只替换读/存配置与通知引导两命令，其余保留 client.ts 真实现
+const openDirMock = vi.fn<(path: string) => Promise<void>>();
+// 只替换读/存配置、通知引导与 open_dir，其余保留 client.ts 真实现
 vi.mock("@/ipc/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/ipc/client")>();
   return {
@@ -25,6 +27,7 @@ vi.mock("@/ipc/client", async (importOriginal) => {
     saveConfig: (config: AppConfig) => saveConfigMock(config),
     notificationPermissionStatus: () => permissionStatusMock(),
     openNotificationSettings: () => openSettingsMock(),
+    openDir: (path: string) => openDirMock(path),
   };
 });
 
@@ -44,9 +47,12 @@ beforeEach(() => {
   saveConfigMock.mockReset();
   permissionStatusMock.mockReset();
   openSettingsMock.mockReset();
+  openDirMock.mockReset();
   getConfigMock.mockResolvedValue(structuredClone(BASE_CONFIG));
   // 授权态默认已授予：不影响既有用例的断言面（引导条只在未授权时出现）
   permissionStatusMock.mockResolvedValue({ status: "granted", hasSettingsEntry: true });
+  // openDir 默认成功（三入口接线用例按需覆盖为 reject）
+  openDirMock.mockResolvedValue(undefined);
   useSettingsStore.setState({
     config: structuredClone(BASE_CONFIG),
     baseline: structuredClone(BASE_CONFIG),
@@ -54,6 +60,8 @@ beforeEach(() => {
     saving: false,
     error: null,
   });
+  // 会话域复位：无活跃 Tab / 无项目（项目入口用例按需造数据）
+  useSessionsStore.setState({ tabs: [], activeId: null, projects: [] });
 });
 // 每个用例后卸载渲染出的组件，避免 DOM 残留影响下一个用例
 afterEach(cleanup);
@@ -208,5 +216,102 @@ describe("字号与错误恢复入口", () => {
     await waitFor(() => expect(close).toHaveBeenCalledOnce());
     unmount();
     expect(document.documentElement.style.getPropertyValue("--ui-font-size")).toBe("18px");
+  });
+});
+
+/** 造一份项目注册表条目（homeDir 指向虚拟主目录）。 */
+function projectFixture(id: string, homeDir: string): ProjectMeta {
+  return { id, name: `项目-${id}`, homeDir, createdAt: 0 };
+}
+
+describe("数据目录入口（03 号票 open_dir 三按钮）", () => {
+  it("关于页「打开数据目录」按 ~/ 语义路径调 open_dir；失败行内提示", async () => {
+    render(<SettingsPage initialPage="about" onClose={() => {}} />);
+    const button = await screen.findByTestId("open-data-dir");
+    fireEvent.click(button);
+    await waitFor(() => expect(openDirMock).toHaveBeenCalledWith("~/.craftwave"));
+    // 失败 → 行内提示错误码与消息，不打断页面
+    openDirMock.mockRejectedValue({ code: "E_PATH_OUTSIDE_ROOTS", message: "路径越界" });
+    fireEvent.click(button);
+    await waitFor(() => expect(screen.getByText(/E_PATH_OUTSIDE_ROOTS/)).toBeTruthy());
+  });
+
+  it("日志页「打开日志目录」按 ~/ 语义路径调 open_dir", async () => {
+    render(<SettingsPage initialPage="logs" onClose={() => {}} />);
+    const button = await screen.findByTestId("open-logs-dir");
+    fireEvent.click(button);
+    await waitFor(() => expect(openDirMock).toHaveBeenCalledWith("~/.craftwave/logs"));
+  });
+
+  it("工作区与智能体页：有项目会话时按钮携带 <homeDir>/.craftwave；无项目会话禁用", async () => {
+    // 造活跃项目会话 Tab
+    const project = projectFixture("p1", "/Users/demo/Code/Demo");
+    useSessionsStore.setState({
+      projects: [project],
+      tabs: [
+        {
+          id: "s1",
+          projectId: "p1",
+          title: "会话",
+          createdAt: 0,
+          updatedAt: 0,
+          revision: 0,
+          messageCount: 1,
+          totalTokens: 0,
+        },
+      ],
+      activeId: "s1",
+    });
+    render(<SettingsPage initialPage="agent" onClose={() => {}} />);
+    const button = await screen.findByTestId("open-project-data-dir");
+    expect(button.getAttribute("disabled")).toBeNull();
+    fireEvent.click(button);
+    await waitFor(() =>
+      expect(openDirMock).toHaveBeenCalledWith("/Users/demo/Code/Demo/.craftwave"),
+    );
+
+    // 切到临时会话（无项目）：按钮禁用并说明原因
+    useSessionsStore.setState({
+      tabs: [
+        {
+          id: "s2",
+          projectId: undefined,
+          title: "临时会话",
+          createdAt: 0,
+          updatedAt: 0,
+          revision: 0,
+          messageCount: 1,
+          totalTokens: 0,
+        },
+      ],
+      activeId: "s2",
+    });
+    const disabled = await screen.findByTestId("open-project-data-dir");
+    expect(disabled.getAttribute("disabled")).not.toBeNull();
+    fireEvent.click(disabled);
+    // 禁用态点击不发起调用（仍只有有项目时那一次）
+    expect(openDirMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("自定义提示词（03 号票 agent.customPrompt）", () => {
+  it("工作区与智能体页编辑进草稿，保存载荷含 agent 字段；清空后载荷为空串", async () => {
+    const { unmount } = render(<SettingsPage initialPage="agent" onClose={() => {}} />);
+    const input = await screen.findByTestId("custom-prompt-input");
+    fireEvent.change(input, { target: { value: "始终用中文回复" } });
+    expect(useSettingsStore.getState().config?.agent?.customPrompt).toBe("始终用中文回复");
+    // agent 页脏点出现（pageSlice 切片生效）
+    await waitFor(() => expect(screen.getAllByTitle("有未保存的改动").length).toBeGreaterThan(0));
+    saveConfigMock.mockImplementation(async (config) => structuredClone(config));
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(saveConfigMock).toHaveBeenCalled());
+    expect(saveConfigMock.mock.calls[0]?.[0].agent).toEqual({ customPrompt: "始终用中文回复" });
+
+    // 清空：草稿值置 undefined（等价空），提交载荷 customPrompt 为 undefined
+    fireEvent.change(input, { target: { value: "" } });
+    await waitFor(() =>
+      expect(useSettingsStore.getState().config?.agent?.customPrompt).toBeUndefined(),
+    );
+    unmount();
   });
 });

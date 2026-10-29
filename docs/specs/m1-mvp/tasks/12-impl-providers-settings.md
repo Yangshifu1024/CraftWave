@@ -42,3 +42,5 @@ Status: resolved
 **测试清单**：Rust 51 例全绿、其中 1 例 `#[ignore]`（真钥匙串冒烟）——新增 45：util/atomic 3、providers types 8、presets 3、keyring 9（含冒烟）、service 8、storage 协调器 6、manifest 1，另有既有 spike frames 6 + mock_chat 5 + tests/ 集成 5（lib 46 + 集成 5 = 51）。前端 vitest 39 例（契约 4 + settings store 8 + 既有 27）全绿；`cargo fmt --check`/`cargo build`/`cargo clippy --all-targets -- -D warnings`/`cargo test` 与 `pnpm typecheck`/`pnpm test`/`pnpm lint` 七项全过。
 
 **备注**：仓库无 GLOSSARY.md（票面所列前置文件之一不存在，未阻塞）；AGENTS.local.md 亦不存在。
+
+**后续注记（M2 03 号票，2026-10-30）**：本票设置页事项中的"意向残留 UI 提示"（`ConfigStore::pending_intent`）**已作废（v2.5）**——v2.5 用户决策废除 keyring 后，keyring 时代的 intent.json 意向协议已随技术设计文档 §9.4 改写一并移除（ConfigStore 现仅 new/path/load/save/update 五个 API），该 UI 无实现对象。另：本票 Answer 预留的"前端持预设同源副本、slug 两侧测试钉住漂移"临时状态，已随 M2 03 号票收敛为 ts-rs 生成物单源（§3.3 预设单源注记）。

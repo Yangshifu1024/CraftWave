@@ -1,7 +1,7 @@
 # 实现：M1 欠账清偿与设置页打磨
 
 Type: task
-Status: open
+Status: resolved
 
 ## 要做什么
 
@@ -63,8 +63,22 @@ Status: open
 
 ## 验收
 
-- [ ] 预设清单仅 `providers/presets.rs` 一处权威，前端零副本；改一处预设字段前端类型即时感知（编译期）。
-- [ ] 设置页可一键打开数据目录、日志目录、项目数据目录；白名单外路径被拒。
-- [ ] custom_prompt 配置后新 run 的模型请求含该系统前缀（mock 后端断言），清空后不注入。
-- [ ] 脏状态三选与各设置页回归全绿（SettingsPage.test.tsx 既有用例零回归）。
-- [ ] §3.2（customPrompt 字段）、§3.3（open_dir 接线与预设单源注记）、§6.2（注入次序）回写完成；检查链七项全过。
+- [x] 预设清单仅 `providers/presets.rs` 一处权威，前端零副本；改一处预设字段前端类型即时感知（编译期）。
+- [x] 设置页可一键打开数据目录、日志目录、项目数据目录；白名单外路径被拒。（校验面与前端接线经测试验证；OS 打开动作本体未做真实桌面人工点验，见决议记录 11）
+- [x] custom_prompt 配置后新 run 的模型请求含该系统前缀（mock 后端断言），清空后不注入。（断言落 wire 层单测，见决议记录 6）
+- [x] 脏状态三选与各设置页回归全绿（SettingsPage.test.tsx 既有用例零回归）。
+- [x] §3.2（customPrompt 字段）、§3.3（open_dir 接线与预设单源注记）、§6.2（注入次序）回写完成；检查链七项全过。（cargo fmt/build/clippy/test 282 例 + pnpm typecheck/test 152 例/lint 全绿）
+
+## 决议记录（2026-10-30 实施）
+
+1. **预设"生成 TS 常量"的落点**：ts-rs 12 只生成类型声明、不生成运行时常量，票面预留的"不适合运行时结构"分支出线——常量改由 `ipc_manifest_test::export_contract_types_and_match_manifest` 在 cargo test 内以 serde 序列化 `builtin_presets()` 写 `ui/src/ipc/generated/BuiltinPresets.ts`（与 02 号票"生成物进 git、cargo test 统一导出"机制同构）；类型声明 `ProviderPreset.ts`/`PresetModel.ts` 由 export_all 补根导出（预设不在任何命令负载闭包内）。`&'static str`/`&'static [T]` 字段 ts-rs 12 原生支持（`str` 基础实现 + `&T` 包装实现），Rust 权威清单保持零拷贝静态形态不动。前端 `settings/presets.ts` 收敛为消费层（re-export 生成物 + 实例化辅助），"slug 两侧测试钉住"防线撤除并改为生成物消费冒烟（settings.test.ts）。
+2. **预设内容收敛取并集**：单源化核对发现 M1 实际漂移——前端副本的 zhipu 预设含 glm-5.3/glm-5.3-flash 而 Rust 权威只有 glm-4.6。收敛时把前端较新模型回填 Rust 权威清单（避免单源化造成"从预设添加"功能回退），内容以 Rust 侧为唯一权威。
+3. **open_dir 打开载体选 open crate 5.4.5**（票面二选一）：与 select_dir 用 rfd 免 JS 插件与 capability 的既有取舍一致——tauri-plugin-opener 会引入整套插件 IPC 面与 capability 配置，而本票只需要"Rust 校验后打开"一个动作；open crate 纯函数 `that_detached`（macOS 走 /usr/bin/open 即交即返，Windows/Linux detached 不阻塞）。
+4. **open_dir 校验面拆分**：`resolve_open_dir`（headless 可测、无系统副作用）+ `open_dir_core`（校验后调用 open crate），表驱动测试全部走校验面。白名单 = 数据目录（启动即建）+ 日志目录（`open_dir_roots` 幂等补建——票面"目录不存在则先 create_dir_all"落点在后端而非前端）+ 各注册项目的 `<homeDir>/.craftwave`（save_project 注册即建）；残缺注册（主目录被外部删除）自动退出白名单报越界不 panic。前端不感知 home 绝对路径：`~`/`~/…` 前缀由后端 `expand_home_prefix`（HOME/USERPROFILE）展开后照走白名单（安全语义由"展开路径仍被白名单拒绝"用例钉住）。错误分层沿用 PathGuard 既有口径：越界 E_PATH_OUTSIDE_ROOTS、白名单内目标不存在/非目录 E_NOT_FOUND。
+5. **customPrompt 落 `agent.customPrompt`（agent 组）而非票面建议的 `ui.customPrompt`**：语义属智能体行为（注入为对话系统级前缀），对应设置页"工作区与智能体"页；§3.2 agent 组 M2 已预定义（maxConcurrentSubagents/commandAudit），customPrompt 是该组首个实装字段。归一化空白→None（与 apiKey 同口径）。
+6. **注入实现与断言落点**：`backend/wire.rs` 新增 `with_system_prefix`（history 头部插 System 消息），`start_chat_core` 在 wire 切分后从 ConfigStore 读取注入——即票面"注入点 = start_chat 的 wire 重建出口"；未走 rig `RunSpec.preamble`（两条路在模型请求面等价，选 wire 层切入使 04 号票的压缩 summary 可在同点续接 §6.2 次序）。"mock 后端断言"落为 wire 层单测（有/无/空白三态 + trim 归一 + prompt 不受影响）——仓库无现成 HTTP mock 基建（S2/S3 的 axum mock 服务未进主干），不发真实网络请求的单元断言即本票可用的 mock 口径。
+7. **agent 页从纯占位收窄为"承载本票两项"**：边界节"四页仍 PlaceholderPage"按票面前端小节的明确要求（该页加 customPrompt 文本框与项目数据目录入口）收窄——agent 页改为真实页体但只含本票两项，Shell 选择/压缩阈值等余项仍留后续票（占位提示文案相应移除）。
+8. **"当前项目数据目录"的口径**：白名单收各注册项目的 `<homeDir>/.craftwave`（非仅"活跃会话所属项目"）——校验面与用户可开面等价（均为用户自行注册的目录，不越权），前端按钮按活跃 Tab 所属项目计算路径，无项目会话时按钮禁用并说明原因。
+9. **§3.2 顺带回写既有漂移**：AppConfig 结构回写时把 M1 已实装但文档漏记的 `ui.fontSize`（12–18px）与 `notifications` 组一并补入，使字段级设计与代码一致（仅文档回写，无代码改动）。
+10. **检查链**：七项全过——`cargo fmt --check`、`cargo build`、`cargo clippy --all-targets`（零警告）、`cargo test`（lib 257 + 集成 25，含 system_test 表驱动 6 例、wire 注入 3 例、agent normalize 1 例）；`pnpm typecheck`、`pnpm test`（152 例，新增 open_dir 三按钮接线 3 例 + customPrompt 页面 1 例 + store 单源/customPrompt 2 例 + 契约锚点）、`pnpm lint`。已知既有抖动（thread-rendering.test.tsx 建议预填用例偶发）本轮未出现。
+11. **未人工点验项（诚实声明）**：OS 打开动作本体（open::that_detached 调起 Finder/Explorer）与三按钮在真实桌面的视觉落位未经人工运行验证——逻辑、校验与接线均有自动化测试覆盖，真实桌面体验待用户日常使用确认。

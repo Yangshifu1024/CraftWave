@@ -31,7 +31,7 @@ vi.mock("@/ipc/client", () => ({
       : { code: "E_TEST", message: String(err) },
 }));
 
-import { newProviderFromPreset } from "@/settings/presets";
+import { BUILTIN_PRESETS, newProviderFromPreset } from "@/settings/presets";
 import { useSettingsStore } from "@/stores/settings";
 
 /** 造一个供应商配置样例（id 用于区分，其余字段值不参与断言）。 */
@@ -146,5 +146,63 @@ describe("settings store", () => {
       expect(provider?.models.length).toBeGreaterThan(0);
     }
     expect(newProviderFromPreset("nope")).toBeNull();
+  });
+
+  it("预设清单来自生成物：BUILTIN_PRESETS 与 Rust 权威清单同源（03 号票单源）", () => {
+    // 单源定稿后清单不再手写副本：消费面直接来自 ui/src/ipc/generated/
+    // BuiltinPresets.ts（cargo test 从 providers/presets.rs 序列化导出）。
+    // 这里钉住消费链路：6 家 slug 齐全、字段形态与 ProviderConfig 实例化兼容。
+    expect(BUILTIN_PRESETS.map((p) => p.slug)).toEqual([
+      "openai",
+      "anthropic",
+      "deepseek",
+      "moonshot",
+      "zhipu",
+      "openrouter",
+    ]);
+    for (const preset of BUILTIN_PRESETS) {
+      expect(preset.baseUrl).toMatch(/^https:\/\//);
+      expect(preset.models.length).toBeGreaterThan(0);
+      for (const model of preset.models) {
+        expect(model.model).not.toBe("");
+        expect(model.contextWindow).toBeGreaterThan(0);
+        expect(model.maxTokens).toBeGreaterThan(0);
+        expect(typeof model.vision).toBe("boolean");
+      }
+    }
+  });
+
+  it("customPrompt 草稿-提交-回显（03 号票 agent.customPrompt）", async () => {
+    const draft = configFixture([]);
+    useSettingsStore.setState({ config: structuredClone(draft) });
+    // 草稿层写入 agent.customPrompt（工作区与智能体页的文本框路径）
+    useSettingsStore.getState().patchConfig({
+      agent: { customPrompt: "始终用中文回复" },
+    });
+    expect(useSettingsStore.getState().config?.agent?.customPrompt).toBe("始终用中文回复");
+    // 草稿脏：与基线出现差集（agent 组是 agent 页切片）
+    expect(useSettingsStore.getState().config).not.toEqual(useSettingsStore.getState().baseline);
+    // 提交：save_config 载荷带 agent 字段；归一化结果回写草稿与基线
+    const normalized: AppConfig = {
+      ...draft,
+      agent: { customPrompt: "始终用中文回复" },
+    };
+    saveConfig.mockResolvedValue(normalized);
+    const ok = await useSettingsStore.getState().saveAll();
+    expect(ok).toBe(true);
+    expect(saveConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ agent: { customPrompt: "始终用中文回复" } }),
+    );
+    expect(useSettingsStore.getState().config?.agent?.customPrompt).toBe("始终用中文回复");
+    expect(useSettingsStore.getState().baseline?.agent?.customPrompt).toBe("始终用中文回复");
+
+    // 清空（空串 → 归一化后零注入）：后端 normalize 空白归 None，回显无该键
+    useSettingsStore.getState().patchConfig({ agent: { customPrompt: "" } });
+    saveConfig.mockResolvedValue(draft);
+    await useSettingsStore.getState().saveAll();
+    expect(saveConfig).toHaveBeenLastCalledWith(
+      expect.objectContaining({ agent: { customPrompt: "" } }),
+    );
+    expect(useSettingsStore.getState().config?.agent?.customPrompt).toBeUndefined();
   });
 });

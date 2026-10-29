@@ -1,101 +1,23 @@
 /**
- * 内置供应商预设（TS 侧镜像 src-tauri/src/providers/presets.rs）。
+ * 内置供应商预设消费层（03 号票单源定稿，§3.3 预设单源注记）。
  *
  * 预设是"一键新增常用供应商"的静态模板（名称/端点/模型建议，不含凭据）；
- * slug 是每个预设的稳定标识键（如 "openai"），两侧清单靠它对齐。
+ * slug 是每个预设的稳定标识键（如 "openai"）。
  *
- * 预设集是静态 UX 数据：Rust 侧为权威清单（presets.rs，含测试）；
- * §3.3 命令表无 list_presets 命令，M1 骨架由前端持同源副本，
- * 两侧 slug 对齐，漂移由票 Answer 记录、后续票再收敛。
+ * 单源口径：清单内容与类型都来自 Rust 权威 `src-tauri/src/providers/presets.rs`
+ * 的生成物——类型声明（ProviderPreset/PresetModel.ts，ts-rs 导出）与清单
+ * 常量（BuiltinPresets.ts，cargo test 序列化 builtin_presets() 产出）都在
+ * `ui/src/ipc/generated/`，本模块只 re-export 并提供实例化辅助（草稿层新 id
+ * 与 ProviderConfig 实例化）。M1 时代的同源手写副本与"slug 两侧测试钉住"
+ * 临时防线已随单源消亡；改 Rust 预设 → cargo test 重新生成 → 前端即时感知。
  */
 
-import type { ApiFormat, ProviderConfig } from "@/ipc/types";
+import { BUILTIN_PRESETS } from "@/ipc/generated/BuiltinPresets";
+import type { ProviderConfig, ProviderPreset } from "@/ipc/types";
 
-/** 预设里的单个模型建议（实例化时转成 ProviderModel，id 现生成）。 */
-export interface PresetModelSuggestion {
-  /** 模型 wire id（服务商接口里的模型标识，即显示名） */
-  model: string;
-  /** 上下文窗口（token 数） */
-  contextWindow: number;
-  /** 单次回复输出上限（token 数） */
-  maxTokens: number;
-  /** 是否支持图像输入 */
-  vision: boolean;
-}
-
-/** 一个供应商预设的完整模板。 */
-export interface ProviderPreset {
-  /** 前端稳定键（与 Rust 侧 slug 一致） */
-  slug: string;
-  /** 展示名（实例化后成为供应商名称） */
-  name: string;
-  apiFormat: ApiFormat;
-  baseUrl: string;
-  models: PresetModelSuggestion[];
-}
-
-/** 内置供应商预设全集（顺序即设置页"从预设添加"的展示顺序）。 */
-export const BUILTIN_PRESETS: ProviderPreset[] = [
-  {
-    slug: "openai",
-    name: "OpenAI",
-    apiFormat: "openai_chat",
-    baseUrl: "https://api.openai.com/v1",
-    models: [
-      { model: "gpt-4.1", contextWindow: 1_047_576, maxTokens: 32_768, vision: true },
-      { model: "gpt-4o-mini", contextWindow: 128_000, maxTokens: 16_384, vision: true },
-    ],
-  },
-  {
-    slug: "anthropic",
-    name: "Anthropic",
-    apiFormat: "anthropic_messages",
-    baseUrl: "https://api.anthropic.com",
-    models: [
-      { model: "claude-sonnet-4-5", contextWindow: 200_000, maxTokens: 64_000, vision: true },
-      { model: "claude-haiku-4-5", contextWindow: 200_000, maxTokens: 64_000, vision: true },
-    ],
-  },
-  {
-    slug: "deepseek",
-    name: "DeepSeek",
-    apiFormat: "openai_chat",
-    baseUrl: "https://api.deepseek.com",
-    models: [
-      { model: "deepseek-chat", contextWindow: 128_000, maxTokens: 8_192, vision: false },
-      { model: "deepseek-reasoner", contextWindow: 128_000, maxTokens: 8_192, vision: false },
-    ],
-  },
-  {
-    slug: "moonshot",
-    name: "Kimi (Moonshot)",
-    apiFormat: "openai_chat",
-    baseUrl: "https://api.moonshot.cn/v1",
-    models: [
-      { model: "kimi-k2-0905-preview", contextWindow: 256_000, maxTokens: 8_192, vision: false },
-    ],
-  },
-  {
-    slug: "zhipu",
-    name: "智谱 GLM",
-    apiFormat: "openai_chat",
-    baseUrl: "https://open.bigmodel.cn/api/paas/v4",
-    models: [
-      { model: "glm-5.3", contextWindow: 200_000, maxTokens: 128_000, vision: true },
-      { model: "glm-5.3-flash", contextWindow: 200_000, maxTokens: 32_768, vision: true },
-      { model: "glm-4.6", contextWindow: 200_000, maxTokens: 128_000, vision: true },
-    ],
-  },
-  {
-    slug: "openrouter",
-    name: "OpenRouter",
-    apiFormat: "openai_chat",
-    baseUrl: "https://openrouter.ai/api/v1",
-    models: [
-      { model: "openrouter/auto", contextWindow: 128_000, maxTokens: 32_768, vision: false },
-    ],
-  },
-];
+export type { PresetModel } from "@/ipc/generated/PresetModel";
+export type { ProviderPreset };
+export { BUILTIN_PRESETS };
 
 /** 按 slug 查找预设（找不到返回 undefined）。 */
 export function findPreset(slug: string): ProviderPreset | undefined {

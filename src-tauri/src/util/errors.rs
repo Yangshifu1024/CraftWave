@@ -112,6 +112,8 @@ pub const E_SESSION_RUNNING: &str = "E_SESSION_RUNNING";
 pub const E_SESSION_REV: &str = "E_SESSION_REV";
 /// 磁盘 IO 失败。
 pub const E_STORAGE_IO: &str = "E_STORAGE_IO";
+/// OS 层文件与目录操作失败（open_dir 等命令的 io::Error 归一面，§3.6）。
+pub const E_IO: &str = "E_IO";
 /// 内部状态兜底（未分类的意外错误）。
 pub const E_INTERNAL: &str = "E_INTERNAL";
 /// 命令执行超时。
@@ -122,6 +124,8 @@ pub const E_PLAN_STALE: &str = "E_PLAN_STALE";
 pub const E_FENCE_BLOCKED: &str = "E_FENCE_BLOCKED";
 /// 当前权限档排除了该工具。
 pub const E_TOOL_BLOCKED: &str = "E_TOOL_BLOCKED";
+/// 路径越界（FR-05-06，§9.1 safe_join 与 open_dir 白名单共用）。
+pub const E_PATH_OUTSIDE_ROOTS: &str = "E_PATH_OUTSIDE_ROOTS";
 
 /// IPC 命令统一错误负载（§3.1/§3.6，D14）：`{ code, message, detail? }`，camelCase。
 ///
@@ -178,6 +182,16 @@ impl IpcError {
     /// E_STORAGE_IO：磁盘 IO 失败（§3.6，13 号票补录）。
     pub fn storage_io(message: impl Into<String>) -> Self {
         Self::new(E_STORAGE_IO, message)
+    }
+
+    /// E_IO：OS 层文件与目录操作失败（§3.6，02 号票补行、03 号票实装）。
+    pub fn io(message: impl Into<String>) -> Self {
+        Self::new(E_IO, message)
+    }
+
+    /// E_PATH_OUTSIDE_ROOTS：路径越界（§3.6/§9.1）。
+    pub fn path_outside_roots(message: impl Into<String>) -> Self {
+        Self::new(E_PATH_OUTSIDE_ROOTS, message)
     }
 
     /// E_INTERNAL：内部状态兜底。

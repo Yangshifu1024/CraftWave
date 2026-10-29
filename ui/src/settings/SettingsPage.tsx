@@ -9,7 +9,8 @@
  *   4. 离开拦截（切页 / 返回 / 页内 Esc 共用同一份"保存 / 放弃 / 留下"三选弹框）。
  * 页面 JSX 手写；注册表（settings/registry.ts）只提供页序、页名与分组。
  * M1 数据面：providers / activeModelId / ui / proxy / approval / log 真实接线；
- * MCP / 技能 / 写入后检查 / 工作区与智能体四页保留导航占位，随后续里程碑接线。
+ * 03 号票补工作区与智能体页（customPrompt + 项目数据目录入口）与关于/日志页
+ * 的目录入口（open_dir）；MCP / 技能 / 写入后检查三页保留导航占位，随后续票接线。
  */
 
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
@@ -18,10 +19,10 @@ import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/components/ui/cn";
 import { Dialog } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
+import { Input, Textarea } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { notificationPermissionStatus, openNotificationSettings } from "@/ipc/client";
+import { notificationPermissionStatus, openDir, openNotificationSettings } from "@/ipc/client";
 import type { AppConfig, NotificationPermissionStatus } from "@/ipc/types";
 import {
   ArrowLeftIcon,
@@ -46,6 +47,7 @@ import {
   PAGE_ORDER,
   type PageKey,
 } from "@/settings/registry";
+import { useSessionsStore } from "@/stores/sessions";
 import { useSettingsStore } from "@/stores/settings";
 import { applyTheme } from "@/theme";
 import { applyUiFontSize } from "@/ui-font-size";
@@ -75,6 +77,8 @@ function pageSlice(config: AppConfig, page: PageKey): unknown {
       return config.proxy ?? null;
     case "security":
       return config.approval;
+    case "agent":
+      return config.agent ?? null;
     case "logs":
       return config.log;
     default:
@@ -257,7 +261,7 @@ export function SettingsPage({
     { key: "mcp", body: <PlaceholderPage page="mcp" /> },
     { key: "skills", body: <PlaceholderPage page="skills" /> },
     { key: "tools", body: <PlaceholderPage page="tools" /> },
-    { key: "agent", body: <PlaceholderPage page="agent" /> },
+    { key: "agent", body: config ? <AgentPage /> : null },
     { key: "logs", body: config ? <LogsPage /> : null },
     { key: "about", body: <AboutPage /> },
   ];
@@ -451,6 +455,64 @@ function SettingsRow({
         {description && <span className="settings-row-description">{description}</span>}
       </div>
       <div className="settings-row-control">{children}</div>
+    </div>
+  );
+}
+
+/**
+ * 「打开目录」按钮（03 号票，FR-14-07）：统一走 open_dir 命令（后端白名单
+ * 校验 + 系统打开），失败在按钮旁行内提示（错误码 + 消息），不打断页面。
+ */
+function OpenDirButton({
+  testId,
+  label,
+  path,
+  disabled = false,
+  disabledReason,
+}: {
+  testId: string;
+  label: string;
+  /** 要打开的目录绝对路径（disabled 时可为空串占位）。 */
+  path: string;
+  disabled?: boolean;
+  /** 禁用原因（无项目会话等），显示在按钮下方替代错误位。 */
+  disabledReason?: string;
+}) {
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <div className="flex min-w-0 flex-col items-end gap-1">
+      <Button
+        variant="outline"
+        size="sm"
+        data-testid={testId}
+        disabled={disabled}
+        onClick={() => {
+          setError(null);
+          openDir(path).catch((err: unknown) => {
+            const code =
+              typeof err === "object" && err !== null && "code" in err
+                ? String((err as { code: unknown }).code)
+                : "E_INTERNAL";
+            const message =
+              typeof err === "object" && err !== null && "message" in err
+                ? String((err as { message: unknown }).message)
+                : String(err);
+            setError(`${code}: ${message}`);
+          });
+        }}
+      >
+        {label}
+      </Button>
+      {error && (
+        <span className="max-w-full text-right text-ui-sm break-all text-[var(--danger)]">
+          {error}
+        </span>
+      )}
+      {!error && disabled && disabledReason && (
+        <span className="max-w-full text-right text-ui-sm text-[var(--muted-foreground)]">
+          {disabledReason}
+        </span>
+      )}
     </div>
   );
 }
@@ -792,7 +854,7 @@ function SecurityPage() {
   );
 }
 
-/** 日志页：日志级别下拉 */
+/** 日志页：日志级别下拉 + 打开日志目录入口（03 号票，FR-14-07） */
 function LogsPage() {
   const config = useSettingsStore((s) => s.config);
   const patchConfig = useSettingsStore((s) => s.patchConfig);
@@ -814,12 +876,83 @@ function LogsPage() {
             <option value="error">error</option>
           </Select>
         </SettingsRow>
+        <SettingsRow
+          title="日志目录"
+          description="进程日志与排障信息的落盘位置（~/.craftwave/logs）。"
+        >
+          <OpenDirButton testId="open-logs-dir" label="打开日志目录" path="~/.craftwave/logs" />
+        </SettingsRow>
       </SettingsSection>
     </div>
   );
 }
 
-/** 关于页：应用身份只读信息 */
+/**
+ * 工作区与智能体页（03 号票起承载本票两项；Shell 选择、压缩阈值等余项随后
+ * 续票——10/04 号票——接入）：
+ * - 自定义提示词（FR-09-06，agent.customPrompt）：多行文本，注入为每次对话
+ *   的系统级前缀；空/未配置零注入；走草稿 + saveAll 提交，下次 run 生效；
+ * - 打开项目数据目录（FR-14-07）：当前活跃 Tab 所属项目的 `<homeDir>/.craftwave`，
+ *   无项目会话时按钮禁用并说明原因。
+ */
+function AgentPage() {
+  const config = useSettingsStore((s) => s.config);
+  const patchConfig = useSettingsStore((s) => s.patchConfig);
+  const tabs = useSessionsStore((s) => s.tabs);
+  const activeId = useSessionsStore((s) => s.activeId);
+  const projects = useSessionsStore((s) => s.projects);
+  if (!config) return null;
+  const customPrompt = config.agent?.customPrompt ?? "";
+  const patchAgent = (patch: Partial<NonNullable<AppConfig["agent"]>>) =>
+    patchConfig({
+      agent: { ...config.agent, ...patch },
+    });
+  // 当前项目：活跃 Tab 所属（无活跃 Tab 或临时会话 → 无项目数据目录可开）
+  const activeTab = tabs.find((t) => t.id === activeId);
+  const project = activeTab?.projectId
+    ? projects.find((p) => p.id === activeTab.projectId)
+    : undefined;
+  const projectDataDir = project ? `${project.homeDir.replace(/[\\/]+$/, "")}/.craftwave` : null;
+
+  return (
+    <div>
+      <SettingsSection title="智能体">
+        <SettingsRow
+          title="自定义提示词"
+          description="注入为每次对话的系统级前缀；留空则不注入。保存后下次对话生效。"
+        >
+          <Textarea
+            aria-label="自定义提示词"
+            data-testid="custom-prompt-input"
+            className="min-h-24 w-[360px] max-w-full"
+            rows={4}
+            placeholder="例如：始终用中文回复；代码注释保持简洁。"
+            value={customPrompt}
+            onChange={(e) =>
+              patchAgent({ customPrompt: e.target.value === "" ? undefined : e.target.value })
+            }
+          />
+        </SettingsRow>
+      </SettingsSection>
+      <SettingsSection title="项目数据">
+        <SettingsRow
+          title="项目数据目录"
+          description="当前项目会话的元数据落盘位置（<项目主目录>/.craftwave）。"
+        >
+          <OpenDirButton
+            testId="open-project-data-dir"
+            label="打开项目数据目录"
+            path={projectDataDir ?? ""}
+            disabled={projectDataDir === null}
+            disabledReason="当前没有项目会话（项目会话指挂在某个项目下的会话 Tab）"
+          />
+        </SettingsRow>
+      </SettingsSection>
+    </div>
+  );
+}
+
+/** 关于页：应用身份只读信息 + 打开数据目录入口（03 号票，FR-14-07） */
 function AboutPage() {
   return (
     <div>
@@ -837,17 +970,27 @@ function AboutPage() {
           </div>
         </div>
       </section>
+      <section className="settings-section">
+        <h3 className="settings-section-title">数据</h3>
+        <div className="settings-section-card">
+          <SettingsRow
+            title="数据目录"
+            description="全部配置、会话历史与日志的落盘位置（~/.craftwave）。"
+          >
+            <OpenDirButton testId="open-data-dir" label="打开数据目录" path="~/.craftwave" />
+          </SettingsRow>
+        </div>
+      </section>
     </div>
   );
 }
 
-/** 占位页：导航分组照抄 CodeWave，四页内容随后续里程碑接线 */
+/** 占位页：导航分组照抄 CodeWave，余下页内容随后续里程碑接线 */
 function PlaceholderPage({ page }: { page: PageKey }) {
   const hints: Record<string, string> = {
     mcp: "MCP 服务器管理（连接状态与 mcp.json 编辑）随后续里程碑提供。",
     skills: "技能发现与启停管理随后续里程碑提供。",
     tools: "写入后检查与结果校验的配置随后续里程碑提供。",
-    agent: "Shell 选择、自定义提示词与压缩阈值随后续里程碑提供。",
   };
   return (
     <div>

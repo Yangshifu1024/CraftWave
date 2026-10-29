@@ -1,11 +1,11 @@
 //! wire 重建的单元测试：文本/推理原样映射、toolCall 与 toolResult 按调用
-//! id 配对拆分、prompt 与 history 切分、非法形态（空序列/末条非 user/悬空
-//! toolResult）拒绝。
+//! id 配对拆分、prompt 与 history 切分、系统级前缀注入（customPrompt 有/无
+//! 两态，03 号票）、非法形态（空序列/末条非 user/悬空 toolResult）拒绝。
 
 use rig::completion::Message;
 use rig::message::{ToolResultContent, UserContent};
 
-use crate::backend::wire::{WireError, rebuild_message_stream, split_prompt};
+use crate::backend::wire::{WireError, rebuild_message_stream, split_prompt, with_system_prefix};
 use crate::storage::{MessageEntry, MessageRole, WirePart};
 
 /// 造一条 user 文本消息。
@@ -205,4 +205,53 @@ fn run_marker_and_plan_snapshot_skipped() {
         panic!("应为 assistant");
     };
     assert_eq!(m.content.len(), 1, "只余 text part");
+}
+
+/// 提取 system 消息文本（断言辅助；非 system 即 panic）。
+fn system_text(msg: &Message) -> String {
+    let Message::System { content } = msg else {
+        panic!("应为 system 消息");
+    };
+    content.clone()
+}
+
+/// 有 customPrompt：注入为 history 首条 system 消息（§6.2 次序首位），其余
+/// 消息原序后移——模拟 start_chat 的 wire 出口调用形态。
+#[test]
+fn custom_prompt_injected_as_first_system_message() {
+    let entries = vec![user("u1", "第一条"), user("u2", "第二条")];
+    let (history, prompt) = split_prompt(&entries).unwrap();
+    assert_eq!(history.len(), 1, "前置：无注入时 history 只有 u1");
+
+    let injected = with_system_prefix(history, Some("始终用中文回复"));
+    assert_eq!(injected.len(), 2, "注入后首条 system + 原 history");
+    assert_eq!(system_text(as_message(&injected[0])), "始终用中文回复");
+    assert_eq!(user_text(as_message(&injected[1])), "第一条");
+    // prompt 不受注入影响
+    assert_eq!(user_text(&prompt), "第二条");
+}
+
+/// 无/空白 customPrompt：零注入（history 原样返回，不产生空 system 消息）。
+#[test]
+fn empty_or_missing_custom_prompt_injects_nothing() {
+    let entries = vec![user("u1", "第一条"), user("u2", "第二条")];
+    let (history, _) = split_prompt(&entries).unwrap();
+    let baseline_len = history.len();
+
+    for prefix in [None, Some(""), Some("   \n\t ")] {
+        let kept = with_system_prefix(history.clone(), prefix);
+        assert_eq!(kept.len(), baseline_len, "前缀 {prefix:?} 应零注入");
+        assert!(
+            !matches!(as_message(&kept[0]), Message::System { .. }),
+            "前缀 {prefix:?} 首条不应是 system"
+        );
+    }
+}
+
+/// 注入的空白归一：带首尾空白的前缀按 trim 后注入（与 AppConfig.normalize
+/// 的归一口径双保险，防绕过配置入口的调用方带入空白前缀）。
+#[test]
+fn custom_prompt_is_trimmed_before_injection() {
+    let injected = with_system_prefix(Vec::new(), Some("  保持简洁  "));
+    assert_eq!(system_text(as_message(&injected[0])), "保持简洁");
 }

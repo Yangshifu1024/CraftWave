@@ -257,6 +257,20 @@ impl Default for NotificationConfig {
     }
 }
 
+/// 智能体行为配置（§3.2 agent 组）。M2 03 号票起承载 customPrompt；
+/// maxConcurrentSubagents（10 号票）/ commandAudit（36 号票）随对应票补齐。
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentConfig {
+    /// 自定义提示词（FR-09-06）：非空时注入为每次对话的系统级前缀
+    /// （§6.2 注入次序首位：customPrompt → 压缩 summary → 当前计划）。
+    /// 空/未配置零注入；save_config 即时生效于下次 run（§7.6 缓存热替换）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub custom_prompt: Option<String>,
+}
+
 /// 应用总配置，即 `~/.craftwave/config.json` 的载入/落盘结构：
 /// 一个 JSON 文件承载全部设置（供应商、激活模型、代理、审批、界面、日志、通知）。
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -289,6 +303,10 @@ pub struct AppConfig {
     /// 系统通知偏好。
     #[serde(default)]
     pub notifications: NotificationConfig,
+    /// 智能体行为配置（可空 = 全部缺省，§3.2 agent 组）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub agent: Option<AgentConfig>,
 }
 
 /// serde 缺省值函数：schemaVersion 字段缺省时取当前版本号 2。
@@ -349,6 +367,7 @@ impl Default for AppConfig {
             ui: UiConfig::default(),
             log: LogConfig::default(),
             notifications: NotificationConfig::default(),
+            agent: None,
         }
     }
 }
@@ -368,6 +387,14 @@ impl AppConfig {
             .is_some_and(|size| !(12..=18).contains(&size))
         {
             return Err(IpcError::invalid_arg("界面字号必须在 12–18px 之间"));
+        }
+        // agent.customPrompt：空白归一为 None（"没填"与"填了又删掉"等价零注入）
+        if let Some(agent) = &mut self.agent {
+            agent.custom_prompt = agent
+                .custom_prompt
+                .take()
+                .map(|p| p.trim().to_owned())
+                .filter(|p| !p.is_empty());
         }
         if self.schema_version != SCHEMA_VERSION {
             return Err(IpcError::invalid_arg(format!(

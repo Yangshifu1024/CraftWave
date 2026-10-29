@@ -81,6 +81,23 @@ fn export_contract_types_and_match_manifest() {
     <crate::host::commands::workspace::WorkspacePathHit as ts_rs::TS>::export_all(&cfg).unwrap();
     <crate::util::errors::IpcError as ts_rs::TS>::export_all(&cfg).unwrap();
     <crate::tools::ToolOutcome as ts_rs::TS>::export_all(&cfg).unwrap();
+    // 内置预设类型（03 号票）：预设不在任何命令负载闭包内，显式补根导出
+    // 类型声明（ProviderPreset.ts + 依赖 PresetModel.ts）。
+    <crate::providers::presets::ProviderPreset as ts_rs::TS>::export_all(&cfg).unwrap();
+
+    // ①b 内置预设清单常量（03 号票单源定稿）：serde 序列化权威清单写入
+    //    BuiltinPresets.ts（前端 settings/presets.ts re-export 消费）——
+    //    改 Rust 预设 → cargo test 重新生成 → 前端类型与内容即时感知。
+    let presets_json = serde_json::to_string_pretty(crate::providers::presets::builtin_presets())
+        .expect("内置预设序列化失败");
+    let presets_ts = format!(
+        "// 本文件由 cargo test 生成（src-tauri/src/ipc_manifest_test.rs），勿手改。\n\
+         // 权威来源：src-tauri/src/providers/presets.rs 的 builtin_presets()（§3.3 预设单源注记）。\n\
+         import type {{ ProviderPreset }} from \"./ProviderPreset\";\n\n\
+         /** 内置供应商预设全集（顺序即设置页「从预设添加」的展示顺序）。 */\n\
+         export const BUILTIN_PRESETS: ProviderPreset[] = {presets_json};\n"
+    );
+    fs::write(out_dir.join("BuiltinPresets.ts"), presets_ts).expect("写入 BuiltinPresets.ts 失败");
 
     // ② 冒烟 + 关键类型存在
     let mut files = Vec::new();
@@ -108,6 +125,10 @@ fn export_contract_types_and_match_manifest() {
         "AskAnswer.ts",
         "IpcError.ts",
         "ToolOutcome.ts",
+        // 预设单源（03 号票）：类型声明 + 清单常量
+        "ProviderPreset.ts",
+        "PresetModel.ts",
+        "BuiltinPresets.ts",
         "serde_json/JsonValue.ts",
     ] {
         assert!(
@@ -200,6 +221,9 @@ fn export_ipc_manifest_and_cross_lang_fixture() {
         "NotificationPermissionStatus"
     );
     assert_eq!(find("open_notification_settings").ret_type, "()");
+    // 数据目录入口（03 号票，§3.3 #3）
+    assert_eq!(find("open_dir").args_type, "OpenDirArgs");
+    assert_eq!(find("open_dir").ret_type, "()");
     // 标题栏命令（骨架既有）仍在注册表
     assert!(
         commands

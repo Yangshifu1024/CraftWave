@@ -190,3 +190,49 @@ fn ui_font_size_roundtrip_and_bounds() {
         assert_eq!(config.normalize().unwrap_err().code, E_INVALID_ARG);
     }
 }
+
+// 断言（03 号票）：agent.customPrompt 的 normalize 三态——非空白保留并
+// trim、空白归一为 None（零注入）、agent 组整体缺省容忍（旧配置无该键）。
+#[test]
+fn agent_custom_prompt_normalize_and_roundtrip() {
+    use crate::providers::types::AgentConfig;
+
+    // 非空白：保留并去首尾空白；serde 往返保持 camelCase 键面
+    let mut config = AppConfig {
+        agent: Some(AgentConfig {
+            custom_prompt: Some("  始终用中文回复  ".into()),
+        }),
+        ..AppConfig::default()
+    };
+    config.normalize().unwrap();
+    assert_eq!(
+        config.agent.as_ref().unwrap().custom_prompt.as_deref(),
+        Some("始终用中文回复")
+    );
+    let value = serde_json::to_value(&config).unwrap();
+    assert_eq!(value["agent"]["customPrompt"], "始终用中文回复");
+    assert_eq!(serde_json::from_value::<AppConfig>(value).unwrap(), config);
+
+    // 空白形态：全部归一为 None（"没填"与"填了又删掉"等价零注入）
+    for blank in ["", "   ", " \n\t "] {
+        let mut config = AppConfig {
+            agent: Some(AgentConfig {
+                custom_prompt: Some(blank.into()),
+            }),
+            ..AppConfig::default()
+        };
+        config.normalize().unwrap();
+        assert!(
+            config.agent.as_ref().unwrap().custom_prompt.is_none(),
+            "空白 customPrompt {blank:?} 应归一为 None"
+        );
+    }
+
+    // agent 组缺省：旧配置（无 agent 键）反序列化容忍且 normalize 通过
+    let mut config = AppConfig::default();
+    assert!(config.agent.is_none());
+    config.normalize().unwrap();
+    let raw = r#"{"schemaVersion":2,"providers":[],"approval":{"enabled":true,"autoConfirm":false,"commandAllowlist":[]},"ui":{"language":"zh-CN","theme":"system"},"log":{"level":"info"},"notifications":{"enabled":true,"interventionOnly":false}}"#;
+    let parsed: AppConfig = serde_json::from_str(raw).unwrap();
+    assert!(parsed.agent.is_none(), "旧配置无 agent 键应容忍");
+}

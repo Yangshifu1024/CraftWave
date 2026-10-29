@@ -630,6 +630,16 @@ pub async fn start_chat_core(
     //    错误在命令内直接 E_INVALID_ARG）
     let (history, prompt) = crate::backend::wire::split_prompt(&messages)
         .map_err(|e| IpcError::invalid_arg(e.to_string()))?;
+    // ②b 系统级前缀（§6.2 注入次序首位，03 号票）：agent.customPrompt 非空时
+    //    注入为 history 首条 system 消息；空/未配置零注入。save_config 即时
+    //    生效于下次 run（config.load 命中缓存热替换后的值，§7.6）。
+    let custom_prompt = app
+        .config
+        .load()?
+        .agent
+        .as_ref()
+        .and_then(|a| a.custom_prompt.clone());
+    let history = crate::backend::wire::with_system_prefix(history, custom_prompt.as_deref());
     // ③ 工具集（§8.1 三处同源过滤）
     let tool_specs = crate::tools::filter_for_tier(crate::tools::build_registry(), run_config.tier);
     let tools = to_rig_tool_definitions(tool_specs)?;

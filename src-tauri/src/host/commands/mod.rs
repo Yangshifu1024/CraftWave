@@ -22,6 +22,10 @@ pub mod traffic_lights;
 mod chat_test;
 
 #[cfg(test)]
+#[path = "system_test.rs"]
+mod system_test;
+
+#[cfg(test)]
 #[path = "workspace_test.rs"]
 mod workspace_test;
 

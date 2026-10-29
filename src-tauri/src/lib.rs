@@ -55,7 +55,7 @@ use host::commands::session_tree::{
 };
 use host::commands::session_tree::{load_session_tree, save_session_tree};
 #[allow(unused_imports)]
-use host::commands::system::{NotificationPermissionStatus, ResolveExitRequestArgs};
+use host::commands::system::{NotificationPermissionStatus, OpenDirArgs, ResolveExitRequestArgs};
 #[allow(unused_imports)]
 use host::commands::ui_state::{GetUiStateArgs, SetUiStateArgs};
 #[allow(unused_imports)]
@@ -176,6 +176,7 @@ ipc_commands! {
     host::commands::system::resolve_exit_request => args: ResolveExitRequestArgs, ret: ();
     host::commands::system::notification_permission_status => args: (), ret: NotificationPermissionStatus;
     host::commands::system::open_notification_settings => args: (), ret: ();
+    host::commands::system::open_dir => args: OpenDirArgs, ret: ();
     #[cfg(debug_assertions)]
     mock_chat::mock_chat_run => args: (), ret: ();
     select_dir => args: (), ret: Option<String>;

@@ -20,6 +20,7 @@ import type {
   DeleteProviderArgs,
   IpcError,
   NotificationPermissionStatus,
+  OpenDirArgs,
   ProjectMeta,
   ProviderConfig,
   ReadWorkspaceResult,
@@ -54,6 +55,7 @@ export const COMMANDS = {
   saveConfig: "save_config",
   saveProvider: "save_provider",
   deleteProvider: "delete_provider",
+  openDir: "open_dir",
   startChat: "start_chat",
   cancelRun: "cancel_run",
   resolveAsk: "resolve_ask",
@@ -166,6 +168,13 @@ export async function saveProvider(
 /** §3.3 #9：删除供应商并同步删除 keyring 账户。 */
 export async function deleteProvider(providerId: DeleteProviderArgs["providerId"]): Promise<void> {
   return invoke<void>(COMMANDS.deleteProvider, { providerId } satisfies DeleteProviderArgs);
+}
+
+/** §3.3 #3：系统打开目录（03 号票，FR-14-07）。路径必须落在后端白名单内
+ *  （数据目录/日志目录/项目数据目录，§7.1），越界 reject E_PATH_OUTSIDE_ROOTS，
+ *  目录不存在 reject E_NOT_FOUND，OS 打开失败 reject E_IO。 */
+export function openDir(path: string): Promise<void> {
+  return invoke<void>(COMMANDS.openDir, { path } satisfies OpenDirArgs);
 }
 
 /** §3.3 #18：启动一次 run（一轮模型对话）。channel 由调用方建立：Channel 是
