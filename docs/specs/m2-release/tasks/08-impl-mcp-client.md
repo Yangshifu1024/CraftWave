@@ -17,6 +17,8 @@ Status: open
   - `mcp/trust.rs`：TOFU 启动信任——指纹=`(scope, projectId?, name, canonicalConfigPath, sha256(config))`；stdio 启动 / HTTP 握手前无信任记录 → AskSlot + `ask:opened` 携 `AskPayload{kind:"mcpTrust"}`（§3.2 已有字段级：`{server, transport, fingerprint, commandOrUrl}`，options `allow_once/remember/deny`）；"记住"持久化与"指纹变更重问"必须实现。**出入回写点：§9.7/§3.3#46 写"决策写 keyring"——v2.5 已废除钥匙串（§9.4），按用户决策落 `~/.craftwave/trust/mcp.json`（对齐 §7.7 trust 域），回写 §9.7/§3.3 两处 keyring 字样。**
   - `mcp/tools.rs`：工具接入——tools/list 转 DynamicTool；**工具名归一**（FR-08-06）：非法字符替换为 `_`（合法集 `[a-z_][a-z0-9_]{0,63}`，§8.1）、跨 server 碰撞加 `__2` 序号后缀、维护「归一名 → (server, 原名)」反向映射供调用还原；`tools/list_changed` 通知 → 重拉清单热更新注册表并重导 toolSpecs；能力标注：server 声明 `read_only` → ReadOnly，否则 Network；annotations 透传；`tools.allow/deny` glob 在注册时过滤。
 - 注册表动态化（§8.1「MCP 动态工具并入 ToolServer 模式」）：`ToolSpec.name` 现为 `&'static str`（tools/mod.rs:82）——动态段需改 `String`（或归一名驻留池，票内定案）；`filter_for_tier` 增 MCP 规则：**plan 档全部过滤**（§8.5 注）；`TOOL_NAMES` 钉死测试改「静态段 + 动态段」两断言。`backend/exec.rs` dispatch 增动态分支：归一名反查 → 池内 server 工具调用（executor trait 化形态票内定案）。
+- **断连后结果未知（2026-10-29 用户确认 Q14）**：连接可自动恢复；已发出而结果未知的工具调用不自动重放，read_only 声明也不豁免。向主代理返回“可能已执行”的可辨识结果，由主代理先核查实际结果再决定是否重试；不得经通用失败重试路径重发。错误码/结果字段实现前先回写 §3.6/§8.2。
+- **worktree 信任接缝（Q19 用户确认）**：受应用管理的 worktree 按原项目归一资源身份，同资源同内容沿用既有信任；仅副本路径改变不重复询问，但命令/环境/cwd 等实际启动配置改变仍须重核，跨项目不继承。与 24 号票一起回写指纹字段。
 - 调用审批（FR-08-04）：`backend/gate.rs` 判定链增 MCP 分支——server 未声明 read_only 且未开 always_allow 时**即便 full_access 也挂起确认**（AskPayload approval，title 带 server 名与工具名）；"始终允许"热更新不重启连接。
 - 命令 8 个（§3.3 #40–47 逐字）：`mcp_list_config {} → {global, project}`、`mcp_save_config {scope, config} → void`、`mcp_connect {scope, name} → void`（触发 TOFU）、`mcp_disconnect {scope, name}`、`mcp_reconnect {scope, name}`、`mcp_test {draft} → {ok, tools:[{name,description}], error?}`（临时连接 initialize+tools/list，**总预算 60s**，不进池）、`mcp_set_launch_trust {fingerprint, decision}`、`mcp_snapshot {} → {servers:[{name, state, toolCount}]}`。
 - 传输：stdio（`command+args+env+cwd`，tokio process 承载）与 streamable HTTP（`url+headers`）双实现（FR-08-01）。
@@ -30,6 +32,8 @@ Status: open
 
 ### 测试
 
+- fixture 在记录已执行操作后、返回响应前断连：连接恢复但调用计数保持 1；结果明确标记可能已执行，通用失败重试不重放原调用；read_only 声明下同样覆盖。
+
 - 本地 stdio fixture echo server（§12.5 定的测试基建）：覆盖 connect→TOFU allow/remember/deny 三路径、工具发现注册、调用回喂、断连重连、`mcp:status` 四态、`tools/list_changed` 同步。
 - 单测：配置合并与未知字段 round-trip、工具名归一/碰撞后缀/反向还原、池 LRU 驱逐与 generation 失效、审批判定表（read_only × always_allow × tier 四维）。
 - e2e（ScriptedBackend + fixture）：审批挂起→allow 续跑全链（复用 M1 14 号票模式）。
@@ -40,6 +44,8 @@ Status: open
 - MCP prompts/resources（`mcp_read_resource` #72 是 M3）；项目资源信任通用机制与外部目录授权（24 号票，本票仅最小信任存储并在其落地时收敛）；用量计量/配额无关；MCP server 注册为斜杠命令（FR-01-17 P2）。
 
 ## 验收
+
+- [ ] 已发出但结果未知的调用不自动重放；连接恢复后主代理收到“可能已执行”的明确结果，先核查再决定重试。
 
 - [ ] 全局与项目双作用域 mcp.json 加载、同名覆盖、未知字段保存不丢
 - [ ] stdio 与 streamable HTTP 各接通一个 server，工具进模型工具表且调用结果回喂

@@ -24,6 +24,7 @@ FR 依据（原文摘引）：
    - `git_recent_log`（#39）：默认 limit 20，sha/summary/time；
    - 仓库根解析：sessionId → 会话 roots → 项目主目录向上找 .git；git2 错误（脏索引/损坏）降级为空结果 + warn 日志，不阻塞会话。
 3. 写策略（FR-11-03 + §8.7 git 分类表）：
+   - **子代理 worktree 接缝（Q7–Q10 用户确认）**：10 号票由应用管理独立 worktree，并由主代理回收差量；创建/回收不得自动 commit/push 或改变用户已有暂存状态。应用受控工作区管理与模型 git 命令分开授权，本票默认禁止模型 commit/merge 等策略不变。
    - **22 号票接缝**：`git_classify(argv) -> GitClass { ReadOnly, Write, Destructive }` 纯函数已随 22 落地（status/diff/log/show 只读；push/commit/merge/rebase 写；push --force 归黑名单 Block）；本票把策略开关接入 fence 判定；
    - 配置面：ApprovalConfig 增 `gitAllowStageCommit: bool`（默认 false；**字段级缺失，回写 §3.2**）：
      - 关：add/stage/commit/merge/rebase → Block（E_FENCE_BLOCKED，"默认 AI 禁止"）；

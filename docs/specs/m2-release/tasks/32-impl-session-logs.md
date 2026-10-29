@@ -22,15 +22,17 @@ FR-15-01 + FR-14-04 诊断组 + FR-14-07（PRD 行 568/557/560，出处 §3.3 #5
   - 对象 key 命中敏感名单（`apiKey`/`api_key`/`authorization`/`token`/`secret`/`password`/`credential`，大小写不敏感、含 key/token 结尾类子串）→ 值替换 `"***"`；
   - 字符串值兜底扫 `Bearer <…>`/`sk-…` 头模式；数组逐元素递归；其余字段零破坏；
   - 名单硬编码不做配置（攻击面最小化）；rig 依赖内不复刻，仅本项目自有实现。
+- **图片日志（2026-10-29 Q16 用户补充）**：详细日志中的图片仅记实际可用路径、哈希、格式和大小，不写 base64/二进制本体。read 读图记录工作区源文件路径；附件/粘贴记录会话内 blob 存储路径；只有实际获得的原始路径才记录，不为无来源路径的图片虚构路径。文字请求响应仍按详细模式记录并脱敏。
+- **会话删除（2026-10-29 用户确认 Q17）**：同步关闭句柄并删除会话专属诊断日志及轮转副本；应用级日志只保留运行元数据，不记录会话正文或图片，避免会话删除后仍留内容副本。删除失败必须报告，不能声称全部删除成功。
 - **日志布局**（票面定义，回写 §7.1）：
   - `~/.craftwave/logs/app.log`：应用级（启动序/命令报错/panic 捕获/§7.3 ⑤ 落盘失败记账——把现有散落的 `log`/`eprintln` 诊断输出归拢到此通道）；>5MB 轮转 `.log.1`（保留 1 份，再满覆盖）。
   - `~/.craftwave/logs/sessions/<sessionId>.jsonl`：每会话一文件，每行 `{ ts, level, kind, msg, data? }`，可选锚 `runId?/callId?/subId?`；`kind ∈ run|llm|tool|approval|compact|subagent`；>10MB 轮转 `.jsonl.1`（保留 1 份）。
   - 保留期自动清理（FR-14-04 保留期项）随 M3，本票只做轮转。
 - **写入通道** `host/session_log.rs`：轻量自写 logger，**不引入 tracing 全家桶**（per-session 分文件 + JSON 行需自定义 subscriber layer，成本高于收益，取舍记 Answer）：
-  - `SessionLogger`——`Mutex<HashMap<sessionId, Writer>>`；append 打开、**不 fsync**（日志可丢、性能优先，与 NFR-06 会话数据通道严格区分）；写前级别过滤 = `config.log.level`（LogConfig Debug/Info/Warn/Error 已有；**verbose = level 设为 Debug**）；会话删除时顺带关闭句柄。
+  - `SessionLogger`——`Mutex<HashMap<sessionId, Writer>>`；append 打开、**不 fsync**（日志可丢、性能优先，与 NFR-06 会话数据通道严格区分）；写前级别过滤 = `config.log.level`（LogConfig Debug/Info/Warn/Error 已有；**verbose = level 设为 Debug**）；会话删除时关闭句柄并删除本会话日志及轮转副本。
   - 埋点（Info 级元数据、Debug 级全文）：
     - run：起止（runId/模型/耗时/tokens/终态 reason）——chat.rs run 收尾处；
-    - llm：挂 `backend/rig_bridge.rs` 请求出口/响应收口——Info 记 host/model/耗时/usage，**Debug 记完整请求/响应 JSON，过 `redact_json` 后落盘**；
+    - llm：挂 `backend/rig_bridge.rs` 请求出口/响应收口——Info 记 host/model/耗时/usage，**Debug 记请求/响应 JSON（图片替换为路径/哈希/格式/大小），过 `redact_json` 后落盘**；
     - tool：起止与错误（callId/name/ok/耗时/E_* 码）——工具执行器完成点；
     - approval：ask 开关（askId/answered）——ask 协议两端口；
     - compact：压缩生命周期三事件（04 号票事件点复用）；subagent：子代理生命周期（10 号票事件点复用）。
@@ -43,13 +45,17 @@ FR-15-01 + FR-14-04 诊断组 + FR-14-07（PRD 行 568/557/560，出处 §3.3 #5
 ### 前端（ui/）
 
 - **日志页增强**（`ui/src/settings/` logs 页 PageKey 已在 registry，现仅级别项骨架）：
-  - 级别下拉（写 `config.log.level`，旁注「Debug=详细模式，记录完整请求响应（已脱敏）」）；
+  - 级别下拉（写 `config.log.level`，旁注「Debug=详细模式，记录请求响应文字及图片路径/摘要信息（已脱敏，不含图片本体）」）；
   - 「打开日志目录」按钮 → `open_logs_dir`；
   - 查看器：会话选择器（`list_log_files` 过滤 sessions/ 前缀，叠加活跃会话列表做标题映射显示）→ `read_session_log` 拉尾部渲染只读 `<pre>`（等宽滚动容器，kind/level 着色，长行折行）+「刷新」钮；
   - 拉取式，不做实时流（边界）。
 - ipc/client.ts 增三命令出口 + COMMANDS 注册；类型随 02 号票生成物面。
 
+- **命令审计接缝（36）**：记录审计起止、结论、简短理由、失败/超时原因与已返回用量；证据内容及命令参数遵循脱敏，不能通过应用级日志保留会话正文。
+
 ### 测试
+
+- 图片日志：附图请求和 read 读图仅包含实际路径/哈希/格式/大小，不含图片 base64；粘贴图片记录 blob 路径，不虚构原始路径。删除会话后本会话日志及轮转副本不存在，应用日志不含会话正文或图片；删除失败可见。
 
 - Rust：`redact_json` 表驱动（嵌套对象/数组/key 大小写与结尾模式/Bearer 与 sk- 兜底/其余字段零破坏）；级别过滤（Debug 全记/Info 不记 debug/Error 全记）；轮转触发（写超阈值出 .1 且续写新文件）；`read_session_log` tail 语义（缺省 500/上限 5000/空文件/坏行容错）。
 - 集成（ScriptedBackend，无网络）：verbose 开 → 跑一轮带工具与审批的 run → 读回日志断言含 llm 请求/响应行、tool 行、approval 行，且全文 grep 无 `sk-`/apiKey 明文（**NFR-09「日志全链路脱敏」验收测试，常驻 CI**）；verbose 关 → 无消息体行。
@@ -62,7 +68,9 @@ FR-15-01 + FR-14-04 诊断组 + FR-14-07（PRD 行 568/557/560，出处 §3.3 #5
 
 ## 验收
 
-- [ ] 日志级别切 Debug（verbose）后跑一轮真实/脚本 run：查看器可见完整请求与响应（脱敏后）及 run/tool/approval 行。
+- [ ] 图片仅记实际可用路径/哈希/格式/大小，不记录图片本体；删除会话同步删除其专属日志与轮转副本；应用级日志不保留会话正文或图片。
+
+- [ ] 日志级别切 Debug（verbose）后跑一轮真实/脚本 run：查看器可见请求与响应（文字脱敏、图片仅路径及摘要信息）及 run/tool/approval 行。
 - [ ] 同一会话日志文件与设置页拉取内容中 grep 不到任何 Key/Authorization 明文（脱敏集成测试常驻 CI，NFR-09 收口）。
 - [ ] 级别切回 Info：新日志不含请求/响应消息体；级别修改即时生效无需重启。
 - [ ] 单会话日志超 10MB 触发轮转（`.jsonl.1`），应用运行不中断。

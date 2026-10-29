@@ -24,7 +24,8 @@ C-3 定案（§5.5/§5.2 字段级）：消息排队从"M1 前端驱动（runEnd
   - steer 的 user 条目落 canonical（§7.3 时机表 user 行）——steer 消息在前端树/帧面的承载 §3.4 无 user 消息帧，**字段级缺失，先回写 §5.5**（建议：前端以 run:inject 回执本地插入 user 节点 + save_session_tree 同步；Rust RunRecorder 落同 id 条目，两侧 id 规则回写时定）。
 - **followUp 队列**：
   - 会话级 `VecDeque<FollowUpEntry>`（建议新 `host/followup.rs` 或挂 RunManager 旁；Entry 含 text/createdAt/附着 runConfig 摘要）；
-  - 投递时机 = run 终态处理完（runEnded 帧发出 + RunManager.remove 之后，§5.2"followUp 队列头 → 自动作为新 run 重放"）；
+  - 投递时机 = run 正常完成且终态处理完（runEnded 帧发出 + RunManager.remove 之后，§5.2"followUp 队列头 → 自动作为新 run 重放"）；
+  - **失败暂停（2026-10-29 用户决策）**：run 失败时暂停队列，持久保留全部待发消息，等待用户明确继续；不得因任何 run 终态都自动投递。队列暂停态跨重启保留；用户取消仍按下述返还草稿规则处理。前端提供暂停状态与继续入口，状态和操作的字段级契约先回写 §5.5/§3.3，再实现。
   - 队列头出队 → 以其文本构造 user 消息自动 start_chat 新 run（user 条目由 Rust 侧落盘，§6.3 双写协议 start_chat 兜底补落路径）；
   - 新 run 复用同一 Channel（§5.2"同通道"），seq 随新 run 新纪元——webview 重载场景经 attach_run（05 号票）续流；
   - 投递前复查无活跃 run（runEnded 与 remove 之间有并发 start_chat 撞 E_SESSION_RUNNING 时，队列头回队重试，投递循环不丢消息）。
@@ -33,7 +34,7 @@ C-3 定案（§5.5/§5.2 字段级）：消息排队从"M1 前端驱动（runEnd
   - 返还通道：前端收到既有 `run:cancelled` 事件后清空本地队列态并回填 drafts（`stores/sessions.ts` 现成机制）；后端清空前的文本交还字段级未定则回写 §5.5。
 - **队列持久化**（FR-01-11 队列半 + 验收"跨重启不丢"）：
   - 存储路径 §7.7 未列，**先回写 §7.7**（建议 `sessions/<sid>.queue.json`，入队/出队/清空时 `util/atomic` 原子写）；
-  - 启动/会话加载时恢复进内存队列，重启后待投递消息在下次 run 收尾时正常投递。
+  - 启动/会话加载时恢复进内存队列，重启后恢复队列及暂停态；未暂停队列在下次 run 正常完成后投递，暂停队列等待用户明确继续。
 - 带图消息不入 steer、进 followUp（§5.5）——image part 随 17 号票，本票在 Entry 结构预留 attachments 字段即可。
 - 现状锚点：
   - `host/commands/chat.rs` RunConfig 已有 `steer: bool` 字段，注释明言"steer 注入随 §5.5 后续票（本票前端恒不传 true）"——命令面占位已留、逻辑为零；
@@ -54,13 +55,15 @@ C-3 定案（§5.5/§5.2 字段级）：消息排队从"M1 前端驱动（runEnd
 
 ### 测试
 
+- 回归：前一任务失败时，下一条有副作用的 followUp 不启动；全部待发消息与暂停态跨重启保留，用户明确继续后恢复投递。
+
 - Rust 单测：
   - steer 入队/turn 边界消费/acceptedAtTurn 回执；
   - 空闲入 followUp；队列头自动投递（mock 后端驱动第二 run）；
   - 取消清队列；queue.json 原子写与重启恢复。
 - e2e（`tests/backend_e2e.rs`）：
   - 运行中 inject → 下一请求 history 含插话 user 条目 + run:inject；
-  - run 收尾自动投递队列头（两连发场景：run1 结束 → run2 自动开始 → 队列空）；
+  - run 正常完成后自动投递队列头（两连发场景：run1 正常完成 → run2 自动开始 → 队列空）；
   - cancel 后队列清空且持久化文件删除。
 - 前端 vitest：composer-keys 三态路由；队列条增删与徽标；队列 store 持久化往返；contract.test 扩域（inject_run_message 命令 + run:inject/run:start 事件键）。
 
@@ -73,9 +76,11 @@ C-3 定案（§5.5/§5.2 字段级）：消息排队从"M1 前端驱动（runEnd
 
 ## 验收
 
-- [ ] 运行中 Alt+Enter 排队成功显示在队列条，run 结束后自动投递开新 run（帧面连续，无需用户操作）。
+- [ ] 正常完成自动投递；失败暂停并保留全部待发消息，重启后仍暂停，只有用户明确继续才恢复投递；取消仍返还草稿。
+
+- [ ] 运行中 Alt+Enter 排队成功显示在队列条，run 正常完成后自动投递开新 run（帧面连续，无需用户操作）。
 - [ ] 运行中 Enter 插话在 turn 边界被消费，模型回应考虑插话内容，run 不终止。
 - [ ] 中止 run 后队列返还前端草稿区，可再次编辑发送。
-- [ ] 排队后重启应用，队列仍在并在下次 run 收尾时投递。
+- [ ] 排队后重启应用，队列与暂停态仍在；未暂停队列在下次 run 正常完成后投递，暂停队列等待用户明确继续。
 - [ ] steer 与 followUp 在 UI 上语义可区分（徽标/位置）。
 - [ ] §3.2/§3.3 #21/§5.5/§7.3/§7.7 回写完成（返回形态、steer 树承载与 id 规则、队列存储路径）。

@@ -17,8 +17,10 @@ FR 依据（原文摘引）：
 
 ### 后端（src-tauri/）
 
+- **保护边界（Q23，经 Q24–Q26 更新）**：保护文件工具及确定性检查可识别写目标，不宣称隔离任意脚本或 MCP 内部副作用。可识别禁区写入硬拒；灰区 command 交 36 号票单次无工具审计，低风险可放行，证据不足/审计失败转人工。审计不豁免权限档、内部状态、计划范围、公共操作仅主代理及明确人工审批；MCP 沿用既有审批。full_access/白名单/自动确认不能替代明确要求的人工确认；系统级沙箱不纳入本次承诺。
+
 1. 内部状态保护（gate.rs 新判定层，插在围栏步骤之后、矩阵之前）：
-   - 禁区清单（数据侧）：`~/.craftwave/` 全目录（config.json 含 apiKey 明文、projects/、sessions/、histories/、ui-state.json、stats/、quota/、trust/、logs/、cache/）+ 项目侧 `<home>/.craftwave/`（project.json、项目 mcp.json）+ 全局 mcp.json + 段元数据 `.segmeta.json`——即 FR 行"配置/凭据引用/MCP 配置/索引/锁文件"的文件级展开；清单常量集中一处供测试枚举；
+   - 禁区清单（数据侧）：`~/.craftwave/` 内部数据（保留既有 workspace/ agent 工作区例外；config.json 含 apiKey 明文、projects/、sessions/、histories/、ui-state.json、stats/、quota/、trust/、logs/、cache/）+ 项目侧 `<home>/.craftwave/`（project.json、项目 mcp.json）+ 全局 mcp.json + 段元数据 `.segmeta.json`——即 FR 行"配置/凭据引用/MCP 配置/索引/锁文件"的文件级展开；清单常量集中一处供测试枚举；
    - 判定输入 = **22 号票接缝**：`safety/fence/ast.rs` 的写目标提取产物（词法目标 + canonical）；22 未落地时本票先以词法重定向目标提取兜底，22 落地后收敛（与 24/08 号票同风格）；
    - 判定规则：写目标（词法或 canonical，含 symlink 指入禁区）命中禁区 → 工具结果回喂 `E_INTERNAL_STATE`（§3.6"试图写宿主内部状态"）；不挂起、任何档位与白名单不豁免；
    - 读不禁：C-8 已声明风险（读 Key 类），不越权扩到读路径。
@@ -41,6 +43,8 @@ FR 依据（原文摘引）：
 2. SecurityPage：审批四开关组 + 命令白名单可管理（手填命令前缀增删 + 词边界校验提示；现仅能删，补增）。
 
 ### 测试
+
+- 保护边界：已知禁区写入硬拒；灰区 command 审计按 36 号票接线，低风险可放行、失败转人工且不可豁免硬规则；full_access/白名单/自动确认不绕过明确人工确认；既有 workspace/ 文件写仍正常。
 
 - Rust：
   - **篡改向量测试集**——写 `~/.craftwave/config.json`、重定向覆盖 mcp.json、改 `.segmeta.json`/锁文件，全部 E_INTERNAL_STATE；

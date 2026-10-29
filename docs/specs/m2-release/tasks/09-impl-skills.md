@@ -14,6 +14,8 @@ Status: open
 - 新模块 `knowledge/skills.rs`（knowledge 域随本票新建，§2.2 域清单已有）：
   - **发现**：三来源扫描——内置（随应用资源分发）、全局 `~/.craftwave/skills/`、项目 `<home>/.craftwave/skills/`（§7.7 存储行）；每技能=目录 + `SKILL.md`（YAML frontmatter `name/description`）；**兼容 Claude 技能目录格式**：frontmatter 额外字段忽略、目录内附加资源文件按相对路径随正文可用；frontmatter 索引常驻内存（重扫才重建）；**覆盖优先级 内置 < 全局 < 项目**（同名后者胜，来源标记进 skill_list）。
   - **`skill` 工具注册**（§8.3 M2 表，Meta 能力）：参数 `{ name, args? }`（args 可选 string 透传）；结果=该技能 SKILL.md 正文全文（compact 截断同 §8.2）+ 头部标注「以下是技能 X 的正文」；工具 description 动态列出当前启用技能名清单（注册表重建时机随 toggle/reload）。
+  - **技能整体信任（2026-10-29 用户确认 Q21）**：信任版本覆盖 SKILL.md 及随附脚本、模板等资源，不能只核验说明文件；附属资源变化同样在下一 run 重新核验。目录清单、路径边界与版本摘要算法实现前先回写 §9.8；仍按 Q20 固定 run 内版本。
+  - **版本一致性（2026-10-29 用户确认 Q20）**：run 开始时固定技能版本集合，description 与按需加载的正文必须同版本；重扫可更新管理页与下一 run 使用的版本，不能使活跃 run 混用旧描述和新正文。旧版本不可得则停止相关加载并提示；下一 run 加载新版本前核验信任，安全权限撤销立即生效。
   - **渐进披露**（FR-09-02）：系统提示仅注入「技能名 + description」一行清单（启用项）；正文只经 `skill` 工具按需进上下文。
   - **信任接缝**（§9.8）：全局与项目技能均属信任资源——首用未信任技能 → `AskPayload{kind:"projectTrust"}` 确认（接 24 号票机制；24 未落地则最小版：AskSlot 三选项 + 决策写 `trust/project.json` 同构条目，票面记录收敛点）；拒绝 → 不注入清单且 `skill` 调用回 `E_PROJECT_UNTRUSTED`（§3.6 M2 错误码行已定义，随本票首次实装）。
 - 命令 4 个（§3.3 #48–51 逐字）：`skill_list {} → {name, source, enabled, description}[]`、`skill_toggle {name, enabled} → void`、`skill_reload {} → void`（重扫三来源并重建索引）、`skill_inspect {name} → {markdown}`（正文预览，不走工具/不进上下文）。
@@ -27,6 +29,10 @@ Status: open
 - 契约测试：manifest 增 #48–51 命令与 skill 工具行。
 
 ### 测试
+
+- 技能整体版本：SKILL.md 不变而附属脚本/模板变化时，下一 run 仍须重核信任；活跃 run 不混用新附属资源。
+
+- 版本一致性：run 中修改 SKILL.md 并 reload 后，活跃 run 仍使用原版本 description/正文；下一 run 重核新版本信任；原版本不可取得时停止相关加载，不混用版本。
 
 - 单测：frontmatter 解析（含 Claude 格式真实样例：额外字段/长 description）、三来源同名覆盖优先级、skills-state.json round-trip、渐进披露注入文本生成（仅 name+description，断言不含正文）。
 - 集成（真实技能目录 fixture，最小技能随仓库测试资源入库）：description 进系统提示、`skill` 调用回正文、toggle 后不再注入且调用回禁用提示、reload 感知新增目录。

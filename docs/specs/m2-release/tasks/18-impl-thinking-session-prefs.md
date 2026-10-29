@@ -48,6 +48,10 @@ FR 依据（原文摘引）：
 3. 恢复链路：进入会话 `get_session_prefs` → 回填模型 store 与 thinking store；运行中切换下一请求生效（runConfig 惰性取值已在 `runtime.ts:222` 就位）。
 4. 契约：`ipc/client.ts` COMMANDS 增 #24/#25、`ipc/types.ts` 镜像、contract.test 接线断言；§10.6 键位表增 Ctrl+L 行（回写）。
 
+- **请求预算接缝（Q18 用户确认）**：附图、切模型及下一次模型请求均走 04 号票的实际请求预算检查并预留回复空间；没有历史 usage 也不能跳过，压缩后仍超限则暂停保留输入。
+
+- **非视觉切换（Q30 用户确认）**：含历史图片的会话切换到非 vision 后允许纯文字继续，历史图片发给模型时占位并显示提示，界面原图保留；新附图和主动读图仍拒绝。与 17 号票统一校验。
+
 ### 测试
 
 - Rust：prefs roundtrip / 损坏文件兜底 / 会话不存在 E_NOT_FOUND；`thinking_to_request` 表驱动（五档 × 两方言 × 窗口参数）；RunConfig 旧载荷（无 thinking）反序列化兼容；映射函数对 §11.4 回写表的锚定断言。

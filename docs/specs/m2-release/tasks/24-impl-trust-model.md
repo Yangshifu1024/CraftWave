@@ -11,7 +11,7 @@ FR 依据（原文摘引）：
 - FR-05-10：项目 `.craftwave/` 资源（skills/memory/mcp.json/项目指令）首次加载需信任决策（本次/记住/拒绝），绑定内容 SHA-256
 - FR-05-12：项目外目录访问需"始终允许"授权（粒度=目录及子目录读/写/列）；拒绝对文件系统根/家目录整体放行
 - §9.8：指纹=资源内容 SHA-256 → AskPayload{kind:"projectTrust"}（本次会话允许/记住此版本/拒绝）；决策写 `trust/project.json`（§7.7）；未信任资源不注入系统提示且工具访问拒绝（E_PROJECT_UNTRUSTED）；内容变更重新询问；全局作用域（`~/.craftwave/skills/`、`memories/`）首用同样走信任（scope=global）
-- §9.9：会话 roots 初始 = 项目主目录 + 数据目录；roots 外路径 → 预检 `check_external_path` → ask（始终允许 = `allow_external_dir` 入会话 roots 快照）；拒绝整体放行文件系统根、家目录本身、宿主托管目录（`~/.craftwave`、`<home>/.craftwave`）；授权持久于会话 roots 快照，不全局生效
+- §9.9：会话 roots 初始 = 项目主目录 + `<data_root>/workspace/` 子目录（C-8 收窄）；roots 外路径 → 预检 `check_external_path` → ask（始终允许 = `allow_external_dir` 入会话 roots 快照）；拒绝整体放行文件系统根、家目录本身、宿主托管目录（`~/.craftwave`、`<home>/.craftwave`）；授权持久于会话 roots 快照，不全局生效
 - §3.2 已有 AskPayload `{kind:"projectTrust", resourceName, fingerprint}`（options `allow_session|remember|deny`）；§3.3 #33 `check_external_path { sessionId, path } → { allowed, insideRoots }`、#34 `allow_external_dir { sessionId, dir } → { roots: string[] }`；§3.6 已有 E_PROJECT_UNTRUSTED
 
 ## 具体做什么
@@ -23,6 +23,9 @@ FR 依据（原文摘引）：
    - **与 MCP 的接缝约定**：§9.7 MCP 启动信任写 keyring 账户 `craftwave.trust.v1`，但 v2.5 已废 keyring（§9.4）——本票把 TrustStore 扩为两类信任统一承载（记录增 `scope: "project"|"mcp"` 判别字段，**回写 §7.7**）；
    - 08 号票约定：`mcp_set_launch_trust`（#46）的"记住"决策写本 TrustStore，指纹算法沿用 §9.7 `(scope, projectId?, name, canonicalConfigPath, sha256(config))`；若 08 先动工自建最小版（票面既定降级路径），收敛点 = 本票 TrustStore 替换其存储、指纹算法不变。
 2. 项目信任挂接（§9.8 逐字）：
+   - **worktree 身份与信任（2026-10-29 用户确认 Q19）**：由应用管理的 worktree 归属原项目；同一资源、同一内容沿用原项目的既有信任，不因副本路径改变重复询问。信任仍遵循本会话/记住的作用域，其他项目不继承。仅通过应用记录的 worktree 身份映射归一资源来源，内容变更重新问；MCP 实际启动配置改变（命令、环境、cwd 等）不能以“同项目”绕过信任重核。实现前更新 §9.7/§9.8 与信任记录字段。
+   - **技能信任范围（Q21 用户确认）**：绑定说明与随附脚本、模板等资源的整体版本；附属资源变化也须在下一 run 重新核验，不能只计算 SKILL.md。
+   - **任务内资源版本（2026-10-29 用户确认 Q20）**：每个 run 固定项目指令与技能版本，描述与按需加载正文来自同一版本；变更在下一 run 加载并重新核验信任，不能沿用旧信任读新正文。旧版本不可得时停止相关加载并提示，不能换成新版继续。安全权限撤销立即生效，不受版本冻结延迟。
    - 信任对象 = `<home>/.craftwave/` 全部资源 + 项目侧资源；指纹 = 资源内容 SHA-256；
    - 首次加载 → projectTrust 询问；allow_session = 本次会话允许（内存）、remember = 写 TrustStore（绑定指纹）、deny = 拒绝；
    - 未信任资源：knowledge 组装跳过（不注入系统提示）+ 工具访问拒绝 E_PROJECT_UNTRUSTED；
@@ -41,6 +44,8 @@ FR 依据（原文摘引）：
 2. 当前会话已授权外部目录列表（Inspector 或会话信息区）：可移除授权（移除后下次访问重新询问）。
 
 ### 测试
+
+- worktree 信任：同项目同资源同内容沿用信任，不因副本路径重复询问；内容/实际 MCP 配置变更重问；跨项目不继承，本会话允许不扩成跨会话允许。任务中改指令/技能不热换，下一 run 重核；权限撤销立即阻止后续受影响调用。
 
 - Rust：
   - 信任决策全路径：首用询问 → 三选项各自行为；remember 后同指纹免问；内容变更重问；deny 后不注入 + 访问 E_PROJECT_UNTRUSTED；

@@ -17,7 +17,7 @@ FR-03-05（§6.2 压缩调度字段级）：长会话不再"聊着聊着超长�
   - id 规则 §6.1 未定——回写 §6.1 时钉（建议沿用 §6.3 canonical id 的 runId 前缀惯例，如 `{runId}:compact:{n}`）。
 - **阈值与触发点**（§6.2 字段级）：
   - 阈值 = 上下文占用 ≥ compact_threshold（默认 0.6，窗口占比；contextWindow 取 `ProviderModel.contextWindow`，§3.2 default 128000）；
-  - 占用基数 = 最近一次 usage 帧的输入侧累计（input+cacheRead+cacheWrite）；一次 usage 都没有的首轮不触发（落地口径，回写 §6.2 注明）；
+  - **每请求预算检查（2026-10-29 用户确认 Q18）**：每次请求模型前检查本次实际发送内容（含系统指令、工具定义、摘要、历史、本次输入、工具结果及图片），并预留回复空间；覆盖首次请求、大附件/工具结果增长、切换小窗口模型。最近 usage 仅作校准，不能以无 usage 为由跳过。超预算先压缩，仍放不下则暂停保留输入，不静默裁历史。估算器先复用已有实现/依赖，不足时调研再选型；字段级预算与预留规则先回写 §6.2。
   - 触发点 = run 开始前（start_chat 流程 §5.2 时序内、首个模型调用前）与 ask 关闭后（`host/commands/chat.rs` wait_approval 收口处，与 §7.2 封口安全点"run 终态后、ask 关闭后"重合）；
   - 配置字段（AppConfig 增 compaction 组：threshold/timeout）§3.2 未含，先回写再实现。
 - **压缩流程**（§6.2 五步）：
@@ -26,11 +26,11 @@ FR-03-05（§6.2 压缩调度字段级）：长会话不再"聊着聊着超长�
   - ③ 追加 compaction 条目入当前段 + fsync——§7.3 持久化时机表无此行，回写增行；
   - ④ 发 `compactDone` 帧与 `run:compacted` 事件；
   - 摘要 prompt 内容文档未定——回写 §6.2 附要点（输入=cutEntryId 之前区间的完整转录，输出=结构化摘要文本），先回写再实现。
-- **失败兜底**：摘要调用失败/超时 → 事件 `run:compact_failed`（载荷 `{ sessionId }`）→ 回退原历史继续，不阻塞对话（run 照常开始）。
+- **失败兜底（2026-10-29 用户决策）**：摘要调用失败/超时 → 事件 `run:compact_failed`（载荷 `{ sessionId }`）；原上下文仍能放入模型窗口则继续，放不下则暂停并保留本次输入，提示重试压缩或开启新会话。不得静默删除未经摘要的早期历史来继续执行；原始记录始终保留。
 - **wire 重建**（§6.2 压缩边界）：`backend/wire.rs` 增 compaction 识别——
   - 路径上最近 compaction 条目的 summary 作为 system 前缀注入（位于 custom prompt 之后、对话历史之前；层叠次序与 03 号票 customPrompt 在回写 §6.2 时一并钉死）；
   - `cutEntryId` 之后的条目正常展开、之前的全部跳过；
-  - token 预算超限（模型窗口 ×0.9）从最旧 turn 起 trim（keep_last=2 turns）；
+  - token 预算超限（模型窗口 ×0.9）优先压缩；不得静默裁掉未经摘要的历史，失败按上述兜底规则处理；
   - 注意：start_chat 的 messages 由前端活动路径传入，前端树侧承载形态见前端节。
 - **手动命令**：`compact_session`（§6.2 明文"手动压缩命令（M2 命令，参数 {sessionId}）"，但 §3.3 命令表 #32–59 未编号）——回写 §3.3 增补行后再注册进 `ipc_commands!`；运行中会话拒绝（E_SESSION_RUNNING）或定义为对活跃 run 外的快照压缩，取其一并回写。
 - **C-9 口径**：摘要调用计入会话累计（`tokens:update` 照发）、不计 turnUsage；压缩不重置会话累计。
@@ -45,7 +45,7 @@ FR-03-05（§6.2 压缩调度字段级）：长会话不再"聊着聊着超长�
   - `run:compacting` → Composer 上方轻量指示条"正在压缩上下文…"；
   - `run:compacted`（tokensBefore/tokensAfter）→ 指示条收口 + 用量进度条刷新；
   - `run:compact_failed` → 行内轻提示，不打断输入（Toast 反馈层属 29 号票）。
-- 手动按钮落点：用量 Popover 的上下文进度条旁（§10.5 已定义 0.6 阈值标线，进度条=sessionUsage 折算 contextWindow）——"压缩"按钮 → `compact_session`；运行中禁用（后端 E_SESSION_RUNNING 兜底）。
+- 手动按钮落点：用量 Popover 的上下文进度条旁（§10.5 已定义 0.6 阈值标线，进度条=本次实际上下文占用估算/contextWindow，会话累计消耗独立显示）——"压缩"按钮 → `compact_session`；运行中禁用（后端 E_SESSION_RUNNING 兜底）。
 - **压缩边界在前端树的承载**：§6.3 未定义 compaction 条目在 assistant-ui 树的节点形态——先回写 §6.3 再实现：
   - 建议形态参照 runMarker（system 空消息 + custom 载荷，`tree-persistence.ts` 的 `readRunMarker` 同款机制）；
   - `entriesToExported`/`toWire` 增 compaction 分支，保证 save_session_tree 载荷与 canonical 条目 roundtrip 一致（否则 E_SESSION_REV）；
@@ -54,13 +54,15 @@ FR-03-05（§6.2 压缩调度字段级）：长会话不再"聊着聊着超长�
 
 ### 测试
 
+- 每请求预算回归：首次大输入、工具结果暴涨、切换小窗口模型和图片均在发送前检查，回复空间计入预算；压缩后仍超预算不发请求、输入保留；上下文占用进度独立于会话累计消耗。
+
 - Rust 单测：
   - 阈值判定表驱动（0.6 上下、无 usage 首轮、contextWindow 取值）；
   - compaction 条目 serde roundtrip（entries 测试扩展）；
-  - wire 重建边界（cutEntryId 前跳过/后展开/system 前缀位置；×0.9 trim keep_last=2 不变量——§12.5 点名的压缩往返属性测试）。
+  - wire 重建边界（cutEntryId 前跳过/后展开/system 前缀位置；实际请求预算/回复预留、压缩失败超限暂停并保留输入、不静默裁历史的不变量——§12.5 点名的压缩往返属性测试）。
 - e2e（`tests/backend_e2e.rs`，ScriptedBackend 驱动）：
   - 跨阈值自动压缩 → compactDone 帧 + run:compacted 事件 + 后续 turn wire 只含 summary+新条目；
-  - 摘要失败注入 → run:compact_failed + run 正常完成；
+  - 摘要失败注入：原上下文可容纳 → run:compact_failed 后继续；不可容纳 → 暂停、输入保留、重试压缩/新会话入口可用，未经摘要历史未被静默裁剪；
   - 手动 compact_session 命令路径。
 - 前端 vitest：frames.ts compactDone 解析、事件桥三键分发、tree-persistence compaction roundtrip、contract.test 扩域（compact_session 命令 + compactDone 帧 + 3 事件键）。
 
@@ -75,6 +77,6 @@ FR-03-05（§6.2 压缩调度字段级）：长会话不再"聊着聊着超长�
 - [ ] 长会话跨阈值自动压缩，模型不报超长；压缩后对话上下文连贯（summary 生效）。
 - [ ] 手动压缩按钮可用；压缩中/完成/失败三态 UI 均有呈现。
 - [ ] 压缩边界落盘后重启应用，load_session_tree 恢复且 wire 重建仍从边界生效（重启后继续对话不重复注入旧历史）。
-- [ ] 压缩失败不阻塞对话（run 正常完成，事件面可见失败）。
+- [ ] 压缩失败：原上下文可容纳时继续，不可容纳时暂停且输入保留；提示重试压缩或开启新会话，未经摘要的历史不被静默裁剪。
 - [ ] tokens 口径遵守 C-9（会话累计不因压缩重置，tokens:update 照发）。
 - [ ] §3.2/§3.3/§6.1/§6.2/§6.3/§7.3 回写完成（compact_session 编号、配置字段、id 规则、树承载形态、落盘时机行）。

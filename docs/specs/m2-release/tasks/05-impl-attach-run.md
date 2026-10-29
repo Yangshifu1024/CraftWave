@@ -25,7 +25,7 @@ C-1/D16 定案（§5.8 字段级）：WebView 重载/崩溃后不再受 M1"只�
   - RunState（run_manager.rs）已有 status/started_at/turn/tool_count/last_seq，缺 usage——RunState 增 `usage: UsageTotal` 累计（DriveState 收口处同步写入）；
   - RunSnapshot 类型按 §3.2 落命令层；run_manager.rs 头注释"对账快照命令为后续工单"即本票。
 - 命令两个都注册进 `ipc_commands!`（lib.rs 单一事实源）；错误面：sessionId 未知 → null（快照）/空重放（attach），不报 E_NOT_FOUND（幂等查询语义，回写 §3.3 注记）。
-- 取消/挂起交互：attach 不影响 run 生命周期（不触碰 CancellationToken 与 AskSlot）；审批挂起中 attach → 重放帧含 ask:opened 之前的帧面，前端观察态照常（AskPanel 走事件键而非 Channel，重放不覆盖事件面——重载后 AskPanel 的恢复机制在 Answer 记录取舍）。
+- **待审批恢复（2026-10-29 用户确认）**：attach 不改变 run 生命周期或审批决定。重连时查询后端仍有效的待审批请求，恢复 AskPanel 并展示原始操作及参数；已经失效的审批关闭。重载本身不代表批准或拒绝。审批走事件键，Channel 重放不能替代待审批查询；查询与实时事件按请求标识对账，处理重连期间请求已解决的竞态。待审批查询及有效性校验的字段级契约先回写 §3.3/§5.6，再实现。
 
 ### 前端（ui/）
 
@@ -39,10 +39,12 @@ C-1/D16 定案（§5.8 字段级）：WebView 重载/崩溃后不再受 M1"只�
   - runEnded 帧丢失兜底——5s 无新帧且快照 status=idle → `load_session_tree` 重载终态；
   - 现行 `chat/runtime.ts` 的 maxSeq 为单 adapter 局部变量（无跨重载记忆），本票把"已见最大 seq"提升为会话级状态供重连判定。
 - 观察态下禁用输入（防 start_chat 撞 E_SESSION_RUNNING），提供"取消"按钮走 `cancel_run`；观察态视觉与正常流式区分（顶部细条"已重连到运行中的任务"）。
-- 交互细节：重放帧中的 runStarted 不触发运行态节点记账（`useSessionPersistStore.noteRuntimeNode` 观察态旁路，防污染 canonical 双写协议 §6.3）；观察态期间收到的 ask:opened 事件照常弹 AskPanel（审批不因重载失联）。
+- 交互细节：重放帧中的 runStarted 不触发运行态节点记账（`useSessionPersistStore.noteRuntimeNode` 观察态旁路，防污染 canonical 双写协议 §6.3）；观察态期间收到的 ask:opened 事件照常弹 AskPanel；重连前已挂起的审批按后端有效请求恢复，已失效请求关闭（审批不因重载失联）。
 - `ipc/client.ts` 增 `attachRun`/`sessionRunSnapshot` 两个出口 + COMMANDS 注册；types.ts 增 RunSnapshot/AttachRunResult（随 02 号票生成物面则 derive）。
 
 ### 测试
+
+- 待审批恢复：重载前已有请求恢复原始操作与参数；已失效请求关闭；重连查询与实时批准/取消事件交错时不重复或恢复过期审批，后端拒绝过期请求操作。
 
 - Rust 单测（`run_manager_test.rs` 扩展）：
   - 环形缓冲溢出丢最旧 + dropped 计数；
@@ -63,6 +65,8 @@ C-1/D16 定案（§5.8 字段级）：WebView 重载/崩溃后不再受 M1"只�
 - 子代理 subFrame 帧进重放缓冲的细节（10 号票；本票保证 FrameHub 对帧类型不感知即可）。
 
 ## 验收
+
+- [ ] 审批挂起时重载，原始操作与参数恢复且可正常批准/拒绝；重载不自动决定审批。重连期间已解决或取消的请求不残留可操作弹窗。
 
 - [ ] 运行中 reload WebView（dev 下 Cmd+R），会话回到前台后帧不丢续流，runEnded 后树完整收口。
 - [ ] 重放窗口耗尽（>512 帧）场景有摘要帧兜底，前端状态与后端一致。
