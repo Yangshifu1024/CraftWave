@@ -69,10 +69,11 @@ pub struct RunState {
 }
 
 /// 单个活跃 run 的句柄：持有取消令牌与运行时状态，供宿主命令层操作这个
-/// run（技术设计文档 §5.1）。用户插话队列（steer）为后续工单；ask 槽与
-/// 计划状态由 backend 执行器写入、宿主命令 resolve_ask/approve_plan 读取；
-/// 帧枢纽 [`FrameHub`] 承担帧出口（seq 递增 → 入环 → 下发）与 attach 重连
-/// （§5.8，05 号票）。
+/// run（技术设计文档 §5.1）。ask 槽与计划状态由 backend 执行器写入、宿主
+/// 命令 resolve_ask/approve_plan 读取；steer 插话队列（§5.5，06 号票）由
+/// `inject_run_message` 命令写入、RunLoop 在 turn 边界消费（宿主侧
+/// `SteerSource` 实现承担落盘与回执副作用）；帧枢纽 [`FrameHub`] 承担帧
+/// 出口（seq 递增 → 入环 → 下发）与 attach 重连（§5.8，05 号票）。
 #[derive(Debug)]
 pub struct RunHandle {
     /// 本 run 的唯一标识。
@@ -88,6 +89,11 @@ pub struct RunHandle {
     pub ask: Arc<AskSlotCell>,
     /// 计划状态（模型用 plan 工具写 / approve_plan 命令冻结 / 审批门读取）。
     pub plan: Arc<Mutex<Option<PlanState>>>,
+    /// steer 插话队列（§5.5，06 号票）：`inject_run_message` 运行中入队，
+    /// RunLoop 的 turn 边界消费（工具批结果回喂后、下一次模型调用前）；
+    /// run 收尾时残余按终态分流（Done → 转会话 followUp 队列尾，取消/失败
+    /// → 随 `run:queue.returned` 交还草稿）。
+    pub steer: Arc<Mutex<VecDeque<String>>>,
     /// 帧枢纽（§5.8）：环形帧缓冲 + 可热切换的下发通道，`attach_run`
     /// 重放续流的数据源（Arc 共享给 sink 装饰链与宿主命令两侧）。
     pub hub: Arc<FrameHub>,
@@ -380,6 +386,7 @@ impl RunManager {
             }),
             ask: Arc::new(Mutex::new(None)),
             plan: Arc::new(Mutex::new(None)),
+            steer: Arc::new(Mutex::new(VecDeque::new())),
             hub,
         });
         runs.insert(session_id.to_owned(), handle.clone());

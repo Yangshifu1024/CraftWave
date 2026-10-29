@@ -6,15 +6,22 @@
  * - tokens:update → runMetrics.sessionUsage 权威校正（§10.5/C-9）；
  * - plan:update → planState（Inspector 计划页，参考样式改版）；
  * - run:compacting / run:compacted / run:compact_failed → compaction store
- *   （04 号票：Composer 指示条 + 边界投影刷新 + 行内失败提示）。
+ *   （04 号票：Composer 指示条 + 边界投影刷新 + 行内失败提示）；
+ * - run:inject → followUp store 插话节点（06 号票：时间线「插话」徽标）；
+ * - run:queue → sessions store 队列态（06 号票：队列条增删/暂停态/取消
+ *   返还草稿，后端 queue.json 为投递权威）；
+ * - run:start → 非运行态收到即后端自动投递的新 run，经 attach 观察态接入
+ *   续流（06 号票，§5.5/§5.8）。
  *
  * listen 依赖可注入（测试）。
  */
 
 import { useEffect } from "react";
 import { useCompactionStore } from "@/chat/compaction-store";
+import { useFollowUpStore } from "@/chat/followup-store";
 import { usePlanStateStore } from "@/chat/plan-state";
 import { useRunMetricsStore } from "@/chat/run-metrics";
+import { reconnectIfNeeded } from "@/chat/run-reconnect";
 import { EVENT_KEYS, listenEvent, loadSessionTree } from "@/ipc/client";
 import type {
   AskClosedEvent,
@@ -23,11 +30,15 @@ import type {
   RunCompactedEvent,
   RunCompactFailedEvent,
   RunCompactingEvent,
+  RunInjectEvent,
+  RunQueueEvent,
+  RunStartEvent,
   RunSuggestionsEvent,
   StoredCompactionEntry,
   TokensUpdateEvent,
 } from "@/ipc/types";
 import { useAskStore } from "@/stores/ask";
+import { useSessionsStore } from "@/stores/sessions";
 
 /** 事件桥依赖面：listen 函数可注入（生产用 ipc/client 的 listenEvent，测试换假实现）。
  *  handler 参数标成 never 是为了让各种带具体类型的事件处理函数都能直接传入
@@ -37,13 +48,28 @@ export interface EventBridgeDeps {
   /** 压缩收口后的边界投影刷新源（生产 = loadSessionTree；测试注入 no-op）。
    *  返回该会话的最新 compactions 投影（失败 → null，保留旧投影）。 */
   reloadCompactions?: (sessionId: string) => Promise<unknown>;
+  /** run:start 驱动的观察态接入（06 号票自动投递续流；生产 = reconnectIfNeeded，
+   *  其内部先查快照确认 run 仍活着再 attach——事件与投递竞态下幂等）。 */
+  autoDeliverReconnect?: (sessionId: string) => Promise<boolean>;
 }
 
 /** 生产依赖：用 ipc/client 的 listenEvent 真实订阅 Tauri 事件。 */
 export const defaultEventBridgeDeps: EventBridgeDeps = {
   listen: (key, handler) => listenEvent(key, handler as (payload: never) => void),
   reloadCompactions: (sessionId) => loadSessionTree(sessionId),
+  autoDeliverReconnect: (sessionId) => reconnectIfNeeded(sessionId),
 };
+
+/** run:queue 事件的本地队列条校正（06 号票）：本地数组比后端权威 size 长
+ *  时裁尾（投递消费后的事件与本地入队的竞态差），短则保留（重启恢复场景
+ *  明细以后端为准但事件不带明细，等下一次入队/删除对齐）。 */
+export function reconcileQueueSize(sessionId: string, size: number): void {
+  const store = useSessionsStore.getState();
+  const local = store.queues[sessionId] ?? [];
+  if (local.length > size) {
+    store.setQueue(sessionId, local.slice(0, size));
+  }
+}
 
 /** 挂载即订阅（App 生命周期一份），卸载时全部取消。 */
 export function useBackendEvents(deps: EventBridgeDeps = defaultEventBridgeDeps): void {
@@ -86,6 +112,35 @@ export function useBackendEvents(deps: EventBridgeDeps = defaultEventBridgeDeps)
       }),
       deps.listen(EVENT_KEYS.runCompactFailed, (p: RunCompactFailedEvent) => {
         useCompactionStore.getState().setPhase(p.sessionId, "failed");
+      }),
+      deps.listen(EVENT_KEYS.runInject, (p: RunInjectEvent) => {
+        // steer 被消费：时间线本地插入插话节点（canonical 由 Rust 同 id 落盘，
+        // 树重载收养后按 entryId 去重，§5.5）
+        useFollowUpStore.getState().addSteerNode(p.sessionId, {
+          entryId: p.entryId,
+          text: p.text,
+          acceptedAtTurn: p.acceptedAtTurn,
+        });
+      }),
+      deps.listen(EVENT_KEYS.runQueue, (p: RunQueueEvent) => {
+        const store = useSessionsStore.getState();
+        store.setQueuePaused(p.sessionId, p.paused);
+        if (p.returned !== undefined && p.returned.length > 0) {
+          // 取消/失败返还：清队列 + 文本回填草稿（returned 为后端权威交还面）
+          store.returnQueueToDraft(p.sessionId, p.returned);
+        } else {
+          reconcileQueueSize(p.sessionId, p.size);
+        }
+      }),
+      deps.listen(EVENT_KEYS.runStart, (p: RunStartEvent) => {
+        // 非运行态收到 run:start = 后端自动投递的新 run（手动发起时 adapter
+        // 已在运行态、帧走自身 channel）：attach 观察态接入续流（§5.8；
+        // reconnectIfNeeded 内部先查快照，竞态下幂等）
+        if (useSessionsStore.getState().running[p.sessionId] !== true) {
+          void deps.autoDeliverReconnect?.(p.sessionId)?.catch((err) => {
+            console.warn("[followUp] 自动投递观察态接入失败", err);
+          });
+        }
       }),
     ];
     return () => {

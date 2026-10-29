@@ -79,7 +79,9 @@ export const echoAdapter: ChatModelAdapter = {
  */
 export const LOCAL_SESSION_ID = "local";
 
-/** M1 默认运行配置（auto_edit 档直写 roots；maxTurns 文档默认 24）。 */
+/** M1 默认运行配置（auto_edit 档直写 roots；maxTurns 文档默认 24）。
+ *  steer 恒 false（06 号票复审：后端队列接管后前端不再以 steer=true 调
+ *  start_chat，插话/排队统一走 inject_run_message——字段为契约兼容占位）。 */
 export const DEFAULT_RUN_CONFIG: RunConfig = {
   tier: "autoEdit",
   maxTurns: 24,

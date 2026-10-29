@@ -22,6 +22,18 @@ export interface UiStatePayload {
   inspectorOpen?: boolean;
   /** 会话草稿（§10.6 按 Tab 存；sessionId → 输入框文本，缺省无）。 */
   drafts?: Record<string, string>;
+  /** 会话待发队列（FR-01-11 队列半，06 号票：sessionId → 排队消息数组，
+   *  队头在前；后端 queue.json 为投递权威，此处承载 UI 现场恢复）。 */
+  queues?: Record<string, QueuedFollowUp[]>;
+  /** 会话队列暂停态（06 号票失败暂停的展示面；跨重启保留）。 */
+  queuePaused?: Record<string, boolean>;
+}
+
+/** 一条待发消息的 UI 侧形状（后端 FollowUpEntry 的展示投影；06 号票）。 */
+export interface QueuedFollowUp {
+  /** 后端队列条目 id（fu-*，删除/编辑取出时回传）。 */
+  id: string;
+  text: string;
 }
 
 export interface SessionsStore {
@@ -41,6 +53,11 @@ export interface SessionsStore {
   inspectorOpen: boolean;
   /** 会话草稿（§10.6，ui-state 持久化；写侧防抖由 persistUiState 承担）。 */
   drafts: Record<string, string>;
+  /** 会话待发队列（FR-01-11 队列半，06 号票；事件与本地操作共同驱动，
+   *  ui-state 持久化；后端 queue.json 为投递权威）。 */
+  queues: Record<string, QueuedFollowUp[]>;
+  /** 会话队列暂停态（06 号票失败暂停的展示面，ui-state 持久化）。 */
+  queuePaused: Record<string, boolean>;
 
   /** 启动恢复：并行拉项目/会话/ui-state，重建 Tab 布局（空则兜底最新会话或新建）。 */
   bootstrap: () => Promise<void>;
@@ -60,6 +77,14 @@ export interface SessionsStore {
   setInspectorOpen: (open: boolean) => void;
   /** 草稿写入（sessionId 维度替换；空串清除该键）。 */
   setDraft: (sessionId: string, text: string) => void;
+  /** 待发队列全量替换（06 号票：本地入队/删除/清空与 run:queue 事件校正
+   *  共用；空数组清除该键）。 */
+  setQueue: (sessionId: string, entries: QueuedFollowUp[]) => void;
+  /** 队列暂停态写入（06 号票 run:queue.paused 事件驱动）。 */
+  setQueuePaused: (sessionId: string, paused: boolean) => void;
+  /** 清空队列并把返还文本合并回草稿（06 号票取消/失败返还面；returned
+   *  为后端 run:queue.returned 交还的权威文本，追加在原草稿之后）。 */
+  returnQueueToDraft: (sessionId: string, returned: string[]) => void;
   /** Tab 布局落盘（setUiState；失败静默——布局可丢，数据不可）。 */
   persistUiState: () => void;
 }
@@ -106,6 +131,8 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
   ready: false,
   inspectorOpen: false,
   drafts: {},
+  queues: {},
+  queuePaused: {},
 
   bootstrap: async () => {
     const emptyUiState: UiStatePayload = { tabIds: [], activeId: null };
@@ -130,6 +157,8 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
       ready: true,
       inspectorOpen: uiState.inspectorOpen ?? false,
       drafts: uiState.drafts ?? {},
+      queues: uiState.queues ?? {},
+      queuePaused: uiState.queuePaused ?? {},
     });
     if (tabs.length > 0) {
       const active = tabs.find((m) => m.id === uiState.activeId) ?? tabs[0];
@@ -211,19 +240,58 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
     get().persistUiState();
   },
 
+  setQueue: (sessionId, entries) => {
+    set((s) => {
+      const queues = { ...s.queues };
+      if (entries.length === 0) delete queues[sessionId];
+      else queues[sessionId] = entries;
+      return { queues };
+    });
+    get().persistUiState();
+  },
+
+  setQueuePaused: (sessionId, paused) => {
+    set((s) => {
+      const queuePaused = { ...s.queuePaused };
+      if (!paused) delete queuePaused[sessionId];
+      else queuePaused[sessionId] = true;
+      return { queuePaused };
+    });
+    get().persistUiState();
+  },
+
+  returnQueueToDraft: (sessionId, returned) => {
+    set((s) => {
+      const queues = { ...s.queues };
+      delete queues[sessionId];
+      const queuePaused = { ...s.queuePaused };
+      delete queuePaused[sessionId];
+      // 返还文本追加在原草稿之后（空行分隔），一并回到输入框可再编辑
+      const prior = s.drafts[sessionId] ?? "";
+      const merged = [prior, ...returned].filter((t) => t.trim().length > 0).join("\n\n");
+      const drafts = { ...s.drafts };
+      if (merged.length === 0) delete drafts[sessionId];
+      else drafts[sessionId] = merged;
+      return { queues, queuePaused, drafts };
+    });
+    get().persistUiState();
+  },
+
   persistUiState: () => {
     // 300ms 防抖窗口：连续操作合并为最后一次落盘；落盘失败只记警告不重试
     // （布局属可丢数据，不值得为它打断用户流程）
     if (persistTimer !== null) clearTimeout(persistTimer);
     persistTimer = setTimeout(() => {
       persistTimer = null;
-      const { tabs, activeId, inspectorOpen, drafts } = get();
+      const { tabs, activeId, inspectorOpen, drafts, queues, queuePaused } = get();
       void client
         .setUiState({
           tabIds: tabs.map((t) => t.id),
           activeId,
           inspectorOpen,
           drafts,
+          queues,
+          queuePaused,
         } satisfies UiStatePayload)
         .catch((err) => console.warn("[ui-state] 布局落盘失败（忽略）", err));
     }, 300);

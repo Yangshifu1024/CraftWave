@@ -43,7 +43,7 @@ function TestHarness() {
 
 /** 真实 UI 交互发送：填 composer → 点 Send。 */
 function sendFromComposer(text: string) {
-  fireEvent.change(screen.getByPlaceholderText("发一条消息，运行中的消息将自动排队…"), {
+  fireEvent.change(screen.getByPlaceholderText("发一条消息，Alt+Enter 排队待发…"), {
     target: { value: text },
   });
   // Send 带 aria-label「发送」（17 号票起 Composer 区还有回底按钮等，按名取）

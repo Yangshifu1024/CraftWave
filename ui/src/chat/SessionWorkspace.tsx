@@ -36,6 +36,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AskPanel } from "@/chat/AskPanel";
 import { useCompactionStore } from "@/chat/compaction-store";
 import { useBackendEvents } from "@/chat/event-bridge";
+import { useFollowUpStore } from "@/chat/followup-store";
 import { Inspector } from "@/chat/Inspector";
 import { ReconnectOverlay } from "@/chat/ReconnectOverlay";
 import { useRunMetricsStore } from "@/chat/run-metrics";
@@ -265,10 +266,11 @@ function SessionTab({
   onOpenSettings: () => void;
 }) {
   const adapter = useMemo(() => sessionAdapter(sessionId), [sessionId]);
-  // unstable_enableMessageQueue（实验性消息队列，FR-01-07 排队面）：运行中
-  // 发送的消息先入 composer 队列展示，当前 run 结束后自动依次发送——
-  // 避开同会话并发 run（后端 E_SESSION_RUNNING）。Steer 立即注入随 §5.5 票。
-  const runtime = useLocalRuntime(adapter, { unstable_enableMessageQueue: true });
+  // 消息队列已迁移到后端（06 号票，§5.5）：运行中 Enter=steer 插话、
+  // Alt+Enter=followUp 排队（后端 queue.json 持久化 + run 正常完成后自动
+  // 投递）——M1 的 unstable_enableMessageQueue 前端队列撤除，避免与后端
+  // 队列双轨重复投递。
+  const runtime = useLocalRuntime(adapter);
   // run 收口摘要（17 号票折叠分组数据面）：历史收养后按 runMarker 推导
   const [summaries, setSummaries] = useState<Map<string, RunSummary>>(() => new Map());
   // 树收养（历史恢复 + 观察态收口共用）：load → import → 摘要/压缩投影刷新
@@ -278,6 +280,11 @@ function SessionTab({
       setSummaries(deriveRunSummaries(tree.messages));
       // 压缩边界投影（04 号票，§6.3：compaction 条目不进树，store 承载）
       useCompactionStore.getState().setCompactions(sessionId, tree.compactions ?? []);
+      // steer 插话节点收养剔除（06 号票，§5.5）：树内已有同 id 的普通 user
+      // 消息，本地「插话」节点任务完成
+      useFollowUpStore
+        .getState()
+        .dropSteerNodes(sessionId, new Set(tree.messages.map((m) => m.id)));
     },
     [runtime, sessionId],
   );
@@ -709,6 +716,7 @@ async function deleteSessionAndClose(sessionId: string): Promise<void> {
   useAskStore.getState().forgetSession(sessionId);
   useCompactionStore.getState().forgetSession(sessionId);
   useRunReconnectStore.getState().forgetSession(sessionId);
+  useFollowUpStore.getState().forgetSession(sessionId);
   await useSessionsStore.getState().refresh();
 }
 

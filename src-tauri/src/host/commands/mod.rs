@@ -44,10 +44,11 @@ pub const FRAMES: &[&str] = &[
     "runSnapshot",
 ];
 
-/// 事件键（§3.5 P0 子集 + 【M2】压缩三键）：14 号票实装 5 键（ask 协议 /
-/// plan / suggest / 会话用量）；17 号票补 run 终态三键与 notify/app 退出两键；
-/// 04 号票补压缩生命周期三键；其余键（run:start / run:retry / run:inject /
-/// tool:* / session:title / menu:action）随对应票填充。
+/// 事件键（§3.5 P0 子集 + 【M2】压缩三键 + 06 号票队列键）：14 号票实装 5 键
+/// （ask 协议 / plan / suggest / 会话用量）；17 号票补 run 终态三键与
+/// notify/app 退出两键；04 号票补压缩生命周期三键；06 号票补 run:start /
+/// run:inject / run:queue 三键；其余键（run:retry / tool:* / session:title /
+/// menu:action）随对应票填充。
 pub const EVENTS: &[&str] = &[
     "ask:opened",
     "ask:closed",
@@ -57,6 +58,9 @@ pub const EVENTS: &[&str] = &[
     "run:done",
     "run:error",
     "run:cancelled",
+    "run:start",
+    "run:inject",
+    "run:queue",
     "notify:activate",
     "app:exit_requested",
     "run:compacting",

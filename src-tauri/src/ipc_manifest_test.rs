@@ -221,6 +221,22 @@ fn export_ipc_manifest_and_cross_lang_fixture() {
     assert_eq!(find("cancel_run").args_type, "CancelRunArgs");
     assert_eq!(find("resolve_ask").args_type, "ResolveAskArgs");
     assert_eq!(find("approve_plan").args_type, "ApprovePlanArgs");
+    // steer/followUp 队列三命令（06 号票，§3.3 #21/#59d/#59e）
+    assert_eq!(find("inject_run_message").args_type, "InjectRunMessageArgs");
+    assert_eq!(
+        find("inject_run_message").ret_type,
+        "InjectRunMessageResult"
+    );
+    assert_eq!(
+        find("resume_followup_queue").args_type,
+        "ResumeFollowupQueueArgs"
+    );
+    assert_eq!(
+        find("resume_followup_queue").ret_type,
+        "ResumeFollowupQueueResult"
+    );
+    assert_eq!(find("remove_followup").args_type, "RemoveFollowupArgs");
+    assert_eq!(find("remove_followup").ret_type, "RemoveFollowupResult");
     // 通知引导两命令（19 号票）
     assert_eq!(
         find("notification_permission_status").ret_type,
@@ -276,7 +292,8 @@ fn export_ipc_manifest_and_cross_lang_fixture() {
     assert_eq!(manifest["frames"].as_array().unwrap().len(), 11);
     // 事件键：14 号票 5 键 + 17 号票 5 键（run 终态三键 + notify/退出两键）
     // + 04 号票压缩三键（run:compacting/compacted/compact_failed）
-    assert_eq!(manifest["events"].as_array().unwrap().len(), 13);
+    // + 06 号票三键（run:start / run:inject / run:queue）
+    assert_eq!(manifest["events"].as_array().unwrap().len(), 16);
     assert_eq!(manifest["tools"].as_array().unwrap().len(), 8);
     assert_eq!(manifest["toolSpecs"].as_array().unwrap().len(), 8);
     fs::create_dir_all(target_dir()).unwrap();

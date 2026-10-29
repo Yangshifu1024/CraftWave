@@ -209,6 +209,11 @@ export async function restorePendingAsk(
  * 帧且快照 status=idle → 兜底收口（§5.6 runEnded 丢失）。
  */
 async function observeRun(sessionId: string, deps: ReconnectDeps): Promise<boolean> {
+  // 防重入（06 号票）：run:start 事件驱动的自动接入与本路径并发时，已在
+  // 观察态（同一 run 正在续流）则不再进第二次 attach
+  if (useRunReconnectStore.getState().scopes[sessionId]?.phase === "observing") {
+    return false;
+  }
   useRunReconnectStore.getState().enter(sessionId);
   const buffer = new FrameBuffer();
   let finished = false;

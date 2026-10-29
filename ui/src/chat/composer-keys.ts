@@ -1,11 +1,14 @@
 /**
- * Composer 按键体系（§10.6 / FR-13-05，17 号票）。
+ * Composer 按键体系（§10.6 / FR-13-05，17 号票；06 号票起 Enter 三态路由）。
  *
  * 覆盖：`@` 路径补全菜单（search_workspace_paths 驱动，光标锚定，Tab 优先级
  * 菜单 > ghost hint）、↑↓ 空输入翻阅本人历史消息、Esc 停止运行/关闭浮层、
  * Shift+Tab 循环权限档（内存态）、Tab 接受 ghost hint。
- * Enter 发送 / Shift+Enter 换行 / IME 组合期防误发由 ComposerPrimitive.Input
- * 原生承担（0.15.31 内建 isComposing 检查，17 号票实证）。
+ * Enter 路由（06 号票，FR-01-07 两种语义界面明确）：空闲 Enter=普通发送、
+ * 运行中 Enter=steer 插话（inject_run_message，turn 边界消费不终止 run）、
+ * Alt+Enter=followUp 排队（任何时刻可排，run 正常完成后自动投递）；
+ * Shift+Enter 换行 / IME 组合期防误发由 ComposerPrimitive.Input 原生承担
+ * （0.15.31 内建 isComposing 检查，17 号票实证）。
  *
  * 同时承担草稿记账：composer 文本变化即写 sessions store（落盘防抖在
  * store 的 persistUiState）——§10.6「草稿按 Tab 存 ui-state」。
@@ -13,7 +16,10 @@
 
 import { useAui, useAuiState } from "@assistant-ui/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { usePermissionTierStore } from "@/chat/permission-tier";
+import { queueFollowUp, sendSteer } from "@/chat/followup-store";
+import { tierOf, usePermissionTierStore } from "@/chat/permission-tier";
+import { DEFAULT_RUN_CONFIG } from "@/chat/runtime";
+import { modelOf } from "@/chat/session-model";
 import { useSessionScope } from "@/chat/session-scope";
 import { cancelRun, searchWorkspacePaths } from "@/ipc/client";
 import type { WorkspacePathHit } from "@/ipc/types";
@@ -25,6 +31,25 @@ export interface AtMenuState {
   query: string;
   items: WorkspacePathHit[];
   activeIndex: number;
+}
+
+/**
+ * Enter 键的三态路由判定（纯函数，FR-01-07 两种语义界面明确）：
+ * - Alt+Enter → followUp 排队（任何时刻可排，含运行中）；
+ * - 运行中 Enter → steer 插话（注入当前 run，不终止）；
+ * - 其余 → none（空闲 Enter 的普通发送 / Shift+Enter 换行交给
+ *   ComposerPrimitive.Input 原生处理）。
+ * IME 组合期（isComposing）一律 none——防误发与原生口径一致。
+ */
+export function routeEnterKey(opts: {
+  altKey: boolean;
+  isRunning: boolean;
+  isComposing: boolean;
+}): "steer" | "followUp" | "none" {
+  if (opts.isComposing) return "none";
+  if (opts.altKey) return "followUp";
+  if (opts.isRunning) return "steer";
+  return "none";
 }
 
 /** 从 (text, cursor) 检测未闭合的 `@` 触发（§10.6 光标锚定）：
@@ -190,7 +215,37 @@ export function useComposerKeys(): {
       cycleTier(sessionId);
       return;
     }
-    // 5) Esc：停止运行（终态以 runEnded 帧为权威，S5 语义）
+    // 5) Enter 三态路由（06 号票，FR-01-07）：Alt+Enter=followUp 排队、
+    //    运行中 Enter=steer 插话；空闲 Enter（普通发送）与 Shift+Enter（换行）
+    //    不拦截，交给 ComposerPrimitive.Input 原生。两种排队语义排队成功后
+    //    清空输入框（steer 回执后时间线插节点，followUp 进队列条）。
+    if (event.key === "Enter" && !event.shiftKey) {
+      const route = routeEnterKey({
+        altKey: event.altKey,
+        isRunning,
+        isComposing: event.nativeEvent.isComposing,
+      });
+      const body = text.trim();
+      if (route === "none" || body.length === 0) return;
+      event.preventDefault();
+      if (route === "steer") {
+        void sendSteer(sessionId, body).then((accepted) => {
+          if (accepted) aui.composer.setText("", { origin: "user" });
+          // 未接纳（防御态）：保留输入框文本，不打断输入
+        });
+        return;
+      }
+      const runConfig = {
+        ...DEFAULT_RUN_CONFIG,
+        tier: tierOf(sessionId),
+        ...(modelOf(sessionId) !== undefined ? { modelId: modelOf(sessionId) } : {}),
+      };
+      void queueFollowUp(sessionId, body, runConfig).then((queued) => {
+        if (queued !== null) aui.composer.setText("", { origin: "user" });
+      });
+      return;
+    }
+    // 6) Esc：停止运行（终态以 runEnded 帧为权威，S5 语义）
     if (event.key === "Escape") {
       if (isRunning) {
         event.preventDefault();

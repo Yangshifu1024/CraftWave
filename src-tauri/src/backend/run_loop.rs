@@ -25,6 +25,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Instant;
 
+use rig::completion::Message;
 use rig::run::response::PromptResponse;
 use rig::run::{AgentRun, AgentRunStep, PendingToolCall, PromptError};
 use tokio_util::sync::CancellationToken;
@@ -175,6 +176,17 @@ pub fn resume_run(run_json: &str) -> serde_json::Result<AgentRun> {
     serde_json::from_str(run_json)
 }
 
+/// steer 插话源（§5.5，06 号票）：RunLoop 在 turn 边界（工具批结果回喂后、
+/// 下一次模型调用前）经它取一条插话注入下一请求。副作用（canonical 落盘 +
+/// `run:inject` 回执事件）收在宿主实现里——backend 层只见纯文本的取出口，
+/// 不依赖存储与事件汇。测试直驱路径传 None（无插话源）。
+pub trait SteerSource: Send + Sync {
+    /// 消费一条插话：宿主实现出队 + 落盘 + 回执后返回注入文本；
+    /// 队列空返回 None。`turn` 为即将开始的模型调用轮次（回执载荷
+    /// `acceptedAtTurn` 的取值面）。
+    fn take(&self, turn: u32) -> Option<String>;
+}
+
 /// 主循环驱动（§5.2 的"每轮"循环 + §3.4 的帧生产）：
 ///
 /// - 首次调用（`resume` 为 None）发 runStarted 起手帧；恢复调用延续
@@ -182,6 +194,9 @@ pub fn resume_run(run_json: &str) -> serde_json::Result<AgentRun> {
 /// - CallModel（调模型）：发 stepStarted → 流式调用（增量经 64ms 节流器
 ///   出帧）→ 收口发 usage 帧（§10.5 累计口径，rate = 本轮输出速度，
 ///   token/秒）→ 收尾 flush；
+/// - **steer 消费（§5.5，06 号票）**：非首拍的 CallModel 前（即上一 turn
+///   已收尾——工具批结果回喂后）经 `steer` 取一条插话，以 user 消息追加进
+///   本拍请求的 history（落盘与回执副作用在宿主实现内）；
 /// - CallTools（执行工具批）：**先整批判定再执行**（§5.4 ①–④）——首个
 ///   Suspend 即把整只 run 序列化挂起（批内零执行）；Blocked 回喂错误
 ///   结果；其余逐个执行 → 发 toolResult 帧（调用 id 经桥接映射与流式
@@ -200,6 +215,7 @@ pub async fn drive_run(
     gate: Arc<dyn ToolGate>,
     sink: &mut dyn FrameSink,
     resume: Option<DriveState>,
+    steer: Option<&dyn SteerSource>,
 ) -> Result<RunExit, PromptError> {
     let mut state = resume.unwrap_or_default();
     // 首次进入（无恢复状态）：记录开始时刻并发起手帧；恢复进入则跳过，
@@ -228,6 +244,17 @@ pub async fn drive_run(
                 turn,
             } => {
                 state.last_turn = turn as u32;
+                // steer 消费点（§5.5，06 号票）：turn 边界 = 上一拍已收尾
+                // （turn > 1 意味着走完了「模型输出 → 工具批回喂」的边界）。
+                // 首拍（turn == 1）不消费——插话不并入模型见到的第一批输入。
+                let mut history = history;
+                if turn > 1
+                    && let Some(text) = steer.and_then(|source| source.take(turn as u32))
+                {
+                    history.push(Arc::new(Message::User {
+                        content: vec![rig::message::UserContent::text(text)],
+                    }));
+                }
                 sink.send(ChatFrame::StepStarted { turn: turn as u32 });
                 let mut turn_bridge = RigEventBridge::new();
                 turn_bridge.seed_model_call_ids(bridge.model_call_ids().clone());

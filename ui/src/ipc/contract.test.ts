@@ -114,6 +114,9 @@ describe("§12.3 manifest 双向扫描", () => {
       "open_dir",
       "start_chat",
       "cancel_run",
+      "inject_run_message",
+      "resume_followup_queue",
+      "remove_followup",
       "resolve_ask",
       "approve_plan",
       "compact_session",
@@ -168,6 +171,19 @@ describe("§12.3 manifest 双向扫描", () => {
     expect(find("cancel_run")).toMatchObject({
       args_type: "CancelRunArgs",
       ret_type: "bool",
+    });
+    // steer/followUp 队列三命令（06 号票，§3.3 #21/#59d/#59e）
+    expect(find("inject_run_message")).toMatchObject({
+      args_type: "InjectRunMessageArgs",
+      ret_type: "InjectRunMessageResult",
+    });
+    expect(find("resume_followup_queue")).toMatchObject({
+      args_type: "ResumeFollowupQueueArgs",
+      ret_type: "ResumeFollowupQueueResult",
+    });
+    expect(find("remove_followup")).toMatchObject({
+      args_type: "RemoveFollowupArgs",
+      ret_type: "RemoveFollowupResult",
     });
     // ask/计划门命令（14 号票，§3.3 #22/#26c）
     expect(find("resolve_ask")).toMatchObject({
@@ -270,8 +286,9 @@ describe("§12.3 manifest 双向扫描", () => {
   });
 
   it("manifest.events 覆盖 §3.5 实装 13 键且与 EVENT_KEYS 一致", () => {
-    // 事件清单双保险：manifest 恰好 13 键（14/17 号票 10 键 + 04 号票压缩
-    // 三键），且与前端 EVENT_KEYS 注册表完全一致
+    // 事件清单双保险：manifest 恰好 16 键（14/17 号票 10 键 + 04 号票压缩
+    // 三键 + 06 号票 run:start/run:inject/run:queue 三键），且与前端
+    // EVENT_KEYS 注册表完全一致
     expect(manifest.events).toEqual([
       "ask:opened",
       "ask:closed",
@@ -281,6 +298,9 @@ describe("§12.3 manifest 双向扫描", () => {
       "run:done",
       "run:error",
       "run:cancelled",
+      "run:start",
+      "run:inject",
+      "run:queue",
       "notify:activate",
       "app:exit_requested",
       "run:compacting",

@@ -1,5 +1,7 @@
-//! start_chat / cancel_run / resolve_ask / approve_plan 命令
-//! （§3.3 #18/#19/#22/#26c，M1 单会话核心链路 + 14 号票审批接线）。
+//! start_chat / cancel_run / resolve_ask / approve_plan / inject_run_message /
+//! resume_followup_queue / remove_followup 命令
+//! （§3.3 #18/#19/#22/#26c/#21/#59d/#59e，M1 单会话核心链路 + 14 号票审批接线
+//! + 06 号票 steer/followUp 队列）。
 //!
 //! - 命令层只做校验/转调与装配（§2.2）：模型解析（§11.1：RunConfig.modelId >
 //!   AppConfig.activeModelId）→ wire 切分（§6.2）→ 工具集（§8.1 档位过滤）→
@@ -11,14 +13,23 @@
 //!   usage/计数不回退）；deny/取消 → 挂起调用补拒绝结果帧 + runEnded(cancelled)；
 //! - **suggest 后台小调用**（C-9）：run Done 后以同模型一次非流式调用生成
 //!   建议提示词 → `run:suggestions` 事件；失败静默、用量计入会话累计；
+//! - **steer / followUp 队列**（06 号票，§5.5）：`inject_run_message` 按
+//!   活跃状态与 mode 分叉——运行中 steer 入 RunHandle 插话队列（turn 边界
+//!   由 `SteerSource` 宿主实现消费：出队 + canonical 落盘 + run:inject 回执，
+//!   注入下一请求 history）；followUp 入会话级队列（`host::followup`，
+//!   queue.json 持久化），run 正常完成后自动投递队列头新开 run（复查无活跃
+//!   run、撞车回队重试）；run 失败暂停队列等待 `resume_followup_queue`；
+//!   取消清空队列并把文本随 `run:queue.returned` 交还前端草稿；
 //! - 帧出口（§5.8，05 号票）：tauri `Channel` 适配为已序列化帧下发端，seq
 //!   递增 + 环形缓冲（512 帧）+ 下发收进 agent 层 `FrameHub` 枢纽，外包事件
 //!   层（usage 帧 → RunState 同步 + tokens:update 事件全量校正）与 canonical
 //!   落盘层；`attach_run`/`session_run_snapshot`/`session_pending_ask`
-//!   （#57/#20/#59c）承载 WebView 重载后的帧重放续流与状态对账；
-//! - provider 只接 openai_chat 方言（§11.1），Key 经 keyring 读取；
+//!   （#57/#20/#59c）承载 WebView 重载后的帧重放续流与状态对账；自动投递的
+//!   新 run 无前端通道，以 `DetachedSink` 起手（帧只入环不下发，前端经
+//!   `run:start` 事件 → attach 观察态续流）；
+//! - provider 只接 openai_chat 方言（§11.1），Key 经 config 读取；
 //! - 错误终态兜底：RunLoop 内部失败（PromptError）由 run 任务发
-//!   `runEnded(error)`（§11.3 分类器为 provider 适配层后续票，本票 E_INTERNAL）。
+//!   runEnded(error)（§11.3 分类器为 provider 适配层后续票，本票 E_INTERNAL）。
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -44,9 +55,12 @@ use crate::backend::frames::{
     UsageTotal,
 };
 use crate::backend::gate::ApprovalGate;
-use crate::backend::run_loop::{DriveState, PendingCall, RunExit, drive_run, resume_run};
+use crate::backend::run_loop::{
+    DriveState, PendingCall, RunExit, SteerSource, drive_run, resume_run,
+};
 use crate::backend::turn::TurnDriver;
 use crate::host::AppState;
+use crate::host::followup::{FollowUpEntry, FollowUpManager, QueuedRunConfig};
 use crate::host::run_persistence::{PersistingSink, RunRecorder};
 use crate::providers::types::{ApiFormat, ProviderConfig, ProviderModel};
 use crate::safety::tier::PermissionTier;
@@ -90,6 +104,90 @@ pub struct RunConfig {
 /// maxTurns 缺省值：单次 run 最多跑 24 个来回（防止模型无限循环烧钱）。
 fn default_max_turns() -> u32 {
     24
+}
+
+/// `inject_run_message` 的注入语义（§3.3 #21，06 号票）：steer = 运行中插话
+/// （有活跃 run 时注入当前 run，turn 边界消费）；followUp = 排队（任何时刻
+/// 可排，run 正常完成后自动投递）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub enum InjectMode {
+    Steer,
+    FollowUp,
+}
+
+/// `inject_run_message` 参数契约（§3.3 #21，06 号票改写）。
+#[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct InjectRunMessageArgs {
+    pub session_id: String,
+    pub text: String,
+    /// 注入语义；缺省按 steer 处理（无活跃 run 时自动落 followUp）。
+    #[serde(default)]
+    #[cfg_attr(test, ts(optional))]
+    pub mode: Option<InjectMode>,
+    /// followUp 附着的运行配置快照（投递新 run 的 RunConfig 来源；缺省回退
+    /// 默认档位组合）。
+    #[serde(default)]
+    #[cfg_attr(test, ts(optional))]
+    pub run_config: Option<RunConfig>,
+}
+
+/// `inject_run_message` 返回契约（§3.3 #21，06 号票改写）：实际入队的通道。
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct InjectRunMessageResult {
+    pub queued: bool,
+    /// 实际接纳通道："steer" = 已被运行中 run 接纳；"followUp" = 已入会话级
+    /// 待发队列。queued=false（未接纳）时省略。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub mode: Option<InjectMode>,
+    /// followUp 模式下返回队列条目 id（前端队列条的删除/编辑取出回传键）；
+    /// steer 模式省略。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub entry_id: Option<String>,
+}
+
+/// `resume_followup_queue` 参数契约（§3.3 #59d）。
+#[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct ResumeFollowupQueueArgs {
+    pub session_id: String,
+}
+
+/// `resume_followup_queue` 返回契约（§3.3 #59d）：delivered=true 表示解除
+/// 暂停后立即投递了队列头并新开 run（runId 带值）。
+#[derive(Debug, Clone, Serialize, Default, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct ResumeFollowupQueueResult {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub run_id: Option<String>,
+    pub delivered: bool,
+}
+
+/// `remove_followup` 参数契约（§3.3 #59e）。
+#[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct RemoveFollowupArgs {
+    pub session_id: String,
+    pub entry_id: String,
+}
+
+/// `remove_followup` 返回契约（§3.3 #59e）：移除后的队列长度。
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct RemoveFollowupResult {
+    pub size: usize,
 }
 
 /// `cancel_run` 参数契约（§3.3 #19）。
@@ -326,6 +424,114 @@ fn send_error_ended(sink: &mut dyn FrameSink, message: String) {
         turn: 1,
         error: Some(FrameError::new(E_INTERNAL, message)),
     });
+}
+
+/// steer 消费的宿主实现（§5.5，06 号票）：出队 → canonical 落盘
+/// （id=`{runId}:steer:{n}`，父=消费时刻链尾，§7.3 时机表增行）→
+/// `run:inject` 回执（acceptedAtTurn + entryId/text，前端据以本地插入插话
+/// 节点）。副作用收在本实现内，RunLoop（backend 层）只拿到注入文本。
+struct HostSteerSource {
+    /// 该 run 的插话队列（RunHandle.steer 的共享句柄）。
+    queue: Arc<Mutex<std::collections::VecDeque<String>>>,
+    store: Arc<crate::storage::SessionStore>,
+    events: Arc<dyn EventSink>,
+    session_id: String,
+    run_id: String,
+    /// 条目序号（id 的 `{n}` 段，run 内从 1 递增）。
+    seq: std::sync::atomic::AtomicU32,
+}
+
+impl SteerSource for HostSteerSource {
+    fn take(&self, turn: u32) -> Option<String> {
+        let text = self
+            .queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .pop_front()?;
+        let n = self.seq.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        let entry_id = format!("{}:steer:{n}", self.run_id);
+        // 父 = 消费时刻 canonical 链尾（steer 条目排在最新已落盘条目之后——
+        // turn 收口的 assistant 条目已先于此落盘，§7.3 时机次序天然成立）
+        let parent_id = self
+            .store
+            .load_session_tree(&self.session_id)
+            .ok()
+            .and_then(|tree| tree.active_leaf_id);
+        let entry = MessageEntry {
+            id: entry_id.clone(),
+            parent_id,
+            role: MessageRole::User,
+            parts: vec![crate::storage::WirePart::Text { text: text.clone() }],
+            created_at: now_ms(),
+            run_id: Some(self.run_id.clone()),
+            status: None,
+        };
+        // 落盘失败不阻断注入（帧面可用性优先，M1 取舍同 RunRecorder——
+        // 缺行在崩溃恢复扫描中补 interrupted 标记，不会产生半行）
+        if let Err(e) = self
+            .store
+            .append_canonical(&self.session_id, &[StoredEntry::Message(entry)])
+        {
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "[craftwave] steer 条目落盘失败（{} {}）：{e:?}",
+                self.session_id, entry_id
+            );
+            #[cfg(not(debug_assertions))]
+            let _ = e;
+        }
+        self.events.emit(
+            keys::RUN_INJECT,
+            serde_json::json!({
+                "sessionId": self.session_id,
+                "runId": self.run_id,
+                "acceptedAtTurn": turn,
+                "entryId": entry_id,
+                "text": text,
+            }),
+        );
+        Some(text)
+    }
+}
+
+/// 自动投递新 run 的帧出口占位（§5.5 06 号票）：自动投递时后端没有前端
+/// 通道——帧枢纽以本空实现起手（帧只入环形缓冲不下发），前端收到
+/// `run:start` 事件后经 attach_run（§5.8 观察态）以新通道重放续流。
+struct DetachedSink;
+
+impl SequencedSink for DetachedSink {
+    fn send_seq(&mut self, _frame: SequencedFrame) {}
+}
+
+/// 取走并清空某会话活跃 run 的 steer 未消费残余（run 收尾分流用：
+/// Done → 转会话 followUp 队列尾；取消/失败 → 随 run:queue.returned 交还）。
+fn drain_steer(handle: &Arc<RunHandle>) -> Vec<String> {
+    handle
+        .steer
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .drain(..)
+        .collect()
+}
+
+/// `run:queue` 事件发射（§3.5【M2】增补键，06 号票）：载荷 = 快照 + 可选
+/// `returned` 交还文本数组（取消清空/失败交还时出现）。
+fn emit_queue_state(
+    events: &Arc<dyn EventSink>,
+    session_id: &str,
+    followups: &FollowUpManager,
+    returned: Vec<String>,
+) {
+    let snapshot = followups.snapshot(session_id);
+    let mut payload = serde_json::json!({
+        "sessionId": session_id,
+        "size": snapshot.size,
+        "paused": snapshot.paused,
+    });
+    if !returned.is_empty() {
+        payload["returned"] = serde_json::json!(returned);
+    }
+    events.emit(keys::RUN_QUEUE, payload);
 }
 
 /// 审批挂起 → AskPayload(kind=approval)：write=新文件全 add、edit=替换 hunk、
@@ -1318,8 +1524,15 @@ pub async fn start_chat_core(
         [custom_prompt.as_deref(), compaction_summary.as_deref()],
     );
 
-    // ⑥ 注册 run（同会话互斥 E_SESSION_RUNNING；帧枢纽随句柄挂载）
+    // ⑥ 注册 run（同会话互斥 E_SESSION_RUNNING；帧枢纽随句柄挂载）+ run:start
+    //    事件（§3.5 P0 键，06 号票实装：手动 start_chat 与自动投递都发——前端
+    //    以它区分「自己 adapter 发起的 run」与「后端自动投递的新 run」并接入
+    //    观察态续流）
     let handle = runs.start(&session_id, run_id.clone(), now_ms(), hub)?;
+    app.events.emit(
+        keys::RUN_START,
+        serde_json::json!({ "sessionId": session_id, "runId": run_id }),
+    );
 
     // ⑤ spawn RunLoop 任务（帧生产 + 审批挂起恢复 + 取消 + 终态摘除）。
     let spec = RunSpec {
@@ -1367,6 +1580,17 @@ pub async fn start_chat_core(
     let runs_for_task = runs.clone();
     let suggest_tail = context_tail(&messages);
     let run_id_for_result = run_id.clone();
+    // steer 插话源（06 号票，§5.5）：RunHandle 的插话队列 + 宿主副作用
+    // （canonical 落盘 + run:inject 回执）收进 HostSteerSource，RunLoop 于
+    // turn 边界经 trait 取文本
+    let steer_source: Arc<dyn SteerSource> = Arc::new(HostSteerSource {
+        queue: handle.steer.clone(),
+        store: app.store.clone(),
+        events: events.clone(),
+        session_id: session_id.clone(),
+        run_id: run_id.clone(),
+        seq: std::sync::atomic::AtomicU32::new(0),
+    });
     // ask 关闭后压缩触发点（§6.2 触发点②）的依赖面：摘要驱动与策略随
     // run 任务进闭包（摘要模型独立解析，与 run 的 driver 互不占用）；
     // 存储器同源 Arc（命令层与 run 落盘器同一锁表）
@@ -1374,6 +1598,11 @@ pub async fn start_chat_core(
     let policy_for_task = policy;
     let store_for_task = app.store.clone();
     let recorder = RunRecorder::new(app.store.clone(), session_id.clone(), run_id.clone());
+    // run 收尾的队列依赖面（06 号票）：全部字段同源的共享句柄副本（Arc
+    // 克隆零深拷贝）——收尾后按终态分流 followUp 队列并自动投递（投递要
+    // 以完整状态面重新走 start_chat_core，故捕获句柄而非细粒度克隆件）
+    let app_for_delivery = app.share_handles();
+    let run_config_for_delivery = run_config.clone();
     tokio::spawn(async move {
         // 帧出口 = 事件层（usage → tokens:update + RunState 同步）包 canonical
         // 落盘器（§7.3）包帧枢纽（§5.8：seq 递增 → 入环 → 下发）
@@ -1406,6 +1635,7 @@ pub async fn start_chat_core(
                 gate.clone(),
                 &mut sink,
                 resume_state.take(),
+                Some(steer_source.as_ref()),
             )
             .await;
             match attempt {
@@ -1492,6 +1722,44 @@ pub async fn start_chat_core(
             ),
         }
         runs_for_task.remove(&session_id, &run_id);
+
+        // —— followUp 队列收尾分流（§5.5，06 号票）——
+        // 次序锚点：投递时机 = run 正常完成且终态处理完（runEnded 帧已发出 +
+        // RunManager.remove 已摘除）。steer 未消费残余按终态分流：
+        // Done → 转会话 followUp 队列尾（随下次投递发出）；取消/失败 →
+        // 随 run:queue.returned 交还前端草稿（未消费的插话未落 canonical、
+        // 未上时间线，文本交还即无丢失）。
+        let leftover_steer = drain_steer(&handle);
+        let followups = &app_for_delivery.followups;
+        let events_for_task = &events;
+        match (&final_exit, &errored) {
+            (RunExit::Done(_), _) => {
+                for text in leftover_steer {
+                    let entry = followup_entry_from_text(&text, &run_config_for_delivery);
+                    followups.push(&session_id, entry);
+                }
+                let snapshot = followups.snapshot(&session_id);
+                if snapshot.size > 0 && !snapshot.paused {
+                    emit_queue_state(events_for_task, &session_id, followups, Vec::new());
+                    spawn_followup_delivery(app_for_delivery, session_id.clone());
+                } else {
+                    emit_queue_state(events_for_task, &session_id, followups, Vec::new());
+                }
+            }
+            // 失败终态（含 runEnded(error) 兜底）：暂停队列 + 持久保留全部待发，
+            // steer 残余交还（§5.5 失败暂停定案；E_RUN_STALLED 同此路径，37 号票）
+            (_, Some(_)) => {
+                followups.set_paused(&session_id, true);
+                emit_queue_state(events_for_task, &session_id, followups, leftover_steer);
+            }
+            // 取消终态（含审批 deny 收场）：清空队列 + 全部文本交还草稿
+            // （FR-01-07 返还草稿；暂停态随清空一并复位）
+            _ => {
+                let mut returned = followups.clear(&session_id);
+                returned.extend(leftover_steer);
+                emit_queue_state(events_for_task, &session_id, followups, returned);
+            }
+        }
     });
 
     Ok(StartChatResult {
@@ -1545,6 +1813,299 @@ pub(crate) async fn cancel_run(
     session_id: String,
 ) -> Result<bool, IpcError> {
     Ok(runs.cancel(&session_id))
+}
+
+// ---- steer / followUp 队列（§3.3 #21/#59d/#59e，06 号票） ----
+
+/// 等待会话空闲的重试参数：runEnded 与 remove 之间有并发 start_chat 撞车时
+/// 队列头回队延迟重试（§5.5「投递循环不丢消息」）；总窗口约 5s，超时保留
+/// 队列等下一次触发（下次 run 完成 / resume 命令），不丢消息。
+const DELIVERY_RETRY_LIMIT: u32 = 50;
+const DELIVERY_RETRY_INTERVAL: Duration = Duration::from_millis(100);
+
+/// 从纯文本构造 followUp 待发条目（runConfig 快照随行——投递时按它开新 run）。
+fn followup_entry_from_text(text: &str, run_config: &RunConfig) -> FollowUpEntry {
+    FollowUpEntry {
+        id: format!("fu-{}", uuid::Uuid::new_v4()),
+        text: text.to_owned(),
+        created_at: now_ms(),
+        run_config: QueuedRunConfig {
+            model_id: run_config.model_id.clone(),
+            tier: run_config.tier,
+            max_turns: run_config.max_turns,
+        },
+        attachments: Vec::new(),
+    }
+}
+
+/// 自动投递队列头（§5.5，06 号票）：等会话空闲（复查无活跃 run）→ 出队 →
+/// 以附着 runConfig 构造 user 消息自动 start_chat 新 run（走同一入口，压缩
+/// 编排/wire 切分天然继承；user 条目由 start_chat 侧 persist_user_fallback
+/// 兜底落盘，§6.3 双写协议补落路径）。
+///
+/// 撞 E_SESSION_RUNNING 回队重试；其他失败（模型未配等命令面错误）回队 +
+/// 暂停等待用户明确继续（`resume_followup_queue`）——两种路径都不丢消息。
+/// `app` 为全部字段同源的共享句柄副本（[`AppState::share_handles`]）。
+async fn deliver_followup_head(
+    app: &AppState,
+    session_id: &str,
+) -> Result<Option<String>, IpcError> {
+    // ① 等会话空闲：runEnded 与 remove 之间并发的 start_chat 会占住会话
+    for _ in 0..DELIVERY_RETRY_LIMIT {
+        if app.runs.get(session_id).is_none() {
+            break;
+        }
+        tokio::time::sleep(DELIVERY_RETRY_INTERVAL).await;
+    }
+    if app.runs.get(session_id).is_some() {
+        // 空闲等待超时：保留队列（不投递），等下次 run 完成 / resume 触发
+        return Ok(None);
+    }
+    // ② 出队前再查暂停态（resume 前的收尾投递竞态防御）
+    if app.followups.snapshot(session_id).paused {
+        return Ok(None);
+    }
+    let Some(entry) = app.followups.pop_head(session_id) else {
+        return Ok(None);
+    };
+    app.events.emit(
+        keys::RUN_QUEUE,
+        serde_json::json!({
+            "sessionId": session_id,
+            "size": app.followups.snapshot(session_id).size,
+            "paused": app.followups.snapshot(session_id).paused,
+        }),
+    );
+    // ③ 构造 user 消息与 RunConfig（附着快照原样生效）
+    let user_entry = MessageEntry {
+        id: format!("auto-{}", entry.id),
+        parent_id: None,
+        role: MessageRole::User,
+        parts: vec![crate::storage::WirePart::Text {
+            text: entry.text.clone(),
+        }],
+        created_at: now_ms(),
+        run_id: None,
+        status: None,
+    };
+    let run_config = RunConfig {
+        model_id: entry.run_config.model_id.clone(),
+        tier: entry.run_config.tier,
+        max_turns: entry.run_config.max_turns,
+        steer: false,
+    };
+    // ④ 自动开新 run：帧出口用 DetachedSink（无前端通道，帧只入环——前端
+    //    经 run:start 事件走 attach 观察态续流，§5.5/§5.8）
+    let auto_confirm = app
+        .config
+        .load()
+        .map(|c| c.approval.auto_confirm)
+        .unwrap_or(false);
+    match start_chat_core(
+        app,
+        &app.runs,
+        session_id.to_owned(),
+        vec![user_entry],
+        run_config,
+        Box::new(DetachedSink),
+        auto_confirm,
+    )
+    .await
+    {
+        Ok(result) => Ok(Some(result.run_id)),
+        Err(err) => {
+            // 投递失败：队列头回队（不丢消息）。E_SESSION_RUNNING = 撞车，
+            // 保留未暂停态由重试机制自然续投；其他错误（模型未配等）暂停
+            // 队列等待用户明确继续（避免反复失败刷屏）
+            app.followups.push_front(session_id, entry);
+            if err.code != crate::util::errors::E_SESSION_RUNNING {
+                app.followups.set_paused(session_id, true);
+            }
+            emit_queue_state(&app.events, session_id, &app.followups, Vec::new());
+            Err(err)
+        }
+    }
+}
+
+/// 自动投递的异步触发（run 正常完成收尾用）：spawn 独立任务执行
+/// [`deliver_followup_head`]，失败只记日志（队列态已回队/暂停，事件面可见）。
+fn spawn_followup_delivery(app: AppState, session_id: String) {
+    tokio::spawn(async move {
+        if let Err(e) = deliver_followup_head(&app, &session_id).await {
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "[craftwave] followUp 自动投递失败（{session_id}）：{}",
+                e.message
+            );
+            #[cfg(not(debug_assertions))]
+            let _ = (e, session_id);
+        }
+    });
+}
+
+/// `inject_run_message` 主体（§3.3 #21，06 号票）：按 mode 与活跃状态分流——
+/// mode=steer（缺省）且会话有活跃 run → 入该 run 的插话队列（turn 边界消费，
+/// §5.5）；否则入会话级 followUp 队列（`mode=followUp` 显式排队时无论活跃
+/// 与否都入队）。公开给集成测试。
+pub fn inject_run_message_core(
+    app: &AppState,
+    session_id: &str,
+    text: &str,
+    mode: Option<InjectMode>,
+    run_config: Option<&RunConfig>,
+) -> Result<InjectRunMessageResult, IpcError> {
+    if session_id.trim().is_empty() {
+        return Err(IpcError::invalid_arg("sessionId 不能为空"));
+    }
+    if text.trim().is_empty() {
+        return Err(IpcError::invalid_arg("text 不能为空"));
+    }
+    let handle = app.runs.get(session_id);
+    if mode != Some(InjectMode::FollowUp)
+        && let Some(handle) = handle
+    {
+        // steer：运行中插话（RunHandle 插话队列，RunLoop turn 边界消费）
+        handle
+            .steer
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push_back(text.to_owned());
+        return Ok(InjectRunMessageResult {
+            queued: true,
+            mode: Some(InjectMode::Steer),
+            entry_id: None,
+        });
+    }
+    // followUp：会话级待发队列（持久化 + run 正常完成后自动投递）。
+    // 附着 runConfig 快照：显式入参优先（前端发送时读会话权限档/模型覆盖），
+    // 缺省回退默认档位组合（§3.3 #21 注记）。
+    let effective = run_config.cloned().unwrap_or_else(|| RunConfig {
+        model_id: None,
+        tier: PermissionTier::AutoEdit,
+        max_turns: default_max_turns(),
+        steer: false,
+    });
+    let entry = followup_entry_from_text(text, &effective);
+    let entry_id = entry.id.clone();
+    app.followups.push(session_id, entry);
+    emit_queue_state(&app.events, session_id, &app.followups, Vec::new());
+    Ok(InjectRunMessageResult {
+        queued: true,
+        mode: Some(InjectMode::FollowUp),
+        entry_id: Some(entry_id),
+    })
+}
+
+/// `inject_run_message` 命令（§3.3 #21）：平铺形参（tauri invoke 一层；
+/// InjectRunMessageArgs 为文档命名锚点）。
+#[tauri::command]
+pub(crate) async fn inject_run_message(
+    app: State<'_, AppState>,
+    session_id: String,
+    text: String,
+    mode: Option<InjectMode>,
+    run_config: Option<RunConfig>,
+) -> Result<InjectRunMessageResult, IpcError> {
+    // 契约命名单一事实源：平铺形参回组为文档契约结构
+    let args = InjectRunMessageArgs {
+        session_id,
+        text,
+        mode,
+        run_config,
+    };
+    inject_run_message_core(
+        &app,
+        &args.session_id,
+        &args.text,
+        args.mode,
+        args.run_config.as_ref(),
+    )
+}
+
+/// `resume_followup_queue` 主体（§3.3 #59d）：解除失败暂停；解除后无活跃
+/// run 且队列非空 → 同步投递队列头新开 run（runId 带值）。公开给集成测试。
+pub async fn resume_followup_queue_core(
+    app: &AppState,
+    session_id: &str,
+) -> Result<ResumeFollowupQueueResult, IpcError> {
+    if session_id.trim().is_empty() {
+        return Err(IpcError::invalid_arg("sessionId 不能为空"));
+    }
+    app.followups.set_paused(session_id, false);
+    emit_queue_state(&app.events, session_id, &app.followups, Vec::new());
+    if app.runs.get(session_id).is_some() {
+        // 有活跃 run：只解除暂停，该 run 正常完成后自动投递
+        return Ok(ResumeFollowupQueueResult {
+            run_id: None,
+            delivered: false,
+        });
+    }
+    if app.followups.snapshot(session_id).size == 0 {
+        return Ok(ResumeFollowupQueueResult {
+            run_id: None,
+            delivered: false,
+        });
+    }
+    match deliver_followup_head(app, session_id).await {
+        Ok(Some(run_id)) => Ok(ResumeFollowupQueueResult {
+            run_id: Some(run_id),
+            delivered: true,
+        }),
+        // 投递未发生（竞态暂停/队列空）或失败（已回队/暂停并广播）：不算命令错误
+        Ok(None) => Ok(ResumeFollowupQueueResult {
+            run_id: None,
+            delivered: false,
+        }),
+        Err(_) => Ok(ResumeFollowupQueueResult {
+            run_id: None,
+            delivered: false,
+        }),
+    }
+}
+
+/// `resume_followup_queue` 命令（§3.3 #59d）。
+#[tauri::command]
+pub(crate) async fn resume_followup_queue(
+    app: State<'_, AppState>,
+    session_id: String,
+) -> Result<ResumeFollowupQueueResult, IpcError> {
+    resume_followup_queue_core(&app, &session_id).await
+}
+
+/// `remove_followup` 主体（§3.3 #59e）：移除一条待发消息（队列条 × 删除与
+/// 前端「编辑取出」共用）。公开给集成测试。
+pub fn remove_followup_core(
+    app: &AppState,
+    session_id: &str,
+    entry_id: &str,
+) -> Result<RemoveFollowupResult, IpcError> {
+    if session_id.trim().is_empty() {
+        return Err(IpcError::invalid_arg("sessionId 不能为空"));
+    }
+    let removed = app
+        .followups
+        .remove(session_id, entry_id)
+        .ok_or_else(|| IpcError::not_found(format!("待发消息不在队列：{entry_id}")))?;
+    let _ = removed;
+    emit_queue_state(&app.events, session_id, &app.followups, Vec::new());
+    Ok(RemoveFollowupResult {
+        size: app.followups.snapshot(session_id).size,
+    })
+}
+
+/// `remove_followup` 命令（§3.3 #59e）：平铺形参（同 start_chat 惯例）。
+#[tauri::command]
+pub(crate) async fn remove_followup(
+    app: State<'_, AppState>,
+    session_id: String,
+    entry_id: String,
+) -> Result<RemoveFollowupResult, IpcError> {
+    // 契约命名单一事实源：平铺形参回组为文档契约结构
+    let args = RemoveFollowupArgs {
+        session_id,
+        entry_id,
+    };
+    remove_followup_core(&app, &args.session_id, &args.entry_id)
 }
 
 /// resolve_ask 主体（§3.3 #22：投递应答并唤醒等待方；槽位清理与

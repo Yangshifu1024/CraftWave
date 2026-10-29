@@ -38,9 +38,12 @@ use backend::frames::RunSnapshot;
 #[allow(unused_imports)]
 use host::commands::chat::{
     ApprovePlanArgs, AttachRunArgs, AttachRunResult, CancelRunArgs, CompactSessionArgs,
-    CompactSessionResult, ResolveAskArgs, RunConfig, SessionPendingAsk, SessionPendingAskArgs,
+    CompactSessionResult, InjectMode, InjectRunMessageArgs, InjectRunMessageResult,
+    RemoveFollowupArgs, RemoveFollowupResult, ResolveAskArgs, ResumeFollowupQueueArgs,
+    ResumeFollowupQueueResult, RunConfig, SessionPendingAsk, SessionPendingAskArgs,
     SessionRunSnapshotArgs, StartChatArgs, StartChatResult, approve_plan, attach_run, cancel_run,
-    compact_session, resolve_ask, session_pending_ask, session_run_snapshot, start_chat,
+    compact_session, inject_run_message, remove_followup, resolve_ask, resume_followup_queue,
+    session_pending_ask, session_run_snapshot, start_chat,
 };
 #[allow(unused_imports)]
 use host::commands::config::{SaveConfigArgs, get_config, save_config};
@@ -175,6 +178,9 @@ ipc_commands! {
     host::commands::provider::delete_provider => args: DeleteProviderArgs, ret: ();
     host::commands::chat::start_chat => args: StartChatArgs, ret: StartChatResult;
     host::commands::chat::cancel_run => args: CancelRunArgs, ret: bool;
+    host::commands::chat::inject_run_message => args: InjectRunMessageArgs, ret: InjectRunMessageResult;
+    host::commands::chat::resume_followup_queue => args: ResumeFollowupQueueArgs, ret: ResumeFollowupQueueResult;
+    host::commands::chat::remove_followup => args: RemoveFollowupArgs, ret: RemoveFollowupResult;
     host::commands::chat::resolve_ask => args: ResolveAskArgs, ret: ();
     host::commands::chat::approve_plan => args: ApprovePlanArgs, ret: ();
     host::commands::chat::compact_session => args: CompactSessionArgs, ret: CompactSessionResult;

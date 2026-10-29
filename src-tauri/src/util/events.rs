@@ -14,6 +14,9 @@ use std::sync::Mutex;
 /// 事件键常量（§3.5 P0 子集；17 号票前实装 5 键，本票补 run 终态三键与
 /// 通知/退出两键）。
 pub mod keys {
+    /// run 任务确认启动（§3.5 P0 键；06 号票实装——自动投递与手动
+    /// start_chat 都发，前端以它驱动自动投递新 run 的观察态接入）。
+    pub const RUN_START: &str = "run:start";
     /// 询问/审批开启（AskPanel 弹出）。
     pub const ASK_OPENED: &str = "ask:opened";
     /// 已答/已取消。
@@ -30,6 +33,11 @@ pub mod keys {
     pub const RUN_ERROR: &str = "run:error";
     /// run 用户取消终态。
     pub const RUN_CANCELLED: &str = "run:cancelled";
+    /// steer 被消费（§3.5 P0 键，06 号票实装：acceptedAtTurn + entryId/text）。
+    pub const RUN_INJECT: &str = "run:inject";
+    /// followUp 队列状态变化（§3.5【M2】增补键，06 号票：入队/出队/移除/
+    /// 暂停/恢复即发；returned 仅清空返还时出现）。
+    pub const RUN_QUEUE: &str = "run:queue";
     /// 系统通知点击回跳（§9.6：payload 带 sessionId/runId/anchor）。
     pub const NOTIFY_ACTIVATE: &str = "notify:activate";
     /// 退出请求待确认（存在活跃 run 的退出拦截，§9.6）。

@@ -11,6 +11,7 @@
 
 pub mod commands;
 mod error;
+pub mod followup;
 pub mod notify;
 pub mod run_persistence;
 pub mod shell;
@@ -29,36 +30,44 @@ use serde_json::Value;
 
 use crate::agent::RunManager;
 use crate::backend::frames::UsageTotal;
+use crate::host::followup::FollowUpManager;
 use crate::providers::types::AppConfig;
 use crate::storage::SessionStore;
 use crate::storage::config_store::ConfigStore;
 use crate::storage::project_store::ProjectStore;
 use crate::util::events::{EventSink, keys};
 
-/// 应用级共享状态（tauri manage）。
+/// 应用级共享状态（tauri manage）。全部字段都是共享句柄（Arc 或内含 Arc），
+/// 因此 [`AppState::share_handles`] 能以零拷贝代价产出一份轻量副本供异步
+/// 任务持有（06 号票：run 收尾的 followUp 自动投递要在此后调用
+/// start_chat_core——命令层之外的第二个入口，此前各任务只捕获细粒度克隆件）。
 pub struct AppState {
     /// 配置协调器（§7.6）：config.json 唯一写入口（API Key 明文承载，0600）。
     /// Arc 共享：17 号票起通知门（notify.rs）读同一份缓存，避免双实例缓存漂移。
     pub config: Arc<ConfigStore<AppConfig>>,
-    /// 活跃 run 注册表（§5.1；M1 单会话核心链路，13 号票）。
+    /// 活跃 run 注册表（§5.1；M1 单会话核心链路，13 号票）。内部 Arc<Mutex>，
+    /// Clone 即同源句柄。
     pub runs: RunManager,
     /// 事件汇（§3.5）：生产 tauri emit；测试 RecordingEventSink（14 号票）。
     pub events: Arc<dyn EventSink>,
     /// 会话累计用量（tokens:update 的全量口径；run 帧增量折算 + suggest 后台小调用）。
-    pub session_usage: Mutex<HashMap<String, UsageTotal>>,
+    pub session_usage: Arc<Mutex<HashMap<String, UsageTotal>>>,
     /// 会话存储器（15 号票：run 落盘器与命令层共享同一锁表/索引）。
     pub store: Arc<SessionStore>,
-    /// 项目注册表（FR-10-01，16 号票）。
-    pub projects: ProjectStore,
+    /// 项目注册表（FR-10-01，16 号票）。Arc 共享：run 任务内解析会话 roots 用。
+    pub projects: Arc<ProjectStore>,
     /// UI 状态（§3.3 #30/31，16 号票：Tab 布局等前端自管 Json）。
-    pub ui_state: ConfigStore<Value>,
+    pub ui_state: Arc<ConfigStore<Value>>,
     /// 活跃会话标识（前端 set_ui_state 顺带写入；通知防打扰精判共享，
     /// 17 号票）。headless 测试下无写入方，保持 None。
     pub active_session: Arc<Mutex<Option<String>>>,
     /// 退出确认状态机（§9.6 退出拦截 + 19 号票超时兜底：request 置位并
     /// 起算，resolve 回执解除；超时未回执由 request_exit 排定的定时任务
     /// 判定后放行）。
-    pub exit_confirm: Mutex<shell::ExitConfirm>,
+    pub exit_confirm: Arc<Mutex<shell::ExitConfirm>>,
+    /// 会话级 followUp 队列（§5.5，06 号票：运行中排队续发 + 失败暂停 +
+    /// 取消返还，`sessions/<sid>.queue.json` 持久化）。
+    pub followups: FollowUpManager,
 }
 
 impl AppState {
@@ -69,12 +78,33 @@ impl AppState {
             config: Arc::new(ConfigStore::new(data_dir.join("config.json"))),
             runs: RunManager::new(),
             events,
-            session_usage: Mutex::new(HashMap::new()),
+            session_usage: Arc::new(Mutex::new(HashMap::new())),
             store,
-            projects: ProjectStore::new(&data_dir),
-            ui_state: ConfigStore::new(data_dir.join("ui-state.json")),
+            projects: Arc::new(ProjectStore::new(&data_dir)),
+            ui_state: Arc::new(ConfigStore::new(data_dir.join("ui-state.json"))),
             active_session: Arc::new(Mutex::new(None)),
-            exit_confirm: Mutex::new(shell::ExitConfirm::new(shell::EXIT_CONFIRM_TIMEOUT)),
+            exit_confirm: Arc::new(Mutex::new(shell::ExitConfirm::new(
+                shell::EXIT_CONFIRM_TIMEOUT,
+            ))),
+            followups: FollowUpManager::new(data_dir.clone()),
+        }
+    }
+
+    /// 产出一份全部字段同源的轻量副本（Arc/内部 Arc 克隆，零深拷贝）——
+    /// 异步任务（run 收尾的 followUp 自动投递，06 号票）经它持有完整状态
+    /// 面，可直接调用 start_chat_core 开新 run。
+    pub fn share_handles(&self) -> AppState {
+        Self {
+            config: self.config.clone(),
+            runs: self.runs.clone(),
+            events: self.events.clone(),
+            session_usage: self.session_usage.clone(),
+            store: self.store.clone(),
+            projects: self.projects.clone(),
+            ui_state: self.ui_state.clone(),
+            active_session: self.active_session.clone(),
+            exit_confirm: self.exit_confirm.clone(),
+            followups: self.followups.clone(),
         }
     }
 

@@ -81,7 +81,7 @@ describe("useBackendEvents（事件分发，按 sessionId 入桶）", () => {
       }),
     };
     renderHook(() => useBackendEvents(deps));
-    await vi.waitFor(() => expect(handlers.size).toBe(8));
+    await vi.waitFor(() => expect(handlers.size).toBe(11));
 
     // ask:opened → ask store（按 sessionId 分桶）
     const opened: AskOpenedEvent = {
@@ -120,7 +120,7 @@ describe("useBackendEvents（事件分发，按 sessionId 入桶）", () => {
   });
 
   it("卸载时取消全部订阅", async () => {
-    const unlistens = Array.from({ length: 8 }, () => vi.fn());
+    const unlistens = Array.from({ length: 11 }, () => vi.fn());
     let i = 0;
     const deps = {
       listen: vi.fn(async () => {
@@ -130,7 +130,7 @@ describe("useBackendEvents（事件分发，按 sessionId 入桶）", () => {
       }),
     };
     const { unmount } = renderHook(() => useBackendEvents(deps));
-    await vi.waitFor(() => expect(deps.listen).toHaveBeenCalledTimes(8));
+    await vi.waitFor(() => expect(deps.listen).toHaveBeenCalledTimes(11));
     unmount();
     // cleanup 里 unlisten.then(fn => fn()) 是微任务，等待其落地
     await vi.waitFor(() => {

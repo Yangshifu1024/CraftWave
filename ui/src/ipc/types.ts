@@ -59,6 +59,9 @@ export * from "./generated/EndReason";
 export * from "./generated/FrameError";
 export * from "./generated/GetUiStateArgs";
 export * from "./generated/IncompleteReason";
+export * from "./generated/InjectMode";
+export * from "./generated/InjectRunMessageArgs";
+export * from "./generated/InjectRunMessageResult";
 export * from "./generated/IpcError";
 export * from "./generated/Language";
 export * from "./generated/ListSessionsArgs";
@@ -88,10 +91,14 @@ export * from "./generated/ReadRange";
 export * from "./generated/ReadWorkspaceFileArgs";
 export * from "./generated/ReadWorkspaceResult";
 export * from "./generated/ReasoningEffort";
+export * from "./generated/RemoveFollowupArgs";
+export * from "./generated/RemoveFollowupResult";
 export * from "./generated/RenameSessionArgs";
 export * from "./generated/RequiresActionReason";
 export * from "./generated/ResolveAskArgs";
 export * from "./generated/ResolveExitRequestArgs";
+export * from "./generated/ResumeFollowupQueueArgs";
+export * from "./generated/ResumeFollowupQueueResult";
 export * from "./generated/RunConfig";
 export * from "./generated/RunSnapshot";
 export * from "./generated/RunSnapshotStatus";
@@ -182,4 +189,32 @@ export type RunCompactedEvent = {
 /** run:compact_failed 事件载荷：压缩失败（行内轻提示，不打断输入）。 */
 export type RunCompactFailedEvent = {
   sessionId: string;
+};
+
+/** run:start 事件载荷（06 号票实装）：run 任务确认启动——手动 start_chat 与
+ *  后端自动投递的新 run 都发。前端以「本会话是否运行态」区分：非运行态收到
+ *  即后端自动投递，经 attach_run 观察态（§5.8）接入续流。 */
+export type RunStartEvent = {
+  sessionId: string;
+  runId: string;
+};
+
+/** run:inject 事件载荷（06 号票实装）：steer 被消费（turn 边界）。前端据
+ *  entryId/text 本地插入插话节点（canonical 由 Rust 侧同 id 落盘，§5.5）。 */
+export type RunInjectEvent = {
+  sessionId: string;
+  runId: string;
+  acceptedAtTurn: number;
+  entryId: string;
+  text: string;
+};
+
+/** run:queue 事件载荷（06 号票）：followUp 队列状态变化——入队/出队/移除/
+ *  暂停/恢复即发，队列条以此驱动增删（后端 queue.json 为权威）。 */
+export type RunQueueEvent = {
+  sessionId: string;
+  size: number;
+  paused: boolean;
+  /** 清空返还的文本数组（取消/失败交还草稿；正常状态变化时缺省）。 */
+  returned?: string[];
 };

@@ -179,6 +179,7 @@ async fn e2e_frame_fidelity_call_id_same_origin_throttle_nfr02() {
         Arc::new(AllowAllGate),
         &mut sink_handle,
         None,
+        None,
     )
     .await
     .expect("RunLoop 应正常跑完");
@@ -337,6 +338,7 @@ async fn e2e_cancel_midstream_run_ended_last_frame_latency() {
             fake_executor_text("不该被调用"),
             Arc::new(AllowAllGate),
             &mut *sink_box,
+            None,
             None,
         )
         .await
@@ -552,6 +554,7 @@ async fn e2e_tool_batch_cancel_keep_completed_mark_rest() {
             Arc::new(AllowAllGate),
             &mut *sink_box,
             None,
+            None,
         )
         .await
     });
@@ -669,6 +672,7 @@ async fn e2e_approval_suspend_serialize_resume_done() {
         }),
         &mut sink1_handle,
         None,
+        None,
     )
     .await
     .expect("挂起路径应正常返回");
@@ -716,6 +720,7 @@ async fn e2e_approval_suspend_serialize_resume_done() {
         Arc::new(AllowAllGate),
         &mut sink2_handle,
         Some(state),
+        None,
     )
     .await
     .expect("恢复路径应跑到完成");
@@ -2028,5 +2033,465 @@ mod command_face {
                 || events.payloads_of("run:compacted").is_empty(),
             "手动压缩走命令返回面（不发生自动压缩事件流）"
         );
+    }
+
+    // —— 8. steer / followUp 队列（06 号票，§5.5）——
+
+    use craftwave_lib::host::commands::chat::{
+        InjectMode, inject_run_message_core, remove_followup_core, resume_followup_queue_core,
+    };
+    use craftwave_lib::storage::MessageRole;
+
+    /// run 正常完成后的两连发场景（06 号票 e2e）：
+    /// 空闲时 followUp 入队 → run1 正常完成 → 队列头自动投递开 run2（走同一
+    /// start_chat_core 入口、DetachedSink 帧只入环）→ 队列空 + run2 的 user
+    /// 条目与产物落盘 + run:queue 事件随行。
+    #[tokio::test]
+    async fn followup_auto_delivery_after_done_two_runs_back_to_back() {
+        let mock = MockOpenAI::start().await;
+        let (app, events) = app_fixture_with_events(&mock);
+
+        // 空闲时 Alt+Enter 排队（mode=followUp + 附着 runConfig 快照）
+        let injected = inject_run_message_core(
+            &app,
+            "sess-fu",
+            "排队第二条",
+            Some(InjectMode::FollowUp),
+            Some(&run_config()),
+        )
+        .expect("空闲入 followUp 应成功");
+        assert!(injected.queued);
+        assert_eq!(injected.mode, Some(InjectMode::FollowUp));
+        assert_eq!(app.followups.snapshot("sess-fu").size, 1);
+        // 入队即落盘（§7.7）
+        assert!(
+            app.store
+                .root()
+                .join("sessions")
+                .join("sess-fu.queue.json")
+                .exists(),
+            "queue.json 应在入队时生成"
+        );
+
+        // run1 启动并跑完（默认脚本两轮 → Done）
+        let sink = SharedSink::default();
+        let first = craftwave_lib::host::commands::chat::start_chat_core(
+            &app,
+            &app.runs,
+            "sess-fu".to_owned(),
+            vec![user_entry("第一条消息")],
+            run_config(),
+            Box::new(sink.clone()),
+            false,
+        )
+        .await
+        .expect("run1 应成功");
+        let ended = wait_ended(&sink, Duration::from_secs(10)).await;
+        assert!(
+            matches!(
+                ended,
+                ChatFrame::RunEnded {
+                    reason: EndReason::Done,
+                    ..
+                }
+            ),
+            "run1 应正常完成"
+        );
+
+        // run2 自动投递（收尾 spawn 异步投递）：等第二个 run:start 事件
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let starts = events.payloads_of("run:start");
+            if starts.len() >= 2 {
+                break;
+            }
+            assert!(Instant::now() < deadline, "等待 run2 自动投递超时");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let second_run_id = events.payloads_of("run:start")[1]["runId"]
+            .as_str()
+            .expect("run2 的 runId")
+            .to_owned();
+        assert_ne!(second_run_id, first.run_id, "自动投递应新开 run");
+
+        // run2 收口（Done 事件；帧面走 DetachedSink 不进 sink1）
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if events.payloads_of("run:done").len() >= 2 {
+                break;
+            }
+            assert!(Instant::now() < deadline, "等待 run2 收口超时");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+
+        // 队列空（run2 已消费队列头）+ canonical 含 run2 的 user 条目与产物
+        let snap = app.followups.snapshot("sess-fu");
+        assert_eq!(snap.size, 0, "队列头应已被投递消费");
+        let tree = app.store.load_session_tree("sess-fu").unwrap();
+        let auto_user = tree
+            .messages
+            .iter()
+            .find(|m| m.id.starts_with("auto-fu-"))
+            .expect("run2 的 user 条目应兜底落盘");
+        assert_eq!(auto_user.role, MessageRole::User);
+        let run2_ids: Vec<&str> = tree
+            .messages
+            .iter()
+            .filter(|m| {
+                m.run_id.as_deref() == Some(second_run_id.as_str())
+                    || m.id == format!("{second_run_id}:marker")
+            })
+            .map(|m| m.id.as_str())
+            .collect();
+        assert!(
+            run2_ids.iter().any(|id| id.ends_with(":1")),
+            "run2 的 turn 文本条目应落盘：{run2_ids:?}"
+        );
+        assert!(
+            run2_ids.iter().any(|id| id.ends_with(":marker")),
+            "run2 的 marker 应落盘（marker 条目按 id 识别，run_id 字段为空）：{run2_ids:?}"
+        );
+
+        // run:queue 事件随行（入队一次 size=1 + 投递后 size=0）
+        let queue_events = events.payloads_of("run:queue");
+        assert!(
+            queue_events
+                .iter()
+                .any(|p| p["size"].as_u64() == Some(1) && !p["paused"].as_bool().unwrap()),
+            "入队事件：{queue_events:?}"
+        );
+        assert!(
+            queue_events.iter().any(|p| p["size"].as_u64() == Some(0)),
+            "投递后清空事件：{queue_events:?}"
+        );
+
+        // 第二次请求的 history 应含排队文本（run2 的首请求）
+        let bodies = mock.request_bodies().await;
+        let with_queued = bodies
+            .iter()
+            .filter_map(|b| b["messages"].as_array())
+            .filter(|msgs| {
+                msgs.iter()
+                    .any(|m| m["content"].as_str() == Some("排队第二条"))
+            })
+            .count();
+        assert!(with_queued >= 1, "自动投递请求应携带排队消息");
+    }
+
+    /// 运行中 inject → steer 在 turn 边界被消费：run:inject 回执 + steer
+    /// 条目落 canonical + 下一请求 history 含插话 user 条目（run 不终止）。
+    #[tokio::test]
+    async fn steer_injected_midrun_consumed_at_turn_boundary() {
+        let mock = MockOpenAI::start().await;
+        let (app, events) = app_fixture_with_events(&mock);
+        let sink = SharedSink::default();
+
+        let first = craftwave_lib::host::commands::chat::start_chat_core(
+            &app,
+            &app.runs,
+            "sess-steer".to_owned(),
+            vec![user_entry("帮我读配置文件")],
+            run_config(),
+            Box::new(sink.clone()),
+            false,
+        )
+        .await
+        .expect("run 应成功");
+
+        // 等 run1 进入工具轮（toolStarted 帧出现）后插话——默认脚本
+        // turn1 工具调用 → turn2 文本，插话应在 turn2 请求前被消费
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if sink
+                .frames()
+                .iter()
+                .any(|t| matches!(t.frame.frame, ChatFrame::ToolStarted { .. }))
+            {
+                break;
+            }
+            assert!(Instant::now() < deadline, "等待 turn1 工具开始超时");
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        let injected = inject_run_message_core(&app, "sess-steer", "顺便看下端口", None, None)
+            .expect("运行中 steer 应成功");
+        assert!(injected.queued);
+        assert_eq!(
+            injected.mode,
+            Some(InjectMode::Steer),
+            "有活跃 run 应归 steer"
+        );
+
+        let ended = wait_ended(&sink, Duration::from_secs(10)).await;
+        assert!(
+            matches!(
+                ended,
+                ChatFrame::RunEnded {
+                    reason: EndReason::Done,
+                    ..
+                }
+            ),
+            "插话不应终止 run"
+        );
+
+        // run:inject 回执（acceptedAtTurn = 消费时的下一轮次；entryId 规则）
+        let injects = events.payloads_of("run:inject");
+        assert_eq!(injects.len(), 1, "恰好消费一次：{injects:?}");
+        assert_eq!(injects[0]["sessionId"], "sess-steer");
+        assert_eq!(injects[0]["runId"], first.run_id);
+        assert_eq!(injects[0]["text"], "顺便看下端口");
+        let entry_id = injects[0]["entryId"].as_str().expect("entryId");
+        assert_eq!(
+            entry_id,
+            format!("{}:steer:1", first.run_id),
+            "id 规则 = {{runId}}:steer:{{n}}"
+        );
+        let accepted_turn = injects[0]["acceptedAtTurn"]
+            .as_u64()
+            .expect("acceptedAtTurn");
+        assert!(accepted_turn >= 2, "turn 边界消费（turn>1）");
+
+        // steer 条目已落 canonical（id 同回执）
+        let tree = app.store.load_session_tree("sess-steer").unwrap();
+        let steer_entry = tree
+            .messages
+            .iter()
+            .find(|m| m.id == entry_id)
+            .expect("steer 条目应落盘");
+        assert_eq!(steer_entry.role, MessageRole::User);
+
+        // 下一请求（第 2 轮，带 tool result）的 history 含插话 user 内容
+        let bodies = mock.request_bodies().await;
+        let tool_round = bodies
+            .iter()
+            .find(|b| {
+                b["messages"]
+                    .as_array()
+                    .map(|msgs| msgs.iter().any(|m| m["role"] == "tool"))
+                    .unwrap_or(false)
+            })
+            .expect("应有工具轮请求");
+        let messages = tool_round["messages"].as_array().unwrap();
+        // rig OpenAI wire 把纯文本 user 消息序列化为 content 字符串形态
+        let has_steer = messages
+            .iter()
+            .any(|m| m["role"] == "user" && m["content"] == "顺便看下端口");
+        assert!(has_steer, "第 2 轮请求应含插话 user 条目：{tool_round}");
+    }
+
+    /// cancel 后队列清空且持久化文件删除；取消前入队的待发文本随
+    /// run:queue.returned 交还（FR-01-07 返还草稿）。
+    #[tokio::test]
+    async fn cancel_clears_queue_and_deletes_persisted_file() {
+        let mock = MockOpenAI::start().await;
+        let (app, events) = app_fixture_with_events(&mock);
+        let sink = SharedSink::default();
+
+        // 取消前排队两条
+        inject_run_message_core(
+            &app,
+            "sess-cancel",
+            "取消也不该丢的草稿一",
+            Some(InjectMode::FollowUp),
+            Some(&run_config()),
+        )
+        .unwrap();
+        inject_run_message_core(
+            &app,
+            "sess-cancel",
+            "取消也不该丢的草稿二",
+            Some(InjectMode::FollowUp),
+            Some(&run_config()),
+        )
+        .unwrap();
+
+        craftwave_lib::host::commands::chat::start_chat_core(
+            &app,
+            &app.runs,
+            "sess-cancel".to_owned(),
+            vec![user_entry("跑起来然后取消我")],
+            run_config(),
+            Box::new(sink.clone()),
+            false,
+        )
+        .await
+        .expect("run 应成功");
+
+        // 等首帧出现后取消（cancel_run 置位即返回）
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if !sink.frames().is_empty() {
+                break;
+            }
+            assert!(Instant::now() < deadline, "等待首帧超时");
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert!(
+            craftwave_lib::host::commands::chat::cancel_run_core(&app.runs, "sess-cancel").await,
+            "取消应命中活跃 run"
+        );
+        let ended = wait_ended(&sink, Duration::from_secs(10)).await;
+        assert!(
+            matches!(
+                ended,
+                ChatFrame::RunEnded {
+                    reason: EndReason::Cancelled,
+                    ..
+                }
+            ),
+            "取消终态：{ended:?}"
+        );
+
+        // 队列清空 + 文件删除 + returned 交还
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if app.followups.snapshot("sess-cancel").size == 0 {
+                let returned = events
+                    .payloads_of("run:queue")
+                    .last()
+                    .and_then(|p| p["returned"].as_array())
+                    .map(|a| a.len())
+                    .unwrap_or(0);
+                if returned == 2 {
+                    break;
+                }
+            }
+            assert!(Instant::now() < deadline, "等待清空返还超时");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let returned = events.payloads_of("run:queue").last().unwrap()["returned"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            returned,
+            vec![
+                "取消也不该丢的草稿一".to_owned(),
+                "取消也不该丢的草稿二".to_owned()
+            ],
+            "按排队序交还"
+        );
+        assert!(
+            !app.store
+                .root()
+                .join("sessions")
+                .join("sess-cancel.queue.json")
+                .exists(),
+            "取消后队列文件应删除"
+        );
+    }
+
+    /// 失败暂停与明确继续（06 号票验收回归）：run 以 runEnded(error) 收场 →
+    /// 队列暂停、待发保留；resume_followup_queue 解除后立即投递队列头开新
+    /// run 并跑到收口（模型可用面由 fixture 保证）。
+    #[tokio::test]
+    async fn failure_pauses_queue_until_explicit_resume() {
+        let mock = MockOpenAI::start().await;
+        let (app, events) = app_fixture_with_events(&mock);
+        let sink = SharedSink::default();
+
+        inject_run_message_core(
+            &app,
+            "sess-pause",
+            "失败后应保留的待发",
+            Some(InjectMode::FollowUp),
+            Some(&run_config()),
+        )
+        .unwrap();
+
+        // 让 run 失败：maxTurns=0 → rig 预算即耗尽，run 任务内以错误终态收场
+        //（start_chat 命令面本身成功——失败发生在 run 任务内，收尾暂停可测）
+        let mut bad_config = run_config();
+        bad_config.max_turns = 0;
+        craftwave_lib::host::commands::chat::start_chat_core(
+            &app,
+            &app.runs,
+            "sess-pause".to_owned(),
+            vec![user_entry("必失败")],
+            bad_config,
+            Box::new(sink.clone()),
+            false,
+        )
+        .await
+        .expect("start 命令面应成功（失败发生在 run 任务内）");
+        let ended = wait_ended(&sink, Duration::from_secs(10)).await;
+        assert!(
+            matches!(
+                ended,
+                ChatFrame::RunEnded {
+                    reason: EndReason::Error,
+                    ..
+                }
+            ),
+            "maxTurns=0 应以错误收场：{ended:?}"
+        );
+
+        // 失败收尾：队列暂停 + 待发保留
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let snap = app.followups.snapshot("sess-pause");
+            if snap.paused && snap.size == 1 {
+                break;
+            }
+            assert!(Instant::now() < deadline, "等待失败暂停超时");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let last = events
+            .payloads_of("run:queue")
+            .last()
+            .expect("应有 run:queue 事件")
+            .clone();
+        assert_eq!(last["paused"], true, "失败即暂停");
+        assert_eq!(last["size"], 1, "待发保留");
+
+        // 用户明确继续：解除暂停并立即投递队列头（模型可用 → 新 run 跑到收口）
+        let resumed = resume_followup_queue_core(&app, "sess-pause")
+            .await
+            .expect("resume 应成功");
+        assert!(resumed.delivered, "解除后应立即投递队列头");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if !events.payloads_of("run:done").is_empty() {
+                break;
+            }
+            assert!(Instant::now() < deadline, "等待投递 run 收口超时");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(app.followups.snapshot("sess-pause").size, 0, "队列清空");
+    }
+
+    /// remove_followup：命中移除返回剩余长度；重复删除 E_NOT_FOUND。
+    #[tokio::test]
+    async fn remove_followup_entry_and_miss_reports_not_found() {
+        let mock = MockOpenAI::start().await;
+        let (app, _events) = app_fixture_with_events(&mock);
+
+        inject_run_message_core(
+            &app,
+            "sess-rm",
+            "留下的",
+            Some(InjectMode::FollowUp),
+            Some(&run_config()),
+        )
+        .unwrap();
+        inject_run_message_core(
+            &app,
+            "sess-rm",
+            "要删的",
+            Some(InjectMode::FollowUp),
+            Some(&run_config()),
+        )
+        .unwrap();
+        let entry_id = app
+            .followups
+            .peek_head("sess-rm")
+            .map(|e| e.id)
+            .expect("队头");
+        let result = remove_followup_core(&app, "sess-rm", &entry_id).expect("命中应成功");
+        assert_eq!(result.size, 1);
+        let err = remove_followup_core(&app, "sess-rm", &entry_id).expect_err("重复删除应未命中");
+        assert_eq!(err.code, "E_NOT_FOUND");
+        assert_eq!(app.followups.snapshot("sess-rm").size, 1);
     }
 }

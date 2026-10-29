@@ -13,7 +13,6 @@ import {
   BranchPickerPrimitive,
   ComposerPrimitive,
   MessagePrimitive,
-  QueueItemPrimitive,
   ThreadPrimitive,
   useAui,
   useAuiState,
@@ -42,6 +41,7 @@ import { useEffect, useRef, useState } from "react";
 import { ChatErrorBanner } from "@/chat/ChatErrorBanner";
 import { CompactionDivider, CompactionIndicator } from "@/chat/CompactionUI";
 import { useComposerKeys } from "@/chat/composer-keys";
+import { removeQueuedFollowUp, resumeFollowUpQueue, useFollowUpStore } from "@/chat/followup-store";
 import { Markdown } from "@/chat/Markdown";
 import { TIER_LABELS, usePermissionTierStore } from "@/chat/permission-tier";
 import { ReasoningPart } from "@/chat/ReasoningPart";
@@ -51,6 +51,12 @@ import { useRunSummaries, useSessionScope } from "@/chat/session-scope";
 import { getConfig } from "@/ipc/client";
 import type { PermissionTier } from "@/ipc/types";
 import { matchGhost, useAskStore } from "@/stores/ask";
+import { useSessionsStore } from "@/stores/sessions";
+
+/** selector 缺省空数组（模块级常量：zustand selector 每次返回新引用会触发
+ *  useSyncExternalStore 的无限重渲染——「Maximum update depth」陷阱）。 */
+const NO_ENTRIES: never[] = [];
+const NO_NODES: never[] = [];
 
 /** 消息区（FR-13-15 滚动跟随：Viewport autoScroll 内建「跟随最新 + 上滚
  *  暂停」；不在底部时显示回底按钮，17 号票）。内容列限宽居中（参考样式
@@ -78,6 +84,8 @@ export function ChatThread({ onOpenSettings }: { onOpenSettings?: () => void }) 
                 )
               }
             </ThreadPrimitive.Messages>
+            {/* steer 插话节点（06 号票：run:inject 回执本地插入，树收养后剔除） */}
+            <SteerNodes />
             {/* 运行中末尾 spinner（A3） */}
             <AuiIf condition={(s) => s.thread.isRunning}>
               <div
@@ -185,8 +193,111 @@ function ThreadEmptyState() {
   );
 }
 
+/** 队列条（FR-01-07 排队面，06 号票后端队列）：followUp 待发消息逐条展示
+ *  （带「排队」徽标）——× 移除（后端删除 + 本地同步）、铅笔取出编辑（删除
+ *  后文本回填输入框，改完 Alt+Enter 重新排队）；暂停态（run 失败，06 号票）
+ *  显示横幅与「继续」入口。后端 queue.json 为投递权威，本地队列条以事件
+ *  （run:queue）与本地操作共同驱动（stores/sessions.ts queues 桶）。 */
+function FollowUpQueueBar() {
+  const sessionId = useSessionScope();
+  const entries = useSessionsStore((s) => s.queues[sessionId] ?? NO_ENTRIES);
+  const paused = useSessionsStore((s) => s.queuePaused[sessionId] === true);
+  const aui = useAui();
+  if (entries.length === 0 && !paused) return null;
+  const remove = (entryId: string) => {
+    void removeQueuedFollowUp(sessionId, entryId).catch(() => {});
+  };
+  const edit = (entry: { id: string; text: string }) => {
+    // 编辑取出：后端删除 + 本地同步 + 文本回填输入框（改完重新排队）
+    void removeQueuedFollowUp(sessionId, entry.id).then((ok) => {
+      if (ok) aui.composer.setText(entry.text, { origin: "user" });
+    });
+  };
+  const resume = () => {
+    void resumeFollowUpQueue(sessionId);
+  };
+  return (
+    <div data-testid="followup-queue" className="mb-1 space-y-1">
+      {paused && (
+        <div
+          data-testid="followup-paused"
+          className="flex items-center gap-2 rounded-xl border border-[var(--warning)]/50 bg-[var(--muted)]/60 px-2.5 py-1 text-ui-sm text-[var(--warning)]"
+        >
+          <span className="min-w-0 flex-1 truncate">
+            上一次运行失败，待发队列已暂停（{entries.length} 条待发）
+          </span>
+          <button
+            type="button"
+            data-testid="followup-resume"
+            onClick={resume}
+            className="shrink-0 rounded-lg border border-[var(--border)] px-2 py-0.5 text-ui-sm text-[var(--foreground)] hover:border-[var(--ring)]"
+          >
+            继续
+          </button>
+        </div>
+      )}
+      {entries.map((entry) => (
+        <div
+          key={entry.id}
+          data-testid="queue-item"
+          className="flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--muted)]/60 px-2.5 py-1 text-ui-sm text-[var(--muted-foreground)]"
+        >
+          <span className="shrink-0 rounded-full border border-[var(--border)] px-1.5 text-ui-sm leading-4">
+            排队
+          </span>
+          <span className="min-w-0 flex-1 truncate text-[var(--foreground)]">{entry.text}</span>
+          <button
+            type="button"
+            aria-label="编辑排队消息"
+            title="取出编辑（改完 Alt+Enter 重新排队）"
+            onClick={() => edit(entry)}
+            className="shrink-0 rounded px-1 hover:text-[var(--foreground)]"
+          >
+            <Pencil size={12} aria-hidden className="shrink-0" />
+          </button>
+          <button
+            type="button"
+            aria-label="移除排队消息"
+            onClick={() => remove(entry.id)}
+            className="shrink-0 rounded px-1 hover:text-[var(--destructive)]"
+          >
+            ×
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** steer 插话节点（06 号票，§5.5 本地插入面）：run:inject 回执驱动——时间线
+ *  尾部带「插话」徽标的 user 节点。树重载收养后由 SessionTab 的 adoptTree
+ *  按 entryId 剔除 store 节点（树内已有同 id 的普通 user 消息），此处不做
+ *  消息列表订阅（assistant-ui messages selector 引用不稳定，防无限重渲染）。 */
+function SteerNodes() {
+  const sessionId = useSessionScope();
+  const nodes = useFollowUpStore((s) => s.steerNodes[sessionId] ?? NO_NODES);
+  if (nodes.length === 0) return null;
+  return (
+    <>
+      {nodes.map((node) => (
+        <div key={node.entryId} data-testid="steer-node" className="flex flex-col items-end py-2">
+          <div className="flex max-w-full items-start gap-2">
+            <span className="mt-3 shrink-0 rounded-full border border-[var(--border)] px-1.5 text-ui-sm leading-4 text-[var(--muted-foreground)]">
+              插话
+            </span>
+            <div className="min-w-0 max-w-full rounded-xl rounded-tr-xs border border-[var(--border)] bg-[var(--muted)] px-4 py-3 text-ui-base leading-6 text-[var(--foreground)] sm:max-w-xl">
+              <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">{node.text}</p>
+            </div>
+          </div>
+        </div>
+      ))}
+    </>
+  );
+}
+
 /** Composer 区（§10.6 / FR-13-02，17 号票）：输入框 + 权限档指示 + @ 菜单浮层。
- *  Enter/Shift+Enter/IME 由 ComposerPrimitive.Input 原生承担。 */
+ *  Enter 三态路由（06 号票）/Shift+Enter 换行/IME 组合期防误发由
+ *  useComposerKeys + ComposerPrimitive.Input 共同承担。 */
 function ComposerBar() {
   const { onKeyDown, onCursor, atMenu, pickActive, hoverIndex } = useComposerKeys();
   return (
@@ -220,34 +331,15 @@ function ComposerBar() {
           ))}
         </ul>
       )}
-      {/* 消息队列条（FR-01-07 排队面）：运行中发送的消息先排队展示，
-          当前 run 结束后自动依次发送；× 可移除未发送项 */}
-      <ComposerPrimitive.Queue>
-        {() => (
-          <div
-            data-testid="queue-item"
-            className="mb-1 flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--muted)]/60 px-2.5 py-1 text-ui-sm text-[var(--muted-foreground)]"
-          >
-            <span className="shrink-0 rounded-full border border-[var(--border)] px-1.5 text-ui-sm leading-4">
-              排队中
-            </span>
-            <QueueItemPrimitive.Text className="min-w-0 flex-1 truncate" />
-            <QueueItemPrimitive.Remove
-              aria-label="移除排队消息"
-              className="shrink-0 rounded px-1 hover:text-[var(--destructive)]"
-            >
-              ×
-            </QueueItemPrimitive.Remove>
-          </div>
-        )}
-      </ComposerPrimitive.Queue>
+      {/* followUp 队列条（06 号票后端队列：排队徽标 + 暂停横幅 + 继续入口） */}
+      <FollowUpQueueBar />
       {/* 输入壳（ZCode 同款结构）：p-3 卡，输入框与工具栏/状态栏纵向 gap-2；
           hover 边框提亮一档（--input），focus-within 蓝边呼应聚焦令牌；
           底色用 --composer-bg（暗色 #272728 亮于中部卡，亮色同卡白） */}
       <ComposerPrimitive.Root className="flex flex-col gap-2 rounded-2xl border border-[var(--border)] bg-[var(--composer-bg)] p-3 transition-colors hover:border-[var(--input)] focus-within:border-[var(--cw-focus)]">
         <ComposerPrimitive.Input
           minRows={2}
-          placeholder="发一条消息，运行中的消息将自动排队…"
+          placeholder="发一条消息，Alt+Enter 排队待发…"
           className="max-h-40 w-full resize-none bg-transparent py-0.5 text-ui-base leading-5 placeholder:text-[var(--muted-foreground)] focus:outline-none"
           onKeyDown={onKeyDown}
           onKeyUp={(e) => onCursor(e.currentTarget.selectionStart ?? 0)}

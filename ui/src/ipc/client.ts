@@ -21,12 +21,16 @@ import type {
   CompactSessionArgs,
   CompactSessionResult,
   DeleteProviderArgs,
+  InjectRunMessageArgs,
+  InjectRunMessageResult,
   IpcError,
   NotificationPermissionStatus,
   OpenDirArgs,
   ProjectMeta,
   ProviderConfig,
   ReadWorkspaceResult,
+  RemoveFollowupResult,
+  ResumeFollowupQueueResult,
   RunSnapshot,
   SaveConfigArgs,
   SaveProjectArgs,
@@ -63,6 +67,9 @@ export const COMMANDS = {
   openDir: "open_dir",
   startChat: "start_chat",
   cancelRun: "cancel_run",
+  injectRunMessage: "inject_run_message",
+  resumeFollowupQueue: "resume_followup_queue",
+  removeFollowup: "remove_followup",
   resolveAsk: "resolve_ask",
   approvePlan: "approve_plan",
   compactSession: "compact_session",
@@ -85,7 +92,8 @@ export const COMMANDS = {
 } as const;
 
 /**
- * 本文件已接线的事件键注册表（§3.5：14 号票 5 键 + 17 号票 5 键）。
+ * 本文件已接线的事件键注册表（§3.5：14 号票 5 键 + 17 号票 5 键 + 04 号票
+ * 压缩三键 + 06 号票 run:start/run:inject/run:queue 三键）。
  * 事件是后端主动推送给前端的通知（与命令"前端调后端"方向相反），键名按
  * "域名:动作"命名（如 ask:opened = 询问面板被打开）。
  */
@@ -98,6 +106,9 @@ export const EVENT_KEYS = {
   runDone: "run:done",
   runError: "run:error",
   runCancelled: "run:cancelled",
+  runStart: "run:start",
+  runInject: "run:inject",
+  runQueue: "run:queue",
   notifyActivate: "notify:activate",
   appExitRequested: "app:exit_requested",
   runCompacting: "run:compacting",
@@ -211,6 +222,35 @@ export function startChat(args: {
 /** §3.3 #19：取消运行（置位即返回；终态以 runEnded 帧为权威）。 */
 export async function cancelRun(sessionId: string): Promise<boolean> {
   return invoke<boolean>(COMMANDS.cancelRun, { sessionId } satisfies { sessionId: string });
+}
+
+/** §3.3 #21：注入消息（06 号票）。mode=steer（缺省）为运行中插话（turn 边界
+ *  消费，run:inject 回执）；mode=followUp 为排队（Alt+Enter，run 正常完成后
+ *  自动投递；空闲时缺省 mode 也落 followUp）。runConfig 为附着快照（投递
+ *  新 run 的运行配置来源）。 */
+export function injectRunMessage(args: {
+  sessionId: string;
+  text: string;
+  mode?: "steer" | "followUp";
+  runConfig?: StartChatArgs["runConfig"];
+}): Promise<InjectRunMessageResult> {
+  return invoke<InjectRunMessageResult>(COMMANDS.injectRunMessage, {
+    sessionId: args.sessionId,
+    text: args.text,
+    mode: args.mode,
+    runConfig: args.runConfig,
+  } satisfies InjectRunMessageArgs);
+}
+
+/** §3.3 #59d：继续 followUp 队列（06 号票失败暂停的明确继续）。解除暂停后
+ *  无活跃 run 且队列非空 → 立即投递队列头开新 run（delivered=true）。 */
+export function resumeFollowupQueue(sessionId: string): Promise<ResumeFollowupQueueResult> {
+  return invoke<ResumeFollowupQueueResult>(COMMANDS.resumeFollowupQueue, { sessionId });
+}
+
+/** §3.3 #59e：移除一条待发消息（队列条 × 删除与「编辑取出」共用）。 */
+export function removeFollowup(sessionId: string, entryId: string): Promise<RemoveFollowupResult> {
+  return invoke<RemoveFollowupResult>(COMMANDS.removeFollowup, { sessionId, entryId });
 }
 
 /** §3.3 #22：应答询问/审批（AskPanel）。槽不存在或已关闭 reject E_NOT_FOUND。 */
