@@ -116,6 +116,7 @@ describe("syncTreeBeforeSend（E_SESSION_REV 自愈）", () => {
     const load = vi.mocked(client.loadSessionTree).mockResolvedValue({
       sessionId: "s1",
       messages: [],
+      compactions: [],
       revision: 8,
     });
     await syncTreeBeforeSend("s1", [msg("u1", "user", "你好")]);
@@ -174,6 +175,7 @@ describe("loadHistory", () => {
     const tree: SessionTreeData = {
       sessionId: "s1",
       messages: [{ id: "u1", role: "user", parts: [], createdAt: 1 }] satisfies MessageEntry[],
+      compactions: [],
       activeLeafId: "u1",
       revision: 5,
     };

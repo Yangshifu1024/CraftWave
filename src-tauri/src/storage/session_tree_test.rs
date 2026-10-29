@@ -665,3 +665,153 @@ fn idempotent_save_does_not_touch_index() {
         .unwrap();
     assert_eq!(store.index().get("s1").unwrap().updated_at, before);
 }
+
+// ---- compaction 条目（§6.1【M2】/Q34，04 号票）----
+
+use crate::storage::{StoredCompactionEntry, StoredEntry as Entry};
+
+/// 造一条 compaction 条目（id 规则 §6.1）。
+fn compaction_entry(cut: &str, summary: &str) -> StoredCompactionEntry {
+    StoredCompactionEntry {
+        id: format!("manual:compact:{cut}"),
+        cut_entry_id: cut.to_owned(),
+        summary: summary.to_owned(),
+        tokens_before: 1234,
+        created_at: 42,
+    }
+}
+
+/// 断言：compaction 条目 serde roundtrip（JSONL 行格式 tag=kind=compaction、
+/// camelCase 字段）。
+#[test]
+fn compaction_entry_serde_roundtrip() {
+    let entry = Entry::Compaction(compaction_entry("a1", "压缩摘要"));
+    let line = crate::storage::segment::entry_line(&entry).unwrap();
+    assert!(
+        line.starts_with(r#"{"kind":"compaction","id":"manual:compact:a1","cutEntryId":"a1""#),
+        "行字节即契约：{line}"
+    );
+    let back: Entry = serde_json::from_str(&line).unwrap();
+    assert_eq!(back, entry, "行往返等值");
+}
+
+/// 断言：append_compaction 落盘 + load_session_tree 投影（messages 不含
+/// compaction、compactions 数组按追加序、activeLeaf 不被压缩条目改变、
+/// revision 推进）。
+#[test]
+fn append_compaction_persists_and_loads_projection() {
+    let (store, dir) = store();
+    let _ = store
+        .save_session_tree(
+            "s",
+            &[user("u1", None, "甲"), assistant("a1", "u1", "乙")],
+            Some("a1"),
+            0,
+        )
+        .unwrap();
+    let revision_before = store.load_session_tree("s").unwrap().revision;
+
+    store
+        .append_compaction("s", compaction_entry("a1", "第一轮摘要"))
+        .unwrap();
+    let tree = store.load_session_tree("s").unwrap();
+    assert_eq!(
+        tree.messages
+            .iter()
+            .map(|m| m.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["u1", "a1"],
+        "message 面不含 compaction"
+    );
+    assert_eq!(
+        tree.compactions.len(),
+        1,
+        "compactions 投影：{:?}",
+        tree.compactions
+    );
+    assert_eq!(tree.compactions[0].cut_entry_id, "a1");
+    assert_eq!(tree.compactions[0].summary, "第一轮摘要");
+    assert_eq!(
+        tree.active_leaf_id.as_deref(),
+        Some("a1"),
+        "压缩条目不改变活动叶"
+    );
+    assert!(tree.revision > revision_before, "追加即 revision++");
+
+    // 第二次压缩（增量场景）：compactions 按追加序，最近在末位
+    store
+        .append_compaction("s", compaction_entry("a1", "合并后摘要"))
+        .unwrap();
+    let tree = store.load_session_tree("s").unwrap();
+    assert_eq!(tree.compactions.len(), 2);
+    assert_eq!(tree.compactions[1].summary, "合并后摘要");
+
+    // compaction_overview：最近条目 + 总数
+    let (latest, count) = store.compaction_overview("s").unwrap();
+    assert_eq!(count, 2);
+    assert_eq!(latest.expect("有最近条目").summary, "合并后摘要");
+    let _ = dir;
+}
+
+/// 断言：Q34 备份守卫——首次 append_compaction 前成功创建可恢复备份
+///（histories/config 进备份目录），标记存在后不再重复备份。
+#[test]
+fn first_compaction_creates_upgrade_backup_once() {
+    let (store, dir) = store();
+    let root = store_root_dir(&dir);
+    store
+        .save_session_tree("s", &[user("u1", None, "甲")], Some("u1"), 0)
+        .unwrap();
+    store
+        .append_compaction("s", compaction_entry("u1", "摘要"))
+        .unwrap();
+
+    let backups = root.join("backups");
+    let marker = backups.join(".upgrade-compaction.done");
+    assert!(marker.exists(), "升级标记应存在");
+    let recorded = std::fs::read_to_string(&marker).unwrap();
+    let backup_dir = backups.join(recorded.trim());
+    assert!(
+        backup_dir.join("histories").join("s").exists(),
+        "会话日志进了备份"
+    );
+    assert!(
+        backup_dir.join("sessions").join("index.json").exists(),
+        "索引进了备份"
+    );
+
+    // 幂等：第二次压缩不再产生新备份（标记内目录数量不变）
+    let pre_dirs = std::fs::read_dir(&backups).unwrap().count();
+    store
+        .append_compaction("s", compaction_entry("u1", "第二次摘要"))
+        .unwrap();
+    let post_dirs = std::fs::read_dir(&backups).unwrap().count();
+    assert_eq!(pre_dirs, post_dirs, "一次升级只备一次");
+}
+
+/// 断言：load_session_tree 返回结构的 camelCase 契约面（compactions 进
+/// 序列化面，前端投影消费）。
+#[test]
+fn load_result_includes_compactions_field() {
+    let (store, dir) = store();
+    store
+        .save_session_tree("s", &[user("u1", None, "甲")], Some("u1"), 0)
+        .unwrap();
+    store
+        .append_compaction("s", compaction_entry("u1", "摘要"))
+        .unwrap();
+    let tree = store.load_session_tree("s").unwrap();
+    let json = serde_json::to_value(&tree).unwrap();
+    assert!(
+        json.get("compactions")
+            .and_then(|v| v.as_array())
+            .map(|a| a.len())
+            == Some(1),
+        "compactions 字段应在序列化面：{json}"
+    );
+    assert!(
+        json["compactions"][0].get("cutEntryId").is_some(),
+        "字段 camelCase：{json}"
+    );
+    let _ = dir;
+}

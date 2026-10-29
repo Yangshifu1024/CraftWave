@@ -20,9 +20,15 @@
 //! - [`ask`]：询问与审批的载荷协议（模型向用户提问、请求批准时的数据结构）；
 //! - [`wire`]：把存储层的 wire 中立消息重建为 rig 的消息对象（§6.2 当前
 //!   阶段子集；wire 中立消息 = 存储层定义的、不依赖具体模型 SDK 的通用
-//!   消息格式）。
+//!   消息格式）；
+//! - [`estimator`]：请求 token 估算器（§6.2 每请求预算检查的估算面，
+//!   Q18：宁高勿低启发式，不依赖 usage 帧）；
+//! - [`compaction`]：上下文压缩编排（FR-03-05，04 号票）——阈值判定、
+//!   压缩范围计算、增量/分块摘要（Q31/Q38 共用总超时）与原子提交。
 
 pub mod ask;
+pub mod compaction;
+pub mod estimator;
 pub mod exec;
 pub mod frames;
 pub mod gate;

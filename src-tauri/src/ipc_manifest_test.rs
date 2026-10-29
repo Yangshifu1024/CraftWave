@@ -224,6 +224,9 @@ fn export_ipc_manifest_and_cross_lang_fixture() {
     // 数据目录入口（03 号票，§3.3 #3）
     assert_eq!(find("open_dir").args_type, "OpenDirArgs");
     assert_eq!(find("open_dir").ret_type, "()");
+    // 手动压缩命令（04 号票，§3.3 #59b）
+    assert_eq!(find("compact_session").args_type, "CompactSessionArgs");
+    assert_eq!(find("compact_session").ret_type, "CompactSessionResult");
     // 标题栏命令（骨架既有）仍在注册表
     assert!(
         commands
@@ -248,9 +251,10 @@ fn export_ipc_manifest_and_cross_lang_fixture() {
             }))
             .collect::<Vec<_>>(),
     });
-    assert_eq!(manifest["frames"].as_array().unwrap().len(), 9);
+    assert_eq!(manifest["frames"].as_array().unwrap().len(), 10);
     // 事件键：14 号票 5 键 + 17 号票 5 键（run 终态三键 + notify/退出两键）
-    assert_eq!(manifest["events"].as_array().unwrap().len(), 10);
+    // + 04 号票压缩三键（run:compacting/compacted/compact_failed）
+    assert_eq!(manifest["events"].as_array().unwrap().len(), 13);
     assert_eq!(manifest["tools"].as_array().unwrap().len(), 8);
     assert_eq!(manifest["toolSpecs"].as_array().unwrap().len(), 8);
     fs::create_dir_all(target_dir()).unwrap();
@@ -374,6 +378,15 @@ fn fixture_entries() -> Vec<StoredEntry> {
             created_at: 1_760_000_000_006,
             run_id: None,
             status: None,
+        }),
+        // compaction 条目（04 号票，§6.1）：前端树持久化层须跳过（不投影为
+        // 树节点，§6.3），跨语言行格式在此钉住
+        StoredEntry::Compaction(crate::storage::StoredCompactionEntry {
+            id: "manual:compact:1".to_string(),
+            cut_entry_id: "a3".to_string(),
+            summary: "早期对话摘要".to_string(),
+            tokens_before: 9000,
+            created_at: 1_760_000_000_007,
         }),
         StoredEntry::Meta(MetaEntry {
             active_leaf_id: Some("run-2:marker".to_string()),

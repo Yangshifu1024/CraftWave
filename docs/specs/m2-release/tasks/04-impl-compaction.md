@@ -1,7 +1,7 @@
 # 实现：上下文压缩 compaction
 
 Type: task
-Status: open
+Status: resolved
 
 ## 要做什么
 
@@ -77,10 +77,21 @@ FR-03-05（§6.2 压缩调度字段级）：长会话不再"聊着聊着超长�
 
 ## 验收
 
-- [ ] 增量与分块压缩遵守总超时、计量与边界原子提交规则；首次格式升级备份失败时阻止升级，原数据可继续由旧版读取。
-- [ ] 长会话跨阈值自动压缩，模型不报超长；压缩后对话上下文连贯（summary 生效）。
-- [ ] 手动压缩按钮可用；压缩中/完成/失败三态 UI 均有呈现。
-- [ ] 压缩边界落盘后重启应用，load_session_tree 恢复且 wire 重建仍从边界生效（重启后继续对话不重复注入旧历史）。
-- [ ] 压缩失败：原上下文可容纳时继续，不可容纳时暂停且输入保留；提示重试压缩或开启新会话，未经摘要的历史不被静默裁剪。
-- [ ] tokens 口径遵守 C-9（会话累计不因压缩重置，tokens:update 照发）。
-- [ ] §3.2/§3.3/§6.1/§6.2/§6.3/§7.3 回写完成（compact_session 编号、配置字段、id 规则、树承载形态、落盘时机行）。
+- [x] 增量与分块压缩遵守总超时、计量与边界原子提交规则；首次格式升级备份失败时阻止升级，原数据可继续由旧版读取。（Q31：summarize 任一分块开始前检查剩余总预算、全部用量经 tokens:update 计入会话；失败不 append_compaction 不推进边界。Q34：storage/backup.rs 守卫在 append_compaction 首次写入前创建 backups/pre-compaction-<ts>/ 可恢复备份，失败返回 Err 暂停写入、原数据不动；backup_test 覆盖失败保数据/幂等/空安装。）
+- [x] 长会话跨阈值自动压缩，模型不报超长；压缩后对话上下文连贯（summary 生效）。（run 开始前触发点①完整编排：0.6 阈值判定 → 摘要 → 落盘 → wire 按新边界重建；e2e `auto_compaction_across_threshold_frame_event_wire_and_metering` 断言 compactDone 帧、run:compacted 事件、mock 流式请求 messages[0]=system 摘要且被裁历史不进 wire、压缩后 tokensAfter < tokensBefore。）
+- [x] 手动压缩按钮可用；压缩中/完成/失败三态 UI 均有呈现。（Inspector 上下文进度条旁 CompactButton → compact_session；Composer 上方 CompactionIndicator 三态：compacting 指示条 / compacted 收口 / failed 行内轻提示。）
+- [x] 压缩边界落盘后重启应用，load_session_tree 恢复且 wire 重建仍从边界生效（重启后继续对话不重复注入旧历史）。（compaction 条目 append-only 落盘 + load_session_tree.compactions 投影；wire 重建由后端读史册最近边界（compaction_overview），前端 toWire 不产边界节点——重启后 start_chat 依旧按 cutEntryId 裁剪 + summary 注入；session_tree_test 覆盖落盘/投影/id 规则/revision 推进。）
+- [x] 压缩失败：原上下文可容纳时继续，不可容纳时暂停且输入保留；提示重试压缩或开启新会话，未经摘要的历史不被静默裁剪。（e2e `compaction_failure_keeps_history_and_continues_when_fits`（mock 500 注入：失败后 run 继续、边界未推进、wire 含完整历史）与 `context_overflow_after_compaction_pauses_with_input_kept`（E_CONTEXT_OVERFLOW + user 条目已先落盘保留 + run 未启动）。wire 边界锚点缺失显式拒绝（不静默全量展开）。）
+- [x] tokens 口径遵守 C-9（会话累计不因压缩重置，tokens:update 照发）。（摘要调用用量经 accumulate_compaction_usage 计入会话累计并 tokens:update 全量校正；不计 turnUsage（压缩不属主 run 轮次）；e2e 断言 tokens:update 事件照发。）
+- [x] §3.2/§3.3/§6.1/§6.2/§6.3/§7.3 回写完成（compact_session 编号、配置字段、id 规则、树承载形态、落盘时机行）。（v2.12：§3.2 compaction 组、§3.3 #59b、§3.6 E_CONTEXT_OVERFLOW、§6.1 id 规则、§6.2 两触发点生效面/预算字段级/摘要 prompt 骨架、§6.3 树承载定稿、§7.3 时机表增行。）
+
+## 决议记录
+
+- **树承载形态推翻票面建议**（2026-10-30 实现决策）：票面建议 compaction 条目参照 runMarker 以"system 空消息 + custom 载荷"挂树。实现定案**不投影为树节点**（§6.3 回写）：§6.1 该条目无 parentId，且 run 开始前压缩时本次 user 条目已先行落盘（parent 指向压缩范围链尾），链上插入任何节点都会与真实后续条目构成兄弟分支，破坏 assistant-ui 分支切换语义。改为：load_session_tree 增 `compactions` 投影面（时间线顶部渲染分隔提示）、wire 边界由后端史册承载、save 载荷与史册天然无 roundtrip 冲突。
+- **ask 关闭后触发点为落盘面压缩**（§6.2 回写）：rig 0.45 的 AgentRun 状态机不支持中途替换内部 history（序列化现场不可改写），审批恢复后的请求无法按新边界重建。定案：该触发点执行摘要与落盘（对恢复后的落盘条目与下一个 run 生效），当前 run 恢复后照常执行；恢复后请求超硬预算（窗口 ×0.9）由 §6.2 兜底终止（输入保留）。安全点语义保持（边界只落已完成条目之间）。
+- **摘要模型跟随口径**：§6.2 原文"active model 或专用小模型（未配则 active model）"——实现取"专用小模型未配时跟随当前 run 模型"（无会话覆盖时即 active model）：会话级模型覆盖时跟随 active 可能解析到已失效配置而拖垮整个 start_chat。已回写 §6.2。
+- **tokensBefore/tokensAfter 口径**：压缩前后"本次实际发送内容 + 回复预留"的估算 token 数（估算器：CJK ×1.5、其他 ÷4，宁高勿低），非累计消耗；被压缩内容比摘要还短时 tokensAfter 可大于 tokensBefore（长历史场景必然下降）。
+- **E_CONTEXT_OVERFLOW 为新增错误码**（§3.6 补行）：上下文超预算且压缩后仍放不下时的命令面 reject 码；输入先落盘（persist_user_fallback 提前到压缩前）保证"暂停保留输入"在史册面成立。
+- **compact_session 定案为运行中拒绝**（票面二选一）：与 delete_session 同口径（E_SESSION_RUNNING），语义 = 对活跃 run 外的快照压缩；§3.3 #59b 回写。
+- **压缩期间不可取消**（已知取舍）：自动压缩在 run 注册前执行（RunManager 尚无句柄），compact_timeout 最长 180s 内 cancel_run 不生效；记录为 M2 已知取舍，随 05 号票 attach_run 或后续打磨可挂取消令牌。
+- **边界投影的即时性**：run:compacted 事件到达时前端拉一次 load_session_tree 刷新边界投影；拉取失败保留旧投影（下次会话进入收养自愈），已由 compaction-store.test 覆盖。

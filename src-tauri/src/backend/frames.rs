@@ -101,6 +101,13 @@ pub enum ChatFrame {
         #[cfg_attr(test, ts(optional))]
         error: Option<FrameError>,
     },
+    /// 压缩完成（§3.4【M2】增补帧，04 号票）：压缩边界与压缩前后上下文
+    /// 占用估算。通知面（FrameBuffer 透传），不进打字机内容面。
+    CompactDone {
+        cut_entry_id: String,
+        tokens_before: u64,
+        tokens_after: u64,
+    },
 }
 
 /// run 结束原因。

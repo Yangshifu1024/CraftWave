@@ -40,6 +40,7 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { ChatErrorBanner } from "@/chat/ChatErrorBanner";
+import { CompactionDivider, CompactionIndicator } from "@/chat/CompactionUI";
 import { useComposerKeys } from "@/chat/composer-keys";
 import { Markdown } from "@/chat/Markdown";
 import { TIER_LABELS, usePermissionTierStore } from "@/chat/permission-tier";
@@ -65,6 +66,8 @@ export function ChatThread({ onOpenSettings }: { onOpenSettings?: () => void }) 
           </AuiIf>
           {/* 内容列限宽居中（约 62%，A1）：消息与过程行统一宽度 */}
           <div className="mx-auto min-w-0 w-full max-w-4xl space-y-4 2xl:max-w-6xl">
+            {/* 压缩边界分隔提示（§6.3 定稿：非消息体，04 号票） */}
+            <CompactionDivider />
             <ThreadPrimitive.Messages>
               {({ message }) =>
                 // system = runMarker 等存储标记节点（custom 载荷保真，§6.2 跳过内容）——不渲染
@@ -100,6 +103,8 @@ export function ChatThread({ onOpenSettings }: { onOpenSettings?: () => void }) 
             <ThreadPrimitive.ScrollToBottom className="cw-pop-in absolute bottom-full left-1/2 z-20 mb-2 flex size-8 -translate-x-1/2 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--card)] text-[var(--muted-foreground)] shadow hover:text-[var(--foreground)] disabled:hidden">
               <ArrowDown size={14} aria-hidden className="shrink-0" />
             </ThreadPrimitive.ScrollToBottom>
+            {/* 压缩生命周期指示条（Composer 上方轻量呈现，04 号票） */}
+            <CompactionIndicator />
             <ComposerBar />
             <ComposerGhost />
           </div>

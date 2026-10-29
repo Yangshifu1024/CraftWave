@@ -1356,4 +1356,345 @@ mod command_face {
         assert_eq!(last_tokens["usage"]["output"], 144);
         let _ = mock.sent_chunks().await; // 保持 sent 记录引用（Drop 语义锚点）
     }
+
+    // ---- 上下文压缩（04 号票，FR-03-05）：跨阈值自动压缩 / 失败兜底 /
+    // 手动命令 / 超预算暂停 ----
+
+    /// 压缩 e2e 的配置面：把激活模型窗口改小让第二条消息必然跨 0.6 阈值
+    ///（估算面含 32768 回复预留 > 0.6 × 40000）。
+    fn small_window_config(base_url: &str) -> craftwave_lib::providers::types::AppConfig {
+        craftwave_lib::providers::types::AppConfig {
+            providers: vec![craftwave_lib::providers::types::ProviderConfig {
+                models: vec![craftwave_lib::providers::types::ProviderModel {
+                    context_window: 40000,
+                    ..provider_fixture(base_url).models.remove(0)
+                }],
+                ..provider_fixture(base_url)
+            }],
+            active_model_id: Some("model-1".to_owned()),
+            ..craftwave_lib::providers::types::AppConfig::default()
+        }
+    }
+
+    /// 断言：长会话跨阈值自动压缩——compactDone 帧 + run:compacted 事件 +
+    /// 史册 compaction 条目（原始消息全保留）+ 后续请求 wire 只含 summary
+    /// 注入与本次输入（cutEntryId 之前的历史被裁）+ 摘要用量计入会话（C-9）。
+    #[tokio::test]
+    async fn auto_compaction_across_threshold_frame_event_wire_and_metering() {
+        let mock = MockOpenAI::start().await;
+        let (app, events) = app_fixture_with_events(&mock);
+        app.config
+            .save(small_window_config(&mock.base_url))
+            .expect("save config");
+        let runs = RunManager::new();
+        let sink = SharedSink::default();
+        let session = "sess-comp";
+
+        // 第一次发送（无历史）：达阈值但无可压内容 → run:compact_failed 事件
+        // + 原上下文可容纳 → run 照常完成（§6.2 失败兜底）
+        craftwave_lib::host::commands::chat::start_chat_core(
+            &app,
+            &runs,
+            session.to_owned(),
+            vec![user_entry("第一条消息")],
+            run_config(),
+            Box::new(sink.clone()),
+            false,
+        )
+        .await
+        .expect("第一次 start_chat 应成功");
+        let ended = wait_ended(&sink, Duration::from_secs(10)).await;
+        assert!(matches!(
+            ended,
+            ChatFrame::RunEnded {
+                reason: EndReason::Done,
+                ..
+            }
+        ));
+        assert!(
+            !events.payloads_of("run:compact_failed").is_empty(),
+            "无可压内容的压缩尝试应发失败事件"
+        );
+        let tree = app.store.load_session_tree(session).unwrap();
+        assert!(tree.compactions.is_empty(), "失败不得提交边界");
+
+        // 第二次发送（历史在史册、messages 参数含旧消息 + 本次输入）：
+        // 触发压缩（body=[长历史条目]）→ 摘要（非流式 mock）→ 落盘 → wire 重建。
+        // 历史用长文本：压缩后摘要（固定 30 token 级）必须显著小于被裁历史
+        //（tokensBefore > tokensAfter 的载荷语义成立）
+        let long_text = "历史".repeat(500);
+        let first = user_entry(&long_text);
+        let second = user_entry("第二条内容消息"); // 字节数不同 → id 不撞车
+        // 前端协议模拟：长历史条目先经 save_session_tree 落盘（挂第一次
+        // run 的链尾），start_chat 只对末条 user 做幂等兜底（§7.3）
+        {
+            let tree = app.store.load_session_tree(session).unwrap();
+            let tail = tree.active_leaf_id.clone().unwrap();
+            let mut first_entry = first.clone();
+            first_entry.parent_id = Some(tail);
+            let rev = tree.revision;
+            app.store
+                .save_session_tree(session, &[first_entry], Some(&first.id), rev)
+                .unwrap();
+        }
+        craftwave_lib::host::commands::chat::start_chat_core(
+            &app,
+            &runs,
+            session.to_owned(),
+            vec![first, second],
+            run_config(),
+            Box::new(sink.clone()),
+            false,
+        )
+        .await
+        .expect("第二次 start_chat 应成功");
+        let ended = wait_ended(&sink, Duration::from_secs(10)).await;
+        assert!(matches!(
+            ended,
+            ChatFrame::RunEnded {
+                reason: EndReason::Done,
+                ..
+            }
+        ));
+
+        // 史册：compaction 条目落地、原始消息全保留（压缩不丢记录）
+        let tree = app.store.load_session_tree(session).unwrap();
+        assert_eq!(tree.compactions.len(), 1, "{:?}", tree.compactions);
+        let long_id = format!("u-{}", long_text.len());
+        assert_eq!(
+            tree.compactions[0].cut_entry_id, long_id,
+            "cut = 被压缩历史链尾"
+        );
+        assert_eq!(tree.compactions[0].summary, "试试让我总结配置要点。");
+        let ids: Vec<&str> = tree.messages.iter().map(|m| m.id.as_str()).collect();
+        assert!(
+            ids.contains(&long_id.as_str()),
+            "原始历史不得被裁掉：{ids:?}"
+        );
+
+        // 帧面：compactDone（本次 run 的 sink 含两次 run 的帧；至少一帧）
+        assert!(
+            sink.count_kind(|f| matches!(f, ChatFrame::CompactDone { .. })) >= 1,
+            "应有 compactDone 帧"
+        );
+        // 事件面：run:compacted（tokensBefore/tokensAfter 载荷）
+        let compacted = events
+            .payloads_of("run:compacted")
+            .last()
+            .cloned()
+            .expect("应有 run:compacted 事件");
+        assert_eq!(compacted["sessionId"], session);
+        let before = compacted["tokensBefore"].as_u64().unwrap();
+        let after = compacted["tokensAfter"].as_u64().unwrap();
+        assert!(before > after, "压缩后占用应下降：{compacted}");
+
+        // wire 面：第二次 run 的流式请求 messages[0] = system 摘要注入，
+        // 且不含被压缩的"第一条消息"（cutEntryId 之前被裁）
+        let requests = mock.request_bodies().await;
+        let streaming: Vec<&serde_json::Value> = requests
+            .iter()
+            .filter(|r| r["stream"] == serde_json::Value::Bool(true))
+            .collect();
+        let last_stream = streaming.last().expect("应有流式请求");
+        let messages = last_stream["messages"].as_array().unwrap();
+        assert_eq!(
+            messages[0]["role"], "system",
+            "摘要应注入为 system 前缀：{messages:?}"
+        );
+        assert_eq!(
+            messages[0]["content"][0]["text"], "试试让我总结配置要点。",
+            "摘要文本 = mock 非流式答复（rig system content 数组形态）"
+        );
+        let joined = serde_json::to_string(&messages).unwrap();
+        assert!(
+            !joined.contains(&long_text),
+            "被压缩历史不得进入 wire：{joined}"
+        );
+        assert!(joined.contains("第二条内容消息"), "本次输入保留：{joined}");
+
+        // 计量面（C-9）：摘要用量计入会话（tokens:update 照发）
+        assert!(
+            !events.payloads_of("tokens:update").is_empty(),
+            "压缩摘要用量应计入会话累计"
+        );
+    }
+
+    /// 断言：摘要失败注入——run:compact_failed 后原上下文可容纳 → run 继续
+    /// 完成；边界不推进（不提交 compaction 条目）；原始历史未被静默裁剪。
+    #[tokio::test]
+    async fn compaction_failure_keeps_history_and_continues_when_fits() {
+        let mock = MockOpenAI::start().await;
+        let (app, events) = app_fixture_with_events(&mock);
+        app.config
+            .save(small_window_config(&mock.base_url))
+            .expect("save config");
+        mock.set_fail_nonstream(true); // 非流式（摘要调用）一律 500
+        let runs = RunManager::new();
+        let sink = SharedSink::default();
+        let session = "sess-fail";
+
+        // 先让史册有内容（第一次 run 也会尝试压缩并失败——注入已在）
+        craftwave_lib::host::commands::chat::start_chat_core(
+            &app,
+            &runs,
+            session.to_owned(),
+            vec![user_entry("第一条消息")],
+            run_config(),
+            Box::new(sink.clone()),
+            false,
+        )
+        .await
+        .unwrap();
+        wait_ended(&sink, Duration::from_secs(10)).await;
+
+        // 第二次：有可压内容但摘要失败 → 兜底继续（可容纳）
+        craftwave_lib::host::commands::chat::start_chat_core(
+            &app,
+            &runs,
+            session.to_owned(),
+            vec![user_entry("第一条消息"), user_entry("第二条消息")],
+            run_config(),
+            Box::new(sink.clone()),
+            false,
+        )
+        .await
+        .unwrap();
+        let ended = wait_ended(&sink, Duration::from_secs(10)).await;
+        assert!(matches!(
+            ended,
+            ChatFrame::RunEnded {
+                reason: EndReason::Done,
+                ..
+            }
+        ));
+        assert!(
+            !events.payloads_of("run:compact_failed").is_empty(),
+            "摘要失败应发 run:compact_failed"
+        );
+        let tree = app.store.load_session_tree(session).unwrap();
+        assert!(
+            tree.compactions.is_empty(),
+            "失败不得提交边界：{:?}",
+            tree.compactions
+        );
+        // wire 未裁剪：本次流式请求含完整历史（未经摘要的历史不被静默裁掉）
+        let requests = mock.request_bodies().await;
+        let streaming: Vec<&serde_json::Value> = requests
+            .iter()
+            .filter(|r| r["stream"] == serde_json::Value::Bool(true))
+            .collect();
+        let joined = serde_json::to_string(streaming.last().unwrap()).unwrap();
+        assert!(
+            joined.contains("第一条消息"),
+            "失败后 wire 不得裁历史：{joined}"
+        );
+    }
+
+    /// 断言：压缩后仍超硬预算 → E_CONTEXT_OVERFLOW 暂停，输入条目已先落盘
+    /// 保留（persist 兜底先于压缩），run 不启动。
+    #[tokio::test]
+    async fn context_overflow_after_compaction_pauses_with_input_kept() {
+        let mock = MockOpenAI::start().await;
+        let (app, _events) = app_fixture_with_events(&mock);
+        // 窗口 30000：阈值线 18000（触发压缩）、硬预算 27000（预留 32768
+        // 必然超出——压缩成功也放不下）
+        let config = craftwave_lib::providers::types::AppConfig {
+            providers: vec![craftwave_lib::providers::types::ProviderConfig {
+                models: vec![craftwave_lib::providers::types::ProviderModel {
+                    context_window: 30000,
+                    ..provider_fixture(&mock.base_url).models.remove(0)
+                }],
+                ..provider_fixture(&mock.base_url)
+            }],
+            active_model_id: Some("model-1".to_owned()),
+            ..craftwave_lib::providers::types::AppConfig::default()
+        };
+        app.config.save(config).expect("save config");
+        let runs = RunManager::new();
+        let sink = SharedSink::default();
+
+        let err = craftwave_lib::host::commands::chat::start_chat_core(
+            &app,
+            &runs,
+            "sess-overflow".to_owned(),
+            vec![user_entry("超大输入")],
+            run_config(),
+            Box::new(sink.clone()),
+            false,
+        )
+        .await
+        .expect_err("应因超硬预算被拒");
+        assert_eq!(err.code, "E_CONTEXT_OVERFLOW", "{err}");
+        // 输入保留：user 兜底条目已在史册（暂停不丢输入）
+        let tree = app.store.load_session_tree("sess-overflow").unwrap();
+        assert!(
+            tree.messages.iter().any(|m| m.id == "u-12"),
+            "输入条目应已落盘保留：{:?}",
+            tree.messages.iter().map(|m| &m.id).collect::<Vec<_>>()
+        );
+        assert!(runs.get("sess-overflow").is_none(), "run 不应启动");
+    }
+
+    /// 断言：手动 compact_session——快照压缩成功（返回 cutEntryId 与前后
+    /// 估算）；运行中拒绝（E_SESSION_RUNNING）。
+    #[tokio::test]
+    async fn manual_compact_session_snapshot_and_running_rejected() {
+        let mock = MockOpenAI::start().await;
+        let (app, events) = app_fixture_with_events(&mock);
+        app.config
+            .save(small_window_config(&mock.base_url))
+            .expect("save config");
+        let runs = RunManager::new();
+        let session = "sess-manual";
+        app.store
+            .save_session_tree(session, &[user_entry("第一条消息")], Some("u-15"), 0)
+            .unwrap();
+
+        // 运行中拒绝：start_chat 启动后（run 未收口）手动压缩即拒
+        {
+            let sink = SharedSink::default();
+            craftwave_lib::host::commands::chat::start_chat_core(
+                &app,
+                &runs,
+                session.to_owned(),
+                vec![user_entry("第一条消息")],
+                run_config(),
+                Box::new(sink.clone()),
+                false,
+            )
+            .await
+            .unwrap();
+            let err =
+                craftwave_lib::host::commands::chat::compact_session_core(&app, &runs, session)
+                    .await
+                    .expect_err("运行中应拒绝");
+            assert_eq!(err.code, "E_SESSION_RUNNING", "{err}");
+            wait_ended(&sink, Duration::from_secs(10)).await;
+        }
+
+        // 快照压缩：无条件执行（不走阈值判定）。此时史册已含第一次 run 的
+        // 产物条目，压缩候选 = 全量（无"本次输入"豁免）→ cut = 史册链尾 marker
+        let result =
+            craftwave_lib::host::commands::chat::compact_session_core(&app, &runs, session)
+                .await
+                .expect("手动压缩应成功");
+        let tree = app.store.load_session_tree(session).unwrap();
+        let tail_id = tree.active_leaf_id.clone().expect("史册应有活动叶");
+        assert_eq!(
+            result.cut_entry_id.as_deref(),
+            Some(tail_id.as_str()),
+            "{result:?}"
+        );
+        assert_eq!(tree.compactions.len(), 1);
+        assert_eq!(
+            tree.compactions[0].id, "manual:compact:1",
+            "手动 owner=manual"
+        );
+        assert!(tree.messages.iter().any(|m| m.id == "u-15"), "原始历史保留");
+        assert!(
+            events.payloads_of("tokens:update").is_empty()
+                || events.payloads_of("run:compacted").is_empty(),
+            "手动压缩走命令返回面（不发生自动压缩事件流）"
+        );
+    }
 }

@@ -179,6 +179,9 @@ impl RunRecorder {
                 let turn = self.current_turn;
                 self.flush_text_turn(turn);
             }
+            // 压缩完成帧（04 号票）：通知面透传，不落 canonical 条目
+            //（compaction 条目由压缩编排经 append_compaction 落盘，§7.3）
+            ChatFrame::CompactDone { .. } => {}
             ChatFrame::RunEnded {
                 duration_ms,
                 tool_count,

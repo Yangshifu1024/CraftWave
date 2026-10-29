@@ -35,8 +35,9 @@ pub mod util;
 // 后者仅在 cfg(test) 存在，故非测试构建下编译器仍视为未用。
 #[allow(unused_imports)]
 use host::commands::chat::{
-    ApprovePlanArgs, CancelRunArgs, ResolveAskArgs, RunConfig, StartChatArgs, StartChatResult,
-    approve_plan, cancel_run, resolve_ask, start_chat,
+    ApprovePlanArgs, CancelRunArgs, CompactSessionArgs, CompactSessionResult, ResolveAskArgs,
+    RunConfig, StartChatArgs, StartChatResult, approve_plan, cancel_run, compact_session,
+    resolve_ask, start_chat,
 };
 #[allow(unused_imports)]
 use host::commands::config::{SaveConfigArgs, get_config, save_config};
@@ -173,6 +174,7 @@ ipc_commands! {
     host::commands::chat::cancel_run => args: CancelRunArgs, ret: bool;
     host::commands::chat::resolve_ask => args: ResolveAskArgs, ret: ();
     host::commands::chat::approve_plan => args: ApprovePlanArgs, ret: ();
+    host::commands::chat::compact_session => args: CompactSessionArgs, ret: CompactSessionResult;
     host::commands::system::resolve_exit_request => args: ResolveExitRequestArgs, ret: ();
     host::commands::system::notification_permission_status => args: (), ret: NotificationPermissionStatus;
     host::commands::system::open_notification_settings => args: (), ret: ();

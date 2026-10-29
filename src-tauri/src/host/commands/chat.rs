@@ -121,11 +121,17 @@ pub struct StartChatResult {
     pub run_id: String,
 }
 
-/// 解析后的运行模型（§11.1 ResolvedModel 的 M1 子集）。
+/// 解析后的运行模型（§11.1 ResolvedModel 的当前子集）。
 pub(crate) struct ResolvedModel {
     /// 显示名（runStarted.model，= wire id）。
     pub name: String,
     pub driver: rig::driver::Model<Chat>,
+    /// 上下文窗口 token 数（`ProviderModel.contextWindow`，§3.2 缺省 128000；
+    /// 压缩预算检查的窗口面，§6.2）。
+    pub context_window: u64,
+    /// 单次回复 token 上限（`ProviderModel.maxTokens`，§3.2 缺省 32768；
+    /// 每请求预算的回复预留面，§6.2 Q18）。
+    pub max_tokens: u64,
 }
 
 /// §11.1 模型解析：RunConfig.modelId > AppConfig.activeModelId →
@@ -176,6 +182,8 @@ pub(crate) fn resolve_model(
     Ok(ResolvedModel {
         name: model.model.clone(),
         driver,
+        context_window: u64::from(model.context_window),
+        max_tokens: u64::from(model.max_tokens),
     })
 }
 
@@ -574,6 +582,587 @@ pub(crate) fn context_tail(messages: &[MessageEntry]) -> String {
         .unwrap_or_default()
 }
 
+/// 压缩运行时策略快照（§6.2：配置 + 模型窗口 + 回复预留，04 号票）。
+#[derive(Debug, Clone)]
+pub(crate) struct CompactionRuntimePolicy {
+    /// 自动压缩阈值（窗口占比，§3.2 compaction.threshold）。
+    pub threshold: f64,
+    /// 压缩总超时（分块共用，§6.2 Q31）。
+    pub timeout: Duration,
+    /// 当前模型上下文窗口（§3.2 contextWindow）。
+    pub context_window: u64,
+    /// 回复预留（§3.2 maxTokens，Q18 预算组成）。
+    pub reply_reserve: u64,
+    /// 摘要模型的上下文窗口（分块装箱面；专用小模型未配时 = 当前模型窗口）。
+    pub summary_window: u64,
+}
+
+/// 压缩结果（提交面）：新压缩边界（tokensBefore/tokensAfter 由调用方按
+/// 各自触发点的估算基准填入帧与事件载荷）。
+#[derive(Debug, Clone)]
+pub(crate) struct CompactionOutcome {
+    pub boundary: crate::backend::wire::CompactionBoundary,
+}
+
+/// 从 AppConfig 读压缩策略（模型窗口取当前 run 模型；摘要专用模型未配时
+/// 摘要窗口 = 当前模型窗口）。
+pub(crate) fn compaction_policy(app: &AppState, model: &ResolvedModel) -> CompactionRuntimePolicy {
+    let config = app
+        .config
+        .load()
+        .map(|c| c.compaction.clone())
+        .unwrap_or_default();
+    // 摘要专用小模型未配置时跟随当前模型（§6.2），窗口同取当前模型
+    let summary_window = config
+        .model_id
+        .as_deref()
+        .and_then(|id| {
+            app.config.load().ok().and_then(|c| {
+                c.providers
+                    .iter()
+                    .flat_map(|p| p.models.iter())
+                    .find(|m| m.id == id)
+                    .map(|m| u64::from(m.context_window))
+            })
+        })
+        .filter(|w| *w > 0)
+        .unwrap_or(model.context_window);
+    CompactionRuntimePolicy {
+        threshold: config.threshold,
+        timeout: Duration::from_secs(config.timeout_secs),
+        context_window: model.context_window,
+        reply_reserve: model.max_tokens,
+        summary_window,
+    }
+}
+
+/// 工具表的估算输入面（name + description + schema 文本）。
+fn tool_estimate_inputs(
+    tools: &[Arc<rig::completion::request::ToolDefinition>],
+) -> Vec<(String, String, String)> {
+    tools
+        .iter()
+        .map(|t| {
+            (
+                t.name.to_string(),
+                t.description.clone(),
+                t.parameters.to_string(),
+            )
+        })
+        .collect()
+}
+
+/// 把压缩摘要调用的实际用量计入会话累计（C-9：tokens:update 照发、
+/// 不计 turnUsage——压缩不属主 run 轮次）。共享表 + 事件汇为细粒度参数
+/// （run 任务的 spawn 闭包里没有 AppState 整体，只有这些克隆件）。
+fn accumulate_compaction_usage(
+    session_usage: &Mutex<HashMap<String, UsageTotal>>,
+    events: &Arc<dyn EventSink>,
+    session_id: &str,
+    usages: &[rig::completion::Usage],
+) {
+    let mut delta = UsageTotal::default();
+    for usage in usages {
+        delta.accumulate(&crate::backend::turn::usage_total(usage));
+    }
+    if delta == UsageTotal::default() {
+        return; // 无计量（mock/未知用量不伪造，Q39）
+    }
+    let total = {
+        let mut map = session_usage
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let total = map.entry(session_id.to_owned()).or_default();
+        total.accumulate(&delta);
+        *total
+    };
+    events.emit(
+        keys::TOKENS_UPDATE,
+        serde_json::json!({ "sessionId": session_id, "usage": total }),
+    );
+}
+
+/// 压缩后的上下文占用估算（tokensAfter 口径，§6.2）：裁剪后条目 + 摘要
+/// 前缀 + 工具表 + 回复预留。
+pub(crate) fn estimate_after_compaction(
+    remaining_entries: &[MessageEntry],
+    summary: &str,
+    tools: &[(String, String, String)],
+    reserve: u64,
+) -> u64 {
+    crate::backend::estimator::estimate_request_tokens(
+        &[summary],
+        remaining_entries,
+        "",
+        tools,
+        reserve,
+    )
+}
+
+/// 对会话执行一次压缩（FR-03-05 核心编排，04 号票）：
+/// ① 摘要调用（增量输入 = 旧摘要 + 新增内容；分块共用总超时，Q31/Q38）；
+/// ② `append_compaction` 原子落盘（含 Q34 首次格式升级备份守卫——失败
+///    暂停写入并报错，原数据不动）；③ 摘要用量计入会话累计（C-9）。
+/// 中途失败不提交条目、不推进边界（Q31 原子提交面），错误原样上抛由调用
+/// 方发 run:compact_failed 与兜底判定。
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn execute_compaction(
+    store: &Arc<crate::storage::SessionStore>,
+    events: &Arc<dyn EventSink>,
+    session_usage: &Mutex<HashMap<String, UsageTotal>>,
+    session_id: &str,
+    owner: &str,
+    scope: &crate::backend::compaction::CompactionScope,
+    summary_driver: &TurnDriver,
+    policy: &CompactionRuntimePolicy,
+) -> Result<CompactionOutcome, crate::backend::compaction::CompactionError> {
+    let (summary, usages) = crate::backend::compaction::summarize(
+        summary_driver,
+        scope.old_summary.as_deref(),
+        &scope.entries,
+        policy.summary_window,
+        policy.timeout,
+    )
+    .await?;
+    // 摘要已成功，进入提交面：备份守卫 + append 原子落盘（失败即整体失败，
+    // 不推进边界——摘要结果被丢弃，下次重试重新摘要）
+    let (_, count) = store
+        .compaction_overview(session_id)
+        .map_err(|e| crate::backend::compaction::CompactionError::Failed(e.to_string()))?;
+    let entry = crate::storage::StoredCompactionEntry {
+        id: crate::backend::compaction::compaction_entry_id(owner, count + 1),
+        cut_entry_id: scope.cut_entry_id.clone(),
+        summary: summary.clone(),
+        tokens_before: crate::backend::estimator::estimate_entries_tokens(&scope.entries),
+        created_at: now_ms(),
+    };
+    store
+        .append_compaction(session_id, entry)
+        .map_err(|e| crate::backend::compaction::CompactionError::Failed(e.to_string()))?;
+    accumulate_compaction_usage(session_usage, events, session_id, &usages);
+    Ok(CompactionOutcome {
+        boundary: crate::backend::wire::CompactionBoundary {
+            cut_entry_id: scope.cut_entry_id.clone(),
+            summary,
+        },
+    })
+}
+
+/// run 开始前的自动压缩编排（§6.2 触发点①，FR-03-05）：
+/// 1. 估算本次请求（系统前缀 + 历史边界裁剪 + prompt + 工具表 + 回复预留）；
+/// 2. 未达阈值 → Ok((既有边界, tokens))，tokens 供 wire 预算复查；
+/// 3. 达阈值 → run:compacting → 压缩编排 → compactDone 帧 + run:compacted；
+/// 4. 压缩失败：原上下文能放入窗口（< 0.9）→ Ok((既有边界, …)) 继续；放不下 →
+///    Err(E_CONTEXT_OVERFLOW)（输入已落盘保留，不静默裁历史，§6.2 兜底）。
+///
+/// 压缩成功后的新边界立即生效于本次 run 的全部请求（§6.2 生效面定稿）；
+/// `summary_driver` 由调用方按配置解析（专用小模型或当前模型，§6.2）。
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn maybe_compact_before_run(
+    app: &AppState,
+    session_id: &str,
+    run_id: &str,
+    messages: &[MessageEntry],
+    tools: &[Arc<rig::completion::request::ToolDefinition>],
+    policy: &CompactionRuntimePolicy,
+    summary_driver: &TurnDriver,
+    sink: &mut dyn FrameSink,
+    custom_prompt: Option<&str>,
+) -> Result<(Option<crate::backend::wire::CompactionBoundary>, u64), IpcError> {
+    let overview = app
+        .store
+        .compaction_overview(session_id)
+        .map_err(|e| IpcError::internal(e.to_string()))?;
+    let boundary = overview
+        .0
+        .map(|c| crate::backend::wire::CompactionBoundary {
+            cut_entry_id: c.cut_entry_id,
+            summary: c.summary,
+        });
+    // 估算面：活动路径按现有边界裁剪（与 wire 重建同一裁剪口径），
+    // 再剔除末条 prompt（本次输入不参与压缩，§6.2 触发点①口径）
+    let whole_after_boundary = boundary_ref_slice(messages, boundary.as_ref())?;
+    let body = &whole_after_boundary[..whole_after_boundary.len().saturating_sub(1)];
+    let prompt_text = messages
+        .last()
+        .map(|m| {
+            m.parts
+                .iter()
+                .filter_map(|p| match p {
+                    crate::storage::WirePart::Text { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<String>()
+        })
+        .unwrap_or_default();
+    let tool_inputs = tool_estimate_inputs(tools);
+    let prefixes: Vec<&str> = [custom_prompt, boundary.as_ref().map(|b| b.summary.as_str())]
+        .into_iter()
+        .flatten()
+        .collect();
+    let estimated = crate::backend::estimator::estimate_request_tokens(
+        &prefixes,
+        body,
+        &prompt_text,
+        &tool_inputs,
+        policy.reply_reserve,
+    );
+    if !crate::backend::estimator::should_auto_compact(
+        estimated,
+        policy.context_window,
+        policy.threshold,
+    ) {
+        return Ok((boundary, estimated));
+    }
+
+    // —— 达阈值：压缩编排（事件 → 摘要 → 落盘 → 帧/事件收口）——
+    app.events.emit(
+        keys::RUN_COMPACTING,
+        serde_json::json!({ "sessionId": session_id }),
+    );
+    let scope = crate::backend::compaction::compression_scope(
+        body,
+        boundary
+            .as_ref()
+            .map(|b| (b.cut_entry_id.as_str(), b.summary.as_str())),
+    );
+    let executed = match scope {
+        Some(scope) => {
+            execute_compaction(
+                &app.store,
+                &app.events,
+                &app.session_usage,
+                session_id,
+                run_id,
+                &scope,
+                summary_driver,
+                policy,
+            )
+            .await
+        }
+        // 无可压内容但已达阈值（如首次请求即超大附件）：按超预算兜底
+        None => Err(crate::backend::compaction::CompactionError::Failed(
+            "已达压缩阈值但无可压缩的历史内容".to_owned(),
+        )),
+    };
+    let outcome = match executed {
+        Ok(outcome) => outcome,
+        Err(_) => {
+            app.events.emit(
+                keys::RUN_COMPACT_FAILED,
+                serde_json::json!({ "sessionId": session_id }),
+            );
+            // 失败兜底（§6.2）：原上下文能放入硬预算（窗口 ×0.9）则继续
+            if !crate::backend::estimator::is_over_wire_budget(estimated, policy.context_window) {
+                return Ok((boundary, estimated));
+            }
+            return Err(context_overflow(estimated, policy));
+        }
+    };
+    // tokensAfter：新边界下的重算（压缩已在史册生效，重读概览取最新边界）
+    let new_boundary = crate::backend::wire::CompactionBoundary {
+        cut_entry_id: outcome.boundary.cut_entry_id.clone(),
+        summary: outcome.boundary.summary.clone(),
+    };
+    let new_body = boundary_ref_slice(messages, Some(&new_boundary))?;
+    let tokens_after = estimate_after_compaction(
+        new_body,
+        &new_boundary.summary,
+        &tool_inputs,
+        policy.reply_reserve,
+    );
+    sink.send(ChatFrame::CompactDone {
+        cut_entry_id: new_boundary.cut_entry_id.clone(),
+        tokens_before: estimated,
+        tokens_after,
+    });
+    app.events.emit(
+        keys::RUN_COMPACTED,
+        serde_json::json!({
+            "sessionId": session_id,
+            "tokensBefore": estimated,
+            "tokensAfter": tokens_after,
+        }),
+    );
+    Ok((Some(new_boundary), tokens_after))
+}
+
+/// 活动路径的边界裁剪切片（与 [`crate::backend::wire::split_prompt_with_boundary`]
+/// 同一裁剪口径的条目视图；边界锚点缺失按参数错误拒绝——不静默全量展开）。
+fn boundary_ref_slice<'a>(
+    entries: &'a [MessageEntry],
+    boundary: Option<&crate::backend::wire::CompactionBoundary>,
+) -> Result<&'a [MessageEntry], IpcError> {
+    match boundary {
+        None => Ok(entries),
+        Some(b) => {
+            let idx = entries
+                .iter()
+                .position(|e| e.id == b.cut_entry_id)
+                .ok_or_else(|| {
+                    IpcError::invalid_arg(format!(
+                        "压缩边界锚点 {} 不在会话活动路径上",
+                        b.cut_entry_id
+                    ))
+                })?;
+            Ok(&entries[idx + 1..])
+        }
+    }
+}
+
+/// ask 关闭后的压缩触发点（§6.2 触发点②，run 任务内 wait_approval 收口处，
+/// 与 §7.2 封口安全点重合）：**落盘面压缩**——摘要与 compaction 条目落盘后
+/// 对恢复后的落盘条目与下一个 run 生效；当前 run 的 AgentRun 状态机
+/// （rig 0.45）不支持中途替换内部 history，恢复后照常执行，恢复后请求超
+/// 硬预算由 §6.2 兜底终止（输入保留）。
+///
+/// 估算基准 = 最近请求真实输入（`DriveState.last_input`）+ 本次审批调用
+/// 参数 + 工具表 + 回复预留。失败只发 run:compact_failed、不阻断恢复
+/// （落盘面优化不承载硬预算义务——硬预算判定在恢复后的请求面）。
+/// 存储器/事件汇/用量表为细粒度参数（spawn 闭包内无 AppState 整体）。
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn maybe_compact_after_ask(
+    store: &Arc<crate::storage::SessionStore>,
+    events: &Arc<dyn EventSink>,
+    session_usage: &Mutex<HashMap<String, UsageTotal>>,
+    session_id: &str,
+    run_id: &str,
+    pending: &PendingCall,
+    state: &DriveState,
+    tools: &[Arc<rig::completion::request::ToolDefinition>],
+    policy: &CompactionRuntimePolicy,
+    summary_driver: &TurnDriver,
+) {
+    let pending_tokens = crate::backend::estimator::estimate_text_tokens(&pending.args_json);
+    let tool_tokens = crate::backend::estimator::estimate_tool_tokens(&tool_estimate_inputs(tools));
+    let estimated = state.last_input + pending_tokens + tool_tokens + policy.reply_reserve;
+    if !crate::backend::estimator::should_auto_compact(
+        estimated,
+        policy.context_window,
+        policy.threshold,
+    ) {
+        return;
+    }
+    events.emit(
+        keys::RUN_COMPACTING,
+        serde_json::json!({ "sessionId": session_id }),
+    );
+    // 安全点语义：run 内落盘条目均已完成（turn 收口才落盘），边界不拆批次；
+    // 压缩候选 = 史册全量（无"本次输入"豁免——ask 后场景没有独立 prompt）
+    let compacted = async {
+        let tree = store
+            .load_session_tree(session_id)
+            .map_err(|e| crate::backend::compaction::CompactionError::Failed(e.to_string()))?;
+        let overview = store
+            .compaction_overview(session_id)
+            .map_err(|e| crate::backend::compaction::CompactionError::Failed(e.to_string()))?;
+        let boundary = overview
+            .0
+            .map(|c| crate::backend::wire::CompactionBoundary {
+                cut_entry_id: c.cut_entry_id,
+                summary: c.summary,
+            });
+        let scope = crate::backend::compaction::compression_scope(
+            &tree.messages,
+            boundary
+                .as_ref()
+                .map(|b| (b.cut_entry_id.as_str(), b.summary.as_str())),
+        );
+        let scope = scope.ok_or_else(|| {
+            crate::backend::compaction::CompactionError::Failed("无可压缩的历史内容".to_owned())
+        })?;
+        execute_compaction(
+            store,
+            events,
+            session_usage,
+            session_id,
+            run_id,
+            &scope,
+            summary_driver,
+            policy,
+        )
+        .await
+    }
+    .await;
+    match compacted {
+        Ok(outcome) => {
+            let tokens_after = store
+                .load_session_tree(session_id)
+                .ok()
+                .and_then(|tree| {
+                    let boundary = crate::backend::wire::CompactionBoundary {
+                        cut_entry_id: outcome.boundary.cut_entry_id.clone(),
+                        summary: outcome.boundary.summary.clone(),
+                    };
+                    // 锚点必在史册（cut 取自史册条目）；防御失败按 0 折算
+                    boundary_ref_slice(&tree.messages, Some(&boundary))
+                        .ok()
+                        .map(|rest| {
+                            estimate_after_compaction(
+                                rest,
+                                &boundary.summary,
+                                &[],
+                                policy.reply_reserve,
+                            )
+                        })
+                })
+                .unwrap_or(0);
+            events.emit(
+                keys::RUN_COMPACTED,
+                serde_json::json!({
+                    "sessionId": session_id,
+                    "tokensBefore": estimated,
+                    "tokensAfter": tokens_after,
+                }),
+            );
+        }
+        Err(_) => {
+            events.emit(
+                keys::RUN_COMPACT_FAILED,
+                serde_json::json!({ "sessionId": session_id }),
+            );
+        }
+    }
+}
+
+/// `compact_session` 主体（§3.3 #59b，FR-03-05 手动压缩）：对活跃 run 外的
+/// 会话快照无条件压缩（不走 0.6 阈值判定）；运行中拒绝（E_SESSION_RUNNING）。
+/// 无可压内容时原样返回估算值且不带 cutEntryId。
+pub async fn compact_session_core(
+    app: &AppState,
+    runs: &RunManager,
+    session_id: &str,
+) -> Result<CompactSessionResult, IpcError> {
+    if session_id.trim().is_empty() {
+        return Err(IpcError::invalid_arg("sessionId 不能为空"));
+    }
+    if runs.get(session_id).is_some() {
+        return Err(IpcError::session_running(format!(
+            "会话已有活跃 run：{session_id}"
+        )));
+    }
+    let model = resolve_model(app, None)?;
+    let policy = compaction_policy(app, &model);
+    let summary_model_id = app.config.load()?.compaction.model_id.clone();
+    let summary_resolved = match summary_model_id.as_deref() {
+        Some(id) => resolve_model(app, Some(id))?,
+        None => resolve_model(app, None)?,
+    };
+    let summary_driver = TurnDriver::new(summary_resolved.driver, RunSpec::new(), Vec::new());
+    let tree = app
+        .store
+        .load_session_tree(session_id)
+        .map_err(|e| match e {
+            crate::storage::StorageError::NotFound(_) => IpcError::new(
+                crate::util::errors::E_NOT_FOUND,
+                format!("会话不存在：{session_id}"),
+            ),
+            other => IpcError::internal(other.to_string()),
+        })?;
+    let overview = app
+        .store
+        .compaction_overview(session_id)
+        .map_err(|e| IpcError::internal(e.to_string()))?;
+    let boundary = overview
+        .0
+        .map(|c| crate::backend::wire::CompactionBoundary {
+            cut_entry_id: c.cut_entry_id,
+            summary: c.summary,
+        });
+    // 手动压缩估算面：史册 + 摘要前缀 + 回复预留（工具表不计——无 run 配置，
+    // before/after 同口径即可比）
+    let prefixes: Vec<&str> = [boundary.as_ref().map(|b| b.summary.as_str())]
+        .into_iter()
+        .flatten()
+        .collect();
+    let tokens_before = crate::backend::estimator::estimate_request_tokens(
+        &prefixes,
+        &tree.messages,
+        "",
+        &[],
+        policy.reply_reserve,
+    );
+    let scope = crate::backend::compaction::compression_scope(
+        &tree.messages,
+        boundary
+            .as_ref()
+            .map(|b| (b.cut_entry_id.as_str(), b.summary.as_str())),
+    );
+    let Some(scope) = scope else {
+        return Ok(CompactSessionResult {
+            cut_entry_id: None,
+            tokens_before,
+            tokens_after: tokens_before,
+        });
+    };
+    let outcome = execute_compaction(
+        &app.store,
+        &app.events,
+        &app.session_usage,
+        session_id,
+        "manual",
+        &scope,
+        &summary_driver,
+        &policy,
+    )
+    .await
+    .map_err(|e| IpcError::internal(e.to_string()))?;
+    let tokens_after = estimate_after_compaction(
+        boundary_ref_slice(&tree.messages, Some(&outcome.boundary))?,
+        &outcome.boundary.summary,
+        &[],
+        policy.reply_reserve,
+    );
+    Ok(CompactSessionResult {
+        cut_entry_id: Some(outcome.boundary.cut_entry_id),
+        tokens_before,
+        tokens_after,
+    })
+}
+
+/// `compact_session` 参数契约（§3.3 #59b）。
+#[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct CompactSessionArgs {
+    pub session_id: String,
+}
+
+/// `compact_session` 返回契约（§3.3 #59b）：cutEntryId 缺省 = 无可压内容。
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct CompactSessionResult {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub cut_entry_id: Option<String>,
+    pub tokens_before: u64,
+    pub tokens_after: u64,
+}
+
+/// `compact_session` 命令（§3.3 #59b）。
+#[tauri::command]
+pub(crate) async fn compact_session(
+    app: State<'_, AppState>,
+    runs: State<'_, RunManager>,
+    session_id: String,
+) -> Result<CompactSessionResult, IpcError> {
+    compact_session_core(&app, &runs, &session_id).await
+}
+
+/// E_CONTEXT_OVERFLOW 错误构造（§3.6，04 号票：暂停并保留输入，提示重试
+/// 压缩或开启新会话）。
+fn context_overflow(estimated: u64, policy: &CompactionRuntimePolicy) -> IpcError {
+    IpcError::new(
+        crate::util::errors::E_CONTEXT_OVERFLOW,
+        format!(
+            "上下文占用约 {estimated} token，超过模型窗口（{}）的硬预算且压缩后仍放不下：\
+             已暂停本次发送，输入已保留，可重试压缩或开启新会话",
+            policy.context_window
+        ),
+    )
+}
+
 /// user 条目幂等兜底：末条 user 不在史册时以史册链尾为父追加（一次 canonical
 /// 落盘即 fsync）。正常协议下前端发送前已 save，此处立即跳过。
 fn persist_user_fallback(app: &AppState, session_id: &str, messages: &[MessageEntry]) {
@@ -618,7 +1207,7 @@ pub async fn start_chat_core(
     session_id: String,
     messages: Vec<MessageEntry>,
     run_config: RunConfig,
-    sink: Box<dyn FrameSink>,
+    mut sink: Box<dyn FrameSink>,
     auto_confirm: bool,
 ) -> Result<StartChatResult, IpcError> {
     if session_id.trim().is_empty() {
@@ -626,26 +1215,70 @@ pub async fn start_chat_core(
     }
     // ① 模型解析（§11.1）
     let model = resolve_model(app, run_config.model_id.as_deref())?;
-    // ② wire 切分（§6.2）：末条 user 为 prompt，其余为 history（参数校验面，
-    //    错误在命令内直接 E_INVALID_ARG）
-    let (history, prompt) = crate::backend::wire::split_prompt(&messages)
+    // ①b wire 参数校验（§6.2：末条 user 为 prompt）——压缩编排前先验，
+    //    让参数错误优先于任何有副作用的流程
+    crate::backend::wire::split_prompt(&messages)
         .map_err(|e| IpcError::invalid_arg(e.to_string()))?;
-    // ②b 系统级前缀（§6.2 注入次序首位，03 号票）：agent.customPrompt 非空时
-    //    注入为 history 首条 system 消息；空/未配置零注入。save_config 即时
-    //    生效于下次 run（config.load 命中缓存热替换后的值，§7.6）。
+    // ② 系统级前缀与压缩策略（§6.2 注入次序：customPrompt → 压缩 summary →
+    //    当前计划）。save_config 即时生效于下次 run（config.load 命中缓存热
+    //    替换后的值，§7.6）。
     let custom_prompt = app
         .config
         .load()?
         .agent
         .as_ref()
         .and_then(|a| a.custom_prompt.clone());
-    let history = crate::backend::wire::with_system_prefix(history, custom_prompt.as_deref());
-    // ③ 工具集（§8.1 三处同源过滤）
+    let policy = compaction_policy(app, &model);
+    // 摘要驱动（§6.2：专用小模型未配则当前 run 模型——无会话覆盖时即
+    // active model；与 run 模型同源解析，独立客户端实例）
+    let summary_model_id = app.config.load()?.compaction.model_id.clone();
+    let summary_resolved = match summary_model_id.as_deref() {
+        Some(id) => resolve_model(app, Some(id))?,
+        None => resolve_model(app, run_config.model_id.as_deref())?,
+    };
+    let summary_driver = TurnDriver::new(summary_resolved.driver, RunSpec::new(), Vec::new());
+    // ③ 工具集（§8.1 三处同源过滤）——预算检查含工具表（§6.2 Q18）
     let tool_specs = crate::tools::filter_for_tier(crate::tools::build_registry(), run_config.tier);
     let tools = to_rig_tool_definitions(tool_specs)?;
 
-    // ④ 注册 run（同会话互斥 E_SESSION_RUNNING）
+    // ④ 同会话互斥预检（E_SESSION_RUNNING 快速失败；正式互斥仍由
+    //    RunManager::start 兜底）→ run 开始前压缩（§6.2 触发点①：首个模型
+    //    调用前完成摘要与落盘，新边界立即生效于本次 run 全部请求）
+    if runs.get(&session_id).is_some() {
+        return Err(IpcError::session_running(format!(
+            "会话已有活跃 run：{session_id}"
+        )));
+    }
     let run_id = uuid::Uuid::new_v4().to_string();
+    // user 条目幂等兜底提前到压缩前（§7.3 首行）：输入先落盘再谈压缩——
+    // 压缩失败/E_CONTEXT_OVERFLOW 暂停时「输入已保留」在史册面成立
+    persist_user_fallback(app, &session_id, &messages);
+    let (boundary, estimated_after) = maybe_compact_before_run(
+        app,
+        &session_id,
+        &run_id,
+        &messages,
+        &tools,
+        &policy,
+        &summary_driver,
+        sink.as_mut(),
+        custom_prompt.as_deref(),
+    )
+    .await?;
+    // wire 硬预算复查（§6.2：压缩后仍 > 窗口 ×0.9 → 暂停保留输入，不静默裁历史）
+    if crate::backend::estimator::is_over_wire_budget(estimated_after, policy.context_window) {
+        return Err(context_overflow(estimated_after, &policy));
+    }
+    // ⑤ wire 切分（§6.2 压缩边界）：cutEntryId 前跳过/后展开，摘要交前缀层
+    let (history, prompt, compaction_summary) =
+        crate::backend::wire::split_prompt_with_boundary(&messages, boundary.as_ref())
+            .map_err(|e| IpcError::invalid_arg(e.to_string()))?;
+    let history = crate::backend::wire::with_system_prefix_layers(
+        history,
+        [custom_prompt.as_deref(), compaction_summary.as_deref()],
+    );
+
+    // ⑥ 注册 run（同会话互斥 E_SESSION_RUNNING）
     let handle = runs.start(&session_id, run_id.clone(), now_ms())?;
 
     // ⑤ spawn RunLoop 任务（帧生产 + 审批挂起恢复 + 取消 + 终态摘除）。
@@ -653,7 +1286,7 @@ pub async fn start_chat_core(
         max_turns: Some(run_config.max_turns as usize),
         ..RunSpec::new()
     };
-    let driver = TurnDriver::new(model.driver, spec.clone(), tools);
+    let driver = TurnDriver::new(model.driver, spec.clone(), tools.clone());
     let model_name = model.name;
     let cancel = handle.cancel.clone();
     let executor: Arc<dyn crate::backend::run_loop::CancellableExecutor> = Arc::new(
@@ -694,9 +1327,12 @@ pub async fn start_chat_core(
     let runs_for_task = runs.clone();
     let suggest_tail = context_tail(&messages);
     let run_id_for_result = run_id.clone();
-    // user 条目幂等兜底（§7.3 首行）：正常协议前端发送前已 save_session_tree
-    //（user 拓扑正确）；headless/异常路径未 save 时此处补落（parent=史册链尾）。
-    persist_user_fallback(app, &session_id, &messages);
+    // ask 关闭后压缩触发点（§6.2 触发点②）的依赖面：摘要驱动与策略随
+    // run 任务进闭包（摘要模型独立解析，与 run 的 driver 互不占用）；
+    // 存储器同源 Arc（命令层与 run 落盘器同一锁表）
+    let summary_driver_for_task = summary_driver;
+    let policy_for_task = policy;
+    let store_for_task = app.store.clone();
     let recorder = RunRecorder::new(app.store.clone(), session_id.clone(), run_id.clone());
     tokio::spawn(async move {
         // 帧出口 = 事件层（usage → tokens:update）包 canonical 落盘器（§7.3）
@@ -742,6 +1378,21 @@ pub async fn start_chat_core(
                     match wait_approval(&events, &handle, &pending, auto_confirm).await {
                         ApprovalResolution::Allowed => {
                             gate.approve(&pending.name, &pending.args_json);
+                            // ask 关闭后压缩（§6.2 触发点②）：落盘面压缩，
+                            // 失败不阻断恢复（硬预算义务在恢复后的请求面）
+                            maybe_compact_after_ask(
+                                &store_for_task,
+                                &events,
+                                &session_usage,
+                                &session_id,
+                                &run_id,
+                                &pending,
+                                &state,
+                                &tools,
+                                &policy_for_task,
+                                &summary_driver_for_task,
+                            )
+                            .await;
                             match resume_run(&run_json) {
                                 Ok(resumed) => {
                                     run = resumed;

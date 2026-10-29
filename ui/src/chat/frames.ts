@@ -59,6 +59,9 @@ export interface FrameSnapshot {
   usage: { input: number; output: number; cacheRead: number; cacheWrite: number };
   /** 最近一次 usage 帧的输出速率（tok/s；无则 null）。 */
   rate: number | null;
+  /** compactDone 帧（§3.4【M2】，04 号票：通知面透传，不进打字机内容面——
+   *  压缩边界与前后上下文占用估算；本 run 未发生压缩时为 null）。 */
+  compaction: null | { cutEntryId: string; tokensBefore: number; tokensAfter: number };
   /**
    * 思考流的起止时刻（performance.now() 毫秒）：首帧 reasoningDelta 记起点，
    * 首帧 textDelta / toolStarted / runEnded 记终点——null = 本 run 没有思考流。
@@ -93,6 +96,7 @@ export class FrameBuffer {
     cacheWrite: 0,
   };
   private rate: number | null = null;
+  private compaction: FrameSnapshot["compaction"] = null;
   private thinkingStartedAt: number | null = null;
   private thinkingEndedAt: number | null = null;
   private maxSeq = -1;
@@ -160,6 +164,14 @@ export class FrameBuffer {
         this.rate = frame.rate ?? this.rate;
         break;
       }
+      case "compactDone":
+        // 通知面透传（§3.4【M2】：不进打字机内容面，指示/审计用）
+        this.compaction = {
+          cutEntryId: frame.cutEntryId,
+          tokensBefore: frame.tokensBefore,
+          tokensAfter: frame.tokensAfter,
+        };
+        break;
       case "runEnded":
         this.ended = {
           reason: frame.reason,
@@ -211,6 +223,7 @@ export class FrameBuffer {
       run: this.run ? { ...this.run } : null,
       usage: { ...this.usage },
       rate: this.rate,
+      compaction: this.compaction ? { ...this.compaction } : null,
       thinking:
         this.thinkingStartedAt === null
           ? null

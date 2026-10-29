@@ -255,3 +255,85 @@ fn custom_prompt_is_trimmed_before_injection() {
     let injected = with_system_prefix(Vec::new(), Some("  保持简洁  "));
     assert_eq!(system_text(as_message(&injected[0])), "保持简洁");
 }
+
+// ---- 压缩边界重建（§6.2【M2】，04 号票）----
+
+use crate::backend::wire::{
+    CompactionBoundary, split_prompt_with_boundary, with_system_prefix_layers,
+};
+
+/// 历史序列：u1 → a1（含工具回合）→ u2（本次输入 prompt）。
+fn compact_sample() -> Vec<MessageEntry> {
+    vec![
+        user("u1", "被压缩的早期内容"),
+        assistant_with_tool_round("a1", "call_1", "read"),
+        user("u2", "本次输入"),
+    ]
+}
+
+/// 断言：cutEntryId（含）之前跳过、之后正常展开（工具配对完整）、prompt
+/// 保留、摘要作为第三返回值交注入层。
+#[test]
+fn boundary_skips_before_cut_and_expands_after() {
+    let entries = compact_sample();
+    let boundary = CompactionBoundary {
+        cut_entry_id: "u1".to_owned(),
+        summary: "早期内容摘要".to_owned(),
+    };
+    let (history, prompt, summary) = split_prompt_with_boundary(&entries, Some(&boundary)).unwrap();
+    // u1 被裁（摘要取代），a1 展开为 assistant + 工具结果 user 两条
+    assert_eq!(history.len(), 2, "裁剪后 history：{history:?}");
+    assert!(matches!(as_message(&history[0]), Message::Assistant(_)));
+    assert!(matches!(as_message(&history[1]), Message::User { .. }));
+    // 工具配对完整：a1 的 toolResult 以 user 工具结果消息展开
+    if let Message::User { content } = as_message(&history[1]) {
+        assert!(matches!(content.first(), Some(UserContent::ToolResult(_))));
+    } else {
+        panic!("第二条应为工具结果 user 消息");
+    }
+    // prompt = 本次输入，不受边界影响
+    assert_eq!(user_text(as_message(&prompt)), "本次输入");
+    assert_eq!(summary.as_deref(), Some("早期内容摘要"));
+
+    // 无边界：全量展开（u1 + a1 的 assistant + 工具结果）
+    let (full_history, _, summary) = split_prompt_with_boundary(&entries, None).unwrap();
+    assert_eq!(full_history.len(), 3);
+    assert!(summary.is_none(), "无边界无摘要层");
+}
+
+/// 断言：边界锚点不在活动路径上 → 显式拒绝（不静默全量展开——未经摘要的
+/// 历史不得被静默裁掉的镜像不变量：不确定时不裁）。
+#[test]
+fn missing_cut_anchor_is_rejected_not_silently_expanded() {
+    let entries = compact_sample();
+    let boundary = CompactionBoundary {
+        cut_entry_id: "不存在".to_owned(),
+        summary: "x".to_owned(),
+    };
+    let err = split_prompt_with_boundary(&entries, Some(&boundary)).unwrap_err();
+    assert!(err.0.contains("压缩边界锚点"), "错误面：{err}");
+}
+
+/// 断言：多层前缀层叠次序（§6.2 定稿）——customPrompt 在最前、压缩 summary
+/// 紧随其后；空层零注入。
+#[test]
+fn layered_prefix_orders_custom_prompt_then_summary() {
+    let entries = compact_sample();
+    let (history, _, _) = split_prompt_with_boundary(
+        &entries,
+        Some(&CompactionBoundary {
+            cut_entry_id: "u1".to_owned(),
+            summary: "摘要层".to_owned(),
+        }),
+    )
+    .unwrap();
+    let layered = with_system_prefix_layers(history, [Some("自定义提示"), Some("摘要层")]);
+    assert_eq!(system_text(as_message(&layered[0])), "自定义提示");
+    assert_eq!(system_text(as_message(&layered[1])), "摘要层");
+    assert!(matches!(as_message(&layered[2]), Message::Assistant(_)));
+
+    // 空层零注入：customPrompt 未配置 + 无压缩边界 → 原样
+    let (plain, _, _) = split_prompt_with_boundary(&entries, None).unwrap();
+    let untouched = with_system_prefix_layers(plain, [None, None]);
+    assert!(!matches!(as_message(&untouched[0]), Message::System { .. }));
+}

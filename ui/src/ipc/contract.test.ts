@@ -116,6 +116,7 @@ describe("§12.3 manifest 双向扫描", () => {
       "cancel_run",
       "resolve_ask",
       "approve_plan",
+      "compact_session",
       "resolve_exit_request",
       "notification_permission_status",
       "open_notification_settings",
@@ -217,9 +218,10 @@ describe("§12.3 manifest 双向扫描", () => {
     expect(offenders, `未知 invoke 命令：\n${offenders.join("\n")}`).toEqual([]);
   });
 
-  it("manifest.frames 覆盖 §3.4 P0 全集 9 帧", () => {
-    // 帧清单必须恰好是 P0 全集：9 帧一个不能少（且不允许混入未知帧）
-    expect(manifest.frames).toHaveLength(9);
+  it("manifest.frames 覆盖 §3.4 P0 全集 9 帧 + M2 压缩帧", () => {
+    // 帧清单必须恰好是 P0 全集 9 帧 + 04 号票 compactDone：一个不能少
+    //（且不允许混入未知帧）
+    expect(manifest.frames).toHaveLength(10);
     for (const frame of [
       "runStarted",
       "stepStarted",
@@ -230,6 +232,7 @@ describe("§12.3 manifest 双向扫描", () => {
       "toolResult",
       "usage",
       "runEnded",
+      "compactDone",
     ]) {
       expect(manifest.frames).toContain(frame);
     }
@@ -265,8 +268,9 @@ describe("§12.3 manifest 双向扫描", () => {
     }
   });
 
-  it("manifest.events 覆盖 §3.5 实装 10 键且与 EVENT_KEYS 一致", () => {
-    // 事件清单双保险：manifest 恰好 10 键，且与前端 EVENT_KEYS 注册表完全一致
+  it("manifest.events 覆盖 §3.5 实装 13 键且与 EVENT_KEYS 一致", () => {
+    // 事件清单双保险：manifest 恰好 13 键（14/17 号票 10 键 + 04 号票压缩
+    // 三键），且与前端 EVENT_KEYS 注册表完全一致
     expect(manifest.events).toEqual([
       "ask:opened",
       "ask:closed",
@@ -278,8 +282,21 @@ describe("§12.3 manifest 双向扫描", () => {
       "run:cancelled",
       "notify:activate",
       "app:exit_requested",
+      "run:compacting",
+      "run:compacted",
+      "run:compact_failed",
     ]);
     expect(Object.values(EVENT_KEYS).sort()).toEqual([...manifest.events].sort());
+  });
+
+  it("手动压缩命令（04 号票，§3.3 #59b）在两侧接线", () => {
+    const command = manifest.commands.find((c) => c.name === "compact_session");
+    expect(command).toMatchObject({
+      args_type: "CompactSessionArgs",
+      ret_type: "CompactSessionResult",
+    });
+    // 双向：client.ts 已接线（禁止只注册不使用）
+    expect(Object.values(COMMANDS)).toContain("compact_session");
   });
 });
 
@@ -361,6 +378,14 @@ const EXPECTED_ENTRIES: StoredEntry[] = [
     ],
     createdAt: 1760000000006,
   },
+  {
+    kind: "compaction",
+    id: "manual:compact:1",
+    cutEntryId: "a3",
+    summary: "早期对话摘要",
+    tokensBefore: 9000,
+    createdAt: 1760000000007,
+  },
   { kind: "meta", activeLeafId: "run-2:marker", revision: 4 },
 ];
 
@@ -374,7 +399,9 @@ describe("§6.1 跨语言 fixture roundtrip（Rust serde 落盘 ↔ TS 镜像）
   it("fixture 还原为 assistant-ui 树：结构/activeLeaf/status/toolCall 合并全部正确", () => {
     const repo = entriesToExported(parseSessionJsonl(fixtureText));
 
-    // 树结构（C-4：headId=activeLeaf，parentId null=根；导出序父先子后）
+    // 树结构（C-4：headId=activeLeaf，parentId null=根；导出序父先子后）。
+    // compaction 条目被跳过（§6.3 定稿：不投影为树节点）——6 条 message
+    // 的 exact 断言即防线：混入 compaction 节点立即红。
     expect(repo.headId).toBe("run-2:marker");
     expect(repo.messages.map((m) => m.message.id)).toStrictEqual([
       "u1",
@@ -422,6 +449,23 @@ describe("§6.1 跨语言 fixture roundtrip（Rust serde 落盘 ↔ TS 镜像）
       result: "# CraftWave\n第一版说明。",
       isError: false,
     });
+  });
+
+  it("compaction 条目不进树、行可读回（§6.3 不投影定稿的 roundtrip 面）", () => {
+    const entries = parseSessionJsonl(fixtureText);
+    const compactions = entries.filter(
+      (e): e is Extract<StoredEntry, { kind: "compaction" }> => e.kind === "compaction",
+    );
+    expect(compactions).toHaveLength(1);
+    expect(compactions[0]).toMatchObject({
+      id: "manual:compact:1",
+      cutEntryId: "a3",
+      summary: "早期对话摘要",
+      tokensBefore: 9000,
+    });
+    // 树还原后无 compaction 节点（save 载荷与史册无冲突，无 E_SESSION_REV 面）
+    const repo = entriesToExported(entries);
+    expect(repo.messages.map((m) => m.message.id)).not.toContain("manual:compact:1");
   });
 
   it("保存载荷形状：messages = 存储条目剥离 kind 后的 MessageEntry（TS→Rust 方向）", () => {

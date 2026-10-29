@@ -31,11 +31,23 @@ use crate::storage::{MessageEntry, MessageRole, WirePart};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WireError(pub String);
 
+/// 带边界切分的返回面（history, prompt, 摘要注入层；`type_complexity` 收敛）。
+pub type SplitWithBoundary = (Vec<Arc<Message>>, Arc<Message>, Option<String>);
+
 /// WireError 的展示实现：直接输出内部错误文本。
 impl std::fmt::Display for WireError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
     }
+}
+
+/// 压缩边界（wire 重建面，§6.2【M2】）：史册最近 compaction 条目的锚点与
+/// 摘要——`cut_entry_id`（含）之前的条目跳过（已被摘要取代），之后的正常
+/// 展开；`summary` 由调用方注入为 system 前缀（customPrompt 之后）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompactionBoundary {
+    pub cut_entry_id: String,
+    pub summary: String,
 }
 
 /// 切分 prompt 与 history：末条 user 消息为 prompt（本轮发送给模型），
@@ -44,6 +56,20 @@ impl std::fmt::Display for WireError {
 pub fn split_prompt(
     entries: &[MessageEntry],
 ) -> Result<(Vec<Arc<Message>>, Arc<Message>), WireError> {
+    let (history, prompt, _) = split_prompt_with_boundary(entries, None)?;
+    Ok((history, prompt))
+}
+
+/// 带压缩边界的切分（§6.2 压缩边界，04 号票）：边界存在时 `cutEntryId`
+/// （含）之前的条目全部跳过、之后的正常展开，摘要作为第三返回值交由调用
+/// 方注入（层叠次序 customPrompt → summary，[`with_system_prefix_layers`]）。
+///
+/// 不变量（§12.5 压缩往返属性）：未经摘要的历史不得被静默裁掉——边界锚点
+/// 在序列中找不到时按参数错误拒绝（显式失败），不做静默全量展开。
+pub fn split_prompt_with_boundary(
+    entries: &[MessageEntry],
+    boundary: Option<&CompactionBoundary>,
+) -> Result<SplitWithBoundary, WireError> {
     let Some(last) = entries.last() else {
         return Err(WireError("start_chat 消息序列为空".into()));
     };
@@ -53,9 +79,23 @@ pub fn split_prompt(
             last.role
         )));
     }
-    let history = rebuild_message_stream(&entries[..entries.len() - 1])?;
+    let mut boundary_summary: Option<String> = None;
+    let start = match boundary {
+        Some(b) => {
+            let Some(idx) = entries.iter().position(|e| e.id == b.cut_entry_id) else {
+                return Err(WireError(format!(
+                    "压缩边界锚点 {} 不在会话活动路径上（拒绝静默全量展开）",
+                    b.cut_entry_id
+                )));
+            };
+            boundary_summary = Some(b.summary.clone());
+            idx + 1
+        }
+        None => 0,
+    };
+    let history = rebuild_message_stream(&entries[start..entries.len() - 1])?;
     let prompt = Arc::new(to_rig_user(last)?);
-    Ok((history, prompt))
+    Ok((history, prompt, boundary_summary))
 }
 
 /// 把消息序列重建为 rig 消息流（§6.2）：assistant 条目内 toolCall 后随的
@@ -116,18 +156,35 @@ pub fn rebuild_message_stream(entries: &[MessageEntry]) -> Result<Vec<Arc<Messag
     Ok(out)
 }
 
-/// 系统级前缀注入（§6.2 注入次序首位，03 号票）：`agent.customPrompt`
-/// （FR-09-06）非空白时作为 history 首条 system 消息插入（层叠次序
-/// customPrompt → 压缩 summary → 当前计划，后两层随对应票在同一切入点续接）；
-/// 空/未配置零注入（原样返回）。注入不进消息史册，只在模型请求面生效。
+/// 系统级前缀注入（§6.2 注入次序，03 号票定稿）：`agent.customPrompt`
+/// （FR-09-06）非空白时作为 history 首条 system 消息插入；空/未配置零注入
+/// （原样返回）。注入不进消息史册，只在模型请求面生效。
 pub fn with_system_prefix(history: Vec<Arc<Message>>, prefix: Option<&str>) -> Vec<Arc<Message>> {
-    let Some(text) = prefix.map(str::trim).filter(|t| !t.is_empty()) else {
+    with_system_prefix_layers(history, [prefix])
+}
+
+/// 多层系统级前缀注入（§6.2 层叠次序定稿：customPrompt → 压缩 summary →
+/// 当前计划，04 号票接通第二层；计划注入随工具系统工单）。按传入顺序把
+/// 非空白层各插为一条 system 消息（先传的在最前）；全空层零注入。
+pub fn with_system_prefix_layers<'a, I>(history: Vec<Arc<Message>>, layers: I) -> Vec<Arc<Message>>
+where
+    I: IntoIterator<Item = Option<&'a str>>,
+{
+    let prefixes: Vec<&str> = layers
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .collect();
+    if prefixes.is_empty() {
         return history;
-    };
-    let mut out = Vec::with_capacity(history.len() + 1);
-    out.push(Arc::new(Message::System {
-        content: text.to_owned(),
-    }));
+    }
+    let mut out = Vec::with_capacity(history.len() + prefixes.len());
+    for text in prefixes {
+        out.push(Arc::new(Message::System {
+            content: text.to_owned(),
+        }));
+    }
     out.extend(history);
     out
 }

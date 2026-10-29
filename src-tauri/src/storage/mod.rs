@@ -22,6 +22,7 @@
 //! 下方 `pub use` 把各子模块的公共类型重新导出，crate 其他位置统一从
 //! `crate::storage::…` 引用，不必关心具体藏在哪个子文件里。
 
+pub mod backup;
 pub mod config_store;
 pub mod entries;
 pub mod index_store;
@@ -37,7 +38,8 @@ mod index_store_test;
 
 pub use entries::{
     CompleteReason, IncompleteReason, MessageEntry, MessageRole, MessageStatus, MetaEntry,
-    PlanItem, PlanItemStatus, RequiresActionReason, SessionEntry, StoredEntry, WirePart,
+    PlanItem, PlanItemStatus, RequiresActionReason, SessionEntry, StoredCompactionEntry,
+    StoredEntry, WirePart,
 };
 pub use index_store::{IndexError, SessionIndex, SessionMeta};
 pub use locks::LockMap;

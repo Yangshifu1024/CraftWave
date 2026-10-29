@@ -21,7 +21,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::Serialize;
 
 use super::SessionMeta;
-use super::entries::{MessageEntry, MessageRole, MetaEntry, SessionEntry, StoredEntry, WirePart};
+use super::backup;
+use super::entries::{
+    MessageEntry, MessageRole, MetaEntry, SessionEntry, StoredCompactionEntry, StoredEntry,
+    WirePart,
+};
 use super::index_store::SessionIndex;
 use super::locks::LockMap;
 use super::segment::SessionLog;
@@ -49,13 +53,32 @@ pub enum StorageError {
     Io(String),
 }
 
-/// `load_session_tree` 返回（§6.1 定稿结构：headId=activeLeafId + messages 含 `status?`）。
+/// 展示为 "变体: 说明"（命令层 `to_string` 面；Display 补齐于 04 号票，
+/// 供压缩编排等跨层调用方统一错误文本）。
+impl std::fmt::Display for StorageError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::RevisionConflict { expected, actual } => {
+                write!(f, "树同步基线过期：base={expected} 实际={actual}")
+            }
+            Self::NotFound(id) => write!(f, "会话不存在：{id}"),
+            Self::InvalidArg(m) => write!(f, "参数校验失败：{m}"),
+            Self::Io(m) => write!(f, "存储 IO 失败：{m}"),
+        }
+    }
+}
+
+/// `load_session_tree` 返回（§6.1 定稿结构：headId=activeLeafId + messages 含 `status?`；
+/// 04 号票增 `compactions` 投影面——§6.3 定稿：compaction 条目不投影为树节点，
+/// 前端按此数组渲染"已压缩早期上下文"分隔提示，wire 边界由后端史册承载）。
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionTreeData {
     pub session_id: String,
     pub messages: Vec<MessageEntry>,
+    /// 全部压缩边界条目（按追加序；最近一条在末位，wire 重建取它）。
+    pub compactions: Vec<StoredCompactionEntry>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub active_leaf_id: Option<String>,
@@ -228,9 +251,14 @@ impl SessionStore {
         }
         self.repair_interrupted_runs(&mut log)?;
         let mut active_leaf_id = None;
+        let mut compactions = Vec::new();
         for entry in log.entries() {
-            if let StoredEntry::Meta(meta) = entry {
-                active_leaf_id = meta.active_leaf_id.clone(); // 最新赢
+            match entry {
+                StoredEntry::Meta(meta) => {
+                    active_leaf_id = meta.active_leaf_id.clone(); // 最新赢
+                }
+                StoredEntry::Compaction(c) => compactions.push(c.clone()),
+                StoredEntry::Message(_) | StoredEntry::Session(_) => {}
             }
         }
         Ok(SessionTreeData {
@@ -243,6 +271,7 @@ impl SessionStore {
                     _ => None,
                 })
                 .collect(),
+            compactions,
             active_leaf_id,
             revision: log.revision().unwrap_or(0),
         })
@@ -303,6 +332,51 @@ impl SessionStore {
     /// 索引读写器（list_sessions / canonical 终态 upsert 用）。
     pub fn index(&self) -> &SessionIndex {
         &self.index
+    }
+
+    /// compaction 条目追加（§6.1【M2】/§7.3 时机表，04 号票）：**存储格式升级
+    /// 入口守卫**（Q34）——首次写入前成功创建一次可恢复备份，失败暂停写入
+    /// 并报错（原数据不动；自动更新与手动安装共用本入口，天然同受保护）。
+    /// 成功后经 append_canonical 落盘 + meta(revision++)，activeLeaf 不变
+    /// （compaction 非消息条目，§6.3 不挂树）。返回推进后的 revision。
+    pub fn append_compaction(
+        &self,
+        session_id: &str,
+        entry: StoredCompactionEntry,
+    ) -> Result<u64, StorageError> {
+        backup::ensure_upgrade_backup(&self.root, "compaction").map_err(|e| {
+            StorageError::Io(format!(
+                "首次写入压缩条目前的升级备份失败，已暂停格式升级（原数据未动，可手动恢复后重试）：{e}"
+            ))
+        })?;
+        let (revision, _) = self.append_canonical(session_id, &[StoredEntry::Compaction(entry)])?;
+        Ok(revision)
+    }
+
+    /// 压缩状态概览（一次开日志读全）：（路径上最近的 compaction 条目，
+    /// 已有压缩总数）。wire 重建取最近的；手动/自动压缩按总数推下一条序号
+    /// （§6.1 id 规则 `{owner}:compact:{n}`，n 跨 owner 连续递增）。
+    /// 会话不存在（空日志）→ (None, 0)。
+    pub fn compaction_overview(
+        &self,
+        session_id: &str,
+    ) -> Result<(Option<StoredCompactionEntry>, usize), StorageError> {
+        validate_session_id(session_id)?;
+        let mutex = self.locks.get(session_id);
+        let _guard = mutex
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let log = SessionLog::open(self.histories_dir().join(session_id))
+            .map_err(|e| StorageError::Io(e.to_string()))?;
+        let mut latest = None;
+        let mut count = 0usize;
+        for entry in log.entries() {
+            if let StoredEntry::Compaction(c) = entry {
+                latest = Some(c.clone());
+                count += 1;
+            }
+        }
+        Ok((latest, count))
     }
 
     /// 数据根（§7.1；边车等同级布局的基准）。

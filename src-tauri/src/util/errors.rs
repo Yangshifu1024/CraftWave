@@ -126,6 +126,8 @@ pub const E_FENCE_BLOCKED: &str = "E_FENCE_BLOCKED";
 pub const E_TOOL_BLOCKED: &str = "E_TOOL_BLOCKED";
 /// 路径越界（FR-05-06，§9.1 safe_join 与 open_dir 白名单共用）。
 pub const E_PATH_OUTSIDE_ROOTS: &str = "E_PATH_OUTSIDE_ROOTS";
+/// 上下文超预算且压缩后仍放不下——暂停执行并保留输入（04 号票，§6.2）。
+pub const E_CONTEXT_OVERFLOW: &str = "E_CONTEXT_OVERFLOW";
 
 /// IPC 命令统一错误负载（§3.1/§3.6，D14）：`{ code, message, detail? }`，camelCase。
 ///

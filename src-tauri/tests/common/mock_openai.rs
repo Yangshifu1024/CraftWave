@@ -54,6 +54,9 @@ pub struct MockOpenAI {
     pub sent: Arc<Mutex<Vec<SentChunk>>>,
     /// mock 收到的每个补全请求体（轮次与回喂断言用）。
     pub requests: Arc<Mutex<Vec<Value>>>,
+    /// 非流式请求失败注入（04 号票压缩摘要失败的 e2e 面）：置 true 后
+    /// 非流式补全一律返回 500，流式脚本不受影响。
+    pub fail_nonstream: Arc<std::sync::atomic::AtomicBool>,
     shutdown: Option<tokio::sync::oneshot::Sender<()>>,
     server: JoinHandle<()>,
 }
@@ -80,16 +83,19 @@ impl MockOpenAI {
     async fn start_scripts(gap: Duration, turn1: Vec<ScriptEvent>) -> Self {
         let sent: Arc<Mutex<Vec<SentChunk>>> = Arc::default();
         let requests: Arc<Mutex<Vec<Value>>> = Arc::default();
+        let fail_nonstream: Arc<std::sync::atomic::AtomicBool> = Arc::default();
         let route_sent = sent.clone();
         let route_requests = requests.clone();
+        let route_fail = fail_nonstream.clone();
         let app = Router::new()
             .route(
                 "/v1/chat/completions",
                 post(move |Json(body): Json<Value>| {
                     let sent = route_sent.clone();
                     let requests = route_requests.clone();
+                    let fail = route_fail.clone();
                     let turn1 = turn1.clone();
-                    async move { handle_completion(body, sent, requests, gap, turn1).await }
+                    async move { handle_completion(body, sent, requests, gap, turn1, fail).await }
                 }),
             )
             .route("/v1/models", get(get_models));
@@ -108,9 +114,16 @@ impl MockOpenAI {
             base_url: format!("http://{addr}/v1"),
             sent,
             requests,
+            fail_nonstream,
             shutdown: Some(tx),
             server,
         }
+    }
+
+    /// 置位/解除非流式失败注入（压缩摘要失败 e2e 用）。
+    pub fn set_fail_nonstream(&self, on: bool) {
+        self.fail_nonstream
+            .store(on, std::sync::atomic::Ordering::SeqCst);
     }
 
     pub async fn sent_chunks(&self) -> Vec<SentChunk> {
@@ -261,11 +274,16 @@ async fn handle_completion(
     requests: Arc<Mutex<Vec<Value>>>,
     gap: Duration,
     turn1: Vec<ScriptEvent>,
+    fail_nonstream: Arc<std::sync::atomic::AtomicBool>,
 ) -> Response {
     requests.lock().await.push(body.clone());
-    // 非流式请求（rig Model::call 单次调用，如 suggest 后台小调用）：
-    // 返回单个 chat.completion JSON（OpenAI 兼容端点两形态都支持）。
+    // 非流式请求（rig Model::call 单次调用，如 suggest/压缩摘要的后台小调用）：
+    // 失败注入开启时返回 500（压缩失败兜底 e2e 面）；否则返回单个
+    // chat.completion JSON（OpenAI 兼容端点两形态都支持）。
     if body["stream"] != Value::Bool(true) {
+        if fail_nonstream.load(std::sync::atomic::Ordering::SeqCst) {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "injected failure").into_response();
+        }
         return Json(json!({
             "id": "chatcmpl-mock",
             "object": "chat.completion",

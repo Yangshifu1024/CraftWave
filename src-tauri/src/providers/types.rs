@@ -271,6 +271,43 @@ pub struct AgentConfig {
     pub custom_prompt: Option<String>,
 }
 
+/// 上下文压缩配置（§3.2 compaction 组，FR-03-05，04 号票实装）。
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompactionConfig {
+    /// 自动压缩阈值（上下文占用/窗口占比，(0,1]；缺省 0.6）。
+    #[serde(default = "default_compaction_threshold")]
+    pub threshold: f64,
+    /// 压缩总超时秒数（分块摘要共用同一预算，不能按块重置；缺省 180）。
+    #[serde(default = "default_compaction_timeout_secs")]
+    pub timeout_secs: u64,
+    /// 专用摘要小模型 id（指向某 ProviderModel.id；未配置时用会话 active model）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub model_id: Option<String>,
+}
+
+/// serde 缺省值函数：自动压缩阈值缺省 0.6（§6.2）。
+fn default_compaction_threshold() -> f64 {
+    0.6
+}
+/// serde 缺省值函数：压缩总超时缺省 180 秒（§6.2）。
+fn default_compaction_timeout_secs() -> u64 {
+    180
+}
+
+// CompactionConfig 的缺省值：0.6 阈值 / 180 秒总超时 / 无专用小模型（随 active model）。
+impl Default for CompactionConfig {
+    fn default() -> Self {
+        Self {
+            threshold: default_compaction_threshold(),
+            timeout_secs: default_compaction_timeout_secs(),
+            model_id: None,
+        }
+    }
+}
+
 /// 应用总配置，即 `~/.craftwave/config.json` 的载入/落盘结构：
 /// 一个 JSON 文件承载全部设置（供应商、激活模型、代理、审批、界面、日志、通知）。
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -307,6 +344,9 @@ pub struct AppConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub agent: Option<AgentConfig>,
+    /// 上下文压缩（FR-03-05，04 号票；缺省值经 Default：0.6 阈值 / 180s 超时）。
+    #[serde(default)]
+    pub compaction: CompactionConfig,
 }
 
 /// serde 缺省值函数：schemaVersion 字段缺省时取当前版本号 2。
@@ -368,6 +408,7 @@ impl Default for AppConfig {
             log: LogConfig::default(),
             notifications: NotificationConfig::default(),
             agent: None,
+            compaction: CompactionConfig::default(),
         }
     }
 }
@@ -388,6 +429,26 @@ impl AppConfig {
         {
             return Err(IpcError::invalid_arg("界面字号必须在 12–18px 之间"));
         }
+        // compaction：threshold 限 (0,1]（0 或负数会让每条消息都触发压缩，
+        // 大于 1 则永不触发，均视为配置错误拒绝整份提交）；timeoutSecs 下限
+        // 30s（低于该值分块摘要几乎没有完成机会）；modelId 空白归一为 None。
+        if !(0.0 < self.compaction.threshold && self.compaction.threshold <= 1.0) {
+            return Err(IpcError::invalid_arg(format!(
+                "compaction.threshold 必须在 (0,1] 内（实际 {}）",
+                self.compaction.threshold
+            )));
+        }
+        if self.compaction.timeout_secs < 30 {
+            return Err(IpcError::invalid_arg(
+                "compaction.timeoutSecs 不能低于 30 秒",
+            ));
+        }
+        self.compaction.model_id = self
+            .compaction
+            .model_id
+            .take()
+            .map(|m| m.trim().to_owned())
+            .filter(|m| !m.is_empty());
         // agent.customPrompt：空白归一为 None（"没填"与"填了又删掉"等价零注入）
         if let Some(agent) = &mut self.agent {
             agent.custom_prompt = agent

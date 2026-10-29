@@ -17,6 +17,8 @@ import { listen } from "@tauri-apps/api/event";
 import type {
   AppConfig,
   AskAnswer,
+  CompactSessionArgs,
+  CompactSessionResult,
   DeleteProviderArgs,
   IpcError,
   NotificationPermissionStatus,
@@ -60,6 +62,7 @@ export const COMMANDS = {
   cancelRun: "cancel_run",
   resolveAsk: "resolve_ask",
   approvePlan: "approve_plan",
+  compactSession: "compact_session",
   listProjects: "list_projects",
   saveProject: "save_project",
   deleteProject: "delete_project",
@@ -91,6 +94,9 @@ export const EVENT_KEYS = {
   runCancelled: "run:cancelled",
   notifyActivate: "notify:activate",
   appExitRequested: "app:exit_requested",
+  runCompacting: "run:compacting",
+  runCompacted: "run:compacted",
+  runCompactFailed: "run:compact_failed",
 } as const;
 
 /**
@@ -213,6 +219,14 @@ export function resolveAsk(askId: string, answer: AskAnswer): Promise<void> {
  *  模型才动手执行"的关卡；对应计划卡片上的批准按钮。 */
 export function approvePlan(sessionId: string): Promise<void> {
   return invoke<void>(COMMANDS.approvePlan, { sessionId } satisfies { sessionId: string });
+}
+
+/** §3.3 #59b：手动压缩会话上下文（FR-03-05，04 号票）。无条件执行一次
+ *  压缩（不走 0.6 阈值判定）；运行中 reject E_SESSION_RUNNING。 */
+export function compactSession(sessionId: string): Promise<CompactSessionResult> {
+  return invoke<CompactSessionResult>(COMMANDS.compactSession, {
+    sessionId,
+  } satisfies CompactSessionArgs);
 }
 
 /** 把 invoke 失败抛出的错误归一为 §3.1 统一错误负载（{code, message, detail?}）。

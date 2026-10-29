@@ -128,6 +128,9 @@ pub struct DriveState {
     pub started_at: Option<Instant>,
     /// run 的用量累计（各轮相加）。
     pub total_usage: UsageTotal,
+    /// 最近一次模型请求的真实输入 token 数（usage 收口时刷新；ask 关闭后
+    /// 压缩触发点的占用估算基准，§6.2 触发点②）。
+    pub last_input: u64,
     /// 已执行的工具调用计数。
     pub tool_count: u32,
     /// 最新轮次编号。
@@ -257,6 +260,7 @@ pub async fn drive_run(
                             let elapsed_s = turn_started.elapsed().as_secs_f64();
                             let rate = (total.output > 0 && elapsed_s > 0.0)
                                 .then(|| total.output as f64 / elapsed_s);
+                            state.last_input = total.input;
                             state.total_usage.accumulate(&total);
                             sink.send(ChatFrame::Usage {
                                 usage: state.total_usage,

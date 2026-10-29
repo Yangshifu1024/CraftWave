@@ -29,7 +29,7 @@ mod system_test;
 #[path = "workspace_test.rs"]
 mod workspace_test;
 
-/// ChatFrame P0 全集 9 帧（§3.4；type 值与 TS 判别值一致）。
+/// ChatFrame P0 全集 9 帧 + 【M2】压缩帧（§3.4；type 值与 TS 判别值一致）。
 pub const FRAMES: &[&str] = &[
     "runStarted",
     "stepStarted",
@@ -40,12 +40,13 @@ pub const FRAMES: &[&str] = &[
     "toolResult",
     "usage",
     "runEnded",
+    "compactDone",
 ];
 
-/// 事件键（§3.5 P0 子集）：14 号票实装 5 键（ask 协议 / plan / suggest /
-/// 会话用量）；17 号票补 run 终态三键与 notify/app 退出两键；其余键
-/// （run:start / run:retry / run:inject / tool:* / session:title / menu:action）
-/// 随对应票填充。
+/// 事件键（§3.5 P0 子集 + 【M2】压缩三键）：14 号票实装 5 键（ask 协议 /
+/// plan / suggest / 会话用量）；17 号票补 run 终态三键与 notify/app 退出两键；
+/// 04 号票补压缩生命周期三键；其余键（run:start / run:retry / run:inject /
+/// tool:* / session:title / menu:action）随对应票填充。
 pub const EVENTS: &[&str] = &[
     "ask:opened",
     "ask:closed",
@@ -57,4 +58,7 @@ pub const EVENTS: &[&str] = &[
     "run:cancelled",
     "notify:activate",
     "app:exit_requested",
+    "run:compacting",
+    "run:compacted",
+    "run:compact_failed",
 ];

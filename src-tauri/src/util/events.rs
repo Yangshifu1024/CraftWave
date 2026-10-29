@@ -34,6 +34,12 @@ pub mod keys {
     pub const NOTIFY_ACTIVATE: &str = "notify:activate";
     /// 退出请求待确认（存在活跃 run 的退出拦截，§9.6）。
     pub const APP_EXIT_REQUESTED: &str = "app:exit_requested";
+    /// 压缩开始（FR-03-05，04 号票：Composer 上方指示条）。
+    pub const RUN_COMPACTING: &str = "run:compacting";
+    /// 压缩完成（载荷 { sessionId, tokensBefore, tokensAfter }）。
+    pub const RUN_COMPACTED: &str = "run:compacted";
+    /// 压缩失败（载荷 { sessionId }；失败兜底规则见 §6.2）。
+    pub const RUN_COMPACT_FAILED: &str = "run:compact_failed";
 }
 
 /// 事件发射抽象：`emit(key, payload)`，payload 为已序列化 JSON。

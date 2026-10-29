@@ -325,3 +325,28 @@ describe("FrameBuffer 本票增量（13 号票）", () => {
     expect(parts[3]!.text).toBe("根目录如下。");
   });
 });
+
+describe("compactDone 帧（04 号票，§3.4【M2】通知面）", () => {
+  it("透传进快照 compaction 字段，不进打字机内容面", () => {
+    const buffer = new FrameBuffer();
+    let seq = 0;
+    type DistributiveOmit<T, K extends keyof never> = T extends unknown ? Omit<T, K> : never;
+    type FrameArg = DistributiveOmit<SequencedFrame, "seq">;
+    const f = (frame: FrameArg): SequencedFrame => ({ seq: seq++, ...frame }) as SequencedFrame;
+    buffer.push(f({ type: "runStarted", runId: "run-1", model: "m" }));
+    buffer.push(
+      f({ type: "compactDone", cutEntryId: "u-15", tokensBefore: 34000, tokensAfter: 9000 }),
+    );
+    const snap = buffer.snapshot();
+    expect(snap.compaction).toEqual({
+      cutEntryId: "u-15",
+      tokensBefore: 34000,
+      tokensAfter: 9000,
+    });
+    // 通知面：不产生内容段（segments 保持空）
+    expect(snap.segments).toEqual([]);
+    // 未发生压缩的快照为 null
+    const empty = new FrameBuffer().snapshot();
+    expect(empty.compaction).toBeNull();
+  });
+});

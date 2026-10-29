@@ -34,6 +34,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AskPanel } from "@/chat/AskPanel";
+import { useCompactionStore } from "@/chat/compaction-store";
 import { useBackendEvents } from "@/chat/event-bridge";
 import { Inspector } from "@/chat/Inspector";
 import { useRunMetricsStore } from "@/chat/run-metrics";
@@ -276,6 +277,8 @@ function SessionTab({
         if (cancelled || tree === null) return;
         runtime.thread.import(loadedTreeToExported(tree));
         setSummaries(deriveRunSummaries(tree.messages));
+        // 压缩边界投影（04 号票，§6.3：compaction 条目不进树，store 承载）
+        useCompactionStore.getState().setCompactions(sessionId, tree.compactions ?? []);
       } catch (err) {
         console.warn("[session] 历史收养失败（以空会话继续）", err);
       }
@@ -679,6 +682,7 @@ async function deleteSessionAndClose(sessionId: string): Promise<void> {
   useSessionPersistStore.getState().forgetScope(sessionId);
   useRunMetricsStore.getState().forgetSession(sessionId);
   useAskStore.getState().forgetSession(sessionId);
+  useCompactionStore.getState().forgetSession(sessionId);
   await useSessionsStore.getState().refresh();
 }
 

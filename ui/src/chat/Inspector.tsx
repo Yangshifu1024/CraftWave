@@ -9,6 +9,7 @@
  */
 
 import { useEffect, useState } from "react";
+import { CompactButton } from "@/chat/CompactionUI";
 import { type PlanItem, usePlanStateStore } from "@/chat/plan-state";
 import { useSessionMetrics } from "@/chat/run-metrics";
 import { useSessionScope } from "@/chat/session-scope";
@@ -160,7 +161,12 @@ export function Inspector({
             </div>
           </section>
           <section>
-            <h3 className="mb-1 text-ui-sm text-[var(--cw-dim)]">上下文进度</h3>
+            <h3 className="mb-1 flex items-center text-ui-sm text-[var(--cw-dim)]">
+              上下文进度
+              {/* §10.5 落点：进度条旁的手动压缩（FR-03-05，04 号票）；
+                  运行中/压缩中禁用（后端 E_SESSION_RUNNING 兜底） */}
+              <CompactButton />
+            </h3>
             <div
               className="relative h-2 w-full overflow-hidden rounded bg-[var(--muted)]"
               data-testid="inspector-context"

@@ -29,4 +29,4 @@ rate?: number, } | { "type": "runEnded", reason: EndReason, durationMs: number, 
  * 错误终态面（§3.4 `error?`）：reason=error 时承载（§11.3 的错误
  * 分类器属 provider 适配层的后续工单，本阶段以 E_INTERNAL 兜底）。
  */
-error?: FrameError, });
+error?: FrameError, } | { "type": "compactDone", cutEntryId: string, tokensBefore: number, tokensAfter: number, });

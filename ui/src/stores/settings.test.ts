@@ -53,6 +53,7 @@ function configFixture(providers: ProviderConfig[]): AppConfig {
     approval: { enabled: true, autoConfirm: false, commandAllowlist: [] },
     ui: { language: "zh-CN", theme: "system" },
     log: { level: "info" },
+    compaction: { threshold: 0.6, timeoutSecs: 180 },
     notifications: { enabled: true, interventionOnly: false },
   };
 }

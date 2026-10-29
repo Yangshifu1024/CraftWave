@@ -156,6 +156,17 @@ pub enum MessageRole {
     System,
 }
 
+impl MessageRole {
+    /// serde 字符串形态（snake_case，与序列化口径一致；摘要输入块标记用）。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Assistant => "assistant",
+            Self::System => "system",
+        }
+    }
+}
+
 /// message 条目载荷（§6.1）。同时是 `save_session_tree` 的 messages 元素形态
 /// （§6.3：前端树同步载荷，`parentId` null→省略字段，`status?` 仅 assistant）。
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -202,8 +213,33 @@ pub struct SessionEntry {
     pub created_at: i64,
 }
 
+/// compaction 条目（§6.1【M2】，04 号票）：上下文压缩边界——`summary` 是
+/// 被裁历史（`cutEntryId` 之前的全部条目）的增量摘要文本，`tokensBefore`
+/// 是压缩时的上下文占用估算（token 数）。条目自身不挂树（无 parentId，
+/// §6.3 定稿：wire 重建按 cutEntryId 过滤、前端按投影面渲染分隔提示）。
+///
+/// id 规则（§6.1 04 号票钉）：`{owner}:compact:{n}`——自动压缩 owner 为
+/// 触发 run 的 runId，手动压缩 owner 为 `manual`；n 为该会话压缩序号
+/// （跨 owner 连续递增，从 1 起）。
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoredCompactionEntry {
+    pub id: String,
+    /// 压缩边界锚点：此 id（含）之前的条目被摘要取代，之后的正常展开。
+    pub cut_entry_id: String,
+    /// 压缩摘要正文（供 wire 重建注入为 system 前缀，§6.2）。
+    pub summary: String,
+    /// 压缩时的上下文占用估算（token 数；估算器口径见 §6.2）。
+    pub tokens_before: u64,
+    pub created_at: i64,
+}
+
 /// §6.1 存储条目（会话 JSONL 每行一个，serde tag=kind）。
-/// compaction / branchSummary 属 M2，暂不定义变体（未知 kind 读入即报损坏，M1 无前向兼容负担）。
+/// compaction 为 M2 首个新增变体（04 号票）：**这是本应用首次存储格式升级**，
+/// 首次写入前必须成功创建一次可恢复备份（Q34，`storage::backup` 守卫——
+/// 失败暂停写入并告知用户；旧版本读到本变体按损坏行处理，属预期的不前向兼容）。
+/// branchSummary 仍属 M2 可选项，随分支需求另立。
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -211,4 +247,5 @@ pub enum StoredEntry {
     Session(SessionEntry),
     Message(MessageEntry),
     Meta(MetaEntry),
+    Compaction(StoredCompactionEntry),
 }

@@ -42,6 +42,9 @@ export * from "./generated/AskQuestion";
 export * from "./generated/BuiltinPresets";
 export * from "./generated/CancelRunArgs";
 export * from "./generated/ChatFrame";
+export * from "./generated/CompactionConfig";
+export * from "./generated/CompactSessionArgs";
+export * from "./generated/CompactSessionResult";
 export * from "./generated/CompleteReason";
 export * from "./generated/CreateSessionArgs";
 export * from "./generated/DeleteProjectArgs";
@@ -101,6 +104,7 @@ export * from "./generated/SessionTreeData";
 export * from "./generated/SetUiStateArgs";
 export * from "./generated/StartChatArgs";
 export * from "./generated/StartChatResult";
+export * from "./generated/StoredCompactionEntry";
 export * from "./generated/StoredEntry";
 export * from "./generated/serde_json/JsonValue";
 export * from "./generated/Theme";
@@ -153,4 +157,22 @@ export type RunSuggestionsEvent = {
 export type TokensUpdateEvent = {
   sessionId: string;
   usage: UsageTotal;
+};
+
+/** run:compacting 事件载荷：上下文压缩开始（Composer 指示条驱动，04 号票）。 */
+export type RunCompactingEvent = {
+  sessionId: string;
+};
+
+/** run:compacted 事件载荷：压缩完成（前后上下文占用估算，指示条收口 +
+ *  边界投影刷新）。 */
+export type RunCompactedEvent = {
+  sessionId: string;
+  tokensBefore: number;
+  tokensAfter: number;
+};
+
+/** run:compact_failed 事件载荷：压缩失败（行内轻提示，不打断输入）。 */
+export type RunCompactFailedEvent = {
+  sessionId: string;
 };

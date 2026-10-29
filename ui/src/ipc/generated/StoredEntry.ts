@@ -2,9 +2,13 @@
 import type { MessageEntry } from "./MessageEntry";
 import type { MetaEntry } from "./MetaEntry";
 import type { SessionEntry } from "./SessionEntry";
+import type { StoredCompactionEntry } from "./StoredCompactionEntry";
 
 /**
  * §6.1 存储条目（会话 JSONL 每行一个，serde tag=kind）。
- * compaction / branchSummary 属 M2，暂不定义变体（未知 kind 读入即报损坏，M1 无前向兼容负担）。
+ * compaction 为 M2 首个新增变体（04 号票）：**这是本应用首次存储格式升级**，
+ * 首次写入前必须成功创建一次可恢复备份（Q34，`storage::backup` 守卫——
+ * 失败暂停写入并告知用户；旧版本读到本变体按损坏行处理，属预期的不前向兼容）。
+ * branchSummary 仍属 M2 可选项，随分支需求另立。
  */
-export type StoredEntry = { "kind": "session" } & SessionEntry | { "kind": "message" } & MessageEntry | { "kind": "meta" } & MetaEntry;
+export type StoredEntry = { "kind": "session" } & SessionEntry | { "kind": "message" } & MessageEntry | { "kind": "meta" } & MetaEntry | { "kind": "compaction" } & StoredCompactionEntry;
