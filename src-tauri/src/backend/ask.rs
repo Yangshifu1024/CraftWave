@@ -17,8 +17,8 @@
 
 use tokio::sync::oneshot;
 
-/// 询问/审批载荷（§3.2；当前阶段实装 question/approval 两种形态，
-/// mcpTrust/projectTrust 信任询问属后续阶段）。
+/// 询问/审批载荷（§3.2；08 号票起实装 question/approval/mcpTrust 三形态，
+/// projectTrust 项目资源信任随 24 号票）。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(
@@ -53,6 +53,33 @@ pub enum AskPayload {
         /// 用户可选的操作列表（如仅本次允许/拒绝）。
         options: Vec<AskOption>,
     },
+    /// MCP 启动信任（TOFU，§9.7/§3.2 字段级逐字；08 号票）：首次连接未
+    /// 信任服务器前的确认。应答走 [`AskAnswer::Approval`]（optionId = 选项
+    /// id：allow_once/remember/deny）——协议面不新增应答形态。
+    McpTrust {
+        /// 配置里的服务器名。
+        server: String,
+        /// 传输方式（stdio / http）。
+        transport: McpTransportKind,
+        /// 启动指纹（`scope|projectId|name|canonicalPath|sha256(config)` 的
+        /// SHA-256，展示前 16 位即可）。
+        fingerprint: String,
+        /// 启动命令或 URL（stdio = command+args 拼接；HTTP = url）。
+        command_or_url: String,
+        /// 三选项（allow_once / remember / deny）。
+        options: Vec<AskOption>,
+    },
+}
+
+/// MCP 传输方式（§3.2 mcpTrust.transport："stdio" | "http"）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "lowercase")]
+pub enum McpTransportKind {
+    /// stdio 子进程传输。
+    Stdio,
+    /// streamable HTTP 传输。
+    Http,
 }
 
 /// 单个问题（§3.2 question.questions 元素）。
@@ -165,10 +192,11 @@ pub enum DiffLineKind {
 /// AskPayload 的固有方法实现。
 impl AskPayload {
     /// 推荐选项的 id（自动确认超时时选它，§5.4）；问卷形态没有推荐选项，
-    /// 返回 None。
+    /// 返回 None。mcpTrust 同样返回 None——MCP 启动信任不参与 autoConfirm
+    /// 自动批准（FR-08-04 高危外部调用永远过人，票面验收）。
     pub fn recommended_option_id(&self) -> Option<&str> {
         match self {
-            AskPayload::Question { .. } => None,
+            AskPayload::Question { .. } | AskPayload::McpTrust { .. } => None,
             AskPayload::Approval { options, .. } => options
                 .iter()
                 .find(|o| o.recommended == Some(true))

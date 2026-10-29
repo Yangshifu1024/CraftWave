@@ -1,27 +1,48 @@
 /**
- * AskPanel（§3.2 AskPayload 两形态 / §10.1 ask store，14 号票）：
+ * AskPanel（§3.2 AskPayload 三形态，14 号票起 question/approval，08 号票
+ * 增 mcpTrust）：
  * - question：逐题选项点选 + 自由文本输入 → resolveAsk(kind=question)；
- * - approval：diff 预览 / 命令行 + 围栏原因 → 允许/拒绝 → resolveAsk(kind=approval)。
+ * - approval：diff 预览 / 命令行 + 围栏原因 → 允许/拒绝 → resolveAsk(kind=approval)；
+ * - mcpTrust：MCP 启动信任（TOFU）摘要 + 三选项 → resolveAsk(kind=approval，
+ *   optionId = allow_once/remember/deny)。后端以 sessionId=""（应用级询问）
+ *   发 ask:opened——不属任何会话桶，任意会话上下文都渲染（设置页连接触发）。
  *
  * 事件驱动：ask:opened 置 store.current、ask:closed 清除（App.tsx 事件桥）。
- * 后端默认无限等待，autoConfirm 300s 由 Rust 侧兜底（前端无需计时）。
+ * 后端默认无限等待，autoConfirm 300s 由 Rust 侧兜底（前端无需计时）；
+ * mcpTrust 无推荐项，不参与自动批准（FR-08-04：高危外部调用永远过人）。
  *
  * 失效面（05 号票，§5.6 待审批恢复）：重连后恢复的审批可能在重连期间已被
  * 解决/取消——resolveAsk 返回 E_NOT_FOUND 时按 askId 关闭弹窗（不残留可
  * 操作面板）；其余错误原位显示可重试。
  */
 
-import { CircleAlert } from "lucide-react";
+import { CircleAlert, ShieldCheck } from "lucide-react";
 import { useState } from "react";
 import { useSessionScope } from "@/chat/session-scope";
 import { resolveAsk, toIpcError } from "@/ipc/client";
 import type { AskPayload, DiffLine } from "@/ipc/types";
 import { useAskStore } from "@/stores/ask";
 
-/** 询问面板：本会话有未决 ask 时浮层渲染对应表单，否则不渲染任何内容。 */
+/** 询问面板：本会话有未决 ask 时浮层渲染对应表单；会话桶为空时看应用级
+ *  桶（sessionId=""，MCP 启动信任询问专用）。 */
 export function AskPanel() {
   const sessionId = useSessionScope();
   const current = useAskStore((s) => s.bySession[sessionId]);
+  // 应用级 MCP 信任询问（后端 sessionId=""）：不属任何 run/会话，任意
+  // 会话 Tab 都要能看到并应答（多 Tab 下先到先答，后端 oneshot 槽保证
+  // 第二次应答自然失效）
+  const appLevel = useAskStore((s) => s.bySession[""]);
+  if (!current && appLevel?.payload.kind === "mcpTrust") {
+    return (
+      <div
+        data-testid="ask-panel"
+        data-kind="mcpTrust"
+        className="fixed inset-x-4 bottom-4 z-50 mx-auto max-w-xl rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 shadow-2xl"
+      >
+        <McpTrustForm sessionId="" askId={appLevel.askId} payload={appLevel.payload} />
+      </div>
+    );
+  }
   if (!current) return null;
   return (
     <div
@@ -31,6 +52,8 @@ export function AskPanel() {
     >
       {current.payload.kind === "question" ? (
         <QuestionForm sessionId={sessionId} askId={current.askId} payload={current.payload} />
+      ) : current.payload.kind === "mcpTrust" ? (
+        <McpTrustForm sessionId={sessionId} askId={current.askId} payload={current.payload} />
       ) : (
         <ApprovalForm sessionId={sessionId} askId={current.askId} payload={current.payload} />
       )}
@@ -186,6 +209,74 @@ function ApprovalForm({
           className="rounded border border-[var(--destructive)]/30 bg-[var(--destructive)]/5 px-2 py-1 text-ui-sm text-[var(--destructive)]"
         >
           应答提交失败：{error}（可重试；若反复失败请停止该任务）
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** MCP 启动信任表单（08 号票，§9.7 TOFU 第三形态）：server/transport/
+ *  commandOrUrl/fingerprint 摘要 + 三选项按钮 → resolveAsk(approval)。
+ *  应答与普通审批同协议（optionId：allow_once / remember / deny），
+ *  后端在 resolve_ask 的 run 槽未命中时落到 MCP 信任槽。 */
+function McpTrustForm({
+  sessionId,
+  askId,
+  payload,
+}: {
+  sessionId: string;
+  askId: string;
+  payload: Extract<AskPayload, { kind: "mcpTrust" }>;
+}) {
+  const [error, reportError, clearError] = useSubmitError(sessionId);
+  const submit = (optionId: string) => {
+    clearError();
+    resolveAsk(askId, { kind: "approval", optionId }).catch(reportError);
+  };
+  return (
+    <div className="space-y-3">
+      <h3 className="flex items-center gap-2 text-ui-base font-medium text-[var(--foreground)]">
+        <ShieldCheck size={16} aria-hidden className="shrink-0 text-[var(--warning)]" />
+        信任并连接 MCP 服务器 {payload.server}？
+      </h3>
+      <div className="space-y-1 rounded border border-[var(--border)] bg-[var(--background)] px-3 py-2">
+        <p className="text-ui-sm text-[var(--foreground)]">
+          传输方式：
+          {payload.transport === "stdio" ? "stdio 子进程" : "streamable HTTP"}
+        </p>
+        <p className="min-w-0 font-mono text-ui-sm break-all text-[var(--foreground)]">
+          {payload.commandOrUrl}
+        </p>
+        <p className="text-ui-sm text-[var(--muted-foreground)]">
+          配置指纹：<code data-testid="mcp-trust-fingerprint">{payload.fingerprint}</code>
+        </p>
+        <p className="text-ui-sm text-[var(--muted-foreground)]">
+          首次连接需要确认服务器身份；「记住此版本」后同指纹不再询问，配置被改动会重新确认。
+        </p>
+      </div>
+      <div className="flex justify-end gap-2">
+        {payload.options.map((opt) => (
+          <button
+            key={opt.id}
+            type="button"
+            data-testid={`ask-option-${opt.id}`}
+            onClick={() => submit(opt.id)}
+            className={`rounded-full px-4 py-1.5 text-ui-sm ${
+              opt.id === "deny"
+                ? "border border-[var(--border)] text-[var(--foreground)] hover:border-[var(--destructive)]"
+                : "bg-[var(--primary)] text-[var(--primary-foreground)]"
+            }`}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+      {error !== null && (
+        <p
+          data-testid="ask-error"
+          className="rounded border border-[var(--destructive)]/30 bg-[var(--destructive)]/5 px-2 py-1 text-ui-sm text-[var(--destructive)]"
+        >
+          应答提交失败：{error}（可重试）
         </p>
       )}
     </div>

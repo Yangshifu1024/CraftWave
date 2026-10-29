@@ -48,6 +48,9 @@ pub mod keys {
     pub const RUN_COMPACTED: &str = "run:compacted";
     /// 压缩失败（载荷 { sessionId }；失败兜底规则见 §6.2）。
     pub const RUN_COMPACT_FAILED: &str = "run:compact_failed";
+    /// MCP 连接池状态变化（§3.5【M2】增补键，08 号票：payload
+    /// { scope, name, state: "starting"|"ready"|"stopped"|"error", detail? }）。
+    pub const MCP_STATUS: &str = "mcp:status";
 }
 
 /// 事件发射抽象：`emit(key, payload)`，payload 为已序列化 JSON。

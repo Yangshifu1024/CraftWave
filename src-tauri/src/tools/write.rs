@@ -94,7 +94,7 @@ pub(crate) fn atomic_write_utf8(target: &std::path::Path, bytes: &[u8]) -> Resul
 /// write 工具规格（能力 FileWrite：plan 档过滤、confirm_each 档审批）。
 pub fn spec() -> ToolSpec {
     ToolSpec {
-        name: "write",
+        name: "write".to_string(),
         description: "在工作区内新建文件（仅新建，文件已存在时拒绝）。内容一律以 UTF-8 落盘。修改已有文件请用 edit。".to_string(),
         capability: Capability::FileWrite,
         params_schema: json!({
@@ -112,6 +112,7 @@ pub fn spec() -> ToolSpec {
             idempotent_hint: true,
             open_world_hint: false,
         },
+        origin: crate::tools::ToolOrigin::Static,
     }
 }
 

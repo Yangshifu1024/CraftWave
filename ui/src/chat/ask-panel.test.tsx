@@ -4,7 +4,7 @@
  * resolveAsk 载荷形状。client.resolveAsk 注入 fake。
  */
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AskPayload } from "@/ipc/types";
 import { useAskStore } from "@/stores/ask";
@@ -143,5 +143,70 @@ describe("AskPanel：approval 形态", () => {
       kind: "approval",
       optionId: "deny",
     });
+  });
+});
+
+describe("AskPanel：mcpTrust 形态（08 号票）", () => {
+  /** MCP 启动信任载荷样例（后端 ask:opened 的 sessionId="" 形态）。 */
+  const trustPayload: AskPayload = {
+    kind: "mcpTrust",
+    server: "filesystem",
+    transport: "stdio",
+    fingerprint: "a1b2c3d4e5f60718",
+    commandOrUrl: "npx -y @modelcontextprotocol/server-filesystem /tmp",
+    options: [
+      { id: "allow_once", label: "仅本次连接" },
+      { id: "remember", label: "记住此版本" },
+      { id: "deny", label: "拒绝" },
+    ],
+  };
+
+  it('应用级桶（sessionId=""）的 mcpTrust 询问在任意会话上下文渲染', () => {
+    // 信任询问不属任何会话：进 "" 桶；AskPanel 在 s1 作用域下也要能看到
+    useAskStore.getState().open("", "trust-1", trustPayload);
+    renderPanel();
+    const panel = screen.getByTestId("ask-panel");
+    expect(panel.getAttribute("data-kind")).toBe("mcpTrust");
+    expect(panel.textContent).toContain("filesystem");
+    expect(panel.textContent).toContain("npx -y @modelcontextprotocol/server-filesystem /tmp");
+    expect(screen.getByTestId("mcp-trust-fingerprint").textContent).toBe("a1b2c3d4e5f60718");
+  });
+
+  it("三选项 → resolveAsk(approval) 携 allow_once/remember/deny", () => {
+    useAskStore.getState().open("", "trust-1", trustPayload);
+    renderPanel();
+    fireEvent.click(screen.getByTestId("ask-option-remember"));
+    expect(resolveAskMock).toHaveBeenCalledWith("trust-1", {
+      kind: "approval",
+      optionId: "remember",
+    });
+
+    resolveAskMock.mockClear();
+    fireEvent.click(screen.getByTestId("ask-option-allow_once"));
+    expect(resolveAskMock).toHaveBeenCalledWith("trust-1", {
+      kind: "approval",
+      optionId: "allow_once",
+    });
+
+    resolveAskMock.mockClear();
+    fireEvent.click(screen.getByTestId("ask-option-deny"));
+    expect(resolveAskMock).toHaveBeenCalledWith("trust-1", {
+      kind: "approval",
+      optionId: "deny",
+    });
+  });
+
+  it("会话桶为空且无应用级询问时不渲染", () => {
+    const { container } = renderPanel();
+    expect(container.childElementCount).toBe(0);
+  });
+
+  it("应答失效（E_NOT_FOUND）时按 askId 关闭弹窗，不残留面板", async () => {
+    useAskStore.getState().open("", "trust-1", trustPayload);
+    resolveAskMock.mockRejectedValueOnce({ code: "E_NOT_FOUND", message: "槽不存在" });
+    renderPanel();
+    fireEvent.click(screen.getByTestId("ask-option-deny"));
+    await waitFor(() => expect(useAskStore.getState().bySession[""]).toBeUndefined());
+    expect(screen.queryByTestId("ask-panel")).toBeNull();
   });
 });

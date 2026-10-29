@@ -368,7 +368,7 @@ fn cleanup_spill(ctx: &ToolsContext, now: Instant) {
 /// command 工具规格（能力 Network：plan 档过滤、非 full_access 档审批）。
 pub fn spec() -> ToolSpec {
     ToolSpec {
-        name: "command",
+        name: "command".to_string(),
         description: "在工作区执行 shell 命令并返回合流输出。stdout/stderr 合并、\
 自动清理控制字符；超过 96KB 时全量落盘并只返回尾部。危险命令会被拦截或要求审批。\
 超时默认 120 秒（1–600），超时或用户取消时整个进程组被终止。"
@@ -390,5 +390,6 @@ pub fn spec() -> ToolSpec {
             idempotent_hint: false,
             open_world_hint: false,
         },
+        origin: crate::tools::ToolOrigin::Static,
     }
 }

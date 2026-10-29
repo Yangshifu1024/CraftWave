@@ -111,7 +111,7 @@ pub fn run(ctx: &ToolsContext, args: &ListFilesArgs) -> ToolOutcome {
 /// list_files 工具规格（能力 ReadOnly，全档放行）。
 pub fn spec() -> ToolSpec {
     ToolSpec {
-        name: "list_files",
+        name: "list_files".to_string(),
         description:
             "列出工作区目录内容为树形清单（上限 500 条目）。默认尊重 .gitignore；隐藏文件不列出。"
                 .to_string(),
@@ -131,6 +131,7 @@ pub fn spec() -> ToolSpec {
             idempotent_hint: true,
             open_world_hint: false,
         },
+        origin: crate::tools::ToolOrigin::Static,
     }
 }
 

@@ -666,9 +666,7 @@ fn cancelled_result_frame(call_id: &str, ui_summary: &str, executed: bool) -> Ch
 /// 未知工具名视为非 ask（由执行器回喂 E_INVALID_ARG）；suggest 属 run 尾
 /// 后台调用、不在注册表，天然不进本批。
 fn is_interactive(name: &str) -> bool {
-    crate::tools::build_registry()
-        .into_iter()
-        .find(|spec| spec.name == name)
+    crate::tools::lookup_spec(name)
         .is_some_and(|spec| spec.capability == crate::safety::tier::Capability::Interactive)
 }
 

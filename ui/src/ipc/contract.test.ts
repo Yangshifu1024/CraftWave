@@ -285,10 +285,10 @@ describe("§12.3 manifest 双向扫描", () => {
     }
   });
 
-  it("manifest.events 覆盖 §3.5 实装 13 键且与 EVENT_KEYS 一致", () => {
-    // 事件清单双保险：manifest 恰好 16 键（14/17 号票 10 键 + 04 号票压缩
-    // 三键 + 06 号票 run:start/run:inject/run:queue 三键），且与前端
-    // EVENT_KEYS 注册表完全一致
+  it("manifest.events 覆盖 §3.5 实装 14 键且与 EVENT_KEYS 一致", () => {
+    // 事件清单双保险：manifest 恰好 17 键（14/17 号票 10 键 + 04 号票压缩
+    // 三键 + 06 号票 run:start/run:inject/run:queue 三键 + 08 号票
+    // mcp:status），且与前端 EVENT_KEYS 注册表完全一致
     expect(manifest.events).toEqual([
       "ask:opened",
       "ask:closed",
@@ -306,6 +306,7 @@ describe("§12.3 manifest 双向扫描", () => {
       "run:compacting",
       "run:compacted",
       "run:compact_failed",
+      "mcp:status",
     ]);
     expect(Object.values(EVENT_KEYS).sort()).toEqual([...manifest.events].sort());
   });
@@ -318,6 +319,63 @@ describe("§12.3 manifest 双向扫描", () => {
     });
     // 双向：client.ts 已接线（禁止只注册不使用）
     expect(Object.values(COMMANDS)).toContain("compact_session");
+  });
+
+  it("MCP 八命令（08 号票，§3.3 #40–47）在两侧接线且契约类型名一致", () => {
+    const find = (name: string) => {
+      const command = manifest.commands.find((c) => c.name === name);
+      expect(command, `manifest 缺命令 ${name}`).toBeDefined();
+      return command!;
+    };
+    // #40 双作用域配置读取（空参名义类型注册，返回 { global, project,
+    // projectAvailable }）
+    expect(find("mcp_list_config")).toMatchObject({
+      args_type: "McpListConfigArgs",
+      ret_type: "McpListConfigResult",
+    });
+    // #41 整份保存一个作用域（未知字段随 flatten round-trip 不丢）
+    expect(find("mcp_save_config")).toMatchObject({
+      args_type: "McpSaveConfigArgs",
+      ret_type: "()",
+    });
+    // #42–44 连接（触发 TOFU）/断开/重连
+    expect(find("mcp_connect")).toMatchObject({ args_type: "McpServerRefArgs", ret_type: "()" });
+    expect(find("mcp_disconnect")).toMatchObject({
+      args_type: "McpServerRefArgs",
+      ret_type: "()",
+    });
+    expect(find("mcp_reconnect")).toMatchObject({
+      args_type: "McpServerRefArgs",
+      ret_type: "()",
+    });
+    // #45 草稿试连（总预算 60s，不进池）
+    expect(find("mcp_test")).toMatchObject({ args_type: "McpTestArgs", ret_type: "McpTestResult" });
+    // #46 TOFU 决策（remember/revoke，落 trust/mcp.json）
+    expect(find("mcp_set_launch_trust")).toMatchObject({
+      args_type: "McpSetLaunchTrustArgs",
+      ret_type: "()",
+    });
+    // #47 连接池状态快照（空参名义类型注册）
+    expect(find("mcp_snapshot")).toMatchObject({
+      args_type: "McpSnapshotArgs",
+      ret_type: "McpSnapshotResult",
+    });
+    // 双向：client.ts 已接线（禁止只注册不使用）
+    for (const name of [
+      "mcp_list_config",
+      "mcp_save_config",
+      "mcp_connect",
+      "mcp_disconnect",
+      "mcp_reconnect",
+      "mcp_test",
+      "mcp_set_launch_trust",
+      "mcp_snapshot",
+    ]) {
+      expect(Object.values(COMMANDS), `${name} 应在 client.ts 接线`).toContain(name);
+    }
+    // mcp:status 事件（§3.5 M2 键）已在 EVENT_KEYS 注册（与 manifest 一致性
+    // 由上方 events 断言把守，这里防误删）
+    expect(Object.values(EVENT_KEYS)).toContain("mcp:status");
   });
 
   it("帧重放与热重连三命令（05 号票，§3.3 #20/#57/#59c）在两侧接线", () => {

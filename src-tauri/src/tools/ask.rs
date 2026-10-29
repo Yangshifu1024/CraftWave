@@ -113,7 +113,7 @@ pub fn build_payload(args: &AskArgs) -> Result<AskPayload, ToolError> {
 /// ask 工具规格（能力 Interactive，全档放行）。
 pub fn spec() -> ToolSpec {
     ToolSpec {
-        name: "ask",
+        name: "ask".to_string(),
         description: "向用户提出问题并等待回答。适合需要用户决策或补充信息的场景：\
 每个问题可带选项（用户点选）和/或允许自由文本。回答会作为工具结果返回。"
             .to_string(),
@@ -157,5 +157,6 @@ pub fn spec() -> ToolSpec {
             idempotent_hint: false,
             open_world_hint: false,
         },
+        origin: crate::tools::ToolOrigin::Static,
     }
 }

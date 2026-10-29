@@ -22,6 +22,7 @@ import {
   FileText,
   FolderTree,
   MessageCircleQuestion,
+  Plug,
   Search,
   SquareTerminal,
 } from "lucide-react";
@@ -472,5 +473,24 @@ export function AskCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
     >
       <p className="text-[var(--muted-foreground)]">回答在下方询问面板中进行</p>
     </ToolCardShell>
+  );
+}
+
+/**
+ * MCP 动态工具兜底卡（08 号票）：toolkit 只静态声明 8 个内置工具的专用卡，
+ * MCP 服务器的动态工具（归一名运行时才定）无法静态枚举——未命中专用卡的
+ * 工具调用一律落本卡（Thread.tsx 在 part.toolUI 为 null 时兜底渲染）。
+ * 渲染 = 工具名 + 参数 JSON 折叠 + uiSummary + 错误态，结构与专用卡一致
+ * （单行摘要 + 点击展开详情，边车 detail/data 全量）。
+ */
+export function McpFallbackCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
+  return (
+    <ToolCardShell
+      {...props}
+      icon={<Plug size={16} />}
+      label="MCP 工具"
+      runningLabel="正在调用 MCP 工具"
+      summary={props.toolName}
+    />
   );
 }

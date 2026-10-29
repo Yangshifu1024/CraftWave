@@ -48,6 +48,7 @@ import { ReasoningPart } from "@/chat/ReasoningPart";
 import { useSessionMetrics } from "@/chat/run-metrics";
 import { useSessionModelStore } from "@/chat/session-model";
 import { useRunSummaries, useSessionScope } from "@/chat/session-scope";
+import { McpFallbackCard } from "@/chat/ToolCards";
 import { getConfig } from "@/ipc/client";
 import type { PermissionTier } from "@/ipc/types";
 import { matchGhost, useAskStore } from "@/stores/ask";
@@ -751,7 +752,9 @@ function AssistantMessage({ onOpenSettings }: { onOpenSettings?: () => void }) {
       <div className="min-w-0 w-full space-y-4 text-ui-base">
         {/* 内联 render props（勿抽组件）：S1 实证 Parts 对 tool-call part 渲染
             null 时才 fallback 到注册的镜像工具卡；抽组件会让 fallback 判定失效。
-            折叠态过程 part 返回隐藏空元素（非 null）以抑制 fallback 卡。 */}
+            折叠态过程 part 返回隐藏空元素（非 null）以抑制 fallback 卡。
+            08 号票：toolUI 为 null = 工具未注册（MCP 动态工具等），兜底渲染
+            McpFallbackCard（工具名 + 参数 JSON 折叠 + uiSummary + 错误态）。 */}
         <MessagePrimitive.Parts>
           {({ part }) => {
             if (part.type === "text") {
@@ -767,12 +770,19 @@ function AssistantMessage({ onOpenSettings }: { onOpenSettings?: () => void }) {
               // 展开/收起瞬时切换且不重挂，卡内状态机与入场动画不受折叠往返
               // 影响；思考行无挂载语义，折叠即卸载（省计时与重渲染）
               if (part.type === "tool-call") {
-                return <div hidden>{part.toolUI}</div>;
+                return <div hidden>{part.toolUI ?? <McpFallbackCard {...part} />}</div>;
               }
               return <span hidden />;
             }
             if (part.type === "reasoning") {
               return <ReasoningPart text={part.text} status={part.status} timing={part.timing} />;
+            }
+            if (part.type === "tool-call") {
+              // toolUI 为 null = 该工具名未注册任何卡（MCP 动态工具，08 号票）
+              // → 兜底卡；已注册工具返回 null，由 assistant-ui 落注册卡
+              if (part.toolUI == null) {
+                return <McpFallbackCard {...part} />;
+              }
             }
             return null;
           }}

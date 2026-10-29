@@ -2,10 +2,11 @@
 import type { ApprovalDiff } from "./ApprovalDiff";
 import type { AskOption } from "./AskOption";
 import type { AskQuestion } from "./AskQuestion";
+import type { McpTransportKind } from "./McpTransportKind";
 
 /**
- * 询问/审批载荷（§3.2；当前阶段实装 question/approval 两种形态，
- * mcpTrust/projectTrust 信任询问属后续阶段）。
+ * 询问/审批载荷（§3.2；08 号票起实装 question/approval/mcpTrust 三形态，
+ * projectTrust 项目资源信任随 24 号票）。
  */
 export type AskPayload = { "kind": "question", 
 /**
@@ -34,5 +35,26 @@ command?: string,
 fenceReason?: string, 
 /**
  * 用户可选的操作列表（如仅本次允许/拒绝）。
+ */
+options: Array<AskOption>, } | { "kind": "mcpTrust", 
+/**
+ * 配置里的服务器名。
+ */
+server: string, 
+/**
+ * 传输方式（stdio / http）。
+ */
+transport: McpTransportKind, 
+/**
+ * 启动指纹（`scope|projectId|name|canonicalPath|sha256(config)` 的
+ * SHA-256，展示前 16 位即可）。
+ */
+fingerprint: string, 
+/**
+ * 启动命令或 URL（stdio = command+args 拼接；HTTP = url）。
+ */
+commandOrUrl: string, 
+/**
+ * 三选项（allow_once / remember / deny）。
  */
 options: Array<AskOption>, };

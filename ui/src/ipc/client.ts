@@ -24,6 +24,15 @@ import type {
   InjectRunMessageArgs,
   InjectRunMessageResult,
   IpcError,
+  LaunchDecision,
+  McpListConfigResult,
+  McpSaveConfigArgs,
+  McpScope,
+  McpServerRefArgs,
+  McpSetLaunchTrustArgs,
+  McpSnapshotResult,
+  McpTestArgs,
+  McpTestResult,
   NotificationPermissionStatus,
   OpenDirArgs,
   ProjectMeta,
@@ -89,6 +98,14 @@ export const COMMANDS = {
   resolveExitRequest: "resolve_exit_request",
   notificationPermissionStatus: "notification_permission_status",
   openNotificationSettings: "open_notification_settings",
+  mcpListConfig: "mcp_list_config",
+  mcpSaveConfig: "mcp_save_config",
+  mcpConnect: "mcp_connect",
+  mcpDisconnect: "mcp_disconnect",
+  mcpReconnect: "mcp_reconnect",
+  mcpTest: "mcp_test",
+  mcpSetLaunchTrust: "mcp_set_launch_trust",
+  mcpSnapshot: "mcp_snapshot",
 } as const;
 
 /**
@@ -114,6 +131,7 @@ export const EVENT_KEYS = {
   runCompacting: "run:compacting",
   runCompacted: "run:compacted",
   runCompactFailed: "run:compact_failed",
+  mcpStatus: "mcp:status",
 } as const;
 
 /**
@@ -401,4 +419,58 @@ export function notificationPermissionStatus(): Promise<NotificationPermissionSt
 /** 打开系统通知设置（macOS 直达「通知」面板；Windows 走 ms-settings:）。 */
 export function openNotificationSettings(): Promise<void> {
   return invoke<void>(COMMANDS.openNotificationSettings, {});
+}
+
+// ---- MCP 客户端（§3.3 #40–47，08 号票）----
+
+/** §3.3 #40：双作用域 mcp.json 原样配置（未知字段保真）。projectAvailable
+ *  = 当前有项目会话上下文（false 时 project 内容为空配置、不可编辑）。 */
+export function mcpListConfig(): Promise<McpListConfigResult> {
+  return invoke(COMMANDS.mcpListConfig, {});
+}
+
+/** §3.3 #41：整份保存一个作用域的 mcp.json（原子写；未知字段随文件
+ *  round-trip 不丢；保存前校验全部条目可解析，坏条目 reject E_INVALID_ARG）。 */
+export function mcpSaveConfig(args: McpSaveConfigArgs): Promise<void> {
+  return invoke<void>(COMMANDS.mcpSaveConfig, {
+    scope: args.scope,
+    config: args.config,
+  } satisfies McpSaveConfigArgs);
+}
+
+/** §3.3 #42：连接一个服务器。首次连接（或配置指纹变更）触发 TOFU——
+ *  弹 mcpTrust 询问（ask:opened 事件，sessionId 为空串 = 应用级询问）；
+ *  用户拒绝 → reject E_CANCELLED。连接为后台任务，状态经 mcp:status 可见。 */
+export function mcpConnect(scope: McpScope, name: string): Promise<void> {
+  return invoke<void>(COMMANDS.mcpConnect, { scope, name } satisfies McpServerRefArgs);
+}
+
+/** §3.3 #43：断开（desired=false 停止自动重连；动态工具段即时收窄）。 */
+export function mcpDisconnect(scope: McpScope, name: string): Promise<void> {
+  return invoke<void>(COMMANDS.mcpDisconnect, { scope, name } satisfies McpServerRefArgs);
+}
+
+/** §3.3 #44：重连（先断开收口再连接；配置指纹变更会重新走 TOFU）。 */
+export function mcpReconnect(scope: McpScope, name: string): Promise<void> {
+  return invoke<void>(COMMANDS.mcpReconnect, { scope, name } satisfies McpServerRefArgs);
+}
+
+/** §3.3 #45：草稿试连（initialize + tools/list，总预算 60 秒）。不进连接池、
+ *  不写信任、不发状态事件——管理页「测试连接」按钮的探测面。 */
+export function mcpTest(args: McpTestArgs): Promise<McpTestResult> {
+  return invoke<McpTestResult>(COMMANDS.mcpTest, { draft: args.draft } satisfies McpTestArgs);
+}
+
+/** §3.3 #46：TOFU 决策写入 `~/.craftwave/trust/mcp.json`（remember 记住此
+ *  版本 / revoke 撤销；revoke 连带撤销该服务器全部工具级许可，Q44）。 */
+export function mcpSetLaunchTrust(fingerprint: string, decision: LaunchDecision): Promise<void> {
+  return invoke<void>(COMMANDS.mcpSetLaunchTrust, {
+    fingerprint,
+    decision,
+  } satisfies McpSetLaunchTrustArgs);
+}
+
+/** §3.3 #47：连接池状态快照（管理页服务器行：名称/状态/工具数）。 */
+export function mcpSnapshot(): Promise<McpSnapshotResult> {
+  return invoke<McpSnapshotResult>(COMMANDS.mcpSnapshot, {});
 }

@@ -212,3 +212,151 @@ fn unknown_tool_passes_to_executor() {
     let (gate, _) = gate_with_plan(PermissionTier::Plan);
     assert!(matches!(gate.judge("nope", "{}"), GateVerdict::Allow));
 }
+
+/// MCP 动态工具判定表（08 号票，Q44/§9.7）：read_only × 许可三元组 × tier
+/// ——未声明 read_only 即便 full_access 也挂起（FR-08-04）；审批「始终允许」
+/// 授予的许可三元组命中即放行（热生效，与服务器级 always_allow 开关解耦）；
+/// 输入 schema 变更 → 三元组不命中 → 重新挂起（新版本首次调用重确认）；
+/// read_only 声明的工具按 ReadOnly 能力全档放行。真实许可存储驱动（与生产
+/// McpGateAdapter 同构：view 反查进程级注册表，license_hit 查 trust 文件）。
+#[test]
+fn mcp_license_gate_matrix() {
+    use crate::backend::gate::{McpGateView, McpToolView};
+    use crate::mcp::config::{McpScope, McpServerConfig};
+    use crate::mcp::tools::ConnKey;
+    use crate::mcp::trust::ToolLicenseStore;
+
+    let dir = tempfile::tempdir().expect("临时目录");
+    struct LicGate(ToolLicenseStore);
+    impl McpGateView for LicGate {
+        fn view(&self, name: &str) -> Option<McpToolView> {
+            crate::mcp::tools::McpToolRegistry::global()
+                .identity(name)
+                .map(|i| McpToolView {
+                    server_name: i.server_name,
+                    server_fingerprint: i.server_fingerprint,
+                    original_name: i.original_name,
+                    schema_hash: i.schema_hash,
+                    read_only: i.read_only,
+                })
+        }
+        fn license_hit(&self, view: &McpToolView) -> bool {
+            self.0.is_licensed(
+                &view.server_fingerprint,
+                &view.original_name,
+                &view.schema_hash,
+            )
+        }
+    }
+    let mk_gate = || {
+        ApprovalGate::new(PermissionTier::FullAccess, Arc::new(Mutex::new(None)))
+            .with_mcp(Arc::new(LicGate(ToolLicenseStore::new(dir.path()))))
+    };
+
+    // 动态段注册 gateprobe 工具（进程级单例；用例尾摘除防污染）
+    let key = ConnKey {
+        scope: McpScope::Global,
+        project_id: None,
+        name: "gate-server".into(),
+        canonical_path: String::new(),
+    };
+    let fingerprint = "gate-fp".to_owned();
+    let mk_list = |schema: serde_json::Value| {
+        vec![(
+            "gateprobe".to_owned(),
+            "判定探针".to_owned(),
+            schema,
+            crate::tools::ToolAnnotations {
+                read_only_hint: false,
+                destructive_hint: false,
+                idempotent_hint: false,
+                open_world_hint: false,
+            },
+        )]
+    };
+    let cfg = McpServerConfig {
+        read_only: false,
+        ..McpServerConfig::default()
+    };
+    let registered = crate::mcp::tools::McpToolRegistry::global().sync(
+        key.clone(),
+        fingerprint.clone(),
+        &cfg,
+        mk_list(
+            serde_json::json!({ "type": "object", "properties": { "q": { "type": "string" } } }),
+        ),
+    );
+    assert_eq!(registered, vec!["gateprobe".to_owned()]);
+
+    // ① full_access × 未声明 read_only × 无许可 → 挂起（高危外部调用永远过人）
+    assert!(matches!(
+        mk_gate().judge("gateprobe", "{}"),
+        GateVerdict::Suspend { .. }
+    ));
+    // confirm_each 档同样挂起（MCP 审批与档位无关）
+    assert!(matches!(
+        ApprovalGate::new(PermissionTier::ConfirmEach, Arc::new(Mutex::new(None)))
+            .with_mcp(Arc::new(LicGate(ToolLicenseStore::new(dir.path()))))
+            .judge("gateprobe", "{}"),
+        GateVerdict::Suspend { .. }
+    ));
+
+    // ② 审批「始终允许」授予许可（当前 schema 版本）→ 热生效放行
+    let identity = crate::mcp::tools::McpToolRegistry::global()
+        .identity("gateprobe")
+        .expect("身份在场");
+    let licenses = ToolLicenseStore::new(dir.path());
+    licenses
+        .grant(&fingerprint, "gateprobe", &identity.schema_hash, 1)
+        .expect("授予许可");
+    assert!(matches!(
+        mk_gate().judge("gateprobe", "{}"),
+        GateVerdict::Allow
+    ));
+
+    // ③ 输入 schema 变更 → 三元组第三元漂移 → 重新挂起（新版本首次重确认；
+    // 旧版本许可记录留存但不命中）
+    crate::mcp::tools::McpToolRegistry::global().sync(
+        key.clone(),
+        fingerprint.clone(),
+        &cfg,
+        mk_list(
+            serde_json::json!({ "type": "object", "properties": { "q": { "type": "number" } } }),
+        ),
+    );
+    assert!(matches!(
+        mk_gate().judge("gateprobe", "{}"),
+        GateVerdict::Suspend { .. }
+    ));
+
+    // ④ read_only 用户声明 → 能力 ReadOnly → 矩阵全档放行（无许可也放行）
+    let ro_cfg = McpServerConfig {
+        read_only: true,
+        ..McpServerConfig::default()
+    };
+    crate::mcp::tools::McpToolRegistry::global().sync(
+        key.clone(),
+        fingerprint.clone(),
+        &ro_cfg,
+        mk_list(serde_json::json!({ "type": "object" })),
+    );
+    assert!(matches!(
+        mk_gate().judge("gateprobe", "{}"),
+        GateVerdict::Allow
+    ));
+    assert!(matches!(
+        ApprovalGate::new(PermissionTier::Plan, Arc::new(Mutex::new(None)))
+            .with_mcp(Arc::new(LicGate(ToolLicenseStore::new(dir.path()))))
+            .judge("gateprobe", "{}"),
+        GateVerdict::Allow
+    ));
+
+    // 用例尾：摘除动态段（进程级单例复原）
+    crate::mcp::tools::McpToolRegistry::global().remove(&key);
+    assert!(
+        crate::mcp::tools::McpToolRegistry::global()
+            .identity("gateprobe")
+            .is_none(),
+        "动态段已清理"
+    );
+}

@@ -68,12 +68,19 @@ pub struct AppState {
     /// 会话级 followUp 队列（§5.5，06 号票：运行中排队续发 + 失败暂停 +
     /// 取消返还，`sessions/<sid>.queue.json` 持久化）。
     pub followups: FollowUpManager,
+    /// MCP 宿主（08 号票，§9.7）：连接池 + 启动信任 + 工具级许可。
+    pub mcp: Arc<crate::mcp::pool::McpHost>,
+    /// MCP TOFU 信任询问槽表（08 号票：管理页连接触发的信任询问不属任何
+    /// run，挂在应用级；resolve_ask 在 run 槽未命中时落到这里）。
+    pub mcp_asks: Arc<Mutex<HashMap<String, crate::mcp::commands::PendingTrustAsk>>>,
 }
 
 impl AppState {
     /// `~/.craftwave` 数据目录（§7.1）下的 config.json。
     pub fn new_in(data_dir: PathBuf, events: Arc<dyn EventSink>) -> Self {
         let store = Arc::new(SessionStore::with_root(data_dir.clone()));
+        // MCP 宿主与 AppState 共享同一事件汇（克隆在字段 move 之前完成）
+        let events_rcvd = events.clone();
         Self {
             config: Arc::new(ConfigStore::new(data_dir.join("config.json"))),
             runs: RunManager::new(),
@@ -87,6 +94,11 @@ impl AppState {
                 shell::EXIT_CONFIRM_TIMEOUT,
             ))),
             followups: FollowUpManager::new(data_dir.clone()),
+            mcp: Arc::new(crate::mcp::pool::McpHost::new(
+                data_dir.clone(),
+                events_rcvd,
+            )),
+            mcp_asks: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -105,6 +117,8 @@ impl AppState {
             active_session: self.active_session.clone(),
             exit_confirm: self.exit_confirm.clone(),
             followups: self.followups.clone(),
+            mcp: self.mcp.clone(),
+            mcp_asks: self.mcp_asks.clone(),
         }
     }
 

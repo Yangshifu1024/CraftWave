@@ -279,7 +279,7 @@ fn export_ipc_manifest_and_cross_lang_fixture() {
         // 事件键（§3.5）：14 号票实装 5 键
         "events": crate::host::commands::EVENTS,
         // 镜像工具清单（§12.3）：工具注册表单一事实源
-        "tools": crate::tools::TOOL_NAMES,
+        "tools": crate::tools::STATIC_TOOL_NAMES,
         // 工具规格（name + paramsSchema）：前端 toolkit 声明同源校验（§10.3，14 号票）
         "toolSpecs": crate::tools::build_registry()
             .into_iter()
@@ -292,10 +292,13 @@ fn export_ipc_manifest_and_cross_lang_fixture() {
     assert_eq!(manifest["frames"].as_array().unwrap().len(), 11);
     // 事件键：14 号票 5 键 + 17 号票 5 键（run 终态三键 + notify/退出两键）
     // + 04 号票压缩三键（run:compacting/compacted/compact_failed）
-    // + 06 号票三键（run:start / run:inject / run:queue）
-    assert_eq!(manifest["events"].as_array().unwrap().len(), 16);
+    // + 06 号票三键（run:start / run:inject / run:queue）+ 08 号票 mcp:status
+    assert_eq!(manifest["events"].as_array().unwrap().len(), 17);
+    // 08 号票：注册表分「静态段 + 动态段」两断言——静态段钉死 8 个；
+    // 动态段（MCP）运行时可变，manifest 落盘时为当前快照（恒 ≥ 静态段）。
     assert_eq!(manifest["tools"].as_array().unwrap().len(), 8);
     assert_eq!(manifest["toolSpecs"].as_array().unwrap().len(), 8);
+    assert_eq!(crate::tools::STATIC_TOOL_NAMES.len(), 8, "静态段工具数漂移");
     fs::create_dir_all(target_dir()).unwrap();
     fs::write(
         target_dir().join("ipc-manifest.json"),

@@ -191,7 +191,7 @@ fn image_mime(path: &str) -> Option<&'static str> {
 /// read 工具规格（能力 ReadOnly，全档放行）。
 pub fn spec() -> ToolSpec {
     ToolSpec {
-        name: "read",
+        name: "read".to_string(),
         description: "读取工作区内文件。文本按行窗口返回（默认 2000 行，可用 offset/limit 翻页）；kind=\"image\" 以 base64 返回图片（≤3MiB）供视觉模型查看。二进制文件不支持文本读取。".to_string(),
         capability: Capability::ReadOnly,
         params_schema: json!({
@@ -211,6 +211,7 @@ pub fn spec() -> ToolSpec {
             idempotent_hint: true,
             open_world_hint: false,
         },
+        origin: crate::tools::ToolOrigin::Static,
     }
 }
 

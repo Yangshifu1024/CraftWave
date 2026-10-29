@@ -606,7 +606,7 @@ pub(crate) fn version_hex(bytes: &[u8]) -> String {
 /// edit 工具规格（能力 FileWrite：plan 档过滤、confirm_each 档审批）。
 pub fn spec() -> ToolSpec {
     ToolSpec {
-        name: "edit",
+        name: "edit".to_string(),
         description: "修改工作区内已有文件：用 oldText 定位唯一片段并替换为 newText。三级匹配（精确→缩进平移→逐行空白归一），多命中拒绝；version（读文件时返回的版本指纹）可做乐观锁。EOL 风格保持，落盘一律 UTF-8。".to_string(),
         capability: Capability::FileWrite,
         params_schema: json!({
@@ -626,6 +626,7 @@ pub fn spec() -> ToolSpec {
             idempotent_hint: false,
             open_world_hint: false,
         },
+        origin: crate::tools::ToolOrigin::Static,
     }
 }
 

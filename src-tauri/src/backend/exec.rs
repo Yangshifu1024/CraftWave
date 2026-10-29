@@ -48,6 +48,17 @@ use crate::util::errors::{E_INVALID_ARG, ToolError};
 use crate::util::events::EventSink;
 use crate::util::events::keys;
 
+/// MCP 调用面（08 号票；backend 不依赖 mcp 模块——host 装配时注入实现，
+/// 依赖倒置与审批门 [`super::gate::McpGateView`] 同精神）。
+pub trait McpCaller: Send + Sync {
+    /// 调用一个 MCP 动态工具（归一名反查 + 结果未知语义收口在 mcp/pool）。
+    fn call(
+        &self,
+        normalized_name: &str,
+        args_json: &str,
+    ) -> Pin<Box<dyn Future<Output = ToolOutcome> + Send + '_>>;
+}
+
 /// ask 槽单元：互斥锁包着的"至多一个未决询问"（agent 模块构造、backend
 /// 执行器写入、宿主命令 resolve_ask 读取后送回应答）。
 pub type AskSlotCell = Mutex<Option<AskSlot>>;
@@ -70,6 +81,8 @@ pub struct ExecutorEnv {
     /// 数据根目录（§7.1）：工具结果边车落在 `sessions/<会话id>.toolres/`
     /// 目录下（§7.5）。
     pub data_root: std::path::PathBuf,
+    /// MCP 动态工具调用面（None = 未装配 MCP；08 号票）。
+    pub mcp: Option<Arc<dyn McpCaller>>,
 }
 
 /// 工具注册表全集的执行器：模型可见的 8 个工具（§8.3）都经它执行。
@@ -129,10 +142,7 @@ impl ToolsetExecutor {
         // §8.1 三处同源过滤的主循环侧：plan 档的写/联网工具虽已从广播给
         // 模型的工具表里过滤，但模型仍可能点名调用——此时按权限档排除
         // （E_TOOL_BLOCKED，回喂错误但不中断 run）。
-        let Some(spec) = crate::tools::build_registry()
-            .into_iter()
-            .find(|s| s.name == name)
-        else {
+        let Some(spec) = crate::tools::lookup_spec(name) else {
             return ToolOutcome::failure(
                 ToolError::new(E_INVALID_ARG, format!("未知工具：{name}")),
                 format!("未知工具：{name}"),
@@ -464,11 +474,11 @@ fn conflict_rejected(path: &str, reason: &str) -> ToolExecution {
 }
 
 /// 批内一次调用的能力分级查询（未知工具 → None，由执行路径回喂错误）。
+/// 08 号票：走 [`crate::tools::lookup_spec`]（静态段 + MCP 动态段）——
+/// MCP 工具能力只会是 ReadOnly/Network，非 FileWrite，天然走独立执行
+/// 信号量路径。
 fn capability_of(name: &str) -> Option<crate::safety::tier::Capability> {
-    crate::tools::build_registry()
-        .into_iter()
-        .find(|spec| spec.name == name)
-        .map(|spec| spec.capability)
+    crate::tools::lookup_spec(name).map(|spec| spec.capability)
 }
 
 /// 主循环执行契约的实现：按工具名分流——command/plan/ask 三个交互型工具
@@ -536,6 +546,17 @@ impl CancellableExecutor for ToolsetExecutor {
                     execution
                 }
                 other => {
+                    // MCP 动态工具分支（08 号票）：归一名反查命中 → 经
+                    // McpCaller 调用（连接、结果未知语义在 mcp/pool）。
+                    // 未命中或未装配 → 静态表 dispatch（未知工具回喂错误）。
+                    if let Some(mcp) = self.env.as_ref().and_then(|e| e.mcp.as_ref())
+                        && crate::tools::lookup_spec(other)
+                            .is_some_and(|s| s.origin == crate::tools::ToolOrigin::Mcp)
+                    {
+                        let outcome = mcp.call(other, args_json).await;
+                        self.persist_outcome(call_id, &outcome);
+                        return completed_of(outcome);
+                    }
                     let outcome = self.dispatch(other, args_json);
                     self.persist_outcome(call_id, &outcome);
                     completed_of(outcome)

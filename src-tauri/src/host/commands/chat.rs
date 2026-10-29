@@ -574,6 +574,43 @@ fn emit_queue_state(
 /// command=命令行 + fenceReason（§3.2）。
 pub(crate) fn build_approval_payload(pending: &PendingCall) -> AskPayload {
     let args: serde_json::Value = serde_json::from_str(&pending.args_json).unwrap_or_default();
+    // MCP 动态工具分支（08 号票，FR-08-04）：title 带 server 名与工具名
+    // （票面逐字）；选项含「始终允许」（Q44 持久许可的授予入口；恢复循环
+    // 侧写 trust/mcp-tools.json）。MCP 审批无 recommended——不参与
+    // autoConfirm 自动批准。归一名反查失败（极窄窗口：断开已摘除动态段）
+    // 落到下方通用审批标题兜底。
+    if let Some(identity) = crate::mcp::tools::McpToolRegistry::global().identity(&pending.name) {
+        return AskPayload::Approval {
+            title: format!(
+                "MCP 调用审批：服务器 {server} 的工具 {tool}",
+                server = identity.server_name,
+                tool = identity.original_name
+            ),
+            diff: None,
+            command: Some(format!("{} {}", pending.name, pending.args_json)),
+            fence_reason: pending.fence_reason.clone(),
+            options: vec![
+                AskOption {
+                    id: "allow_once".to_owned(),
+                    label: "仅本次允许".to_owned(),
+                    recommended: None,
+                    mode: Some(AskMode::AllowOnce),
+                },
+                AskOption {
+                    id: "always_allow".to_owned(),
+                    label: "始终允许（当前版本）".to_owned(),
+                    recommended: None,
+                    mode: None,
+                },
+                AskOption {
+                    id: "deny".to_owned(),
+                    label: "拒绝".to_owned(),
+                    recommended: None,
+                    mode: Some(AskMode::Deny),
+                },
+            ],
+        };
+    }
     let title = match pending.name.as_str() {
         "write" => format!(
             "写入新文件 {}",
@@ -665,10 +702,13 @@ pub(crate) fn build_approval_payload(pending: &PendingCall) -> AskPayload {
     }
 }
 
-/// 挂起等待的裁决。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// 挂起等待的裁决（option_id 供 MCP「始终允许」的持久许可授予面，08 号票）。
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum ApprovalResolution {
-    Allowed,
+    /// 批准（option_id：allow_once / always_allow / autoConfirm 的
+    /// recommended 项）。
+    Allowed { option_id: String },
+    /// 拒绝/取消。
     Denied,
 }
 
@@ -725,15 +765,21 @@ async fn wait_approval(
     let wait = tokio::select! {
         biased;
         _ = handle.cancel.cancelled() => Wait::Cancelled,
-        _ = tokio::time::sleep(AUTO_CONFIRM_TIMEOUT), if auto_confirm => Wait::AutoConfirm,
+        // autoConfirm 300s 只对「有推荐项（allow_once）」的载荷生效——
+        // mcpTrust 等无 recommended 的信任询问不参与自动批准（FR-08-04：
+        // 高危外部调用永远过人，08 号票）。
+        _ = tokio::time::sleep(AUTO_CONFIRM_TIMEOUT),
+            if auto_confirm && payload.recommended_option_id().is_some() => Wait::AutoConfirm,
         answer = rx => Wait::Answer(answer.ok()),
     };
     let (resolution, answered) = match wait {
         Wait::Answer(Some(AskAnswer::Approval { option_id, .. })) => {
-            let allowed = option_id == "allow_once";
+            // allow_once 与 always_allow（MCP，08 号票）都放行本次；
+            // 其余选项按拒绝收场
+            let allowed = option_id == "allow_once" || option_id == "always_allow";
             (
                 if allowed {
-                    ApprovalResolution::Allowed
+                    ApprovalResolution::Allowed { option_id }
                 } else {
                     ApprovalResolution::Denied
                 },
@@ -746,8 +792,14 @@ async fn wait_approval(
         Wait::Answer(None) => (ApprovalResolution::Denied, true),
         Wait::Cancelled => (ApprovalResolution::Denied, false),
         // autoConfirm：300s 自动选 recommended（allow_once）——挂起必非黑名单
-        // （Block 不会挂起），灾难级例外天然满足（§5.4）
-        Wait::AutoConfirm => (ApprovalResolution::Allowed, true),
+        // （Block 不会挂起），灾难级例外天然满足（§5.4）；无 recommended 的
+        // 载荷（mcpTrust/MCP 审批）已由 select 条件排除，不会走到这里
+        Wait::AutoConfirm => (
+            ApprovalResolution::Allowed {
+                option_id: "allow_once".to_owned(),
+            },
+            true,
+        ),
     };
     // 单一出口清槽 + ask:closed（resolve_ask 只投递不清理）
     *handle
@@ -1531,8 +1583,12 @@ pub async fn start_chat_core(
         None => resolve_model(app, run_config.model_id.as_deref())?,
     };
     let summary_driver = TurnDriver::new(summary_resolved.driver, RunSpec::new(), Vec::new());
-    // ③ 工具集（§8.1 三处同源过滤）——预算检查含工具表（§6.2 Q18）
-    let tool_specs = crate::tools::filter_for_tier(crate::tools::build_registry(), run_config.tier);
+    // ③ 工具集（§8.1 三处同源过滤）——静态段 + MCP 动态段（08 号票：
+    // 「MCP 动态工具并入 ToolServer 模式」，动态段快照随 run 装配固化，
+    // tools/list_changed 的热更新下一 run 生效）；预算检查含工具表（§6.2 Q18）
+    let mut registry_specs = crate::tools::build_registry();
+    registry_specs.extend(app.mcp.registry().snapshot());
+    let tool_specs = crate::tools::filter_for_tier(registry_specs, run_config.tier);
     let tools = to_rig_tool_definitions(tool_specs)?;
 
     // ④ 同会话互斥预检（E_SESSION_RUNNING 快速失败；正式互斥仍由
@@ -1620,9 +1676,22 @@ pub async fn start_chat_core(
             session_id: session_id.clone(),
             run_id: run_id.clone(),
             data_root: app.store.root().to_path_buf(),
+            // MCP 动态工具调用面（08 号票）：归一名反查 + 结果未知语义在
+            // mcp/pool 收口。
+            mcp: Some(Arc::new(crate::mcp::commands::McpCallerAdapter {
+                host: app.mcp.clone(),
+            })),
         }),
     );
-    let gate = Arc::new(ApprovalGate::new(run_config.tier, handle.plan.clone()));
+    // 审批门装配 MCP 判定视图（08 号票：Q44 动态许可核验 + 未声明
+    // read_only 即便 full_access 也挂起，§9.7）。
+    let gate = Arc::new(
+        ApprovalGate::new(run_config.tier, handle.plan.clone()).with_mcp(Arc::new(
+            crate::mcp::commands::McpGateAdapter {
+                host: app.mcp.clone(),
+            },
+        )),
+    );
     let events = app.events.clone();
     let session_usage = Arc::new(Mutex::new(
         app.session_usage
@@ -1660,6 +1729,9 @@ pub async fn start_chat_core(
     // 以完整状态面重新走 start_chat_core，故捕获句柄而非细粒度克隆件）
     let app_for_delivery = app.share_handles();
     let run_config_for_delivery = run_config.clone();
+    // MCP 宿主句柄（08 号票）：恢复循环的「始终允许」许可授予面（spawn
+    // 任务不能借用 app，提前克隆共享句柄）。
+    let mcp_for_task = app.mcp.clone();
     tokio::spawn(async move {
         // 帧出口 = 事件层（usage → tokens:update + RunState 同步）包 canonical
         // 落盘器（§7.3）包帧枢纽（§5.8：seq 递增 → 入环 → 下发）
@@ -1715,8 +1787,22 @@ pub async fn start_chat_core(
                         state,
                     } = *info;
                     match wait_approval(&events, &handle, &pending, auto_confirm).await {
-                        ApprovalResolution::Allowed => {
+                        ApprovalResolution::Allowed { option_id } => {
                             gate.approve(&pending.name, &pending.args_json);
+                            // MCP「始终允许」（Q44，08 号票）：写工具级许可表
+                            // ——绑定服务器启动指纹 + 原始工具名 + 已确认输入
+                            // schema 哈希三元组；新增工具/schema 变化不继承。
+                            if option_id == "always_allow"
+                                && let Some(identity) =
+                                    mcp_for_task.registry().identity(&pending.name)
+                            {
+                                let _ = mcp_for_task.licenses.grant(
+                                    &identity.server_fingerprint,
+                                    &identity.original_name,
+                                    &identity.schema_hash,
+                                    now_ms(),
+                                );
+                            }
                             // ask 关闭后压缩（§6.2 触发点②）：落盘面压缩，
                             // 失败不阻断恢复（硬预算义务在恢复后的请求面）
                             maybe_compact_after_ask(
@@ -2210,14 +2296,26 @@ pub async fn resolve_ask_core(
     Ok(())
 }
 
-/// resolve_ask 命令（§3.3 #22）。
+/// resolve_ask 命令（§3.3 #22；08 号票增补：run 槽未命中时落 MCP TOFU
+/// 信任询问槽——信任询问不属任何 run，挂在应用级槽表）。
 #[tauri::command]
 pub(crate) async fn resolve_ask(
+    app: State<'_, AppState>,
     runs: State<'_, RunManager>,
     ask_id: String,
     answer: AskAnswer,
 ) -> Result<(), IpcError> {
-    resolve_ask_core(&runs, &ask_id, answer).await
+    match resolve_ask_core(&runs, &ask_id, answer.clone()).await {
+        Ok(()) => Ok(()),
+        Err(err) if err.code == crate::util::errors::E_NOT_FOUND => {
+            if crate::mcp::commands::resolve_trust_ask(&app, &ask_id, answer).await {
+                Ok(())
+            } else {
+                Err(err)
+            }
+        }
+        Err(err) => Err(err),
+    }
 }
 
 /// approve_plan 主体（§3.3 #26c：冻结当前计划为批准快照，§8.6）。

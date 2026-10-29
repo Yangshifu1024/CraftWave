@@ -128,7 +128,7 @@ pub fn run(ctx: &ToolsContext, args: &GrepArgs) -> ToolOutcome {
 /// grep 工具规格（能力 ReadOnly，全档放行）。
 pub fn spec() -> ToolSpec {
     ToolSpec {
-        name: "grep",
+        name: "grep".to_string(),
         description: "在工作区内用正则搜索文件内容（内嵌 ripgrep 语义），逐行返回 命中文件:行内容，默认尊重 .gitignore，maxResults 截断。".to_string(),
         capability: Capability::ReadOnly,
         params_schema: json!({
@@ -148,6 +148,7 @@ pub fn spec() -> ToolSpec {
             idempotent_hint: true,
             open_world_hint: false,
         },
+        origin: crate::tools::ToolOrigin::Static,
     }
 }
 

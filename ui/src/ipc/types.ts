@@ -23,6 +23,7 @@
 // 本文件后半的事件载荷族与收窄别名引用生成物类型，本地可见性走显式 import
 // （`export *` 只转发、不引入模块作用域）。
 import type { AskPayload } from "./generated/AskPayload";
+import type { McpScope } from "./generated/McpScope";
 import type { PlanItem } from "./generated/PlanItem";
 import type { StoredEntry } from "./generated/StoredEntry";
 import type { UsageTotal } from "./generated/UsageTotal";
@@ -64,11 +65,28 @@ export * from "./generated/InjectRunMessageArgs";
 export * from "./generated/InjectRunMessageResult";
 export * from "./generated/IpcError";
 export * from "./generated/Language";
+export * from "./generated/LaunchDecision";
 export * from "./generated/ListSessionsArgs";
 export * from "./generated/LoadSessionTreeArgs";
 export * from "./generated/LoadToolOutcomesArgs";
 export * from "./generated/LogConfig";
 export * from "./generated/LogLevel";
+export * from "./generated/McpConfigFile";
+export * from "./generated/McpListConfigArgs";
+export * from "./generated/McpListConfigResult";
+export * from "./generated/McpSaveConfigArgs";
+export * from "./generated/McpScope";
+export * from "./generated/McpServerConfig";
+export * from "./generated/McpServerRefArgs";
+export * from "./generated/McpSetLaunchTrustArgs";
+export * from "./generated/McpSnapshotArgs";
+export * from "./generated/McpSnapshotResult";
+export * from "./generated/McpSnapshotServer";
+export * from "./generated/McpTestArgs";
+export * from "./generated/McpTestResult";
+export * from "./generated/McpTestTool";
+export * from "./generated/McpToolFilter";
+export * from "./generated/McpTransportKind";
 export * from "./generated/MessageEntry";
 export * from "./generated/MessageRole";
 export * from "./generated/MessageStatus";
@@ -219,4 +237,14 @@ export type RunQueueEvent = {
   paused: boolean;
   /** 清空返还的文本数组（取消/失败交还草稿；正常状态变化时缺省）。 */
   returned?: string[];
+};
+
+/** mcp:status 事件载荷（08 号票，§3.5 M2 键）：MCP 连接池状态迁移——
+ *  设置页服务器行的状态徽标实时驱动（Rust 发射点为 json! 字面量）。 */
+export type McpStatusEvent = {
+  scope: McpScope;
+  name: string;
+  state: "starting" | "ready" | "stopped" | "error";
+  /** 状态明细（Error 原因 / Ready 工具数说明；无则缺省）。 */
+  detail?: string;
 };

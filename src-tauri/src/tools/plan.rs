@@ -133,7 +133,7 @@ fn first_duplicate_id(items: &[PlanItem]) -> Option<&str> {
 /// plan 工具规格（能力 Meta，全档放行）。
 pub fn spec() -> ToolSpec {
     ToolSpec {
-        name: "plan",
+        name: "plan".to_string(),
         description: "维护任务计划清单。set 全量替换条目；update 按 id 更新或追加。\
 最多 100 项，同一时刻最多 1 个 in_progress。开始执行前先建计划，完成一项更新一项。"
             .to_string(),
@@ -165,6 +165,7 @@ pub fn spec() -> ToolSpec {
             idempotent_hint: false,
             open_world_hint: false,
         },
+        origin: crate::tools::ToolOrigin::Static,
     }
 }
 

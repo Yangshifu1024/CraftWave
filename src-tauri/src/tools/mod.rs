@@ -73,13 +73,26 @@ pub struct ToolAnnotations {
     pub open_world_hint: bool,
 }
 
+/// 工具来源（08 号票，§8.1「MCP 动态工具并入 ToolServer 模式」）：
+/// 注册表分静态段（编译期内置 8 个）与动态段（MCP 服务器运行时注册）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ToolOrigin {
+    /// 编译期内置工具（build_registry 的静态段）。
+    Static,
+    /// MCP 服务器动态注册的工具（归一名，mcp/tools.rs 维护）。
+    Mcp,
+}
+
 /// 工具规格（§8.1）：注册表里的一个条目，描述工具名、能力分级与参数约束。
 /// `params_schema` 为 JSON Schema 对象，约束 `additionalProperties: false`。
+/// 08 号票：`name` 从 `&'static str` 放宽为 `String`（动态段归一名运行时
+/// 才定，票面定案走 String；静态段构造点均为常量字符串，无额外成本）。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolSpec {
-    /// 合法字符 [a-z_][a-z0-9_]{0,63}。
-    pub name: &'static str,
+    /// 合法字符 [a-z_][a-z0-9_]{0,63}（§8.1）。
+    pub name: String,
     /// 面向模型，≤800 字符。
     pub description: String,
     /// 能力分级（决定该工具在权限矩阵中的判定路径）。
@@ -88,6 +101,30 @@ pub struct ToolSpec {
     pub params_schema: serde_json::Value,
     /// 行为提示注解。
     pub annotations: ToolAnnotations,
+    /// 来源段（静态/动态；plan 档过滤规则与卡片兜底渲染据此分流）。
+    pub origin: ToolOrigin,
+}
+
+// ToolSpec 的构造捷径（静态段各工具与动态段共用）。
+impl ToolSpec {
+    /// 组装一份规格（字段逐项给出，origin 显式传入）。
+    pub fn build(
+        name: impl Into<String>,
+        description: impl Into<String>,
+        capability: Capability,
+        params_schema: serde_json::Value,
+        annotations: ToolAnnotations,
+        origin: ToolOrigin,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            description: description.into(),
+            capability,
+            params_schema,
+            annotations,
+            origin,
+        }
+    }
 }
 
 /// 工具结果（§3.2 ToolOutcomeJson 镜像）：一次工具调用的返回，
@@ -209,9 +246,12 @@ fn floor_char_boundary(s: &str, mut index: usize) -> usize {
     index
 }
 
-/// 工具名称与顺序钉死（§8.1：集成测试防漂移）。M1 注册表 8 个
+/// 静态段工具名称与顺序钉死（§8.1：集成测试防漂移）。M1 注册表 8 个
 /// （§8.3 P0 9 个中的模型可见子集；suggest 仅 run 尾调用不开放模型）。
-pub const TOOL_NAMES: [&str; 8] = [
+/// 08 号票改名 STATIC_TOOL_NAMES：注册表分「静态段 + 动态段（MCP）」两段，
+/// 动态段运行时可变，钉死测试改为两断言（见 mod 的 compact_test 与
+/// ipc_manifest_test）。
+pub const STATIC_TOOL_NAMES: [&str; 8] = [
     "read",
     "write",
     "edit",
@@ -222,7 +262,7 @@ pub const TOOL_NAMES: [&str; 8] = [
     "ask",
 ];
 
-/// 静态注册表（§8.1：启动时构建）。顺序与 [`TOOL_NAMES`] 一致。
+/// 静态注册表（§8.1：启动时构建）。顺序与 [`STATIC_TOOL_NAMES`] 一致。
 pub fn build_registry() -> Vec<ToolSpec> {
     vec![
         read::spec(),
@@ -236,13 +276,33 @@ pub fn build_registry() -> Vec<ToolSpec> {
     ]
 }
 
+/// 全表查询（§8.1「三处同源过滤」的查找面，08 号票）：静态段 + MCP 动态段
+/// （进程级 [`crate::mcp::tools::McpToolRegistry`] 单例快照）。动态段未装配
+/// 时等价于静态表。主循环策略门（is_interactive）、看门狗只读判定、审批门
+/// 与执行器 dispatch 都经本函数，避免各自直连 MCP 模块。
+pub fn lookup_spec(name: &str) -> Option<ToolSpec> {
+    if let Some(spec) = build_registry().into_iter().find(|s| s.name == name) {
+        return Some(spec);
+    }
+    crate::mcp::tools::McpToolRegistry::global()
+        .snapshot()
+        .into_iter()
+        .find(|s| s.name == name)
+}
+
 /// 三处同源过滤的单一实现（§8.1，FR-05-01）：按档位过滤工具表。
-/// plan 档 FileWrite/Network 不出现；其余档位全保留——
-/// NeedsApproval 的审批在门控执行，不影响工具是否暴露给模型。
+/// 08 号票增 MCP 规则（§8.5 注）：plan 档 MCP 动态工具全过滤（不出现在
+/// 工具表）；其余档位保留，能力矩阵照旧——MCP 未声明 read_only 的审批在
+/// 门控执行（§9.7），不影响是否暴露给模型。
 pub fn filter_for_tier(specs: Vec<ToolSpec>, tier: PermissionTier) -> Vec<ToolSpec> {
     specs
         .into_iter()
-        .filter(|spec| decide_gate(spec.capability, tier) != GateDecision::Filtered)
+        .filter(|spec| {
+            if tier == PermissionTier::Plan && spec.origin == ToolOrigin::Mcp {
+                return false;
+            }
+            decide_gate(spec.capability, tier) != GateDecision::Filtered
+        })
         .collect()
 }
 

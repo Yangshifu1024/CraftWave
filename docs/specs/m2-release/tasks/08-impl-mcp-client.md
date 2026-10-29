@@ -1,7 +1,7 @@
 # 实现：MCP 客户端接入（双传输、连接池、信任、管理页）
 
 Type: task
-Status: open
+Status: resolved
 
 ## 要做什么
 
@@ -48,12 +48,28 @@ Status: open
 
 ## 验收
 
-- [ ] 动态新增/输入 schema 变化不继承旧免审批许可，首次调用重新确认；仅用户确认的 read_only/always_allow 可决定权限，远端 annotations 不提升权限。
-- [ ] 已发出但结果未知的调用不自动重放；连接恢复后主代理收到“可能已执行”的明确结果，先核查再决定重试。
+- [x] 动态新增/输入 schema 变化不继承旧免审批许可，首次调用重新确认；仅用户确认的 read_only/always_allow 可决定权限，远端 annotations 不提升权限。
+  - gate 判定表 `backend/gate_test.rs::mcp_license_gate_matrix`：无许可即便 full_access 挂起；「始终允许」许可命中放行；schema 变更三元组漂移重新挂起；read_only 声明全档放行。
+  - `mcp/pool_test.rs::always_allow_auto_grant_respects_schema_changes`：always_allow=true 首次同步自动授予；schema 变更未确认（同工具不同 hash 记录在案）不自动放行。
+  - 远端 annotations 仅作元数据透传（`mcp/pool.rs::list_tools`，不参与判定）；许可三元组绑定测试 `mcp/trust_test.rs::tool_license_triple_binding`。
+- [x] 已发出但结果未知的调用不自动重放；连接恢复后主代理收到“可能已执行”的明确结果，先核查再决定重试。
+  - `mcp/pool_test.rs::result_unknown_never_replayed`：fixture 记录已执行后断连 → E_MCP_RESULT_UNKNOWN + data.resultUnknown 标记 + 计数保持 1；显式重试才第二次执行。
 
-- [ ] 全局与项目双作用域 mcp.json 加载、同名覆盖、未知字段保存不丢
-- [ ] stdio 与 streamable HTTP 各接通一个 server，工具进模型工具表且调用结果回喂
-- [ ] 未声明 read_only 的 server 调用即便 full_access 也弹确认；plan 档 MCP 工具全过滤
-- [ ] 首次连接 TOFU 三选项可用，「记住」后免问、配置指纹变更重问
-- [ ] kill server 子进程后自动重连，`mcp:status` 状态迁移全程可见
-- [ ] 管理页编辑/启停/测试连接可用；fixture 测试 + 检查链全绿
+- [x] 全局与项目双作用域 mcp.json 加载、同名覆盖、未知字段保存不丢（`mcp/config_test.rs` + `mcp/commands_test.rs` 的 round-trip 面）。
+- [x] stdio 与 streamable HTTP 各接通一个 server，工具进模型工具表且调用结果回喂（stdio = 进程内 fixture 全链 `mcp/pool_test.rs` 四例；HTTP = 本地 loopback axum + rmcp StreamableHttpService `http_transport_connects_and_lists_tools`，127.0.0.1 随机端口零外网）。
+- [x] 未声明 read_only 的 server 调用即便 full_access 也弹确认；plan 档 MCP 工具全过滤（gate 判定表 ①② + `tools_registry_test.rs` filter 规则）。
+- [x] 首次连接 TOFU 三选项可用，「记住」后免问、配置指纹变更重问（`mcp/commands_test.rs::tofu_three_paths` + `mcp/trust_test.rs::trust_store_decide_and_status` / `fingerprint_stable_and_sensitive`）。
+- [x] kill server 子进程后自动重连，`mcp:status` 状态迁移全程可见（`mcp/pool_test.rs::auto_reconnect_after_server_kill` + `connect_discover_call_and_status_events` 四态断言 + `generation_invalidates_stale_callbacks`）。
+- [x] 管理页编辑/启停/测试连接可用；fixture 测试 + 检查链全绿（`ui/src/settings/McpPage.test.tsx` 10 例：服务器行/启停/mcp:status 实时徽标/双作用域保存/JSON 校验/测试连接；cargo 362 lib + 前端 210 例全绿）。
+
+## 决议记录
+
+- **续作说明（2026-10-30）**：本票由上一代理中断遗留（工作区大量未提交改动、前端未动）。接手代理逐文件盘点后补齐：6 处 cargo warning、设计文档回写（§3.3#46 / §7.7 / §9.7 的 keyring 字样按 v2.5 废钥匙串决策改为 trust 文件存储；§3.6 补 E_MCP_DISCONNECTED / E_MCP_RESULT_UNKNOWN；§8.1 注册表两段式；§8.2 结果未知语义；§9.7 许可字段与 timeout 定案）、前端消费面全量（types.ts 再导出 18 生成物、client.ts 八命令 + mcp:status、设置页 McpPage、McpFallbackCard 兜底卡、AskPanel mcpTrust 第三形态、contract.test 断言）、以及下述两处实现语义修正。
+- **许可判定语义修正（Q44 落地定案）**：中断前实现把免审批判定写成 `server 级 always_allow && 三元组命中`——服务器配置未开 always_allow 时用户在审批面板点「始终允许」写入的许可永不生效（违背 FR-08-04「"始终允许"热更新不重启连接」）。修正为：免审批判定只看许可三元组（服务器启动指纹 + 原始工具名 + 已确认输入 schema 全等）；服务器级 `always_allow=true` 的语义改为「清单同步时自动授予当前版本许可」，且许可表存在同工具不同 hash 的未确认记录（schema 变更未经用户确认）时不自动放行——新旧两版语义共同满足 Q44「always_allow 不自动覆盖新版本」。
+- **crate 选型**：`rig-rmcp 0.45`（票面点名，对齐锁定的 rig 0.45.0，rmcp 锚定 ^3.5 防依赖树分裂）；`rmcp 3.5` 直依赖补 client + transport-child-process + transport-streamable-http-client-reqwest 三 feature（stdio 子进程与 streamable HTTP 双传输，FR-08-01）；dev-dependencies 另开 server + macros + transport-io + transport-streamable-http-server（fixture echo server 与 loopback HTTP 测试，feature unification 下 cargo build 不激活）；`reqwest 0.13 rustls`（rmcp HTTP 客户端的软依赖承载，锁 rustls 对齐无 OpenSSL 纪律）；`process-wrap 10.0`（stdio 子进程进程组/Job Object，与 rmcp 同款内核；断开/超时整树收割复用 tools/process 收割节奏）；`glob 0.3.3`（tools.allow/deny 工具名过滤）；serde_json 开 `preserve_order`（mcp.json 未知字段 flatten round-trip 保序）。
+- **TOFU 存储定案**：§9.7/§3.3#46 原文"写 keyring"按 v2.5 废钥匙串决策落 `~/.craftwave/trust/mcp.json`（LaunchTrustEntry：fingerprint/decidedAt/decision=remember|revoke）；Q44 工具级许可落 `~/.craftwave/trust/mcp-tools.json`（ToolLicenseEntry 三元组 + decidedAt）；revoke 连带撤销该服务器全部工具许可。设计文档两处 keyring 字样已回写。
+- **mcp_snapshot 补充面**：#47 逐字三字段（name/state/toolCount）之外加 scope/detail/fingerprint(前 16 hex)/trustStatus 补充面；快照语义从「池快照」扩为「配置合并视图 × 池状态 × 信任状态」（管理页完整数据面——配置里有但未连接的服务器同样成行）。
+- **前端落点偏离**：① mcp.json 草稿态放 McpPage 组件内 useState 而非 stores/settings.ts——mcp.json 不属 AppConfig（无 mcp 段），保存走独立 mcp_save_config 命令，与 saveAll 的 AppConfig 脏判定切片不同生命周期；② mcp:status 事件在 McpPage 内订阅（设置页打开期间消费）而非 App 级 event-bridge——状态徽标是设置页专属消费面；③ 兜底卡形态：assistant-ui 0.15 的 `part.toolUI` 在工具未注册时为 null（`MessagePartChildrenInner` 的 resolveToolRender 实证），Thread.tsx 据此兜底渲染 McpFallbackCard，未引入额外注册面。
+- **测试基建**：fixture 走进程内内存管道（tokio duplex）承载 rmcp 双端，字节不走真实 stdio 但握手/清单同步/断线重连语义与生产一致；`die_after_record` + `kill_server` 精确复现 Q14「记录已执行后、返回响应前断连」；HTTP 侧用 axum(0.8, dev-dep) 挂 rmcp StreamableHttpService 起 127.0.0.1 随机端口 loopback，零外网。fixture 全链测试持进程级串行锁（tokio Mutex，guard 设计为跨 await 持有）。
+- **未完成项（诚实记录）**：票面「手测验收：接真实 filesystem server 端到端读写文件」未执行——`npx @modelcontextprotocol/server-filesystem` 需从 npm 拉包（外部网络），与「外部依赖一律本地 fixture」约束冲突，留作用户手测项（管理页测试连接 + 连接后即可验）；自动化面已由进程内 fixture（stdio）与 loopback fixture（HTTP）等价覆盖。
+

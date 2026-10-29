@@ -2,13 +2,13 @@
 //! spec 完整性（名称合法字符、描述长度、schema 形态）、三处同源过滤。
 
 use craftwave_lib::safety::tier::{Capability, GateDecision, PermissionTier};
-use craftwave_lib::tools::{TOOL_NAMES, build_registry, filter_for_tier};
+use craftwave_lib::tools::{STATIC_TOOL_NAMES, build_registry, filter_for_tier};
 
 #[test]
 fn registry_names_and_order_are_pinned() {
     let registry = build_registry();
-    let names: Vec<&str> = registry.iter().map(|s| s.name).collect();
-    assert_eq!(names, TOOL_NAMES.to_vec());
+    let names: Vec<String> = registry.iter().map(|s| s.name.clone()).collect();
+    assert_eq!(names, STATIC_TOOL_NAMES.to_vec());
     // 顺序钉死（追加新工具在尾部，不重排既有顺序；suggest 仅 run 尾调用
     // 不开放模型，不在注册表——14 号票）。
     assert_eq!(
@@ -111,7 +111,7 @@ fn filter_for_tier_matches_matrix() {
 #[test]
 fn filter_never_changes_order() {
     let filtered = filter_for_tier(build_registry(), PermissionTier::ConfirmEach);
-    let names: Vec<&str> = filtered.iter().map(|s| s.name).collect();
-    assert_eq!(names, TOOL_NAMES.to_vec());
+    let names: Vec<String> = filtered.iter().map(|s| s.name.clone()).collect();
+    assert_eq!(names, STATIC_TOOL_NAMES.to_vec());
     let _ = GateDecision::Allow; // 引用完整性
 }

@@ -120,9 +120,7 @@ pub fn read_tool_path(args_json: &str) -> Option<String> {
 /// 提取见 [`read_tool_path`]）。未知工具名按非只读处理（由执行器回喂错误，
 /// 不会成为成功记录）。
 pub fn make_record(name: &str, args_json: &str, ok: bool) -> ToolRecord {
-    let read_only = crate::tools::build_registry()
-        .into_iter()
-        .find(|spec| spec.name == name)
+    let read_only = crate::tools::lookup_spec(name)
         .is_some_and(|spec| spec.capability == crate::safety::tier::Capability::ReadOnly);
     let read_path = (name == "read")
         .then(|| read_tool_path(args_json))

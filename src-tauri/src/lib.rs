@@ -23,6 +23,8 @@ use tauri_plugin_decoration::WebviewWindowExt;
 pub mod agent;
 pub mod backend;
 pub mod host;
+// MCP 客户端（08 号票，FR-08 域；与 host 同层的独立域模块，§2.2/§9.7）
+pub mod mcp;
 pub mod providers;
 pub mod safety;
 pub mod spike;
@@ -68,6 +70,14 @@ use host::commands::ui_state::{GetUiStateArgs, SetUiStateArgs};
 #[allow(unused_imports)]
 use host::commands::workspace::{
     ReadWorkspaceFileArgs, ReadWorkspaceResult, SearchWorkspacePathsArgs, WorkspacePathHit,
+};
+// MCP 八命令（08 号票，§3.3 #40–47）：契约类型与命令实现同源进宏清单
+#[allow(unused_imports)]
+use mcp::commands::{
+    McpListConfigArgs, McpListConfigResult, McpSaveConfigArgs, McpServerRefArgs,
+    McpSetLaunchTrustArgs, McpSnapshotArgs, McpSnapshotResult, McpTestArgs, McpTestResult,
+    mcp_connect, mcp_disconnect, mcp_list_config, mcp_reconnect, mcp_save_config,
+    mcp_set_launch_trust, mcp_snapshot, mcp_test,
 };
 #[allow(unused_imports)]
 use providers::types::{AppConfig, ProviderConfig};
@@ -191,6 +201,15 @@ ipc_commands! {
     host::commands::system::notification_permission_status => args: (), ret: NotificationPermissionStatus;
     host::commands::system::open_notification_settings => args: (), ret: ();
     host::commands::system::open_dir => args: OpenDirArgs, ret: ();
+    // MCP 八命令（08 号票，§3.3 #40–47 逐字）
+    mcp::commands::mcp_list_config => args: McpListConfigArgs, ret: McpListConfigResult;
+    mcp::commands::mcp_save_config => args: McpSaveConfigArgs, ret: ();
+    mcp::commands::mcp_connect => args: McpServerRefArgs, ret: ();
+    mcp::commands::mcp_disconnect => args: McpServerRefArgs, ret: ();
+    mcp::commands::mcp_reconnect => args: McpServerRefArgs, ret: ();
+    mcp::commands::mcp_test => args: McpTestArgs, ret: McpTestResult;
+    mcp::commands::mcp_set_launch_trust => args: McpSetLaunchTrustArgs, ret: ();
+    mcp::commands::mcp_snapshot => args: McpSnapshotArgs, ret: McpSnapshotResult;
     #[cfg(debug_assertions)]
     mock_chat::mock_chat_run => args: (), ret: ();
     select_dir => args: (), ret: Option<String>;

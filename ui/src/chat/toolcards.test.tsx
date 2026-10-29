@@ -14,6 +14,7 @@ import {
   EditCard,
   GrepCard,
   ListFilesCard,
+  McpFallbackCard,
   PlanCard,
   ReadCard,
   toolCardExpandedMemory,
@@ -156,6 +157,36 @@ describe("工具卡渲染", () => {
   it("ask：极简状态卡（问题本体在 AskPanel）", () => {
     render(<AskCard {...props({ title: "选方案" })} />);
     expect(screen.getByTestId("tool-card-c1").textContent).toContain("选方案");
+  });
+
+  it("MCP 兜底卡（08 号票）：工具名摘要 + 展开后参数 JSON 折叠", () => {
+    // MCP 动态工具的归一名运行时才定——兜底卡直接以 part 的 toolName 为摘要
+    render(
+      <McpFallbackCard
+        {...props({ query: "hi" }, { toolName: "server1__echo" } as Partial<PartProps>)}
+      />,
+    );
+    const card = screen.getByTestId("tool-card-c1");
+    expect(card.textContent).toContain("MCP 工具");
+    expect(card.textContent).toContain("server1__echo");
+    // 展开详情：调用参数 JSON 原文（兜底卡无专属排版，参数折叠即详情主体）
+    fireEvent.click(card.querySelector("button")!);
+    expect(card.querySelector("pre")?.textContent).toBe(JSON.stringify({ query: "hi" }));
+  });
+
+  it("MCP 兜底卡：错误态默认展开并显示失败原因", () => {
+    render(
+      <McpFallbackCard
+        {...props({}, {
+          toolName: "fs__write_file",
+          ...resultOf("E_MCP_RESULT_UNKNOWN：结果未知（可能已执行）", true),
+        } as Partial<PartProps>)}
+      />,
+    );
+    const card = screen.getByTestId("tool-card-c1");
+    expect(card.getAttribute("data-phase")).toBe("error");
+    // 错误态默认展开：失败原因无需点击即可见（Q14 结果未知的行动指引可见）
+    expect(card.textContent).toContain("E_MCP_RESULT_UNKNOWN");
   });
 
   it("result 直写：完成态摘要在详情 / isError 错误态默认展开", () => {

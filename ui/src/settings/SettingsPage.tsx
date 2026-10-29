@@ -10,7 +10,9 @@
  * 页面 JSX 手写；注册表（settings/registry.ts）只提供页序、页名与分组。
  * M1 数据面：providers / activeModelId / ui / proxy / approval / log 真实接线；
  * 03 号票补工作区与智能体页（customPrompt + 项目数据目录入口）与关于/日志页
- * 的目录入口（open_dir）；MCP / 技能 / 写入后检查三页保留导航占位，随后续票接线。
+ * 的目录入口（open_dir）；37 号票补看门狗停滞超时；08 号票补 MCP 管理页
+ * （McpPage：双作用域配置编辑 / 启停 / 测试连接 / mcp:status 状态徽标）。
+ * 技能 / 写入后检查两页保留导航占位，随后续票接线。
  */
 
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
@@ -38,6 +40,7 @@ import {
   ShieldIcon,
   ZapIcon,
 } from "@/settings/icons";
+import { McpPage } from "@/settings/McpPage";
 import { ProvidersPage } from "@/settings/ProvidersPage";
 import {
   DEFAULT_PAGE,
@@ -259,7 +262,7 @@ export function SettingsPage({
     { key: "providers", body: config ? <ProvidersPage /> : null },
     { key: "network", body: config ? <NetworkPage /> : null },
     { key: "security", body: config ? <SecurityPage /> : null },
-    { key: "mcp", body: <PlaceholderPage page="mcp" /> },
+    { key: "mcp", body: <McpPage /> },
     { key: "skills", body: <PlaceholderPage page="skills" /> },
     { key: "tools", body: <PlaceholderPage page="tools" /> },
     { key: "agent", body: config ? <AgentPage /> : null },
