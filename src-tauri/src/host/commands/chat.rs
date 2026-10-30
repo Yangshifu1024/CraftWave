@@ -2186,14 +2186,31 @@ pub async fn start_chat_core(
         }),
     );
     // 审批门装配 MCP 判定视图（08 号票：Q44 动态许可核验 + 未声明
-    // read_only 即便 full_access 也挂起，§9.7）。
-    let gate = Arc::new(
-        ApprovalGate::new(run_config.tier, handle.plan.clone()).with_mcp(Arc::new(
+    // read_only 即便 full_access 也挂起，§9.7）。围栏 AST 判定的工作区
+    // 上下文（22 号票，§8.7 四象限）：roots 与项目主目录做 canonicalize
+    // 后装配（词法与 canonical 同域比较的前提）；任一根 canonicalize
+    // 失败则不装配——围栏退化为「有写目标即 Confirm」的保守面。
+    let gate = {
+        let (gate_project_root, gate_data_root) =
+            crate::host::commands::workspace::resolve_session_roots(app, &session_id);
+        let canonical = |p: &std::path::Path| std::fs::canonicalize(p).ok();
+        let gate_ws = match (canonical(&gate_project_root), canonical(&gate_data_root)) {
+            (Some(project), Some(data)) => Some(crate::backend::gate::GateWorkspace {
+                roots: vec![project.clone(), data],
+                base: project,
+            }),
+            _ => None,
+        };
+        let mut gate = ApprovalGate::new(run_config.tier, handle.plan.clone()).with_mcp(Arc::new(
             crate::mcp::commands::McpGateAdapter {
                 host: app.mcp.clone(),
             },
-        )),
-    );
+        ));
+        if let Some(ws) = gate_ws {
+            gate = gate.with_workspace(ws);
+        }
+        Arc::new(gate)
+    };
     let events = app.events.clone();
     let session_usage = Arc::new(Mutex::new(
         app.session_usage

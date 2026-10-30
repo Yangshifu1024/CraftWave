@@ -24,6 +24,7 @@ pub mod grep;
 pub mod http_request;
 pub mod list_files;
 pub mod plan;
+pub mod postcheck;
 pub mod process;
 pub mod read;
 pub mod render_html;

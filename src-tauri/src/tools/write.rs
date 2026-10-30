@@ -5,6 +5,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::safety::tier::Capability;
+use crate::tools::postcheck::EolExpect;
 use crate::tools::{ToolAnnotations, ToolOutcome, ToolSpec, ToolsContext};
 use crate::util::errors::ToolError;
 
@@ -44,6 +45,16 @@ pub fn run(ctx: &ToolsContext, args: &WriteArgs) -> ToolOutcome {
     match atomic_write_utf8(&resolved, args.content.as_bytes()) {
         Ok(()) => {}
         Err(e) => return ToolOutcome::from(e),
+    }
+    // 写后完整性自检（22 号票）：重读比对哈希 + 严格 UTF-8（C-10）。
+    // 失败 → ok=false 回喂 E_INTERNAL（模型可据此重试或改写）。
+    if let Err(f) =
+        crate::tools::postcheck::verify_written(&resolved, args.content.as_bytes(), EolExpect::Any)
+    {
+        return ToolOutcome::failure(
+            crate::tools::postcheck::postcheck_error(&args.path, &f),
+            format!("写入完成但自检失败：{}", args.path),
+        );
     }
     ToolOutcome::success(
         json!({

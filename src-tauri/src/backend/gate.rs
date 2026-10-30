@@ -27,8 +27,10 @@
 //! 挂起之后的载荷构造与 `resolve_ask` 恢复循环在宿主命令层（commands/chat.rs）。
 
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use crate::safety::fence::ast::{self, FsCanonicalizer};
 use crate::safety::fence::{Fence, FenceVerdict};
 use crate::safety::tier::{GateDecision, PermissionTier, decide_gate};
 use crate::tools::plan::PlanState;
@@ -76,11 +78,22 @@ impl McpGateView for NoopMcpGate {
     }
 }
 
+/// 围栏 AST 判定的工作区上下文（22 号票，§8.7 四象限）：canonical 后的
+/// roots + 相对路径默认基准（项目主目录）。装配后围栏对写目标做
+/// Allow/Confirm/Block 判界；未装配时退化为「有写目标即 Confirm」。
+#[derive(Debug, Clone)]
+pub struct GateWorkspace {
+    /// canonical 后的允许根集合（项目主目录 + workspace 子目录，§9.1）。
+    pub roots: Vec<PathBuf>,
+    /// canonical 后的项目主目录（command 的 cwd 缺省基准）。
+    pub base: PathBuf,
+}
+
 /// 生产环境使用的审批门。
 pub struct ApprovalGate {
     /// 当前会话的权限档。
     tier: PermissionTier,
-    /// 命令围栏判定器（黑名单/写信号）。
+    /// 命令围栏判定器（黑名单 / AST 写目标分析，22 号票起 v0.2）。
     fence: Fence,
     /// 本 run 内已批准的（工具名, 参数 JSON）签名集（resolve_ask 放行后登记）。
     approved: Mutex<HashSet<(String, String)>>,
@@ -88,6 +101,8 @@ pub struct ApprovalGate {
     plan: Arc<Mutex<Option<PlanState>>>,
     /// MCP 判定视图（None = 未装配 MCP，全部走静态路径）。
     mcp: Option<Arc<dyn McpGateView>>,
+    /// 围栏 AST 判定的工作区上下文（None = 未装配，退化为有写目标即 Confirm）。
+    workspace: Option<GateWorkspace>,
 }
 
 /// ApprovalGate 的登记与辅助判定。
@@ -101,12 +116,21 @@ impl ApprovalGate {
             approved: Mutex::new(HashSet::new()),
             plan,
             mcp: None,
+            workspace: None,
         }
     }
 
     /// 装配 MCP 判定视图（08 号票：MCP 分支判定与 Q44 许可核验）。
     pub fn with_mcp(mut self, mcp: Arc<dyn McpGateView>) -> Self {
         self.mcp = Some(mcp);
+        self
+    }
+
+    /// 装配围栏 AST 判定的工作区上下文（22 号票）：roots/base 须传
+    /// canonical 后路径（词法与 canonical 同域比较的前提）；装配失败
+    /// （canonicalize 失败）不调用本方法即可，围栏自动走保守退化面。
+    pub fn with_workspace(mut self, workspace: GateWorkspace) -> Self {
+        self.workspace = Some(workspace);
         self
     }
 
@@ -125,6 +149,52 @@ impl ApprovalGate {
             .get("command")?
             .as_str()
             .map(str::to_owned)
+    }
+
+    /// 围栏判定的工作区解析基准：command 的 cwd（roots 内相对/绝对路径）
+    /// 相对项目主目录解析；未给 cwd 或解析异常时用项目主目录（cwd 的
+    /// 存在性与归属校验在执行层 command::prepare 做，门控层宽松取基准）。
+    fn judge_base(&self, args_json: &str) -> PathBuf {
+        let default = self
+            .workspace
+            .as_ref()
+            .map(|ws| ws.base.clone())
+            .unwrap_or_default();
+        let cwd = serde_json::from_str::<serde_json::Value>(args_json)
+            .ok()
+            .and_then(|v| v.get("cwd").and_then(|c| c.as_str()).map(str::to_owned));
+        match cwd {
+            Some(cwd) if !default.as_os_str().is_empty() => {
+                let p = std::path::Path::new(&cwd);
+                if p.is_absolute() {
+                    p.to_path_buf()
+                } else {
+                    default.join(p)
+                }
+            }
+            _ => default,
+        }
+    }
+
+    /// 围栏判定（22 号票：AST 写目标分析 + 四象限）。
+    fn fence_judge(&self, command: &str, args_json: &str) -> crate::safety::fence::FenceOutcome {
+        let shell = ast::Shell::host_default();
+        match &self.workspace {
+            Some(ws) => {
+                let base = self.judge_base(args_json);
+                let workspace = ast::Workspace {
+                    roots: &ws.roots,
+                    base: &base,
+                    fs: &FsCanonicalizer,
+                };
+                self.fence
+                    .judge_in_workspace(command, self.tier, shell, Some(&workspace))
+            }
+            // 未装配工作区上下文：退化语义——有写目标即 Confirm（保守）。
+            None => self
+                .fence
+                .judge_in_workspace(command, self.tier, shell, None),
+        }
     }
 
     /// 计划是否"已过期"：存在已批准的计划且条目全部完成——此时继续写文件
@@ -155,20 +225,28 @@ impl ToolGate for ApprovalGate {
             // 未知工具：放行给 executor 回喂 E_INVALID_ARG（不在这里拦截）
             return GateVerdict::Allow;
         };
-        // (2) 围栏（command 专属，§5.4 ③）
+        // (2) 围栏（command 专属，§5.4 ③；22 号票起 AST 写目标分析：
+        // Block 硬拦 / Confirm 挂起并带具体原因 / Allow 落矩阵合成）
         if name == "command"
             && let Some(command) = Self::command_of(args_json)
         {
-            match self.fence.judge(&command, self.tier) {
+            let outcome = self.fence_judge(&command, args_json);
+            match outcome.verdict {
                 FenceVerdict::Block => {
                     return GateVerdict::Blocked {
                         code: E_FENCE_BLOCKED,
-                        message: format!("围栏拦截（灾难级命令，任何档位不豁免）：{command}"),
+                        message: outcome
+                            .reason
+                            .unwrap_or_else(|| format!("围栏拦截（灾难级命令）：{command}")),
                     };
                 }
                 FenceVerdict::Confirm => {
                     return GateVerdict::Suspend {
-                        fence_reason: Some("命令含写信号，需确认".to_owned()),
+                        fence_reason: Some(
+                            outcome
+                                .reason
+                                .unwrap_or_else(|| "命令含写目标，需确认".to_owned()),
+                        ),
                     };
                 }
                 FenceVerdict::Allow => {}

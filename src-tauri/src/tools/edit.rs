@@ -168,6 +168,18 @@ pub fn run(ctx: &ToolsContext, args: &EditArgs) -> ToolOutcome {
     if let Err(e) = atomic_write_utf8(&resolved, final_text.as_bytes()) {
         return ToolOutcome::from(e);
     }
+    // 写后完整性自检（22 号票）：重读比对哈希 + 严格 UTF-8 + EOL 保持实证
+    // （§8.4 步骤 6 口径）。失败 → ok=false 回喂 E_INTERNAL。
+    if let Err(f) = crate::tools::postcheck::verify_written(
+        &resolved,
+        final_text.as_bytes(),
+        crate::tools::postcheck::EolExpect::Preserve(has_crlf),
+    ) {
+        return ToolOutcome::failure(
+            crate::tools::postcheck::postcheck_error(&args.path, &f),
+            format!("编辑已落盘但自检失败：{}", args.path),
+        );
+    }
 
     let (add, del) = line_changes(&old_norm, &new_norm);
     let level = match &m {
@@ -377,22 +389,43 @@ pub(crate) fn apply_edit_group(
     };
     match commit() {
         Ok(()) => {
-            for slot in accepted {
-                let mut data = json!({
-                    "path": path,
-                    "lineChanges": { "add": slot.add, "del": slot.del },
-                    "version": final_version,
-                    "matchLevel": slot.level,
-                });
-                let mut summary = format!("编辑 {}：+{}/-{} 行", path, slot.add, slot.del);
-                if slot.stale {
-                    data["warning"] = json!(format!(
-                        "version 与当前文件不符（实际 {actual_version}），因 oldText 可唯一匹配而降级执行"
-                    ));
-                    summary.push_str("（版本过期已降级执行）");
+            // 写后完整性自检（22 号票）：合并提交是一次 rename 生效，
+            // 校验挂在其出口——重读比对哈希 + 严格 UTF-8 + EOL 保持。
+            // 失败 → 整组接受成员以失败收口回喂（E_INTERNAL，含阶段）。
+            let postcheck = crate::tools::postcheck::verify_written(
+                &resolved,
+                &final_bytes,
+                crate::tools::postcheck::EolExpect::Preserve(has_crlf),
+            )
+            .err()
+            .map(|f| crate::tools::postcheck::postcheck_error(path, &f));
+            match postcheck {
+                None => {
+                    for slot in accepted {
+                        let mut data = json!({
+                            "path": path,
+                            "lineChanges": { "add": slot.add, "del": slot.del },
+                            "version": final_version,
+                            "matchLevel": slot.level,
+                        });
+                        let mut summary = format!("编辑 {}：+{}/-{} 行", path, slot.add, slot.del);
+                        if slot.stale {
+                            data["warning"] = json!(format!(
+                                "version 与当前文件不符（实际 {actual_version}），因 oldText 可唯一匹配而降级执行"
+                            ));
+                            summary.push_str("（版本过期已降级执行）");
+                        }
+                        let outcome = ToolOutcome::success(data.clone(), summary).with_detail(data);
+                        results[slot.index] = Some(outcome);
+                    }
                 }
-                let outcome = ToolOutcome::success(data.clone(), summary).with_detail(data);
-                results[slot.index] = Some(outcome);
+                Some(err) => {
+                    let summary = format!("编辑已落盘但自检失败（{}）：{}", path, err.message);
+                    let outcome = ToolOutcome::failure(err, summary);
+                    for slot in accepted {
+                        results[slot.index] = Some(outcome.clone());
+                    }
+                }
             }
         }
         Err(e) => {

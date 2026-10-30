@@ -366,3 +366,64 @@ fn group_line_changes_are_per_member() {
         "x\ny\nz\nd\n"
     );
 }
+
+// —— 22 号票：写后完整性自检（合并提交出口 + 单次 edit 出口）——
+
+// 故障注入：落盘闭包写入「被篡改的内容」（与预期 final_bytes 不一致，
+// 等价磁盘静默损坏场景），写后自检应在哈希阶段拦下，整组接受成员以
+// 失败收口回喂 E_INTERNAL（错误回喂含路径与校验阶段）。
+#[test]
+fn group_postcheck_injection_fails_with_internal_error() {
+    let ws = TestWorkspace::new();
+    write_file(&ws, "g.txt", "alpha\nbeta\ngamma\n");
+    let outcomes = apply_edit_group(
+        &ws.ctx(),
+        "g.txt",
+        &[args("g.txt", "beta", "BETA")],
+        |target, _expected| crate::tools::write::atomic_write_utf8(target, b"tampered"),
+    );
+    assert_eq!(outcomes.len(), 1);
+    assert!(!outcomes[0].ok, "篡改写入应被自检拦下：{:?}", outcomes[0]);
+    let err = outcomes[0].error.as_ref().unwrap();
+    assert_eq!(err.code, "E_INTERNAL", "错误码用 E_INTERNAL（§3.6 兜底）");
+    assert!(
+        err.message.contains("自检失败"),
+        "message 指明自检失败：{}",
+        err.message
+    );
+    assert!(
+        err.message.contains("g.txt"),
+        "message 含路径：{}",
+        err.message
+    );
+    assert!(
+        err.message.contains("哈希"),
+        "message 含校验阶段：{}",
+        err.message
+    );
+}
+
+// 正常路径：合并提交出口的自检对 CRLF 文件通过（EOL 保持实证不误伤）；
+// 单次 edit（run）的 CRLF 写回同样过自检（行为面回归）。
+#[test]
+fn postcheck_passes_normal_and_crlf_edits() {
+    let ws = TestWorkspace::new();
+    // 合并提交 + LF 文件。
+    write_file(&ws, "g.txt", "alpha\nbeta\n");
+    let outcomes = apply_edit_group(
+        &ws.ctx(),
+        "g.txt",
+        &[args("g.txt", "alpha", "ALPHA")],
+        crate::tools::write::atomic_write_utf8,
+    );
+    assert!(outcomes[0].ok, "LF 正常合并应过自检：{:?}", outcomes[0]);
+    // CRLF 文件的单次 edit：写回保持 CRLF，自检通过。
+    write_file(&ws, "crlf.txt", "line one\r\nline two\r\n");
+    let outcome = run(&ws.ctx(), &args("crlf.txt", "line one", "LINE ONE"));
+    assert!(outcome.ok, "CRLF 编辑应过自检：{outcome:?}");
+    assert_eq!(
+        std::fs::read(ws.project_file("crlf.txt")).unwrap(),
+        b"LINE ONE\r\nline two\r\n".to_vec(),
+        "EOL 保持不被自检破坏"
+    );
+}

@@ -135,6 +135,85 @@ fn fence_blacklist_blocks_all_tiers() {
     }
 }
 
+/// 22 号票：装配工作区上下文后，围栏对写目标做 §8.7 四象限判定——
+/// roots 内写 fence Allow（落矩阵合成，挂起无围栏原因）；symlink 逃逸、
+/// 变量写路径挂起并带具体原因；界外删除硬拦 E_FENCE_BLOCKED。
+#[cfg(unix)]
+#[test]
+fn fence_workspace_quadrant_gate() {
+    use crate::backend::gate::GateWorkspace;
+
+    let dir = tempfile::tempdir().expect("临时目录");
+    // root 与界外目录做兄弟（outside 必须在 root 之外），root 用 canonical
+    // 后路径（macOS /var → /private/var symlink 语义，与生产 PathGuard
+    // 装配同口径），root 内建逃逸 symlink。
+    let root_dir = dir.path().join("root");
+    let outside = dir.path().join("outside");
+    std::fs::create_dir_all(&root_dir).expect("建 root");
+    std::fs::create_dir_all(&outside).expect("建界外目录");
+    let root = std::fs::canonicalize(&root_dir).expect("root canonicalize");
+    std::os::unix::fs::symlink(&outside, root.join("link")).expect("建 symlink");
+    let gate = ApprovalGate::new(PermissionTier::AutoEdit, Arc::new(Mutex::new(None)))
+        .with_workspace(GateWorkspace {
+            roots: vec![root.clone()],
+            base: root.clone(),
+        });
+
+    // roots 内写：fence Allow → 落矩阵合成（Network@auto_edit 审批，无围栏原因）。
+    match gate.judge("command", &command_args("echo done > build.log")) {
+        GateVerdict::Suspend { fence_reason } => {
+            assert!(
+                fence_reason.is_none(),
+                "roots 内写 fence Allow，原因应为 None（纯矩阵审批）"
+            )
+        }
+        other => panic!("roots 内写应走矩阵挂起：{other:?}"),
+    }
+
+    // symlink 穿越界外：挂起并带具体原因。
+    match gate.judge("command", &command_args("echo x > link/evil.txt")) {
+        GateVerdict::Suspend { fence_reason } => {
+            let reason = fence_reason.expect("symlink 逃逸应带原因");
+            assert!(reason.contains("symlink 逃逸"), "原因应指明逃逸：{reason}");
+        }
+        other => panic!("symlink 逃逸应挂起：{other:?}"),
+    }
+
+    // 变量拼接写路径：挂起并带「未解析变量」原因（字面量掩码）。
+    match gate.judge("command", &command_args("echo x > $HOME/evil.txt")) {
+        GateVerdict::Suspend { fence_reason } => {
+            let reason = fence_reason.expect("变量写路径应带原因");
+            assert!(reason.contains("未解析变量"), "原因应指明变量：{reason}");
+        }
+        other => panic!("变量写路径应挂起：{other:?}"),
+    }
+
+    // 界外删除：E_FENCE_BLOCKED 硬拦（删除类越界直接 Block）。
+    let outside_file = outside.join("keep.txt");
+    match gate.judge(
+        "command",
+        &command_args(&format!("rm {}", outside_file.display())),
+    ) {
+        GateVerdict::Blocked { code, message } => {
+            assert_eq!(code, "E_FENCE_BLOCKED");
+            assert!(
+                message.contains("越出工作区"),
+                "硬拦信息应指明越界：{message}"
+            );
+        }
+        other => panic!("界外删除应硬拦：{other:?}"),
+    }
+
+    // 解析失败 fail-closed：畸形命令挂起并带保守原因（不 fail-open）。
+    match gate.judge("command", &command_args("echo \"unterminated")) {
+        GateVerdict::Suspend { fence_reason } => {
+            let reason = fence_reason.expect("解析失败应带原因");
+            assert!(reason.contains("解析失败"), "原因应指明解析失败：{reason}");
+        }
+        other => panic!("解析失败应保守挂起：{other:?}"),
+    }
+}
+
 /// 断言含写信号的命令被挂起，且携带围栏原因（界面卡片展示用）。
 #[test]
 fn fence_write_signal_suspend_with_reason() {

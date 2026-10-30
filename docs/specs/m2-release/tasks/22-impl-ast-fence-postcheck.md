@@ -1,7 +1,7 @@
 # 实现：AST 命令围栏与写后检查（FR-05-05 P1 + write/edit 完整性自检）
 
 Type: task
-Status: open
+Status: resolved
 
 ## 要做什么
 
@@ -57,8 +57,19 @@ FR-05-05 原文：P1：tree-sitter Bash/PowerShell AST 写目标分析 + 字面�
 
 ## 验收
 
-- [ ] 绕过向量测试集（变量拼接写、symlink 穿越界外、heredoc 重定向）全拒或正确降审批
-- [ ] 引号内的 `>`/`|` 不再触发 Confirm（v0.1 已知误拦消除）
-- [ ] 构造 AST 解析失败路径，行为为 Confirm（fail-closed 实测），无 fail-open
-- [ ] write/edit 落盘后完整性自检生效（故障注入产出错误回喂）
-- [ ] Windows 围栏行为不劣化于 v0.1（grammar 降级时词法分支兜底）
+- [x] 绕过向量测试集（变量拼接写、symlink 穿越界外、heredoc 重定向）全拒或正确降审批——`ast_test::bypass_vectors_reduce_conservatively`：`echo x > $HOME/evil.txt` → Confirm（原因「未解析变量」）、`echo x > link/evil.txt`（link 指向界外）→ Confirm（原因「symlink 逃逸」）、`cat <<EOF > out.txt` heredoc 目标提取成功并按四象限判定（roots 内 Allow / 界外 Confirm）
+- [x] 引号内的 `>`/`|` 不再触发 Confirm（v0.1 已知误拦消除）——`fence_test::quoted_pipe_and_redirect_are_not_write_signals`（`grep "a|b" file` @ plan → Allow、`echo "hello > world" | grep x` → Allow）+ `ast_test::quoted_redirect_and_pipe_are_not_targets`
+- [x] 构造 AST 解析失败路径，行为为 Confirm（fail-closed 实测），无 fail-open——`ast_test::malformed_and_deeply_nested_fail_closed`（未闭合引号 / 80 层嵌套超限 → Failed）+ `unix_fs_tests::parse_failure_is_fail_closed_not_open`（gate 面挂起且原因「解析失败」）
+- [x] write/edit 落盘后完整性自检生效（故障注入产出错误回喂）——`tools/postcheck_test` 6 例（重读不一致 → 哈希阶段、二进制 → UTF-8 阶段、CRLF 裸 LF / LF 引入 CRLF → EOL 阶段、错误构造含路径与阶段）+ `edit_test::group_postcheck_injection_fails_with_internal_error`（合并提交出口注入篡改落盘 → 整组 ok=false 回喂 E_INTERNAL 含阶段）
+- [x] Windows 围栏行为不劣化于 v0.1（grammar 降级时词法分支兜底）——spike 结论 PowerShell grammar 可用，**未降级**，Windows 同走 AST：`ast_test::powershell_redirect_and_cmdlets` 9 例覆盖重定向/Set-Content/Remove-Item/Copy-Item/Tee-Object/流合并 2>&1/变量掩码；安装类词法信号跨平台保留。诚实注记：Windows 真机端到端实跑（powershell.exe 实际执行路径）无法在 macOS 开发机验证，判定面由纯内存解析单测保证，真机行为归用户验收面
+
+## 决议记录
+
+1. **PowerShell grammar spike（票面点名调研项）**：`tree-sitter-powershell 0.26.6`（Airbus CERT 维护，crates.io 下载 488 万，2026-10-28 仍发版更新）可用且节点面齐全（pipeline/command/redirection/redirected_file_name）——**不触发降级路径**，Windows 分支同样走 AST；已回写 §8.7 落地注记与变更记录 v2.28。选型组合：`tree-sitter 0.27.1` runtime + `tree-sitter-bash 0.25.1` + `tree-sitter-powershell 0.26.6`（两个 grammar crate 均经 `tree-sitter-language` 提供语言静态量、C 源码随 crate 经 cc 静态编译，零系统依赖；新增下载 5 包）。
+2. **勘误回写（票面第 4 点）**：设计文档 §8.7 末段 FR-04-06（用户自定义检查命令）标注已由【M2】修订为【M3】，与 map.md「PRD P2 全量」对齐；M2 实际交付内置写后完整性自检（`tools/postcheck.rs`：重读 → sha256 → 严格 UTF-8 → EOL 保持，失败 E_INTERNAL ok=false 回喂）。落地通道注记：write/edit 的工具面落盘通道是 `tools/write.rs::atomic_write_utf8`（util/atomic.rs 的 `write_atomic` 为存储面通道），校验挂在工具面通道的调用出口（write::run / edit::run / apply_edit_group 合并提交出口三处）。
+3. **安装类命令保留词法信号**：npm/pnpm/yarn/pip/make/cargo（build/install）会写工作区文件（node_modules/target 等）但无 shell 级重定向语法，§8.7 AST 写目标清单覆盖不到——保留 v0.1 词法信号（`WRITE_SIGNALS` 正则集语义收窄为安装类）防判定放松，既有测试 `write_signals_require_confirm_outside_plan` 零回归。
+4. **fence v0.1 测试的预期语义更新**：`quoted_pipe_is_split_conservatively` 原断言「引号内 `|` 误拦 Confirm」是 v0.1 词法局限的钉子，本票按验收 2 消除该误拦，测试改写为 `quoted_pipe_and_redirect_are_not_write_signals`（断言 Allow）——属票面明文的预期行为变化，非回归；黑名单/plan 白名单/fail-closed 测试全部原样保持绿。
+5. **git_classify 只读表扩展**：票面表格列 status/diff/log/show，实现另加 rev-parse/blame/describe/shortlog/ls-files/cat-file/ls-tree/reflog 八个客观只读子命令（26 号票策略开关消费的表完备性；plan 档白名单不受影响，仍只认 status/diff/log/show 四个）；未登记子命令保守归 Write，非 git 输入保守归 Write。
+6. **故障注入的诚实边界**：`write::run`/`edit::run` 无落盘闭包注入点，故障注入在两级覆盖——`verify_written` 单元注入（重读不一致/CRLF 破坏/二进制，`tools/postcheck_test`）与 `apply_edit_group` 写闭包注入（篡改落盘 → 整组 E_INTERNAL 回喂，`edit_test`）；真实磁盘级故障时序（坏块/杀毒篡改窗口）不可在单测稳定复现，未做。
+7. **cwd 基准的宽松解析**：审批门对 command 的 cwd 只做「相对项目主目录拼接」的基准解析（存在性/归属校验在执行层 command::prepare），解析异常回退项目主目录——不影响拦截方向（cwd 指向界外时由执行层 safe_join 拒绝）。
+8. **接缝定形（23/26/36 号票）**：`WriteTarget`/`parse_command`（23 号票内部状态保护消费目标路径列表做禁区命中）、`git_classify`（26 号票策略开关）、`TargetVerdict.reason` 分类文案（36 号票审计区分「必须人工确认」与灰区定性依据——未提取到目标不等于证明只读，灰区不放行，36 未完成前维持保守审批）。

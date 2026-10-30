@@ -152,7 +152,9 @@ fn block_beats_everything_even_in_pipe_combination() {
 }
 
 // 断言：规则集编译失败（人为置 None）时判定恒 Confirm，
-// 绝不因内部错误而放行（fail-closed）。
+// 绝不因内部错误而放行（fail-closed）。write_signals 字段语义自 22 号票
+// 起收窄为「安装类命令」词法信号（重定向/tee/sed 已由 AST 接管），
+// None → 恒 Confirm 的 fail-closed 语义不变。
 #[test]
 fn fail_closed_when_rules_fail_to_compile() {
     // 构造编译必失败的规则集，验证恒 Confirm（不 fail-open）。
@@ -170,13 +172,30 @@ fn fail_closed_when_rules_fail_to_compile() {
     );
 }
 
-// 断言：词法分段不解析引号——引号内的 `|` 也被当作管道切段，
-// 导致不在白名单而 Confirm（宁可误拦不可误放）。
+// 断言（22 号票验收 2）：AST 升级后引号内的 `|` 不再被当作管道切段、
+// 引号内的 `>` 不再被当作重定向——v0.1 的已知误拦消除。
 #[test]
-fn quoted_pipe_is_split_conservatively() {
-    // 词法级不解析引号：引号内 `|` 也切段，段不在白名单 → Confirm（误拦方向）。
+fn quoted_pipe_and_redirect_are_not_write_signals() {
+    // plan 档：grep 是只读白名单命令，引号内容不参与切段 → Allow。
     assert_eq!(
         judge("grep \"a|b\" file", PermissionTier::Plan),
-        FenceVerdict::Confirm
+        FenceVerdict::Allow
     );
+    // 非 plan 档：引号内 `>`/`|` 不是语法层面的重定向/管道 → Allow。
+    for tier in [
+        PermissionTier::ConfirmEach,
+        PermissionTier::AutoEdit,
+        PermissionTier::FullAccess,
+    ] {
+        assert_eq!(
+            judge("grep \"a|b\" file", tier),
+            FenceVerdict::Allow,
+            "引号内管道字符不应触发写信号"
+        );
+        assert_eq!(
+            judge("echo \"hello > world\" | grep x", tier),
+            FenceVerdict::Allow,
+            "引号内重定向符号不应触发写信号（管道本身无写目标）"
+        );
+    }
 }
