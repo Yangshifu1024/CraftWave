@@ -55,6 +55,40 @@ fn send_text_run(sink: &mut PersistingSink) {
     });
 }
 
+/// run 终态 index upsert 不得清空既有外部目录授权（24 号票语义：授权
+/// 跨 run 生效；27 号票收尾核实并修复的回归）。
+#[test]
+fn run_end_preserves_authorized_external_dirs() {
+    let (store, mut sink, _dir) = recorder();
+    // 预置会话（run 开始前 index 已有授权记录，模拟 24 号票授权后的会话）
+    store
+        .index()
+        .upsert(crate::storage::SessionMeta {
+            id: "s1".to_string(),
+            project_id: None,
+            title: "有授权的会话".to_string(),
+            created_at: 1,
+            updated_at: 1,
+            revision: 1,
+            message_count: 0,
+            total_tokens: 0,
+            authorized_external_dirs: vec!["/tmp/外部目录".to_string()],
+        })
+        .unwrap();
+    send_text_run(&mut sink);
+    let meta = store
+        .index()
+        .list()
+        .into_iter()
+        .find(|m| m.id == "s1")
+        .unwrap();
+    assert_eq!(
+        meta.authorized_external_dirs,
+        vec!["/tmp/外部目录".to_string()],
+        "run 终态 upsert 清空了外部目录授权"
+    );
+}
+
 /// 纯文本 run：落盘产物为一条文本条目 + runMarker，且 index 建档
 /// （用量为四项之和、条目数与修订号与史册一致）。
 #[test]

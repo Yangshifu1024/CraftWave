@@ -347,7 +347,10 @@ impl RunRecorder {
                 revision: self.last_revision.max(prior.revision),
                 message_count: self.last_message_count.max(prior.message_count),
                 total_tokens: prior.total_tokens + run_tokens,
-                authorized_external_dirs: Vec::new(),
+                // 外部目录授权跨 run 生效（24 号票 §9.9）：run 终态 upsert
+                // 只推进用量/条目/修订号，不清既有授权（曾误写空数组的
+                // 回归由 run_persistence_test 钉住）。
+                authorized_external_dirs: prior.authorized_external_dirs.clone(),
             },
             None => SessionMeta {
                 id: self.session_id.clone(),
