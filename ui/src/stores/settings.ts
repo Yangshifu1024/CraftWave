@@ -28,6 +28,8 @@ export const DEFAULT_CONFIG: AppConfig = {
   tools: { maxParallel: 4 },
   watchdog: { stallTimeoutSecs: 300 },
   agent: { maxConcurrentSubagents: 4 },
+  // 网络工具 SSRF 防护（12 号票，§3.2 network 组）：缺省拒绝私网访问
+  network: { allowPrivateNetwork: false },
 };
 
 /** 设置状态仓库的形状：草稿/基线双份 + 读写动作（说明见各字段行内注释）。 */

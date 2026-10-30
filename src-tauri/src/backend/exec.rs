@@ -682,7 +682,7 @@ impl CancellableExecutor for ToolsetExecutor {
                         self.persist_outcome(call_id, &outcome);
                         return completed_of(outcome);
                     };
-                    let execution = spawner.spawn(args_json, token).await;                    // 委派结果边车（卡片恢复面：成功带汇报摘要，失败带错误面）
+                    let execution = spawner.spawn(args_json, token).await; // 委派结果边车（卡片恢复面：成功带汇报摘要，失败带错误面）
                     if let ToolExecution::Completed {
                         ok,
                         ui_summary,

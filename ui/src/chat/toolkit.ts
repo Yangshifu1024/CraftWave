@@ -201,8 +201,7 @@ export const CW_TOOL_PARAMETERS: Record<string, JSONSchema7> = {
       format: {
         type: "string",
         enum: ["readability", "raw"],
-        description:
-          "输出模式：readability=正文 Markdown（默认）；raw=清洗后的原始 HTML",
+        description: "输出模式：readability=正文 Markdown（默认）；raw=清洗后的原始 HTML",
       },
     },
     required: ["url"],
@@ -222,8 +221,7 @@ export const CW_TOOL_PARAMETERS: Record<string, JSONSchema7> = {
       headers: {
         type: "object",
         additionalProperties: { type: "string" },
-        description:
-          "自定义请求头（跨源重定向时 Authorization/Cookie 等敏感头自动剥除）",
+        description: "自定义请求头（跨源重定向时 Authorization/Cookie 等敏感头自动剥除）",
       },
       body: { type: "string", description: "请求体文本（GET/HEAD 忽略）" },
     },

@@ -30,9 +30,7 @@ fn no_throttle() -> HostThrottle {
 }
 
 /// 起本地 axum fixture（127.0.0.1 随机端口）。
-async fn spawn_fixture(
-    routes: axum::Router,
-) -> std::net::SocketAddr {
+async fn spawn_fixture(routes: axum::Router) -> std::net::SocketAddr {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("绑定本地回环端口");
@@ -93,7 +91,8 @@ async fn get_round_trips_status_headers_and_body() {
 async fn post_carries_body_and_custom_headers() {
     // POST 回显：服务端断言收到的 method/body/自定义头并回显
     use axum::http::HeaderMap as AxumHeaders;
-    let seen: std::sync::Arc<std::sync::Mutex<Option<(String, String, String)>>> = Default::default();
+    let seen: std::sync::Arc<std::sync::Mutex<Option<(String, String, String)>>> =
+        Default::default();
     let capture = seen.clone();
     let app = axum::Router::new().route(
         "/echo",
@@ -184,7 +183,7 @@ fn method_whitelist_rejects_others() {
             .unwrap()
             .block_on(async {
                 let dir = tempfile::tempdir().unwrap();
-                let outcome = run(
+                run(
                     &fixture_ctx(&dir),
                     &no_throttle(),
                     &HttpRequestArgs {
@@ -194,8 +193,7 @@ fn method_whitelist_rejects_others() {
                         body: None,
                     },
                 )
-                .await;
-                outcome
+                .await
             });
         assert!(!outcome.ok, "方法 {method:?} 应拒绝");
         assert_eq!(outcome.error.expect("error").code, "E_INVALID_ARG");
@@ -228,7 +226,10 @@ async fn invalid_header_name_or_value_rejected() {
         &HttpRequestArgs {
             method: "GET".to_owned(),
             url: "http://127.0.0.1:1/".to_owned(),
-            headers: Some(BTreeMap::from([("x-a".to_owned(), "v\ninjected".to_owned())])),
+            headers: Some(BTreeMap::from([(
+                "x-a".to_owned(),
+                "v\ninjected".to_owned(),
+            )])),
             body: None,
         },
     )

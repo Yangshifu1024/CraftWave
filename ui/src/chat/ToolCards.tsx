@@ -656,9 +656,7 @@ export function WebFetchCard(props: ToolCallMessagePartProps<CardArgs, unknown>)
       runningLabel="正在抓取网页"
       summary={str(args, "url")}
     >
-      {title !== null && (
-        <p className="text-ui-sm font-medium text-[var(--foreground)]">{title}</p>
-      )}
+      {title !== null && <p className="text-ui-sm font-medium text-[var(--foreground)]">{title}</p>}
       {length !== undefined && (
         <p className="text-ui-sm text-[var(--muted-foreground)]">
           正文 {length} 字符{truncated ? "（超长已截断）" : ""}
@@ -666,9 +664,7 @@ export function WebFetchCard(props: ToolCallMessagePartProps<CardArgs, unknown>)
       )}
       {preview !== null && (
         <details>
-          <summary className="cursor-pointer text-[var(--muted-foreground)]">
-            正文预览
-          </summary>
+          <summary className="cursor-pointer text-[var(--muted-foreground)]">正文预览</summary>
           <div className="mt-1 max-h-60 overflow-auto rounded border border-[var(--border)] p-2">
             <Markdown>{preview}</Markdown>
           </div>
@@ -758,9 +754,7 @@ export function HttpRequestCard(props: ToolCallMessagePartProps<CardArgs, unknow
         </details>
       )}
       {spillPath !== null && (
-        <p className="text-ui-sm text-[var(--muted-foreground)]">
-          全量响应体：{spillPath}
-        </p>
+        <p className="text-ui-sm text-[var(--muted-foreground)]">全量响应体：{spillPath}</p>
       )}
     </ToolCardShell>
   );

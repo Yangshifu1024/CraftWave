@@ -3,6 +3,7 @@ import type { AgentConfig } from "./AgentConfig";
 import type { ApprovalConfig } from "./ApprovalConfig";
 import type { CompactionConfig } from "./CompactionConfig";
 import type { LogConfig } from "./LogConfig";
+import type { NetworkConfig } from "./NetworkConfig";
 import type { NotificationConfig } from "./NotificationConfig";
 import type { ProviderConfig } from "./ProviderConfig";
 import type { ProxyConfig } from "./ProxyConfig";
@@ -63,4 +64,9 @@ tools: ToolsConfig,
  * 监督看门狗（FR-03-07，37 号票；缺省值经 Default：停滞超时 300 秒。
  * 旧配置无该组时 serde default 回填默认值）。
  */
-watchdog: WatchdogConfig, };
+watchdog: WatchdogConfig, 
+/**
+ * 网络工具 SSRF 防护（FR-05-07/§9.2，12 号票；缺省值经 Default：
+ * 拒绝私网访问。旧配置无该组时 serde default 回填）。
+ */
+network: NetworkConfig, };

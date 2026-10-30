@@ -92,6 +92,7 @@ export * from "./generated/MessageEntry";
 export * from "./generated/MessageRole";
 export * from "./generated/MessageStatus";
 export * from "./generated/MetaEntry";
+export * from "./generated/NetworkConfig";
 export * from "./generated/NewProjectInput";
 export * from "./generated/NotificationConfig";
 export * from "./generated/NotificationPermissionStatus";

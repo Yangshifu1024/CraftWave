@@ -12,21 +12,19 @@
 //! 已知取舍（票面边界）：无 headless 浏览器，JS 渲染的页面只能拿到
 //! raw HTML 骨架；正文提取质量以静态 HTML 为限。
 
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
-use crate::safety::ssrf::{
-    FetchRequest, HostThrottle, SsrfPolicy, fetch, build_client,
-};
+use crate::safety::ssrf::{FetchRequest, HostThrottle, SsrfPolicy, build_client, fetch};
 use crate::util::errors::ToolError;
 
 use super::ToolAnnotations;
-use super::ToolOutcome;
 use super::ToolOrigin;
+use super::ToolOutcome;
 use super::ToolSpec;
 
 /// readability 模式正文的额外保护上限（1MiB）：正常文章在几 KB～几十 KB
@@ -127,9 +125,16 @@ pub async fn execute(
     match format {
         WebFetchFormat::Raw => {
             // 清洗：去控制字符（NUL 等），保留原始 HTML 结构
-            let cleaned: String = html.chars().filter(|c| !c.is_control() || *c == '\n' || *c == '\t').collect();
+            let cleaned: String = html
+                .chars()
+                .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
+                .collect();
             let truncated = cleaned.len() > super::COMPACT_HEAD_BYTES + super::COMPACT_TAIL_BYTES;
-            let content = super::truncate_middle(&cleaned, super::COMPACT_HEAD_BYTES, super::COMPACT_TAIL_BYTES);
+            let content = super::truncate_middle(
+                &cleaned,
+                super::COMPACT_HEAD_BYTES,
+                super::COMPACT_TAIL_BYTES,
+            );
             FetchExit::Done(Box::new(ToolOutcome::success(
                 serde_json::json!({
                     "url": response.url.as_str(),
@@ -168,7 +173,11 @@ pub async fn execute(
             let (title, content, full_length) = extracted;
             let truncated = content.len() > READABILITY_CONTENT_LIMIT;
             let content = if truncated {
-                super::truncate_middle(&content, super::COMPACT_HEAD_BYTES, super::COMPACT_TAIL_BYTES)
+                super::truncate_middle(
+                    &content,
+                    super::COMPACT_HEAD_BYTES,
+                    super::COMPACT_TAIL_BYTES,
+                )
             } else {
                 content
             };
@@ -199,7 +208,9 @@ pub(crate) fn extract_readability(
     };
     let mut readability = dom_smoothie::Readability::new(html, Some(document_url), Some(config))
         .map_err(|e| format!("文档解析失败：{e}"))?;
-    let article = readability.parse().map_err(|e| format!("正文提取失败：{e}"))?;
+    let article = readability
+        .parse()
+        .map_err(|e| format!("正文提取失败：{e}"))?;
     let content = article.content.to_string();
     let length = content.chars().count();
     Ok((article.title, content, length))

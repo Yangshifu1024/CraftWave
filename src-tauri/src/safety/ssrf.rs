@@ -210,7 +210,12 @@ pub fn check_ipv6(ip: Ipv6Addr, policy: SsrfPolicy) -> Result<(), SsrfCategory> 
     }
     let seg = ip.segments();
     // NAT64 有界前缀 64:ff9b::/96（RFC 6052）：末 32 位为内嵌 IPv4
-    if seg[0] == 0x0064 && seg[1] == 0xff9b && seg[2] == 0 && seg[3] == 0 && seg[4] == 0 && seg[5] == 0
+    if seg[0] == 0x0064
+        && seg[1] == 0xff9b
+        && seg[2] == 0
+        && seg[3] == 0
+        && seg[4] == 0
+        && seg[5] == 0
     {
         let v4 = Ipv4Addr::new(
             (seg[6] >> 8) as u8,
@@ -285,7 +290,10 @@ pub fn check_url(url: &Url, policy: SsrfPolicy, context: &str) -> Result<(), Too
         Some(url::Host::Domain(host)) => {
             // 域名：交给 resolver 在解析后校验（此处仅做非空防御）
             if host.is_empty() {
-                return Err(blocked(SsrfCategory::SchemeUnsupported, "URL 缺少主机名".into()));
+                return Err(blocked(
+                    SsrfCategory::SchemeUnsupported,
+                    "URL 缺少主机名".into(),
+                ));
             }
             Ok(())
         }
@@ -297,7 +305,10 @@ pub fn check_url(url: &Url, policy: SsrfPolicy, context: &str) -> Result<(), Too
             Ok(()) => Ok(()),
             Err(cat) => Err(blocked(cat, format!("[{ip}]"))),
         },
-        None => Err(blocked(SsrfCategory::SchemeUnsupported, "URL 缺少主机名".into())),
+        None => Err(blocked(
+            SsrfCategory::SchemeUnsupported,
+            "URL 缺少主机名".into(),
+        )),
     }
 }
 
@@ -354,9 +365,7 @@ impl HostThrottle {
         now: Instant,
         min_interval: Duration,
     ) -> Option<Duration> {
-        let Some(last) = last else {
-            return None;
-        };
+        let last = last?;
         // 已流逝时长（last 超前 now 时饱和为 0）与超前时长（反向同理）
         let elapsed = now.checked_duration_since(last).unwrap_or_default();
         let ahead = last.checked_duration_since(now).unwrap_or_default();
@@ -370,7 +379,10 @@ impl HostThrottle {
     /// 登记一次对 `host` 的访问意图，返回需要等待的时长（None = 立即可发）。
     /// 等待结束后实际放行时间点 = 上次放行 + 间隔（连发逐次排队）。
     pub fn reserve(&self, host: &str, now: Instant) -> Option<Duration> {
-        let mut map = self.last.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut map = self
+            .last
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let last = map.get(host).copied();
         let wait = Self::pending_wait(last, now, self.min_interval);
         let booked = match (last, wait) {
@@ -440,12 +452,17 @@ pub fn build_client(
         .user_agent(concat!("CraftWave/", env!("CARGO_PKG_VERSION")));
     builder = match proxy {
         // none / 未配置：显式禁用代理（不探测系统环境变量）
-        None | Some(ProxyConfig { mode: crate::providers::types::ProxyMode::None, .. }) => {
-            builder.no_proxy()
-        }
+        None
+        | Some(ProxyConfig {
+            mode: crate::providers::types::ProxyMode::None,
+            ..
+        }) => builder.no_proxy(),
         // system：跟随系统代理设置（reqwest 默认行为；system 探测按 19 号票
         // 收敛点完善，当前缺省直连不误伤）
-        Some(ProxyConfig { mode: crate::providers::types::ProxyMode::System, .. }) => builder,
+        Some(ProxyConfig {
+            mode: crate::providers::types::ProxyMode::System,
+            ..
+        }) => builder,
         // manual：使用配置的代理地址
         Some(ProxyConfig {
             mode: crate::providers::types::ProxyMode::Manual,
@@ -456,7 +473,11 @@ pub fn build_client(
                 .map_err(|e| ToolError::invalid_arg(format!("代理地址非法（{url}）：{e}")))?;
             builder.proxy(proxy)
         }
-        Some(ProxyConfig { mode: crate::providers::types::ProxyMode::Manual, url: None, .. }) => {
+        Some(ProxyConfig {
+            mode: crate::providers::types::ProxyMode::Manual,
+            url: None,
+            ..
+        }) => {
             return Err(ToolError::invalid_arg(
                 "代理模式为 manual 但未配置代理地址（proxy.url）",
             ));
@@ -545,7 +566,15 @@ pub async fn fetch(
     for hops in 0..=MAX_REDIRECTS {
         let url = current.url.clone();
         // 第 1 步：scheme + IP 字面量校验（每跳都做）
-        check_url(&url, policy, if hops == 0 { "目标" } else { "重定向目标" })?;
+        check_url(
+            &url,
+            policy,
+            if hops == 0 {
+                "目标"
+            } else {
+                "重定向目标"
+            },
+        )?;
         // 节流（每跳按其 host）
         if let Some(wait) = throttle.reserve(url.host_str().unwrap_or(""), Instant::now()) {
             tokio::select! {
@@ -562,7 +591,9 @@ pub async fn fetch(
         if let Some(body) = &current.body {
             req = req.body(body.clone());
         }
-        let req = req.build().map_err(|e| ToolError::new("E_INVALID_ARG", format!("请求构造失败：{e}")))?;
+        let req = req
+            .build()
+            .map_err(|e| ToolError::new("E_INVALID_ARG", format!("请求构造失败：{e}")))?;
         // 响应头已收到即视为「请求已发出」（取消语义的 executed 判定面）
         tokio::select! {
             biased;
@@ -597,7 +628,7 @@ pub async fn fetch(
                     current.headers = next_hop_allowed(&url, &next, &current.headers)?;
                     // 浏览器语义：301/302/303 对非 GET/HEAD 转 GET 并剥 body；
                     // 307/308 保持方法与 body
-                    if matches!(status, 301 | 302 | 303)
+                    if matches!(status, 301..=303)
                         && current.method != reqwest::Method::GET
                         && current.method != reqwest::Method::HEAD
                     {
@@ -657,7 +688,12 @@ fn origin_of(url: &Url) -> String {
         .port_or_known_default()
         .map(|p| format!(":{p}"))
         .unwrap_or_default();
-    format!("{}://{}{}", url.scheme(), url.host_str().unwrap_or(""), port)
+    format!(
+        "{}://{}{}",
+        url.scheme(),
+        url.host_str().unwrap_or(""),
+        port
+    )
 }
 
 /// 把 reqwest 错误映射为工具错误：source 链里找到 [`SsrfError`] →

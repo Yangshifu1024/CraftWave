@@ -339,7 +339,11 @@ fn spill_dir(ctx: &ToolsContext) -> PathBuf {
 
 /// 全量输出落盘；返回落盘路径字符串。`pub(crate)`：http_request 的 §8.8
 /// 响应治理复用同一原语与目录（12 号票）。
-pub(crate) fn spill_full(ctx: &ToolsContext, call_id: &str, full: &str) -> Result<String, std::io::Error> {
+pub(crate) fn spill_full(
+    ctx: &ToolsContext,
+    call_id: &str,
+    full: &str,
+) -> Result<String, std::io::Error> {
     cleanup_spill(ctx, Instant::now());
     spill(ctx, call_id, full)
 }

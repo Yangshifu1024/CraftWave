@@ -34,9 +34,7 @@ vi.mock("@assistant-ui/react", async (importOriginal) => {
 });
 
 /** 边车数据面（12 号票两卡终态按 callId 拉边车）：用例内改写返回值。 */
-const loadToolOutcomes = vi.hoisted(() =>
-  vi.fn(async () => ({}) as Record<string, unknown>),
-);
+const loadToolOutcomes = vi.hoisted(() => vi.fn(async () => ({}) as Record<string, unknown>));
 vi.mock("@/ipc/client", () => ({
   loadToolOutcomes: loadToolOutcomes,
 }));
@@ -255,6 +253,8 @@ describe("web 工具卡（12 号票）", () => {
     render(<WebFetchCard {...props({ url: "https://example.com" }, resultOf("已抓取"))} />);
     const card = screen.getByTestId("tool-card-c1");
     expect(card.textContent).toContain("https://example.com");
+    // 详情区默认收起（ToolCardShell：收起不渲染 children）——先展开再断言
+    fireEvent.click(card.querySelector("button")!);
     // 边车异步到达：标题渲染 + 正文折叠预览存在
     await vi.waitFor(() => expect(card.textContent).toContain("示例标题"));
     expect(card.textContent).toContain("正文 600 字符");
@@ -303,14 +303,17 @@ describe("web 工具卡（12 号票）", () => {
       />,
     );
     const card = screen.getByTestId("tool-card-c1");
-    // method 徽标大写归一 + 状态码徽标（2xx 绿）
+    // method 徽标大写归一 + 状态码徽标（2xx 绿；状态码徽标在摘要行，
+    // method 徽标在详情区——详情区默认收起，先展开再断言）
+    fireEvent.click(card.querySelector("button")!);
     expect(card.textContent).toContain("POST");
     await vi.waitFor(() => {
       expect(card.textContent).toContain("200");
     });
-    // 展开详情：响应头 JSON 折叠 + body 折叠 + spill 路径
-    fireEvent.click(card.querySelector("button")!);
-    expect(card.textContent).toContain("content-type");
+    // 展开详情：边车到达后响应头 JSON 折叠 + body 折叠 + spill 路径
+    await vi.waitFor(() => {
+      expect(card.textContent).toContain("content-type");
+    });
     expect(card.textContent).toContain("响应体文本");
     expect(card.textContent).toContain("尾部，全量已落盘");
     expect(card.textContent).toContain("/data/logs/spill/call-test.txt");

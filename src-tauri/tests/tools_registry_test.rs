@@ -12,7 +12,9 @@ fn registry_names_and_order_are_pinned() {
     // 顺序钉死（追加新工具在尾部，不重排既有顺序；suggest 仅 run 尾调用
     // 不开放模型，不在注册表——14 号票；skill 随 09 号票 §8.3 M2 表进
     // 静态段尾部，description 动态列出启用技能名；subagent 随 10 号票
-    // §8.3 M2 表 Meta 行进静态段尾部，description 内嵌 7 角色清单）。
+    // §8.3 M2 表 Meta 行进静态段尾部，description 内嵌 7 角色清单；
+    // web_fetch/http_request 随 12 号票 §8.3 M2 表 Network 两行进静态段
+    // 尾部，抓取面经 SSRF 五步防线，§9.2）。
     assert_eq!(
         names,
         [
@@ -25,7 +27,9 @@ fn registry_names_and_order_are_pinned() {
             "plan",
             "ask",
             "skill",
-            "subagent"
+            "subagent",
+            "web_fetch",
+            "http_request"
         ]
     );
 }
@@ -93,6 +97,10 @@ fn capabilities_match_design() {
     // subagent（10 号票，§8.3 M2 表）：Meta 能力——全档放行（委派面的
     // 权限控制在子代理工具表/白名单与并发闸，§5.9）。
     assert_eq!(cap_of("subagent"), Capability::Meta);
+    // web_fetch / http_request（12 号票，§8.3 M2 表）：Network 能力——
+    // plan 档过滤、confirm_each/auto_edit 档审批、full_access 放行（§8.5）。
+    assert_eq!(cap_of("web_fetch"), Capability::Network);
+    assert_eq!(cap_of("http_request"), Capability::Network);
 }
 
 #[test]
@@ -123,7 +131,7 @@ fn filter_for_tier_matches_matrix() {
     ] {
         assert_eq!(
             filter_for_tier(build_registry(), tier).len(),
-            10,
+            12,
             "{tier:?} 应全保留"
         );
     }

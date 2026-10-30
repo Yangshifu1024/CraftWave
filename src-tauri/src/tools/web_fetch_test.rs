@@ -6,8 +6,8 @@
 //! 含导航/头部/正文四段/相关推荐/评论区/页脚/脚本等典型噪声块），不走外网
 //! 抓取（map.md 站定偏好：测试一律本地 fixture，不连真实外网）。
 
-use super::web_fetch::{extract_readability, WebFetchArgs, WebFetchFormat};
 use super::web_fetch::spec;
+use super::web_fetch::{WebFetchArgs, WebFetchFormat, extract_readability};
 use crate::tools::STATIC_TOOL_NAMES;
 
 /// 中文正文页快照（fixtures 入库，include_str 保编译期绑定）。
@@ -39,7 +39,13 @@ fn readability_extracts_chinese_article() {
     }
     assert!(length > 0, "正文字符数应大于 0");
     // 噪声剔除：导航/相关推荐/评论/页脚/脚本不得混入正文
-    for noise in ["相关推荐", "网友评论", "京ICP备", "首页", "人工智能芯片市场"] {
+    for noise in [
+        "相关推荐",
+        "网友评论",
+        "京ICP备",
+        "首页",
+        "人工智能芯片市场",
+    ] {
         assert!(
             !content.contains(noise),
             "正文不应包含噪声「{noise}」：\n{content}"
@@ -61,11 +67,17 @@ fn readability_extracts_english_article() {
         "quarterly progress reports",
         "long-term stability",
     ] {
-        assert!(content.contains(sentence), "正文缺少「{sentence}」：\n{content}");
+        assert!(
+            content.contains(sentence),
+            "正文缺少「{sentence}」：\n{content}"
+        );
     }
     // 噪声剔除
     for noise in ["Related", "Comments", "All rights reserved", "Newsletter"] {
-        assert!(!content.contains(noise), "正文不应包含噪声「{noise}」：\n{content}");
+        assert!(
+            !content.contains(noise),
+            "正文不应包含噪声「{noise}」：\n{content}"
+        );
     }
 }
 
@@ -103,10 +115,12 @@ fn args_deserialize_defaults_to_readability() {
         serde_json::from_str(r#"{"url":"https://example.com","format":"raw"}"#).unwrap();
     assert_eq!(args.format, Some(WebFetchFormat::Raw));
     // 非法 format 拒绝（schema enum 与 serde 双向一致）
-    assert!(serde_json::from_str::<WebFetchArgs>(
-        r#"{"url":"https://example.com","format":"markdown"}"#
-    )
-    .is_err());
+    assert!(
+        serde_json::from_str::<WebFetchArgs>(
+            r#"{"url":"https://example.com","format":"markdown"}"#
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -124,10 +138,7 @@ fn spec_is_registered_as_network_tool() {
         spec.params_schema["properties"]["format"]["enum"][0],
         "readability"
     );
-    assert_eq!(
-        spec.params_schema["properties"]["format"]["enum"][1],
-        "raw"
-    );
+    assert_eq!(spec.params_schema["properties"]["format"]["enum"][1], "raw");
     // 只读注解：GET 抓取无副作用（open_world 除外）
     assert!(spec.annotations.read_only_hint);
     assert!(spec.annotations.open_world_hint);

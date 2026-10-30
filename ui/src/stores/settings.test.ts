@@ -56,6 +56,7 @@ function configFixture(providers: ProviderConfig[]): AppConfig {
     compaction: { threshold: 0.6, timeoutSecs: 180 },
     tools: { maxParallel: 4 },
     watchdog: { stallTimeoutSecs: 300 },
+    network: { allowPrivateNetwork: false },
     notifications: { enabled: true, interventionOnly: false },
   };
 }

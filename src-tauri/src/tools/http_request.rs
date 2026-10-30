@@ -17,12 +17,10 @@ use std::sync::atomic::AtomicBool;
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
-use crate::safety::ssrf::{
-    FetchRequest, HostThrottle, SsrfPolicy, build_client, fetch,
-};
+use crate::safety::ssrf::{FetchRequest, HostThrottle, SsrfPolicy, build_client, fetch};
 use crate::util::errors::ToolError;
 
-use super::{ToolAnnotations, ToolOutcome, ToolOrigin, ToolSpec};
+use super::{ToolAnnotations, ToolOrigin, ToolOutcome, ToolSpec};
 
 /// 允许的 HTTP 方法白名单（§8.3：method 限 GET/POST/PUT/PATCH/DELETE/HEAD）。
 pub const ALLOWED_METHODS: [&str; 6] = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"];

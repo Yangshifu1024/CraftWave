@@ -403,8 +403,10 @@ impl Default for ToolsConfig {
 }
 
 /// 网络工具 SSRF 防护配置（§3.2 network 组，FR-05-07/§9.2，12 号票实装）。
+/// Default（derive）：allow_private_network = false，拒绝私网访问（最保守，
+/// §3.2 network 组注记）。
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NetworkConfig {
     /// 允许 web_fetch/http_request 访问私网/回环/链路本地/CGNAT/ULA 地址
@@ -412,15 +414,6 @@ pub struct NetworkConfig {
     /// 无该组时 serde default 回填 false；save_config 后下一次工具调用生效。
     #[serde(default)]
     pub allow_private_network: bool,
-}
-
-// NetworkConfig 的缺省值：拒绝私网访问（最保守，§3.2 network 组注记）。
-impl Default for NetworkConfig {
-    fn default() -> Self {
-        Self {
-            allow_private_network: false,
-        }
-    }
 }
 
 /// 应用总配置，即 `~/.craftwave/config.json` 的载入/落盘结构：

@@ -57,11 +57,7 @@ async fn spawn_fixture(hits: HitCount) -> std::net::SocketAddr {
 /// 剧本一轮：web_fetch 调用 + 收尾。
 fn web_call_turn(call_id: &str, url: &str) -> Vec<MockStreamEvent> {
     vec![
-        MockStreamEvent::tool_call(
-            call_id,
-            "web_fetch",
-            serde_json::json!({ "url": url }),
-        ),
+        MockStreamEvent::tool_call(call_id, "web_fetch", serde_json::json!({ "url": url })),
         MockStreamEvent::final_response_with_default_usage(),
     ]
 }
@@ -196,7 +192,10 @@ async fn confirm_each_suspends_then_allow_completes_real_fetch() {
     let exit2 = drive(&driver2, Arc::new(executor2), Arc::new(gate2), &mut sink2)
         .await
         .expect("放行后驱动应 Ok");
-    assert!(matches!(exit2, RunExit::Done(_)), "放行后应自然收尾：{exit2:?}");
+    assert!(
+        matches!(exit2, RunExit::Done(_)),
+        "放行后应自然收尾：{exit2:?}"
+    );
     assert_eq!(hits.load(Ordering::SeqCst), 1, "放行后应真实执行一次抓取");
 }
 
@@ -219,10 +218,7 @@ async fn plan_tier_filters_web_tools_from_gate() {
         "plan 档工具表不应包含 http_request"
     );
     // 门控兜底（模型绕过工具表点名调用）：E_TOOL_BLOCKED 硬拦
-    let verdict = gate.judge(
-        "web_fetch",
-        &serde_json::json!({ "url": url }).to_string(),
-    );
+    let verdict = gate.judge("web_fetch", &serde_json::json!({ "url": url }).to_string());
     match verdict {
         crate::backend::run_loop::GateVerdict::Blocked { code, .. } => {
             assert_eq!(code, "E_TOOL_BLOCKED");

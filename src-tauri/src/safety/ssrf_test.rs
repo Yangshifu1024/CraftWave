@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    FetchRequest, HostThrottle, MAX_REDIRECTS, MAX_BODY_BYTES, SsrfCategory, SsrfPolicy,
+    FetchRequest, HostThrottle, MAX_BODY_BYTES, MAX_REDIRECTS, SsrfCategory, SsrfPolicy,
     check_all_addresses, check_ipv4, check_ipv6, check_url, fetch, next_hop_allowed,
 };
 use crate::util::errors::ToolError;
@@ -111,7 +111,10 @@ fn ipv6_deny_vectors() {
     expect_v6("febf::1".parse().unwrap(), Some(SsrfCategory::LinkLocal));
     // ULA fc00::/7（fc00–fdff）
     expect_v6("fc00::1".parse().unwrap(), Some(SsrfCategory::Ula));
-    expect_v6("fd12:3456:789a::1".parse().unwrap(), Some(SsrfCategory::Ula));
+    expect_v6(
+        "fd12:3456:789a::1".parse().unwrap(),
+        Some(SsrfCategory::Ula),
+    );
     // 组播 ff00::/8
     expect_v6("ff02::1".parse().unwrap(), Some(SsrfCategory::Reserved));
     // IPv4 映射 ::ffff:a.b.c.d 解包按 v4 判（伪装形式不绕过）
@@ -175,7 +178,10 @@ fn partial_private_resolution_rejects_whole() {
     // 「域名解析到私网」向量：解析结果部分公网部分私网 → 整体拒绝
     // （防解析到多地址时部分私网绕过）
     let err = check_all_addresses(
-        ["8.8.8.8".parse::<IpAddr>().unwrap(), "192.168.1.1".parse().unwrap()],
+        [
+            "8.8.8.8".parse::<IpAddr>().unwrap(),
+            "192.168.1.1".parse().unwrap(),
+        ],
         STRICT,
     )
     .expect_err("含私网地址的解析结果应整体拒绝");
@@ -194,11 +200,19 @@ fn partial_private_resolution_rejects_whole() {
 #[test]
 fn url_scheme_and_ip_literal_vectors() {
     // 非 http/https scheme 直接拒
-    for url in ["ftp://example.com/", "file:///etc/passwd", "data:text/html,x"] {
-        let err = check_url(&url.parse().unwrap(), STRICT, "目标")
-            .expect_err(&format!("{url} 应拒绝"));
+    for url in [
+        "ftp://example.com/",
+        "file:///etc/passwd",
+        "data:text/html,x",
+    ] {
+        let err =
+            check_url(&url.parse().unwrap(), STRICT, "目标").expect_err(&format!("{url} 应拒绝"));
         assert_eq!(err.code, "E_SSRF_BLOCKED");
-        assert!(err.message.contains("协议不支持"), "message 应带类别：{}", err.message);
+        assert!(
+            err.message.contains("协议不支持"),
+            "message 应带类别：{}",
+            err.message
+        );
     }
     // IP 字面量在请求前拦截（IP 直连不触发 DNS，resolver 拦不到）
     let err = check_url(&"http://10.0.0.5/".parse().unwrap(), STRICT, "目标")
@@ -417,10 +431,7 @@ async fn fetch_rejects_loopback_ip_by_default() {
     // 「直连私网 IP」向量（回环段变体）：默认策略下请求 127.0.0.1 fixture
     // → E_SSRF_BLOCKED 且类别可读（回环地址）——同时证明 fetch 循环每跳
     // 前置 check_url（含重定向二跳，同一入口）
-    let app = axum::Router::new().route(
-        "/",
-        axum::routing::get(|| async { "不应到达" }),
-    );
+    let app = axum::Router::new().route("/", axum::routing::get(|| async { "不应到达" }));
     let (addr, _server) = spawn_fixture(app).await;
     let client = test_client(STRICT);
     let err = run_fetch(&client, &format!("http://{addr}/"), STRICT, &no_throttle())
@@ -434,10 +445,7 @@ async fn fetch_rejects_loopback_ip_by_default() {
 async fn fetch_rejects_domain_resolving_to_loopback() {
     // 「域名解析到私网」向量（真实 DNS 链路）：localhost 恒解析到回环，
     // 默认策略下 resolver 全地址校验应拒绝——E_SSRF_BLOCKED 且类别可读
-    let app = axum::Router::new().route(
-        "/",
-        axum::routing::get(|| async { "不应到达" }),
-    );
+    let app = axum::Router::new().route("/", axum::routing::get(|| async { "不应到达" }));
     let (addr, _server) = spawn_fixture(app).await;
     let client = test_client(STRICT);
     let err = run_fetch(
@@ -461,10 +469,7 @@ async fn fetch_follows_redirect_chain_when_permitted() {
             "/start",
             axum::routing::get(|| async { axum::response::Redirect::to("/final") }),
         )
-        .route(
-            "/final",
-            axum::routing::get(|| async { "终点内容" }),
-        );
+        .route("/final", axum::routing::get(|| async { "终点内容" }));
     let (addr, _server) = spawn_fixture(app).await;
     let policy = SsrfPolicy {
         allow_private_network: true,
@@ -497,10 +502,8 @@ async fn fetch_strips_authorization_across_origins() {
         axum::routing::get(move |headers: AxumHeaders| {
             let capture = capture.clone();
             async move {
-                let mut names: Vec<String> = headers
-                    .iter()
-                    .map(|(k, _)| k.as_str().to_owned())
-                    .collect();
+                let mut names: Vec<String> =
+                    headers.iter().map(|(k, _)| k.as_str().to_owned()).collect();
                 names.sort();
                 names.dedup();
                 *capture.lock().unwrap() = Some(names.join(","));
@@ -541,11 +544,7 @@ async fn fetch_strips_authorization_across_origins() {
     fetch(&client, request, policy, &no_throttle(), &token, &sent)
         .await
         .expect("跨源重定向应跟进成功（剥头不拦截）");
-    let seen_headers = seen_b
-        .lock()
-        .unwrap()
-        .clone()
-        .expect("终点应收到请求");
+    let seen_headers = seen_b.lock().unwrap().clone().expect("终点应收到请求");
     assert!(
         !seen_headers.split(',').any(|n| n == "authorization"),
         "跨源后不应携带 Authorization：{seen_headers}"
@@ -653,10 +652,7 @@ async fn throttle_integration_same_host_waits_real_interval() {
     // （100ms）控制测试时长，语义与生产 1s 一致（同一 reserve 通路）。
     // 异 host 独立性由纯函数单测精确覆盖（集成侧 127.0.0.1 的 host 字符串
     // 唯一，无法构造第二个不同标识指向同一服务）。
-    let app = axum::Router::new().route(
-        "/",
-        axum::routing::get(|| async { "ok" }),
-    );
+    let app = axum::Router::new().route("/", axum::routing::get(|| async { "ok" }));
     let (addr, _server) = spawn_fixture(app).await;
     let policy = SsrfPolicy {
         allow_private_network: true,
@@ -665,8 +661,12 @@ async fn throttle_integration_same_host_waits_real_interval() {
     let throttle = HostThrottle::new(Duration::from_millis(100));
     let url = format!("http://{addr}/");
     let start = Instant::now();
-    run_fetch(&client, &url, policy, &throttle).await.expect("首次");
-    run_fetch(&client, &url, policy, &throttle).await.expect("第二次");
+    run_fetch(&client, &url, policy, &throttle)
+        .await
+        .expect("首次");
+    run_fetch(&client, &url, policy, &throttle)
+        .await
+        .expect("第二次");
     let elapsed = start.elapsed();
     assert!(
         elapsed >= Duration::from_millis(100),
