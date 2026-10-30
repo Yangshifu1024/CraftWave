@@ -18,8 +18,9 @@
  * 操作面板）；其余错误原位显示可重试。
  */
 
-import { CircleAlert, ShieldCheck } from "lucide-react";
+import { CircleAlert, Eye, ShieldCheck } from "lucide-react";
 import { useState } from "react";
+import { HtmlPreview } from "@/chat/HtmlPreview";
 import { useSessionScope } from "@/chat/session-scope";
 import { resolveAsk, toIpcError } from "@/ipc/client";
 import type { AskPayload, DiffLine } from "@/ipc/types";
@@ -183,6 +184,9 @@ function ApprovalForm({
   payload: Extract<AskPayload, { kind: "approval" }>;
 }) {
   const [error, reportError, clearError] = useSubmitError(sessionId);
+  // 「查看预览」展开态（FR-12-04，14 号票）：默认收起——展开才挂载沙箱
+  // iframe（防闪烁、防未经查看的脚本执行，与 render_html 卡同口径）。
+  const [previewOpen, setPreviewOpen] = useState(false);
   const submit = (optionId: string) => {
     clearError();
     resolveAsk(askId, { kind: "approval", optionId }).catch(reportError);
@@ -202,6 +206,27 @@ function ApprovalForm({
         </p>
       )}
       {payload.diff && <DiffView diff={payload.diff} />}
+      {/* HTML 产出预览入口（14 号票）：载荷附带 previewHtml（write/edit 目标
+          为 .html/.htm 时由宿主构造）才显示，render_html 同款沙箱渲染 */}
+      {payload.previewHtml && (
+        <div data-testid="ask-preview">
+          <button
+            type="button"
+            data-testid="ask-preview-toggle"
+            onClick={() => setPreviewOpen((v) => !v)}
+            className="inline-flex cursor-pointer items-center gap-1 text-ui-sm text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+            aria-expanded={previewOpen}
+          >
+            <Eye size={14} aria-hidden className="shrink-0" />
+            {previewOpen ? "收起预览" : "查看预览"}
+          </button>
+          {previewOpen && (
+            <div className="mt-2">
+              <HtmlPreview html={payload.previewHtml} testId="ask-preview-frame-host" />
+            </div>
+          )}
+        </div>
+      )}
       <div className="flex justify-end gap-2">
         {payload.options.map((opt) => (
           <button

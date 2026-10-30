@@ -25,7 +25,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   log: { level: "info" },
   notifications: { enabled: true, interventionOnly: false },
   compaction: { threshold: 0.6, timeoutSecs: 180 },
-  tools: { maxParallel: 4 },
+  tools: { maxParallel: 4, batchReadLimit: 20 },
   watchdog: { stallTimeoutSecs: 300 },
   agent: { maxConcurrentSubagents: 4 },
   // 网络工具 SSRF 防护（12 号票，§3.2 network 组）：缺省拒绝私网访问

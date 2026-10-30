@@ -37,6 +37,7 @@ import type {
   MessageEntry,
   NotificationPermissionStatus,
   OpenDirArgs,
+  PreviewRegisterResult,
   ProjectMeta,
   ProviderConfig,
   ReadWorkspaceResult,
@@ -124,6 +125,8 @@ export const COMMANDS = {
   loadSubagentHistory: "load_subagent_history",
   // 网络搜索连通测试（13 号票，§3.3 #59f）
   searchTest: "search_test",
+  // HTML 沙箱预览注册（14 号票，§3.3 #59g）
+  previewRegister: "preview_register",
 } as const;
 
 /**
@@ -555,9 +558,20 @@ export function loadSubagentHistory(args: LoadSubagentHistoryArgs): Promise<Mess
  *  Key 试连（消耗 1 credit）。失败不 reject（ok=false + error 带引导文案），
  *  仅参数错误（未知 target）reject E_INVALID_ARG。 */
 export function searchTest(args: SearchTestArgs): Promise<SearchTestResult> {
+  // Rust 命令签名为单结构体参数 `args: SearchTestArgs`（13 号票），invoke
+  // 须按参数名包一层（14 号票修正：原平铺形状真实运行会报 missing key）。
   return invoke<SearchTestResult>(COMMANDS.searchTest, {
-    target: args.target,
-    searxngBaseUrl: args.searxngBaseUrl,
-    tavilyApiKey: args.tavilyApiKey,
-  } satisfies SearchTestArgs);
+    args,
+  } satisfies { args: SearchTestArgs });
+}
+
+/**
+ * 注册 HTML 沙箱预览内容（14 号票，§3.3 #59g）：把 HTML 全文交给后端进程级
+ * 注册表（token 寻址，不落盘），返回 iframe 直接可用的预览协议地址。幂等：
+ * 同内容返回同地址。历史卡片重新展开时按参数原文重注册即可。
+ */
+export function registerPreview(html: string): Promise<PreviewRegisterResult> {
+  return invoke<PreviewRegisterResult>(COMMANDS.previewRegister, {
+    args: { html },
+  } satisfies { args: { html: string } });
 }

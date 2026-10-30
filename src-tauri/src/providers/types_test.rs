@@ -275,6 +275,46 @@ fn tools_max_parallel_defaults_and_bounds() {
     }
 }
 
+// 断言（14 号票）：tools.batchReadLimit 的 normalize 与缺省——缺省 20、
+// 合法区间 1–100（硬顶是 batch_read 的 512KB 共享响应预算），越界拒绝
+// 整份提交；旧配置无该字段容忍（serde default 回填 20）。
+#[test]
+fn tools_batch_read_limit_defaults_and_bounds() {
+    // 缺省：ToolsConfig::default() = 20（§3.2 tools.batchReadLimit）
+    let mut config = AppConfig::default();
+    assert_eq!(config.tools.batch_read_limit, DEFAULT_BATCH_READ_LIMIT);
+    config.normalize().unwrap();
+
+    // serde 缺省容忍：旧配置（无 batchReadLimit 字段）反序列化 → 20
+    let raw = r#"{"schemaVersion":2,"providers":[],"tools":{"maxParallel":4},"approval":{"enabled":true,"autoConfirm":false,"commandAllowlist":[]},"ui":{"language":"zh-CN","theme":"system"},"log":{"level":"info"},"notifications":{"enabled":true,"interventionOnly":false}}"#;
+    let parsed: AppConfig = serde_json::from_str(raw).unwrap();
+    assert_eq!(
+        parsed.tools.batch_read_limit, 20,
+        "旧配置无 batchReadLimit → 缺省 20"
+    );
+
+    // 合法边界：1 与 100 都通过，且 serde 往返保持 camelCase 键面
+    for ok in [1, 20, 100] {
+        let mut config = AppConfig::default();
+        config.tools.batch_read_limit = ok;
+        config.normalize().unwrap();
+        let value = serde_json::to_value(&config).unwrap();
+        assert_eq!(value["tools"]["batchReadLimit"], ok);
+        assert_eq!(serde_json::from_value::<AppConfig>(value).unwrap(), config);
+    }
+
+    // 非法：0 与 101 拒绝整份提交
+    for bad in [0, 101] {
+        let mut config = AppConfig::default();
+        config.tools.batch_read_limit = bad;
+        assert_eq!(
+            config.normalize().unwrap_err().code,
+            E_INVALID_ARG,
+            "batchReadLimit = {bad} 应拒绝"
+        );
+    }
+}
+
 // 断言（37 号票）：watchdog.stallTimeoutSecs 的 normalize 与缺省——缺省 300、
 // 合法区间 5–3600，越界拒绝整份提交；旧配置无 watchdog 键容忍（回填默认）。
 #[test]

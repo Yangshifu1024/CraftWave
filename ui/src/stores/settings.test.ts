@@ -54,7 +54,7 @@ function configFixture(providers: ProviderConfig[]): AppConfig {
     ui: { language: "zh-CN", theme: "system" },
     log: { level: "info" },
     compaction: { threshold: 0.6, timeoutSecs: 180 },
-    tools: { maxParallel: 4 },
+    tools: { maxParallel: 4, batchReadLimit: 20 },
     watchdog: { stallTimeoutSecs: 300 },
     network: { allowPrivateNetwork: false },
     search: {

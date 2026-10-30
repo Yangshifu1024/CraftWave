@@ -6,6 +6,8 @@
 pub mod chat;
 pub mod config;
 pub mod project;
+// HTML 沙箱预览注册命令（14 号票，§3.3 #59g）
+pub mod preview;
 pub mod provider;
 // 网络搜索连通测试命令（13 号票，§3.3 #59f）
 pub mod search;

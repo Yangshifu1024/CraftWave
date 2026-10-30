@@ -95,6 +95,9 @@ use host::commands::subagent::{
 // 搜索连通测试命令（13 号票，§3.3 #59f）
 #[allow(unused_imports)]
 use host::commands::search::{SearchTestArgs, SearchTestResult, search_test};
+// HTML 沙箱预览注册命令（14 号票，§3.3 #59g）
+#[allow(unused_imports)]
+use host::commands::preview::{PreviewRegisterArgs, PreviewRegisterResult, preview_register};
 #[allow(unused_imports)]
 use providers::types::{AppConfig, ProviderConfig};
 #[allow(unused_imports)]
@@ -240,6 +243,8 @@ ipc_commands! {
     host::commands::subagent::load_subagent_history => args: LoadSubagentHistoryArgs, ret: Vec<MessageEntry>;
     // 网络搜索连通测试（13 号票，§3.3 #59f）
     host::commands::search::search_test => args: SearchTestArgs, ret: SearchTestResult;
+    // HTML 沙箱预览注册（14 号票，§3.3 #59g）
+    host::commands::preview::preview_register => args: PreviewRegisterArgs, ret: PreviewRegisterResult;
     #[cfg(debug_assertions)]
     mock_chat::mock_chat_run => args: (), ret: ();
     select_dir => args: (), ret: Option<String>;
@@ -296,6 +301,50 @@ pub fn run() {
                 api.prevent_close();
                 let _ = window.hide();
             }
+        })
+        // HTML 沙箱预览协议（14 号票，§8.3 render_html 行/§9.5，FR-12-04）：
+        // 自定义协议 `preview`（Windows 形态 http://preview.localhost）承载
+        // render_html 产出与审批卡「查看预览」的 iframe 加载。为什么不用
+        // srcdoc/blob:：这两类帧会继承主窗 CSP（`script-src 'self'` 拦预览页
+        // 内联脚本，票内验证点定案）；自定义协议响应自带预览专用 CSP
+        // （PREVIEW_CSP：放内联脚本/样式、禁一切外联防内网探测），且 iframe
+        // 再套 sandbox="allow-scripts"（无 allow-same-origin，opaque origin）
+        // 双重隔离。内容只在进程内存（PreviewRegistry，token 寻址），不落盘。
+        .register_uri_scheme_protocol("preview", |_ctx, request| {
+            let token = request
+                .uri()
+                .path()
+                .trim_start_matches('/')
+                .split('/')
+                .next()
+                .unwrap_or("")
+                .to_string();
+            // 响应构造统一附预览 CSP 与 nosniff/no-store（404 说明页同款）。
+            let respond = |status: tauri::http::StatusCode, html: String| {
+                tauri::http::Response::builder()
+                    .status(status)
+                    .header("Content-Type", "text/html; charset=utf-8")
+                    .header(
+                        "Content-Security-Policy",
+                        crate::tools::render_html::PREVIEW_CSP,
+                    )
+                    .header("X-Content-Type-Options", "nosniff")
+                    .header("Cache-Control", "no-store")
+                    .body(html.into_bytes())
+                    .expect("预览响应构造不失败（静态头 + 内存体）")
+            };
+            let registry = crate::tools::render_html::preview_registry();
+            if crate::tools::render_html::is_valid_token(&token)
+                && let Some(html) = registry.lookup(&token)
+            {
+                return respond(tauri::http::StatusCode::OK, html);
+            }
+            // token 失效（应用重启后历史卡片）或非法：说明页引导重新预览。
+            respond(
+                tauri::http::StatusCode::NOT_FOUND,
+                "<!DOCTYPE html><meta charset=\"utf-8\">                 <body style=\"font-family:system-ui;color:#888;padding:16px\">                 预览内容已失效，请让 AI 重新生成或展开该卡片重新加载。</body>"
+                    .to_string(),
+            )
         })
         .setup(|app| {
             // §7.1：数据目录 ~/.craftwave（config.json + histories + sessions）

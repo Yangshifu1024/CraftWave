@@ -341,6 +341,14 @@ pub const DEFAULT_MAX_PARALLEL: u32 = 4;
 /// maxParallel 合法区间上限（§3.2 tools 组注记：1–16）。
 pub const MAX_PARALLEL_LIMIT: u32 = 16;
 
+/// batch_read 单批文件数的缺省上限（§3.2 tools.batchReadLimit / §8.3
+/// batch_read 行，14 号票）。
+pub const DEFAULT_BATCH_READ_LIMIT: u32 = 20;
+/// batchReadLimit 合法区间上限（§3.2 tools.batchReadLimit 注记：真正的硬顶
+/// 是 batch_read 的 512KB 共享响应预算，本字段只是文件数闸门；上限 100
+/// 覆盖大范围清单式调研）。
+pub const MAX_BATCH_READ_LIMIT: u32 = 100;
+
 /// 模型流停滞超时的缺省秒数（§3.2 watchdog 组/§5.7：300 秒）。
 pub const DEFAULT_STALL_TIMEOUT_SECS: u32 = 300;
 /// stallTimeoutSecs 合法区间下限（§5.7：5 秒）。
@@ -386,18 +394,28 @@ pub struct ToolsConfig {
     /// start_chat 应用）。
     #[serde(default = "default_max_parallel")]
     pub max_parallel: u32,
+    /// batch_read 工具的单批文件数上限（§8.3 batch_read 行「≤20 文件」的
+    /// 可配承载，14 号票回写 §3.2 补齐字段级定义）：缺省 20，合法区间
+    /// 1–100，越界拒绝整份提交；save_config 后下一次工具调用生效。
+    #[serde(default = "default_batch_read_limit")]
+    pub batch_read_limit: u32,
 }
 
 /// serde 缺省值函数：同批工具并发上限缺省 4（§3.2）。
 fn default_max_parallel() -> u32 {
     DEFAULT_MAX_PARALLEL
 }
+/// serde 缺省值函数：batch_read 单批文件数上限缺省 20（§3.2/§8.3）。
+fn default_batch_read_limit() -> u32 {
+    DEFAULT_BATCH_READ_LIMIT
+}
 
-// ToolsConfig 的缺省值：并发上限 4（§3.2）。
+// ToolsConfig 的缺省值：并发上限 4 + 单批读取上限 20（§3.2）。
 impl Default for ToolsConfig {
     fn default() -> Self {
         Self {
             max_parallel: DEFAULT_MAX_PARALLEL,
+            batch_read_limit: DEFAULT_BATCH_READ_LIMIT,
         }
     }
 }
@@ -646,6 +664,16 @@ impl AppConfig {
             return Err(IpcError::invalid_arg(format!(
                 "tools.maxParallel 必须在 1–{MAX_PARALLEL_LIMIT} 内（实际 {}）",
                 self.tools.max_parallel
+            )));
+        }
+        // tools.batchReadLimit：合法区间 1–100（§3.2 tools.batchReadLimit 注记
+        // ——真正的硬顶是 batch_read 的 512KB 共享响应预算，本字段只是文件数
+        // 闸门；越界视为配置错误拒绝整份提交。旧配置缺字段由 serde default
+        // 回填 20，14 号票）。
+        if self.tools.batch_read_limit == 0 || self.tools.batch_read_limit > MAX_BATCH_READ_LIMIT {
+            return Err(IpcError::invalid_arg(format!(
+                "tools.batchReadLimit 必须在 1–{MAX_BATCH_READ_LIMIT} 内（实际 {}）",
+                self.tools.batch_read_limit
             )));
         }
         // watchdog.stallTimeoutSecs：合法区间 5–3600 秒（§3.2 watchdog 组/§5.7——

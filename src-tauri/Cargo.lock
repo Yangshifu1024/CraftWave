@@ -1489,6 +1489,7 @@ dependencies = [
  "futures",
  "git2",
  "glob",
+ "globset",
  "grep-regex",
  "grep-searcher",
  "ignore",

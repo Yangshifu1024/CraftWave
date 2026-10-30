@@ -35,6 +35,12 @@ command?: string,
  */
 fenceReason?: string, 
 /**
+ * HTML 预览全文（FR-12-04，14 号票）：write/edit 的目标为 .html/.htm
+ * 且内容 ≤50,000 字符时由宿主审批载荷附带——审批卡「查看预览」入口
+ * 以 render_html 同款沙箱渲染（不落盘不解析，同工具约定）。
+ */
+previewHtml?: string, 
+/**
  * 用户可选的操作列表（如仅本次允许/拒绝）。
  */
 options: Array<AskOption>, } | { "kind": "mcpTrust", 

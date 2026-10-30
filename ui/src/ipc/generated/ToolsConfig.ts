@@ -10,4 +10,10 @@ export type ToolsConfig = {
  * 串行，§5.4 ⑤）；按 run 装配执行器时读取生效（save_config 后下一次
  * start_chat 应用）。
  */
-maxParallel: number, };
+maxParallel: number, 
+/**
+ * batch_read 工具的单批文件数上限（§8.3 batch_read 行「≤20 文件」的
+ * 可配承载，14 号票回写 §3.2 补齐字段级定义）：缺省 20，合法区间
+ * 1–100，越界拒绝整份提交；save_config 后下一次工具调用生效。
+ */
+batchReadLimit: number, };

@@ -287,8 +287,8 @@ impl RunWatchdog {
             self.segmented_corrected_count = level;
             return Some(WatchdogAction::Corrective(format!(
                 "[watchdog] 已对同一文件（{path}）连续分段读取 {run_len} 次：\
-                 请一次性读取更大窗口（read 的 offset/limit）或改用 grep 定位目标内容，\
-                 避免碎片化读取。"
+                 请一次性读取更大窗口（read 的 offset/limit）、用 batch_read 一次读取多个文件，\
+                 或改用 grep 定位目标内容，避免碎片化读取。"
             )));
         }
         None

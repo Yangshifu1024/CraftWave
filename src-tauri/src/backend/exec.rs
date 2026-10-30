@@ -43,7 +43,10 @@ use super::frames::FrameError;
 use super::run_loop::{BatchCall, CancellableExecutor, ToolExecution};
 use crate::safety::tier::PermissionTier;
 use crate::tools::plan::PlanState;
-use crate::tools::{ToolOutcome, ToolsContext, compact_text, edit, grep, list_files, read, write};
+use crate::tools::{
+    ToolOutcome, ToolsContext, batch_read, calculate, compact_text, edit, glob, grep, list_files,
+    read, render_html, write,
+};
 use crate::util::errors::{E_INVALID_ARG, E_PROJECT_UNTRUSTED, ToolError};
 use crate::util::events::EventSink;
 use crate::util::events::keys;
@@ -127,6 +130,9 @@ pub struct ToolsetExecutor {
     /// 同批无冲突调用的并发上限（`tools.maxParallel`，§3.2；缺省 4）。
     /// 按 run 装配执行器时读取生效。
     max_parallel: usize,
+    /// batch_read 的单批文件数上限（`tools.batchReadLimit`，§3.2/§8.3；
+    /// 缺省 20，14 号票）。按 run 装配执行器时读取生效。
+    batch_read_limit: u32,
 }
 
 impl Clone for ToolsetExecutor {
@@ -136,6 +142,7 @@ impl Clone for ToolsetExecutor {
             tier: self.tier,
             env: self.env.clone(),
             max_parallel: self.max_parallel,
+            batch_read_limit: self.batch_read_limit,
         }
     }
 }
@@ -143,13 +150,15 @@ impl Clone for ToolsetExecutor {
 /// ToolsetExecutor 的构造与各工具执行路径。
 impl ToolsetExecutor {
     /// 构造：给定工具上下文与权限档，初始不带交互环境（生产装配需再调
-    /// [`Self::with_env`]）。并发上限取缺省 4（可再调 [`Self::with_max_parallel`]）。
+    /// [`Self::with_env`]）。并发上限取缺省 4（可再调 [`Self::with_max_parallel`]）；
+    /// batch_read 单批上限取缺省 20（可再调 [`Self::with_batch_read_limit`]）。
     pub fn new(ctx: ToolsContext, tier: PermissionTier) -> Self {
         Self {
             ctx,
             tier,
             env: None,
             max_parallel: crate::providers::types::DEFAULT_MAX_PARALLEL as usize,
+            batch_read_limit: crate::providers::types::DEFAULT_BATCH_READ_LIMIT,
         }
     }
 
@@ -165,7 +174,13 @@ impl ToolsetExecutor {
         self
     }
 
-    /// 同步工具（五个文件工具）的分发入口。
+    /// 设置 batch_read 的单批文件数上限（`tools.batchReadLimit`，§3.2，14 号票）。
+    pub fn with_batch_read_limit(mut self, batch_read_limit: u32) -> Self {
+        self.batch_read_limit = batch_read_limit.max(1);
+        self
+    }
+
+    /// 同步工具（文件类与小工具包）的分发入口。
     fn dispatch(&self, name: &str, args_json: &str) -> ToolOutcome {
         // §8.1 三处同源过滤的主循环侧：plan 档的写/联网工具虽已从广播给
         // 模型的工具表里过滤，但模型仍可能点名调用——此时按权限档排除
@@ -202,6 +217,19 @@ impl ToolsetExecutor {
             "edit" => run_typed(&self.ctx, &args, edit::run),
             "list_files" => run_typed(&self.ctx, &args, list_files::run),
             "grep" => run_typed(&self.ctx, &args, grep::run),
+            // batch_read（14 号票）：带 tools.batchReadLimit 上限的三参入口
+            //（其余同步工具统一 run_typed 双参面）。
+            "batch_read" => match serde_json::from_value::<batch_read::BatchReadArgs>(args.clone())
+            {
+                Ok(parsed) => batch_read::run(&self.ctx, &parsed, self.batch_read_limit),
+                Err(e) => ToolOutcome::failure(
+                    ToolError::invalid_arg(format!("工具 {name} 参数校验失败：{e}")),
+                    "工具参数校验失败",
+                ),
+            },
+            "glob" => run_typed(&self.ctx, &args, glob::run),
+            "calculate" => run_typed(&self.ctx, &args, calculate::run),
+            "render_html" => run_typed(&self.ctx, &args, render_html::run),
             // command/plan/ask 是异步交互型，execute 内分发
             other => ToolOutcome::failure(
                 ToolError::new(E_INVALID_ARG, format!("未知工具：{other}")),

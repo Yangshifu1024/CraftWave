@@ -49,32 +49,58 @@ pub fn run(ctx: &ToolsContext, args: &ReadArgs) -> ToolOutcome {
     }
 }
 
-/// 文本读取：解码 → 行窗口切片 → 512KB 单响应上限截断（整行边界）。
-fn read_text(ctx: &ToolsContext, args: &ReadArgs) -> ToolOutcome {
-    let resolved = match ctx.guard().and_then(|g| g.resolve(&args.path)) {
-        Ok(p) => p,
-        Err(e) => return ToolOutcome::from(e),
-    };
-    let bytes = match std::fs::read(&resolved) {
-        Ok(b) => b,
-        Err(e) => return ToolOutcome::from(ToolError::from(e)),
-    };
+/// 文本行窗口读取结果（read 与 batch_read 共用的内部形状，14 号票抽出）。
+pub(crate) struct TextWindow {
+    /// 解码判定出的编码名（BOM / UTF-8 / 探测结果，C-10）。
+    pub encoding: String,
+    /// 文件总行数。
+    pub total_lines: u64,
+    /// 本窗口起点行号（1-based）。
+    pub offset: u64,
+    /// 实际返回的行数。
+    pub returned_lines: u64,
+    /// 窗口内容（每行带换行拼接）。
+    pub content: String,
+    /// 内容未完整返回（预算截断或行窗口截断任一命中）。
+    pub truncated: bool,
+    /// 字节预算截断（512KB 整行边界截断；区别于行窗口截断）——batch_read
+    /// 据此判定批内共享预算耗尽、后续文件让路。
+    pub byte_truncated: bool,
+    /// 截断时的续读起点行号（1-based，供模型直接当 offset 续读）；未截断为 None。
+    pub next_offset: Option<u64>,
+}
+
+/// 文本行窗口读取的核心实现（read 工具与 batch_read 共用，14 号票抽出）：
+/// 读字节 → 二进制检查（前 8KB 含 NUL 判二进制，C-10）→ 解码 → 行窗口
+/// 切片 → `budget` 字节预算内按整行边界截断。
+///
+/// `display` 为报错与结果展示用的路径原文（相对/绝对保持调用方传入的形态）；
+/// `budget` 为本次允许返回的最大内容字节数（read 单文件 = 512KB 上限；
+/// batch_read 传批内剩余预算，14 号票共享上限语义）。
+pub(crate) fn read_text_window(
+    resolved: &std::path::Path,
+    display: &str,
+    offset: u64,
+    limit: u64,
+    budget: usize,
+) -> Result<TextWindow, ToolError> {
+    let bytes = std::fs::read(resolved).map_err(|e| {
+        // io 错误带上目标路径原文（batch_read 逐文件标注需要能对上号）。
+        match e.kind() {
+            std::io::ErrorKind::NotFound => ToolError::not_found(format!("文件不存在：{display}")),
+            _ => ToolError::new("E_INTERNAL_STATE", format!("读取 {display} 失败：{e}")),
+        }
+    })?;
     // 前 8KB 含 NUL 判二进制 → 报错不支持文本预览（C-10）。
     if is_probably_binary(&bytes) {
-        return ToolOutcome::failure(
-            ToolError::invalid_arg(format!(
-                "二进制文件不支持文本读取：{}（图片请用 kind:\"image\"）",
-                args.path
-            )),
-            format!("二进制文件不支持读取：{}", args.path),
-        );
+        return Err(ToolError::invalid_arg(format!(
+            "二进制文件不支持文本读取：{display}（图片请用 read 的 kind:\"image\"）"
+        )));
     }
     let decoded = decode_text(&bytes);
     let lines: Vec<&str> = decoded.text.lines().collect();
     let total_lines = lines.len() as u64;
 
-    let offset = args.offset.unwrap_or(1).max(1);
-    let limit = args.limit.unwrap_or(DEFAULT_LINE_LIMIT);
     // offset 超过总行数 → 空窗口 + truncated=false。
     let start_idx = (offset.saturating_sub(1)) as usize;
     let window: Vec<&str> = if start_idx >= lines.len() {
@@ -87,13 +113,14 @@ fn read_text(ctx: &ToolsContext, args: &ReadArgs) -> ToolOutcome {
             .collect()
     };
 
-    // 单次响应 ≤512KB（C-10）：超限按整行边界截断。
+    // 响应预算（C-10 单次 ≤512KB；batch_read 为批内剩余预算）：超限按整行
+    // 边界截断。
     let mut content = String::new();
     let mut taken = 0usize;
     let mut byte_truncated = false;
     for line in &window {
         let needed = line.len() + 1;
-        if content.len() + needed > MAX_RESPONSE_BYTES && taken > 0 {
+        if content.len() + needed > budget && taken > 0 {
             byte_truncated = true;
             break;
         }
@@ -104,25 +131,53 @@ fn read_text(ctx: &ToolsContext, args: &ReadArgs) -> ToolOutcome {
     let lines_truncated = (start_idx as u64) + (taken as u64) < total_lines;
     let truncated = byte_truncated || lines_truncated;
     let returned_lines = taken as u64;
+    let next_offset = truncated.then(|| offset.saturating_add(returned_lines));
+
+    Ok(TextWindow {
+        encoding: decoded.encoding.to_string(),
+        total_lines,
+        offset,
+        returned_lines,
+        content,
+        truncated,
+        byte_truncated,
+        next_offset,
+    })
+}
+
+/// 文本读取：解码 → 行窗口切片 → 512KB 单响应上限截断（整行边界）。
+fn read_text(ctx: &ToolsContext, args: &ReadArgs) -> ToolOutcome {
+    let resolved = match ctx.guard().and_then(|g| g.resolve(&args.path)) {
+        Ok(p) => p,
+        Err(e) => return ToolOutcome::from(e),
+    };
+    let offset = args.offset.unwrap_or(1).max(1);
+    let limit = args.limit.unwrap_or(DEFAULT_LINE_LIMIT);
+    let window = match read_text_window(&resolved, &args.path, offset, limit, MAX_RESPONSE_BYTES) {
+        Ok(w) => w,
+        Err(e) => return ToolOutcome::from(e),
+    };
 
     ToolOutcome::success(
         json!({
             "kind": "text",
             "path": args.path,
-            "encoding": decoded.encoding,
-            "totalLines": total_lines,
-            "offset": offset,
-            "returnedLines": returned_lines,
-            "content": content,
-            "truncated": truncated,
+            "encoding": window.encoding,
+            "totalLines": window.total_lines,
+            "offset": window.offset,
+            "returnedLines": window.returned_lines,
+            "content": window.content,
+            "truncated": window.truncated,
         }),
         format!(
             "读取 {} 第 {}–{} 行（共 {} 行，{}）",
             args.path,
-            offset,
-            offset.saturating_add(returned_lines.saturating_sub(1)),
-            total_lines,
-            decoded.encoding
+            window.offset,
+            window
+                .offset
+                .saturating_add(window.returned_lines.saturating_sub(1)),
+            window.total_lines,
+            window.encoding
         ),
     )
 }

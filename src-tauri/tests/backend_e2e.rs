@@ -2875,3 +2875,94 @@ async fn parallel_batch_cancel_joins_both_commands_then_run_ended() {
         "收齐全链 <1s"
     );
 }
+
+// —— 9. 小工具包（14 号票，§8.3 M2 表四行）：plan 档可见 + render_html 链路 ——
+
+mod small_tools {
+    use super::*;
+
+    /// 以 plan 档构造真实文件工具执行器（ReadOnly 全放行的矩阵面验证，
+    /// §8.5：plan 档 ReadOnly 放行、FileWrite/Network 过滤）。
+    fn plan_tier_executor() -> (
+        craftwave_lib::backend::exec::ToolsetExecutor,
+        std::path::PathBuf,
+    ) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path().to_path_buf();
+        std::mem::forget(dir);
+        let ctx = craftwave_lib::tools::ToolsContext::new(root.clone(), root.clone());
+        (
+            craftwave_lib::backend::exec::ToolsetExecutor::new(
+                ctx,
+                craftwave_lib::safety::tier::PermissionTier::Plan,
+            ),
+            root,
+        )
+    }
+
+    /// plan 档四工具可见且可执行（ReadOnly 放行，§8.5 矩阵行 1）：注册表层
+    /// 面由 tools_registry_test 钉死，此处验证执行器在 plan 档不排除四工具
+    /// 且真实执行成功。
+    #[tokio::test]
+    async fn plan_tier_sees_and_executes_all_four_small_tools() {
+        let (executor, root) = plan_tier_executor();
+        std::fs::write(root.join("a.txt"), "alpha\n").unwrap();
+        std::fs::write(root.join("b.rs"), "fn main() {}\n").unwrap();
+        let token = CancellationToken::new();
+        for (name, args) in [
+            ("batch_read", r#"{"paths": ["a.txt", "b.rs"]}"#),
+            ("glob", r#"{"pattern": "**/*.rs"}"#),
+            ("calculate", r#"{"expression": "(1 + 2) * 4"}"#),
+            ("render_html", r#"{"html": "<p>plan 档预览</p>"}"#),
+        ] {
+            let out = executor.execute("call_1", name, args, &token).await;
+            let ToolExecution::Completed {
+                ok,
+                ui_summary,
+                error,
+                ..
+            } = out
+            else {
+                panic!("{name} 应为 Completed");
+            };
+            assert!(ok, "plan 档 {name} 应放行且成功：{ui_summary} {error:?}");
+        }
+    }
+
+    /// render_html 完整链路（票面 e2e）：plan 档 run 中模型调用 render_html →
+    /// toolResult 帧成功（卡片折叠/展开的前端面在 small-tools.test.tsx 钉死）。
+    #[tokio::test]
+    async fn render_html_tool_call_round_trip_in_plan_tier() {
+        let (executor, _root) = plan_tier_executor();
+        let html = r#"{"html": "<!DOCTYPE html><p>沙箱预览</p>"}"#;
+        let mock =
+            MockOpenAI::start_with_turn1(multi_tool_turn1(&[("call_1", "render_html", html)]))
+                .await;
+        let driver = TurnDriver::new(
+            mock_model(&mock),
+            RunSpec::new(),
+            vec![tool_def("render_html")],
+        );
+        let sink = SharedSink::default();
+        let mut sink_handle = sink.clone();
+        let exit = drive_run(
+            &driver,
+            new_run("预览"),
+            "run-render-html",
+            "gpt-4o-mock",
+            CancellationToken::new(),
+            Arc::new(executor),
+            Arc::new(AllowAllGate),
+            &mut sink_handle,
+            None,
+            None,
+            std::time::Duration::from_secs(30),
+        )
+        .await
+        .expect("跑完");
+        assert!(matches!(exit, RunExit::Done(_)), "正常终态：{exit:?}");
+        let faces = tool_result_faces(&sink.frames());
+        assert_eq!(faces.len(), 1);
+        assert!(faces[0].1, "render_html 调用成功（{:?}）", faces[0].2);
+    }
+}

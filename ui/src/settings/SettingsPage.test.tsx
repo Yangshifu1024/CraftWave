@@ -42,7 +42,7 @@ const BASE_CONFIG: AppConfig = {
   log: { level: "info" },
   notifications: { enabled: true, interventionOnly: false },
   compaction: { threshold: 0.6, timeoutSecs: 180 },
-  tools: { maxParallel: 4 },
+  tools: { maxParallel: 4, batchReadLimit: 20 },
   watchdog: { stallTimeoutSecs: 300 },
   network: { allowPrivateNetwork: false },
   search: {

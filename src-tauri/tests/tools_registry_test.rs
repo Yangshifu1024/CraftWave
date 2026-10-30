@@ -10,12 +10,14 @@ fn registry_names_and_order_are_pinned() {
     let names: Vec<String> = registry.iter().map(|s| s.name.clone()).collect();
     assert_eq!(names, STATIC_TOOL_NAMES.to_vec());
     // 顺序钉死（追加新工具在尾部，不重排既有顺序；suggest 仅 run 尾调用
-    // 不开放模型，不在注册表——14 号票；skill 随 09 号票 §8.3 M2 表进
+    // 不开放模型，不在注册表——M1 14 号票；skill 随 09 号票 §8.3 M2 表进
     // 静态段尾部，description 动态列出启用技能名；subagent 随 10 号票
     // §8.3 M2 表 Meta 行进静态段尾部，description 内嵌 7 角色清单；
     // web_fetch/http_request 随 12 号票 §8.3 M2 表 Network 两行进静态段
     // 尾部，抓取面经 SSRF 五步防线，§9.2；web_search 随 13 号票 §8.3 M2
-    // 表 Network 行进静态段尾部，本地优先三通道 C-12）。
+    // 表 Network 行进静态段尾部，本地优先三通道 C-12；batch_read/glob/
+    // calculate/render_html 随 M2 14 号票 §8.3 M2 表小工具包四行进静态段
+    // 尾部——批量读、文件名模式检索、精确算术、沙箱 HTML 预览产出）。
     assert_eq!(
         names,
         [
@@ -31,7 +33,11 @@ fn registry_names_and_order_are_pinned() {
             "subagent",
             "web_fetch",
             "http_request",
-            "web_search"
+            "web_search",
+            "batch_read",
+            "glob",
+            "calculate",
+            "render_html"
         ]
     );
 }
@@ -106,6 +112,13 @@ fn capabilities_match_design() {
     // web_search（13 号票，§8.3 M2 表）：Network 能力——同上；通道选择
     // 与 SSRF/代理在执行面（§9.2 复用 + SearXNG 本地回环例外）。
     assert_eq!(cap_of("web_search"), Capability::Network);
+    // 小工具包四件（14 号票，§8.3 M2 表）：batch_read/glob/calculate 均为
+    // ReadOnly（无副作用读与纯求值）；render_html 为 ReadOnly*（只读但
+    // 产物可见——渲染全在前端沙箱，后端不落盘不解析），全档放行（§8.5）。
+    assert_eq!(cap_of("batch_read"), Capability::ReadOnly);
+    assert_eq!(cap_of("glob"), Capability::ReadOnly);
+    assert_eq!(cap_of("calculate"), Capability::ReadOnly);
+    assert_eq!(cap_of("render_html"), Capability::ReadOnly);
 }
 
 #[test]
@@ -124,7 +137,11 @@ fn filter_for_tier_matches_matrix() {
             "plan",
             "ask",
             "skill",
-            "subagent"
+            "subagent",
+            "batch_read",
+            "glob",
+            "calculate",
+            "render_html"
         ]
     );
 
@@ -136,7 +153,7 @@ fn filter_for_tier_matches_matrix() {
     ] {
         assert_eq!(
             filter_for_tier(build_registry(), tier).len(),
-            13,
+            17,
             "{tier:?} 应全保留"
         );
     }

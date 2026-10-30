@@ -26,8 +26,8 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' tauri-plugin-decoration: http://tauri-plugin-decoration.localhost https://tauri-plugin-decoration.localhost; style-src-elem 'self' 'unsafe-inline' tauri-plugin-decoration: http://tauri-plugin-decoration.localhost https://tauri-plugin-decoration.localhost; img-src 'self' data: blob:; connect-src ipc: http://ipc.localhost; font-src 'self'; worker-src 'self' blob:; frame-src 'self' blob:",
-      "devCsp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' tauri-plugin-decoration: http://tauri-plugin-decoration.localhost https://tauri-plugin-decoration.localhost; style-src-elem 'self' 'unsafe-inline' tauri-plugin-decoration: http://tauri-plugin-decoration.localhost https://tauri-plugin-decoration.localhost; img-src 'self' data: blob:; connect-src ipc: http://ipc.localhost ws://localhost:5173; font-src 'self'; worker-src 'self' blob:; frame-src 'self' blob:"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' tauri-plugin-decoration: http://tauri-plugin-decoration.localhost https://tauri-plugin-decoration.localhost; style-src-elem 'self' 'unsafe-inline' tauri-plugin-decoration: http://tauri-plugin-decoration.localhost https://tauri-plugin-decoration.localhost; img-src 'self' data: blob:; connect-src ipc: http://ipc.localhost; font-src 'self'; worker-src 'self' blob:; frame-src 'self' blob: preview: http://preview.localhost",
+      "devCsp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' tauri-plugin-decoration: http://tauri-plugin-decoration.localhost https://tauri-plugin-decoration.localhost; style-src-elem 'self' 'unsafe-inline' tauri-plugin-decoration: http://tauri-plugin-decoration.localhost https://tauri-plugin-decoration.localhost; img-src 'self' data: blob:; connect-src ipc: http://ipc.localhost ws://localhost:5173; font-src 'self'; worker-src 'self' blob:; frame-src 'self' blob: preview: http://preview.localhost"
     }
   },
   "bundle": {

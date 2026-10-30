@@ -16,13 +16,17 @@ import { defineToolkit } from "@assistant-ui/react";
 import type { JSONSchema7 } from "json-schema";
 import {
   AskCard,
+  BatchReadCard,
+  CalculateCard,
   CommandCard,
   EditCard,
+  GlobCard,
   GrepCard,
   HttpRequestCard,
   ListFilesCard,
   PlanCard,
   ReadCard,
+  RenderHtmlCard,
   SkillCard,
   SubagentCard,
   WebFetchCard,
@@ -245,6 +249,56 @@ export const CW_TOOL_PARAMETERS: Record<string, JSONSchema7> = {
     required: ["query"],
     additionalProperties: false,
   },
+  // batch_read 工具（§8.3 M2 表 ReadOnly 行，14 号票；与 tools/batch_read.rs
+  // 的 params_schema 逐字镜像，contract.test 双向锁定）
+  batch_read: {
+    type: "object",
+    properties: {
+      paths: {
+        type: "array",
+        items: { type: "string" },
+        description: "要读取的文件路径列表（工作区内相对路径或绝对路径），按源序读取",
+      },
+    },
+    required: ["paths"],
+    additionalProperties: false,
+  },
+  // glob 工具（§8.3 M2 表 ReadOnly 行，14 号票；与 tools/glob.rs 逐字镜像）
+  glob: {
+    type: "object",
+    properties: {
+      pattern: { type: "string", description: '文件名模式，如 "*.rs" 或 "**/*.rs"' },
+      path: { type: "string", description: "遍历起点，缺省项目根" },
+    },
+    required: ["pattern"],
+    additionalProperties: false,
+  },
+  // calculate 工具（§8.3 M2 表 ReadOnly 行，14 号票；与 tools/calculate.rs
+  // 逐字镜像）
+  calculate: {
+    type: "object",
+    properties: {
+      expression: {
+        type: "string",
+        description: '算术表达式，如 "(1 + 2) * 3.5"、"2^10"、"pi * 2"',
+      },
+    },
+    required: ["expression"],
+    additionalProperties: false,
+  },
+  // render_html 工具（§8.3 M2 表 ReadOnly* 行，14 号票；与 tools/render_html.rs
+  // 逐字镜像）
+  render_html: {
+    type: "object",
+    properties: {
+      html: {
+        type: "string",
+        description: "完整的自包含 HTML 文档（含 <!DOCTYPE html> 与内联样式/脚本）",
+      },
+    },
+    required: ["html"],
+    additionalProperties: false,
+  },
 };
 
 /**
@@ -330,5 +384,29 @@ export const cwToolkit = defineToolkit({
     description: "联网搜索（本地 SearXNG / 内置抓取 / Tavily 三通道自动选）",
     parameters: CW_TOOL_PARAMETERS.web_search,
     render: WebSearchCard,
+  },
+  batch_read: {
+    type: "frontend",
+    description: "一次读取多个文本文件的开头窗口（共享 512KB 响应预算）",
+    parameters: CW_TOOL_PARAMETERS.batch_read,
+    render: BatchReadCard,
+  },
+  glob: {
+    type: "frontend",
+    description: "按文件名模式检索工作区文件（尊重 .gitignore）",
+    parameters: CW_TOOL_PARAMETERS.glob,
+    render: GlobCard,
+  },
+  calculate: {
+    type: "frontend",
+    description: "精确算术求值（防心算出错）",
+    parameters: CW_TOOL_PARAMETERS.calculate,
+    render: CalculateCard,
+  },
+  render_html: {
+    type: "frontend",
+    description: "产出自包含 HTML 供沙箱预览卡查看效果",
+    parameters: CW_TOOL_PARAMETERS.render_html,
+    render: RenderHtmlCard,
   },
 });

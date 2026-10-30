@@ -12,14 +12,18 @@
 //! [`compact_text`] 生成（成功头 4KB + 尾 8KB 截断；失败 error code+message）。
 
 pub mod ask;
+pub mod batch_read;
+pub mod calculate;
 pub mod command;
 pub mod edit;
+pub mod glob;
 pub mod grep;
 pub mod http_request;
 pub mod list_files;
 pub mod plan;
 pub mod process;
 pub mod read;
+pub mod render_html;
 pub mod web_fetch;
 pub mod web_search;
 pub mod write;
@@ -307,8 +311,10 @@ fn floor_char_boundary(s: &str, mut index: usize) -> usize {
 /// 子代理委派入口）：静态 10 个。12 号票增 web_fetch/http_request
 /// （§8.3 M2 表 Network 两行，网页抓取与通用 HTTP）：静态 12 个。
 /// 13 号票增 web_search（§8.3 M2 表 Network 行，本地优先三通道搜索）：
-/// 静态 13 个。
-pub const STATIC_TOOL_NAMES: [&str; 13] = [
+/// 静态 13 个。14 号票增 batch_read/glob/calculate/render_html（§8.3 M2
+/// 表四行：批量读、文件名模式检索、精确算术、沙箱 HTML 预览产出）：
+/// 静态 17 个。
+pub const STATIC_TOOL_NAMES: [&str; 17] = [
     "read",
     "write",
     "edit",
@@ -322,6 +328,10 @@ pub const STATIC_TOOL_NAMES: [&str; 13] = [
     "web_fetch",
     "http_request",
     "web_search",
+    "batch_read",
+    "glob",
+    "calculate",
+    "render_html",
 ];
 
 /// 静态注册表（§8.1：启动时构建）。顺序与 [`STATIC_TOOL_NAMES`] 一致。
@@ -340,6 +350,10 @@ pub fn build_registry() -> Vec<ToolSpec> {
         web_fetch::spec(),
         http_request::spec(),
         web_search::spec(),
+        batch_read::spec(),
+        glob::spec(),
+        calculate::spec(),
+        render_html::spec(),
     ]
 }
 

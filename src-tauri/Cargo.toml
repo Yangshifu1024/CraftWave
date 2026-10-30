@@ -42,6 +42,11 @@ chardetng = "1.0.0"
 grep-regex = "0.1.14"
 grep-searcher = "0.1.17"
 ignore = "0.4.33"
+# 【M2 14 号票】glob 工具的文件名模式匹配（§8.3 glob 行）：票面点名 globset
+# ——依赖树已在（ignore 的底层依赖，锁面 0.4.20 不新增下载），显式声明取其
+# Glob/GlobMatcher 的 `**` 递归语义；遍历仍走同源 ignore::WalkBuilder
+# （与 list_files 一致尊重 .gitignore）。
+globset = "0.4.20"
 regex = "1.13.1"
 base64 = "0.23.1"
 # tools（§8.8）：命令输出 ANSI/OSC 清洗（纯 Rust，anstyle 生态）

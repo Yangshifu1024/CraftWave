@@ -13,14 +13,18 @@
 import { type ToolCallMessagePartProps, useToolArgsStatus } from "@assistant-ui/react";
 import {
   Bot,
+  Calculator,
   ChevronRight,
   CircleAlert,
   ClipboardList,
+  Eye,
   FileCode2,
   FileCog,
   FileJson2,
   FilePenLine,
+  FileStack,
   FileText,
+  FolderSearch,
   FolderTree,
   Globe,
   MessageCircleQuestion,
@@ -30,6 +34,7 @@ import {
   Zap,
 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { HtmlPreview } from "@/chat/HtmlPreview";
 import { Markdown } from "@/chat/Markdown";
 import { useSessionScope } from "@/chat/session-scope";
 import { Button } from "@/components/ui/button";
@@ -908,6 +913,252 @@ export function WebSearchCard(props: ToolCallMessagePartProps<CardArgs, unknown>
           </ul>
         </details>
       )}
+    </ToolCardShell>
+  );
+}
+
+// —— 小工具包四卡（14 号票，§8.3 M2 表 batch_read/glob/calculate/render_html）——
+
+/** batch_read 的边车 data.files 元素形状（宽松取字段用）。 */
+interface BatchReadFileEntry {
+  path?: unknown;
+  ok?: unknown;
+  truncated?: unknown;
+  content?: unknown;
+  nextOffset?: unknown;
+  error?: { message?: unknown } | null;
+}
+
+/**
+ * batch_read 工具卡：文件数徽标 + 逐文件成功/失败/截断列表；每个文件的
+ * 内容默认折叠（details，限高滚动），截断文件标注续读 nextOffset。
+ */
+export function BatchReadCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
+  const args = (props.args ?? {}) as CardArgs;
+  const { toolCallId, result } = props;
+  const paths = Array.isArray(args.paths)
+    ? (args.paths as unknown[]).filter((p): p is string => typeof p === "string")
+    : [];
+  // 逐文件状态来自边车 data.files（帧面 result 是模型通道压缩文本）。
+  const settled = result !== undefined;
+  const outcome = useToolOutcomeDetail(toolCallId, settled);
+  const data = outcome?.data;
+  const rawFiles =
+    data !== null && typeof data === "object" && !Array.isArray(data) ? data.files : undefined;
+  const files = Array.isArray(rawFiles) ? (rawFiles as BatchReadFileEntry[]) : [];
+  const truncatedCount = files.filter((f) => f.truncated === true).length;
+  return (
+    <ToolCardShell
+      {...props}
+      icon={<FileStack size={16} />}
+      label="批量读取"
+      runningLabel="正在批量读取"
+      summary={paths[0] ?? ""}
+      summaryNode={
+        paths.length > 0 ? (
+          <span className="min-w-0 truncate text-[var(--foreground-subtlest)]">
+            {paths.length === 1 ? paths[0] : `${paths[0]} 等 ${paths.length} 个文件`}
+          </span>
+        ) : undefined
+      }
+      badges={
+        paths.length > 0 ? (
+          <span
+            data-testid="batch-read-count"
+            className="shrink-0 rounded bg-[var(--muted)] px-1.5 py-0.5 text-ui-sm font-medium text-[var(--muted-foreground)]"
+          >
+            {paths.length}
+          </span>
+        ) : undefined
+      }
+    >
+      {files.length > 0 && (
+        <ul className="space-y-1" data-testid="batch-read-files">
+          {files.map((file, index) => {
+            const path = typeof file.path === "string" ? file.path : `#${index}`;
+            const failed = file.ok === false;
+            const message =
+              file.error !== null &&
+              typeof file.error === "object" &&
+              typeof file.error?.message === "string"
+                ? file.error.message
+                : "";
+            return (
+              // biome-ignore lint/suspicious/noArrayIndexKey: 重复路径是合法输入（同批可重复读同一文件），序号防 key 撞
+              <li key={`${path}:${index}`} className="min-w-0">
+                <span className={failed ? "text-[var(--destructive)]" : "text-[var(--foreground)]"}>
+                  {failed ? "✗" : "✓"}
+                </span>{" "}
+                <span className="font-mono text-ui-sm text-[var(--foreground)]">{path}</span>
+                {file.truncated === true && (
+                  <span className="ml-1 text-ui-sm text-[var(--warning)]">
+                    截断
+                    {typeof file.nextOffset === "number"
+                      ? `（续读 offset ${file.nextOffset}）`
+                      : ""}
+                  </span>
+                )}
+                {failed && message !== "" && (
+                  <span className="ml-1 text-ui-sm text-[var(--destructive)]">{message}</span>
+                )}
+                {!failed && typeof file.content === "string" && file.content !== "" && (
+                  <details className="mt-0.5">
+                    <summary className="cursor-pointer text-ui-sm text-[var(--muted-foreground)]">
+                      内容
+                    </summary>
+                    <pre className="mt-1 max-h-60 overflow-auto whitespace-pre-wrap font-mono text-ui-sm text-[var(--muted-foreground)]">
+                      {file.content}
+                    </pre>
+                  </details>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {truncatedCount > 0 && (
+        <p className="text-ui-sm text-[var(--muted-foreground)]">
+          {truncatedCount} 个文件内容截断，按续读 offset 用 read 或再调 batch_read 继续。
+        </p>
+      )}
+    </ToolCardShell>
+  );
+}
+
+/** glob 的边车 data.paths 元素形状。 */
+interface GlobPathEntry {
+  path?: unknown;
+  kind?: unknown;
+}
+
+/** glob 工具卡：模式 + 起点摘要；详情 = 命中计数 + 路径列表（上限展示 100
+ *  条，对齐 grep 卡的结果量级）。 */
+export function GlobCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
+  const args = (props.args ?? {}) as CardArgs;
+  const { toolCallId, result } = props;
+  const pattern = str(args, "pattern");
+  const scope = str(args, "path") || "（项目根）";
+  // 命中清单来自边车 data（帧面 result 是压缩文本）。
+  const settled = result !== undefined;
+  const outcome = useToolOutcomeDetail(toolCallId, settled);
+  const data = outcome?.data as { count?: unknown; truncated?: unknown; paths?: unknown } | null;
+  const count = typeof data?.count === "number" ? data.count : undefined;
+  const truncated = data?.truncated === true;
+  const paths = Array.isArray(data?.paths) ? (data?.paths as GlobPathEntry[]) : [];
+  const shown = paths.slice(0, 100);
+  return (
+    <ToolCardShell
+      {...props}
+      icon={<FolderSearch size={16} />}
+      label="模式找文件"
+      runningLabel="正在按模式找文件"
+      summary={`${pattern} @ ${scope}`}
+    >
+      {count !== undefined && (
+        <p className="text-ui-sm text-[var(--muted-foreground)]">
+          {count === 0 ? "无命中" : `${count} 项命中`}
+          {truncated && "（已达上限 500 截断）"}
+        </p>
+      )}
+      {shown.length > 0 && (
+        <ul
+          className="max-h-60 space-y-0.5 overflow-auto font-mono text-ui-sm"
+          data-testid="glob-paths"
+        >
+          {shown.map((entry) => (
+            <li
+              key={typeof entry.path === "string" ? entry.path : ""}
+              className="truncate text-[var(--muted-foreground)]"
+            >
+              {typeof entry.path === "string" ? entry.path : ""}
+              {entry.kind === "dir" && "/"}
+            </li>
+          ))}
+          {paths.length > shown.length && (
+            <li className="text-[var(--muted-foreground)]">
+              …其余 {paths.length - shown.length} 项见「详细数据」
+            </li>
+          )}
+        </ul>
+      )}
+    </ToolCardShell>
+  );
+}
+
+/** calculate 工具卡：表达式摘要（monospace）+ 结果 monospace 单行（保真
+ *  显示取自边车 data.formatted——与 Python repr 同口径的最短往返）。 */
+export function CalculateCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
+  const args = (props.args ?? {}) as CardArgs;
+  const { toolCallId, result } = props;
+  const expression = str(args, "expression");
+  const settled = result !== undefined;
+  const outcome = useToolOutcomeDetail(toolCallId, settled);
+  const data = outcome?.data as { formatted?: unknown } | null;
+  const formatted = typeof data?.formatted === "string" ? data.formatted : null;
+  return (
+    <ToolCardShell
+      {...props}
+      icon={<Calculator size={16} />}
+      label="计算"
+      runningLabel="正在计算"
+      summary={expression}
+    >
+      {formatted !== null && (
+        <p className="font-mono text-ui-sm text-[var(--foreground)]" data-testid="calculate-result">
+          = {formatted}
+        </p>
+      )}
+    </ToolCardShell>
+  );
+}
+
+/** render_html 工具卡：字符数徽标 + 默认折叠的沙箱预览（手动展开才挂
+ *  iframe——防闪烁、防未经查看的脚本执行，票面要求）。 */
+export function RenderHtmlCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
+  const args = (props.args ?? {}) as CardArgs;
+  const html = str(args, "html");
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const charCount = html.length;
+  return (
+    <ToolCardShell
+      {...props}
+      icon={<Eye size={16} />}
+      label="HTML 预览"
+      runningLabel="正在准备 HTML 预览"
+      summary="沙箱预览卡"
+      badges={
+        charCount > 0 ? (
+          <span
+            data-testid="render-html-chars"
+            className="shrink-0 rounded bg-[var(--muted)] px-1.5 py-0.5 text-ui-sm font-medium text-[var(--muted-foreground)]"
+          >
+            {charCount} 字符
+          </span>
+        ) : undefined
+      }
+    >
+      {charCount > 0 && (
+        <div>
+          <button
+            type="button"
+            data-testid="render-html-toggle"
+            onClick={() => setPreviewOpen((v) => !v)}
+            className="cursor-pointer text-ui-sm text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+            aria-expanded={previewOpen}
+          >
+            {previewOpen ? "收起预览" : "查看沙箱预览"}
+          </button>
+          {/* 展开才挂载 iframe：未经查看不执行预览页脚本 */}
+          {previewOpen && (
+            <div className="mt-2">
+              <HtmlPreview html={html} />
+            </div>
+          )}
+        </div>
+      )}
+      <p className="text-[var(--muted-foreground)]">
+        预览在无网络权限的沙箱中渲染（无法访问文件、存储与网络）。
+      </p>
     </ToolCardShell>
   );
 }

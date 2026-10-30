@@ -590,6 +590,7 @@ pub(crate) fn build_approval_payload(pending: &PendingCall) -> AskPayload {
             diff: None,
             command: Some(format!("{} {}", pending.name, pending.args_json)),
             fence_reason: pending.fence_reason.clone(),
+            preview_html: None,
             options: vec![
                 AskOption {
                     id: "allow_once".to_owned(),
@@ -629,10 +630,30 @@ pub(crate) fn build_approval_payload(pending: &PendingCall) -> AskPayload {
     };
     let mut diff = None;
     let mut command = None;
+    // HTML 预览附带（FR-12-04，14 号票）：write/edit 目标扩展名为 .html/.htm
+    // 且内容 ≤50,000 字符时，把产出全文附进审批载荷——审批卡「查看预览」
+    // 以 render_html 同款沙箱渲染（票内定案条件）。超限/其他扩展名不附带
+    // （载荷不膨胀，diff 仍是审批主预览面）。
+    let mut preview_html = None;
+    let html_target = |path: &str| {
+        matches!(
+            std::path::Path::new(path)
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(str::to_ascii_lowercase)
+                .as_deref(),
+            Some("html" | "htm")
+        )
+    };
     match pending.name.as_str() {
         "write" => {
             let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
             let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
+            if html_target(path)
+                && content.chars().count() <= crate::tools::render_html::MAX_HTML_CHARS
+            {
+                preview_html = Some(content.to_owned());
+            }
             diff = Some(ApprovalDiff {
                 path: path.to_owned(),
                 hunks: vec![DiffHunk {
@@ -651,6 +672,11 @@ pub(crate) fn build_approval_payload(pending: &PendingCall) -> AskPayload {
             let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
             let old = args.get("oldText").and_then(|v| v.as_str()).unwrap_or("");
             let new = args.get("newText").and_then(|v| v.as_str()).unwrap_or("");
+            if html_target(path) && new.chars().count() <= crate::tools::render_html::MAX_HTML_CHARS
+            {
+                // 预览语义 = 编辑后的效果：附替换后全文（newText）。
+                preview_html = Some(new.to_owned());
+            }
             let mut lines = Vec::new();
             for l in old.lines() {
                 lines.push(DiffLine {
@@ -704,6 +730,7 @@ pub(crate) fn build_approval_payload(pending: &PendingCall) -> AskPayload {
         diff,
         command,
         fence_reason: pending.fence_reason.clone(),
+        preview_html,
         options: vec![
             AskOption {
                 id: "allow_once".to_owned(),
@@ -1699,9 +1726,11 @@ pub async fn start_chat_core(
             },
             run_config.tier,
         )
-        // 同批无冲突调用并发上限（§3.2 tools 组，07 号票）：按 run 装配时
+        // 同批无冲突调用并发上限（§3.2 tools 组，07 号票）与 batch_read
+        // 单批文件数上限（§3.2 tools.batchReadLimit，14 号票）：按 run 装配时
         // 读取配置生效（save_config 后下一次 start_chat 应用）。
         .with_max_parallel(app.config.load()?.tools.max_parallel as usize)
+        .with_batch_read_limit(app.config.load()?.tools.batch_read_limit)
         .with_env(ExecutorEnv {
             events: app.events.clone(),
             ask: handle.ask.clone(),

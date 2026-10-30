@@ -101,6 +101,9 @@ export * from "./generated/PermissionTier";
 export * from "./generated/PlanItem";
 export * from "./generated/PlanItemStatus";
 export * from "./generated/PresetModel";
+// HTML 沙箱预览注册（14 号票，§3.3 #59g）
+export * from "./generated/PreviewRegisterArgs";
+export * from "./generated/PreviewRegisterResult";
 export * from "./generated/ProjectMeta";
 export * from "./generated/ProviderConfig";
 export * from "./generated/ProviderModel";
