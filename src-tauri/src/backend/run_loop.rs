@@ -407,7 +407,10 @@ where
                         turn: state.last_turn,
                         error: Some(FrameError::new(code, message.clone())),
                     });
-                    return Ok(RunExit::Failed { code, message });
+                    return Ok(RunExit::Failed {
+                        code: code.to_owned(),
+                        message,
+                    });
                 }
                 // steer 消费点（§5.5，06 号票）：turn 边界 = 上一拍已收尾
                 // （turn > 1 意味着走完了「模型输出 → 工具批回喂」的边界）。

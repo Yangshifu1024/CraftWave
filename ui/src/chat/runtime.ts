@@ -26,6 +26,7 @@ import { parseCwImageUrl } from "./image-ref";
 import { tierOf } from "./permission-tier";
 import { useRunMetricsStore } from "./run-metrics";
 import { modelOf } from "./session-model";
+import { thinkingOf } from "./thinking-level";
 import { readRunMarker } from "./tree-persistence";
 
 // ---- S6 骨架回声适配器（无后端 dev fallback，原样保留） ----
@@ -233,19 +234,31 @@ export const tauriChatModel: ChatModelAdapter = createTauriChatAdapter({
 });
 
 /**
+ * 会话 runConfig 的惰性取值（§10.2，17/18 号票）：发送时读会话内存态——
+ * 权限档（tierOf）、模型覆盖（modelOf）、thinking 档（thinkingOf）；未设置
+ * 的字段省略（serde default 后端兜底）。独立导出供 sessionAdapter 与测试
+ * 共用同一形状。
+ */
+export function sessionRunConfig(sessionId: string): RunConfig {
+  return {
+    ...DEFAULT_RUN_CONFIG,
+    tier: tierOf(sessionId),
+    ...(modelOf(sessionId) !== undefined ? { modelId: modelOf(sessionId) } : {}),
+    ...(thinkingOf(sessionId) !== undefined ? { thinking: thinkingOf(sessionId) } : {}),
+  };
+}
+
+/**
  * 按会话产出生产 adapter（16 号票多会话）：每 Tab 一个实例——帧入本会话的
  * metrics 桶，运行态节点记账记到本会话的 persist 分桶；runConfig 惰性取值
- * （17 号票：发送时读会话权限档与模型覆盖，均为内存态）。
+ * （17 号票：发送时读会话权限档与模型覆盖；18 号票追加 thinking 档——
+ * 三者均为内存态，运行中切换由后端每拍请求前重读 prefs 生效，§11.1）。
  */
 export function sessionAdapter(sessionId: string): ChatModelAdapter {
   return createTauriChatAdapter({
     ...defaultDeps,
     sessionId,
-    runConfig: () => ({
-      ...DEFAULT_RUN_CONFIG,
-      tier: tierOf(sessionId),
-      ...(modelOf(sessionId) !== undefined ? { modelId: modelOf(sessionId) } : {}),
-    }),
+    runConfig: () => sessionRunConfig(sessionId),
     onFrame: (frame) => useRunMetricsStore.getState().ingest(sessionId, frame),
   });
 }

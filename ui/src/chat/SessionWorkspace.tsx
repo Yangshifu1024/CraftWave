@@ -42,6 +42,8 @@ import { ReconnectOverlay } from "@/chat/ReconnectOverlay";
 import { useRunMetricsStore } from "@/chat/run-metrics";
 import { reconnectIfNeeded, useRunReconnectStore } from "@/chat/run-reconnect";
 import { sessionAdapter } from "@/chat/runtime";
+import { useSessionModelStore } from "@/chat/session-model";
+import { restoreSessionPrefs } from "@/chat/session-prefs";
 import { RunSummariesContext, SessionScopeContext } from "@/chat/session-scope";
 import { ChatThread } from "@/chat/Thread";
 import { cwToolkit } from "@/chat/toolkit";
@@ -316,6 +318,26 @@ function SessionTab({
       cancelled = true;
     };
   }, [sessionId, adoptTree]);
+  // 会话偏好恢复（18 号票，FR-14-05）：进入会话 get_session_prefs → 回填
+  // 模型覆盖与 thinking 档两个内存态 store（选模型 + 切档跨重启还原）。
+  // 恢复走 store 纯方法（session-prefs 内部已处理），读失败静默按空偏好。
+  useEffect(() => {
+    void restoreSessionPrefs(sessionId);
+  }, [sessionId]);
+  // Ctrl+L 模型快速切换（FR-13-05，18 号票）：仅活跃 Tab 响应（多 Tab
+  // keep-mounted，非活跃 handler 直接放行不拦截）——经 openRequest store
+  // 唤起本会话 Composer 的 ModelPicker 下拉。
+  useEffect(() => {
+    if (!active) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.ctrlKey && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "l") {
+        event.preventDefault();
+        useSessionModelStore.getState().requestOpen(sessionId);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [active, sessionId]);
   return (
     <div className={active ? "absolute inset-0 flex" : "hidden"}>
       <AssistantRuntimeProvider runtime={runtime} config={cwAuiConfig}>

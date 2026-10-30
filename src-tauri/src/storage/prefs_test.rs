@@ -60,7 +60,10 @@ fn partial_prefs_roundtrip_keeps_only_set_fields() {
 #[test]
 fn missing_file_defaults_to_empty() {
     let root = temp_root("missing");
-    assert_eq!(load_prefs(root.path(), "no-such-session"), SessionPrefs::default());
+    assert_eq!(
+        load_prefs(root.path(), "no-such-session"),
+        SessionPrefs::default()
+    );
 }
 
 /// 损坏文件 → 空偏好兜底（票面定案：不阻塞会话加载），且再次写入可自愈。
@@ -91,10 +94,6 @@ fn corrupted_file_falls_back_to_empty_and_recovers() {
 fn unknown_thinking_level_falls_back_to_empty() {
     let root = temp_root("unknown-level");
     fs::create_dir_all(root.path().join("sessions")).expect("建目录失败");
-    fs::write(
-        prefs_path(root.path(), "sess-4"),
-        r#"{"thinking":"ultra"}"#,
-    )
-    .expect("写非法值失败");
+    fs::write(prefs_path(root.path(), "sess-4"), r#"{"thinking":"ultra"}"#).expect("写非法值失败");
     assert_eq!(load_prefs(root.path(), "sess-4"), SessionPrefs::default());
 }

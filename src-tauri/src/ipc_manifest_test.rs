@@ -234,6 +234,12 @@ fn export_ipc_manifest_and_cross_lang_fixture() {
     assert_eq!(find("cancel_run").args_type, "CancelRunArgs");
     assert_eq!(find("resolve_ask").args_type, "ResolveAskArgs");
     assert_eq!(find("approve_plan").args_type, "ApprovePlanArgs");
+    // 会话偏好两命令（18 号票，§3.3 #24/#25）：#25 返回 () 非名义，载荷
+    // 类型名只锚 args 面（SetSessionPrefsArgs → SetSessionPrefsPayload）
+    assert_eq!(find("get_session_prefs").args_type, "SessionPrefsArgs");
+    assert_eq!(find("get_session_prefs").ret_type, "GetSessionPrefsResult");
+    assert_eq!(find("set_session_prefs").args_type, "SetSessionPrefsArgs");
+    assert_eq!(find("set_session_prefs").ret_type, "()");
     // steer/followUp 队列三命令（06 号票，§3.3 #21/#59d/#59e）
     assert_eq!(find("inject_run_message").args_type, "InjectRunMessageArgs");
     assert_eq!(

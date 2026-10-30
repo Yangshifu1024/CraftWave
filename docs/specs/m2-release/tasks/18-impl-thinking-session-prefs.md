@@ -1,7 +1,7 @@
 # 实现：Thinking 档位与会话偏好（FR-02-08 + FR-14-05/07 + Ctrl+L）
 
 Type: task
-Status: claimed
+Status: resolved
 
 ## 要做什么
 
@@ -65,8 +65,25 @@ FR 依据（原文摘引）：
 
 ## 验收
 
-- [ ] Composer thinking 钮五档可切，下一请求生效（mock 端可断言 reasoning_effort 字段随档变化）
-- [ ] 选模型 + 切档后重启应用，进入会话两者还原；权限档重启回默认档不还原
-- [ ] Ctrl+L 唤起模型切换，选择即持久
-- [ ] 会话未显式设置 thinking 时，per-model reasoningEffort 生效（含不传档）
-- [ ] 契约测试含 #24/#25 接线；§3.3 #24/#25、§3.2 RunConfig、§11.4 映射表、§10.6 键位表回写完成
+- [x] Composer thinking 钮五档可切，下一请求生效（mock 端可断言 reasoning_effort 字段随档变化）
+  ——ThinkingMenu 下拉（跟随默认 + off/minimal/low/medium/high，Thread.tsx）；映射层 `reasoning_test.rs` 表驱动钉五档 × 三方言；wire 注入层集成测试 `backend_e2e::e2e_mid_run_switch_applies_on_next_request` 断言切换后请求体带 `reasoning_effort: "high"`、切换前不带；新 run 起点 `sessionRunConfig` 惰性携带（runtime.test 钉 off/未设置的区分）
+- [x] 选模型 + 切档后重启应用，进入会话两者还原；权限档重启回默认档不还原
+  ——`<id>.prefs.json` 原子写（prefs_test roundtrip/损坏兜底）+ SessionTab 挂载 `restoreSessionPrefs` 回填双 store（session-prefs.test：回填/未设置不动/失败静默/不回写环）；权限档 store 无落盘路径（FR-14-05 保持内存态）。注：重启还原以后端 roundtrip + 挂载恢复两级测试覆盖，未做真实重启的人工端到端
+- [x] Ctrl+L 唤起模型切换，选择即持久
+  ——SessionTab 活跃 Tab keydown → `openRequest` store → ModelPicker 展开；`setModelPersisted` 防抖落盘（session-prefs.test 钉合并与 null 清除语义）
+- [x] 会话未显式设置 thinking 时，per-model reasoningEffort 生效（含不传档）
+  ——`effective_thinking_directive` 优先级链（chat.rs）+ `reasoning_test.rs` 的 `model_effort_*` 表驱动（default → OpenAI 不传 / Anthropic 20%）
+- [x] 契约测试含 #24/#25 接线；§3.3 #24/#25、§3.2 RunConfig、§11.4 映射表、§10.6 键位表回写完成
+  ——`contract.test.ts` 双命令接线 + 类型名锚点；`ipc_manifest_test.rs` #24/#25 锚点断言；文档四处回写完成（v2.23）
+
+## 决议记录
+
+- **续作决策（2026-10-31）**：本票由上一代理限额中断于 WIP 检查点 6611ac1（编译不过：E0382/E0061/E0599/E0753/E0308/E0004 十处），本次续作修复全部编译错误（含 `drive_run` 增 refresh 参数的三个既有调用点同步、`RunExit::Failed` 新变体在子代理驱动循环的兜底分支），并补齐前端消费面、契约同步与文档回写；WIP 检查点提交保留不动。
+- **§11.4 对照表定稿**（纪律回写点）：会话五档（off/minimal/low/medium/high）与 per-model 五档（default/low/medium/high/max）不对齐问题的回写定案——会话 `minimal` ↔ per-model `default` 同 20% 预算；会话 `off` = OpenAI 系显式 `"none"`（rig `Reasoning::Off`）/ Anthropic 不启用（缺省行为），区别于「未设置」；max_tokens 上调规则统一为 budget > 原 maxTokens 时上调至 min(contextWindow, budget + 原 maxTokens)。
+- **#25 merge 语义**：`prefs` 载荷采用双 Option（TS 生成物摊平为 `T | null | undefined`）——字段缺省 = 不动、`null` = 清除回默认、设值 = 覆盖；空白 modelId 归一为清除（宽容前端空串）。
+- **偏好权威链**：run 起点快照 = prefs 文件值 > RunConfig（前端两者同步写，文件缺失回落 RunConfig 兼容旧载荷）；运行中以后端 prefs 文件为权威——`HostRequestRefresher` 每拍 CallModel 前重读，变更才换模型客户端/请求参数/图片降级开关（锁内 clone 即释放，不跨 await，不打断在飞请求）。
+- **Q18 预算接缝落地**：切换模型时以 `DriveState.last_input`（最近请求真实输入）+ 新模型回复预留做硬预算复查（`is_over_wire_budget`），超限 E_CONTEXT_OVERFLOW 终止（§6.2 暂停保留输入）；`RunExit::Failed` 为新增终态变体，runEnded(error) 由 drive_run 发出。
+- **rig 目录启发式行为记录**：rig 0.45 按模型名启发式判定推理能力——`gpt-4` 系按名判定为非推理模型，effort 参数被 `OnUnsupported::Ignore` 丢弃（正确语义）；目录外名字（第三方兼容端点如 deepseek/qwen）不匹配任何启发式，effort 正常透传。集成测试的模型 B 用 `gpt-5-mock` 名字触发「按名推理模型」分支。
+- **诚实降级（不勾假绿之外的说明）**：①「预算与图片能力重新校验」在切换路径由 `HostRequestRefresher` 实现承载（`is_over_wire_budget` 纯函数 + `set_downgrade_images` 开关），有实现与组件级覆盖，但无独立集成测试驱动「切换后超预算 → E_CONTEXT_OVERFLOW」与「切非 vision → 历史图降级」的端到端路径（HostRequestRefresher 为 pub(crate) 且依赖完整 AppState，测试构造代价高；核心判定函数已有单测）；②「重启还原」以 roundtrip + 挂载恢复两级测试覆盖，未做真实重启人工验收。
+- **前端持久化节奏**：`session-prefs.ts` 模块级防抖（300ms 合并同会话多字段变更为一次 set_session_prefs；同字段后写覆盖先写）；恢复走 store 纯方法防「读取→原样写回」回环。
+- **Ctrl+L 实现口径**：FR-13-05 的「Ctrl+L」按字面 `Ctrl` 键实现（`event.ctrlKey`，macOS 亦然）；仅活跃 Tab 响应（多 Tab keep-mounted，非活跃 handler 放行不拦截）；ModelPicker 展开经模块级 `openRequest` store 单信号承载。

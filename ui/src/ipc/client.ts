@@ -23,6 +23,7 @@ import type {
   CompactSessionArgs,
   CompactSessionResult,
   DeleteProviderArgs,
+  GetSessionPrefsResult,
   InjectRunMessageArgs,
   InjectRunMessageResult,
   IpcError,
@@ -60,7 +61,10 @@ import type {
   SequencedFrame,
   SessionMeta,
   SessionPendingAsk,
+  SessionPrefsArgs,
   SessionTreeData,
+  SetSessionPrefsArgs,
+  SetSessionPrefsPayload,
   SkillInspectArgs,
   SkillInspectResult,
   SkillListEntry,
@@ -107,6 +111,9 @@ export const COMMANDS = {
   createSession: "create_session",
   deleteSession: "delete_session",
   renameSession: "rename_session",
+  // 会话偏好两命令（18 号票，§3.3 #24/#25）
+  getSessionPrefs: "get_session_prefs",
+  setSessionPrefs: "set_session_prefs",
   searchWorkspacePaths: "search_workspace_paths",
   readWorkspaceFile: "read_workspace_file",
   getUiState: "get_ui_state",
@@ -435,6 +442,25 @@ export function deleteSession(sessionId: string): Promise<void> {
 /** §3.3 #17：会话重命名。 */
 export function renameSession(sessionId: string, title: string): Promise<SessionMeta> {
   return invoke<SessionMeta>(COMMANDS.renameSession, { sessionId, title });
+}
+
+/** §3.3 #24：读取会话偏好（18 号票）——modelId/thinking 未设置时键省略；
+ *  会话不存在 reject E_NOT_FOUND。进入会话时的恢复数据源（FR-14-05）。 */
+export function getSessionPrefs(sessionId: string): Promise<GetSessionPrefsResult> {
+  return invoke<GetSessionPrefsResult>(COMMANDS.getSessionPrefs, {
+    sessionId,
+  } satisfies SessionPrefsArgs);
+}
+
+/** §3.3 #25：设置会话偏好（18 号票）——merge 语义：字段缺省 = 不动、
+ *  null = 清除回默认、设值 = 覆盖。写入即对运行中 run 的下一次模型请求生效
+ *  （后端每拍请求前重读 prefs，§11.1 FR-02-07 修正案）；原子写落盘跨重启
+ *  还原。会话不存在 reject E_NOT_FOUND。 */
+export function setSessionPrefs(sessionId: string, prefs: SetSessionPrefsPayload): Promise<void> {
+  return invoke<void>(COMMANDS.setSessionPrefs, {
+    sessionId,
+    prefs,
+  } satisfies SetSessionPrefsArgs);
 }
 
 // ---- workspace 只读（§3.3 #27/#28，16 号票）----

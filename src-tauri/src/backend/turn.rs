@@ -222,10 +222,10 @@ where
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
-        let response =
-            model.call(request).await.map_err(|e| {
-                PromptError::from(rig::error::ProviderError::request(e.to_string()))
-            })?;
+        let response = model
+            .call(request)
+            .await
+            .map_err(|e| PromptError::from(rig::error::ProviderError::request(e.to_string())))?;
         let text = response
             .choice
             .iter()
@@ -354,10 +354,12 @@ pub fn downgrade_history_images(history: Vec<Arc<Message>>) -> Vec<Arc<Message>>
                 Arc::new(Message::User {
                     content: content
                         .into_iter()
-                        .map(|c| if is_image_content(&c) {
-                            rig::message::UserContent::text(RUNTIME_PLACEHOLDER.to_owned())
-                        } else {
-                            c
+                        .map(|c| {
+                            if is_image_content(&c) {
+                                rig::message::UserContent::text(RUNTIME_PLACEHOLDER.to_owned())
+                            } else {
+                                c
+                            }
                         })
                         .collect(),
                 })

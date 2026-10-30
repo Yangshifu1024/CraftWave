@@ -158,6 +158,7 @@ where
         sink,
         None,
         None::<&dyn crate::backend::run_loop::SteerSource>,
+        None::<&dyn crate::backend::run_loop::RequestRefresher>,
         Duration::from_secs(30),
     )
     .await

@@ -82,8 +82,8 @@ impl ThinkingLevel {
 
 /// 档位映射的中立结果（§11.4 回写表的一行）：按方言二选一生效。
 ///
-//! 为什么是中立结构而不是直接给 rig 枚举：providers 域保持零 rig 依赖
-//! （§2.2 层次纪律），rig `GenerationOptions` 的构造在 backend 层完成。
+/// 为什么是中立结构而不是直接给 rig 枚举：providers 域保持零 rig 依赖
+/// （§2.2 层次纪律），rig `GenerationOptions` 的构造在 backend 层完成。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReasoningDirective {
     /// OpenAI 系请求字段 `reasoning_effort` 的取值。None = 不传（供应商缺省

@@ -50,9 +50,19 @@ const FULL_CHAIN_BUDGET: Duration = Duration::from_millis(1000);
 
 /// 指向 mock 的 rig Chat 模型。
 fn mock_model(mock: &MockOpenAI) -> rig::driver::Model<rig::providers::openai::wire::Chat> {
+    mock_model_named(mock, "gpt-4o-mock")
+}
+
+/// 指定模型名的变体（18 号票切换测试用：gpt-5 名字触发 rig 目录启发式的
+/// 「按名判定为推理模型」分支，effort 参数不被 OnUnsupported::Ignore 丢弃
+/// ——gpt-4 系按名判定为非推理模型，effort 被忽略正是 §11.4 的正确语义）。
+fn mock_model_named(
+    mock: &MockOpenAI,
+    model: &str,
+) -> rig::driver::Model<rig::providers::openai::wire::Chat> {
     let config = rig::providers::openai::wire::OpenAIConfig::new("mock-key".to_owned())
         .with_base_url(mock.base_url.clone());
-    config.client().chat("gpt-4o-mock")
+    config.client().chat(model.to_owned())
 }
 
 /// 工具定义（read：mock 脚本点名；command：S5 长命令载体）。
@@ -183,6 +193,7 @@ async fn e2e_frame_fidelity_call_id_same_origin_throttle_nfr02() {
         &mut sink_handle,
         None,
         None,
+        None, // 每拍请求刷新源（测试直驱路径无，18 号票）
         std::time::Duration::from_secs(30),
     )
     .await
@@ -312,6 +323,140 @@ async fn e2e_frame_fidelity_call_id_same_origin_throttle_nfr02() {
     }
 }
 
+// —— 1b. 运行中模型/thinking 切换（18 号票，FR-02-07 修正案） ——
+
+/// 每拍请求刷新的测试实现：第一次调用（首拍前）不动；第二次调用（第二拍前，
+/// 工具批结果已回喂）把驱动热切到模型 B 并把请求参数改为 thinking=high。
+/// 对应生产 HostRequestRefresher 的「每拍 CallModel 前重读会话偏好」契约
+/// （§11.1），此处直接换 mock 模型客户端以便断言请求归属。
+struct SwapMidRunRefresher {
+    driver: Arc<TurnDriver<rig::providers::openai::wire::Chat, rig::http_client::DynHttpClient>>,
+    model_b: rig::driver::Model<rig::providers::openai::wire::Chat>,
+    calls: std::sync::atomic::AtomicUsize,
+}
+
+impl craftwave_lib::backend::run_loop::RequestRefresher for SwapMidRunRefresher {
+    fn before_request(
+        &self,
+        _state: &craftwave_lib::backend::run_loop::DriveState,
+    ) -> Result<(), craftwave_lib::backend::run_loop::RefreshFailure> {
+        let n = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if n == 1 {
+            // 第二拍前生效（同 run 内的下一次模型请求，无需重新 start_chat）
+            self.driver.swap_model(self.model_b.clone());
+            self.driver.update_spec(|spec| {
+                spec.options = rig::completion::options::GenerationOptions::default()
+                    .reasoning(rig::completion::Reasoning::Effort(
+                        rig::completion::Effort::High,
+                    ))
+                    .on_unsupported(rig::completion::options::OnUnsupported::Ignore);
+            });
+        }
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn e2e_mid_run_switch_applies_on_next_request() {
+    // 模型 A：默认脚本（turn1 出 read 工具调用 + turn2 文本——第二拍轮不到它）
+    let mock_a = MockOpenAI::start().await;
+    // 模型 B：单拍文本答复（第二拍直接收口 Done）
+    let mock_b = MockOpenAI::start_with_turn1(vec![
+        content_delta("B 模型接管后的答复。"),
+        finish_chunk("stop"),
+        usage_event(),
+        done_marker(),
+    ])
+    .await;
+
+    let driver = Arc::new(TurnDriver::new(
+        mock_model(&mock_a),
+        RunSpec::new(),
+        vec![tool_def(TOOL_READ)],
+    ));
+    let refresher = SwapMidRunRefresher {
+        driver: driver.clone(),
+        model_b: mock_model_named(&mock_b, "gpt-5-mock"),
+        calls: std::sync::atomic::AtomicUsize::new(0),
+    };
+    let sink = SharedSink::default();
+    let mut sink_handle = sink.clone();
+    let exit = drive_run(
+        &driver,
+        new_run("帮我读配置文件"),
+        "run-mid-switch",
+        "model-a",
+        CancellationToken::new(),
+        fake_executor_text("共 12 行：port = 8087"),
+        Arc::new(AllowAllGate),
+        &mut sink_handle,
+        None,
+        None,
+        Some(&refresher),
+        std::time::Duration::from_secs(30),
+    )
+    .await
+    .expect("RunLoop 应正常跑完");
+
+    // ① run 自然收口 Done：正在进行的请求不被切换打断（第一拍在 A 上完整走完）
+    assert!(
+        matches!(exit, RunExit::Done(_)),
+        "退出态应为 Done，实际 {exit:?}"
+    );
+    let frames = sink.frames();
+    assert!(
+        matches!(
+            frames.last().expect("有帧").frame.frame,
+            ChatFrame::RunEnded {
+                reason: EndReason::Done,
+                ..
+            }
+        ),
+        "末帧应为 runEnded(done)"
+    );
+    // 工具批照常回喂（第一拍的产物不因中途切换丢失）
+    assert_eq!(
+        sink.count_kind(|f| matches!(f, ChatFrame::ToolResult { .. })),
+        1
+    );
+
+    // ② 请求归属：模型 A 只收到第一拍，模型 B 收到第二拍（同 run 内切换生效）
+    let a_requests = mock_a.request_bodies().await;
+    assert_eq!(a_requests.len(), 1, "模型 A 只应收到第一拍请求");
+    let b_requests = mock_b.request_bodies().await;
+    assert_eq!(b_requests.len(), 1, "模型 B 应收到第二拍请求");
+
+    // ③ 参数随拍生效：B 的请求带切换后的 reasoning_effort=high；A 的第一拍不带
+    assert_eq!(
+        b_requests[0]
+            .get("reasoning_effort")
+            .and_then(|v| v.as_str()),
+        Some("high"),
+        "第二拍请求应带切换后的 thinking 档（reasoning_effort=high）：{}",
+        b_requests[0]
+    );
+    assert!(
+        a_requests[0].get("reasoning_effort").is_none(),
+        "切换前的第一拍不应带 reasoning 参数：{}",
+        a_requests[0]
+    );
+
+    // ④ usage 归实际模型：每拍收口各发一帧 usage（A 一帧 + B 一帧），run 内
+    //    累计随帧推进——用量按当拍实际服务的模型归属（票面口径），无重复计账
+    let usage_total: Vec<u64> = frames
+        .iter()
+        .filter_map(|t| match &t.frame.frame {
+            ChatFrame::Usage { usage, .. } => Some(usage.input),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(usage_total.len(), 2, "两拍各发一帧 usage（归当拍模型）");
+    assert!(
+        usage_total.windows(2).all(|w| w[0] <= w[1]),
+        "usage 帧为 run 内累计值，应单调不减：{usage_total:?}"
+    );
+}
+
 // —— 2. 流中取消 ——
 
 #[tokio::test]
@@ -344,6 +489,7 @@ async fn e2e_cancel_midstream_run_ended_last_frame_latency() {
             &mut *sink_box,
             None,
             None,
+            None, // 每拍请求刷新源（测试直驱路径无，18 号票）
             std::time::Duration::from_secs(30),
         )
         .await
@@ -560,6 +706,7 @@ async fn e2e_tool_batch_cancel_keep_completed_mark_rest() {
             &mut *sink_box,
             None,
             None,
+            None, // 每拍请求刷新源（测试直驱路径无，18 号票）
             std::time::Duration::from_secs(30),
         )
         .await
@@ -679,6 +826,7 @@ async fn e2e_approval_suspend_serialize_resume_done() {
         &mut sink1_handle,
         None,
         None,
+        None, // 每拍请求刷新源（测试直驱路径无，18 号票）
         std::time::Duration::from_secs(30),
     )
     .await
@@ -728,6 +876,7 @@ async fn e2e_approval_suspend_serialize_resume_done() {
         &mut sink2_handle,
         Some(state),
         None,
+        None, // 每拍请求刷新源（测试直驱路径无，18 号票）
         std::time::Duration::from_secs(30),
     )
     .await
@@ -879,6 +1028,7 @@ mod command_face {
     ) -> craftwave_lib::host::commands::chat::RunConfig {
         craftwave_lib::host::commands::chat::RunConfig {
             model_id: None,
+            thinking: None,
             tier,
             max_turns: 4,
             steer: false,
@@ -2765,6 +2915,7 @@ async fn parallel_batch_mixed_read_write_source_order() {
         &mut sink_handle,
         None,
         None,
+        None, // 每拍请求刷新源（测试直驱路径无，18 号票）
         std::time::Duration::from_secs(30),
     )
     .await
@@ -2842,6 +2993,7 @@ async fn parallel_batch_cancel_joins_both_commands_then_run_ended() {
             &mut sink_handle,
             None,
             None,
+            None, // 每拍请求刷新源（测试直驱路径无，18 号票）
             std::time::Duration::from_secs(30),
         )
         .await
@@ -2962,6 +3114,7 @@ mod small_tools {
             &mut sink_handle,
             None,
             None,
+            None, // 每拍请求刷新源（测试直驱路径无，18 号票）
             std::time::Duration::from_secs(30),
         )
         .await
@@ -3034,6 +3187,7 @@ mod image_face {
     fn run_config() -> RunConfig {
         RunConfig {
             model_id: None,
+            thinking: None,
             tier: PermissionTier::FullAccess,
             max_turns: 4,
             steer: false,

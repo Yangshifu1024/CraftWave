@@ -479,6 +479,7 @@ where
         sink,
         None,
         None::<&dyn SteerSource>,
+        None::<&dyn crate::backend::run_loop::RequestRefresher>,
         stall_timeout,
     )
     .await

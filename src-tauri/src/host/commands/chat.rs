@@ -2099,7 +2099,7 @@ pub async fn start_chat_core(
                 // run:error 事件与队列暂停分流（§6.2 暂停保留输入）。
                 Ok(RunExit::Failed { code, message }) => {
                     errored = Some(RunFailure {
-                        code,
+                        code: code.clone(),
                         message: message.clone(),
                     });
                     break RunExit::Failed { code, message };

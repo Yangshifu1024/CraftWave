@@ -21,6 +21,7 @@ import {
   ArrowDown,
   ArrowUp,
   Bot,
+  Brain,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -64,12 +65,20 @@ import { TIER_LABELS, tierOf, usePermissionTierStore } from "@/chat/permission-t
 import { ReasoningPart } from "@/chat/ReasoningPart";
 import { useSessionMetrics } from "@/chat/run-metrics";
 import { DEFAULT_RUN_CONFIG } from "@/chat/runtime";
-import { modelOf, useSessionModelStore } from "@/chat/session-model";
+import { modelOf, setModelPersisted, useSessionModelStore } from "@/chat/session-model";
 import { useRunSummaries, useSessionScope } from "@/chat/session-scope";
 import { McpFallbackCard } from "@/chat/ToolCards";
+import {
+  setLevelPersisted,
+  THINKING_DESCRIPTIONS,
+  THINKING_LABELS,
+  THINKING_LEVELS,
+  thinkingOf,
+  useThinkingStore,
+} from "@/chat/thinking-level";
 import { useVisionStore, visionOf } from "@/chat/vision-state";
 import { getConfig, pathKind, readImageBlob } from "@/ipc/client";
-import type { PermissionTier } from "@/ipc/types";
+import type { PermissionTier, ThinkingLevel } from "@/ipc/types";
 import { matchGhost, useAskStore } from "@/stores/ask";
 import { useSessionsStore } from "@/stores/sessions";
 
@@ -368,6 +377,7 @@ function ComposerBar() {
           ...DEFAULT_RUN_CONFIG,
           tier: tierOf(sessionId),
           ...(modelOf(sessionId) !== undefined ? { modelId: modelOf(sessionId) } : {}),
+          ...(thinkingOf(sessionId) !== undefined ? { thinking: thinkingOf(sessionId) } : {}),
         };
         void queueFollowUp(
           sessionId,
@@ -653,6 +663,7 @@ function ComposerBar() {
             </button>
           )}
           <TierMenu />
+          <ThinkingMenu />
           <div className="ml-auto flex items-center gap-1.5">
             <ModelPicker />
             {/* 键位同位替换（ZCode 单键形态）：空闲=发送；运行中=停止（点击中断本轮）。
@@ -786,17 +797,123 @@ function TierMenu() {
   );
 }
 
+/** thinking 档触发器文案：未显式设置显示「默认」（per-model reasoningEffort
+ *  回落，§11.4 优先级链），显式档显示档位名。 */
+function thinkingTriggerLabel(level: ThinkingLevel | undefined): string {
+  return level === undefined ? "默认" : THINKING_LABELS[level];
+}
+
 /**
- * 模型选择下拉（FR-13-05 Ctrl+L 的 M1 简化形态）：列出配置里全部供应商
- * 的模型；选中即本会话覆盖（发送时经 RunConfig.modelId 生效，§11.1），
- * 「跟随默认」回到全局 activeModelId。清单在每次打开时拉取（设置页
- * 改动即时反映）。
+ * thinking 档下拉（FR-02-08，18 号票）：Composer 工具条的思考力度快捷钮
+ * （票面「Shift+Tab 或按钮」二选一——Shift+Tab 已被权限档占用（§10.6），
+ * 走按钮 + 下拉）。六行 = 「跟随默认」（清除显式设置，回落 per-model
+ * reasoningEffort）+ 五档（off→minimal→low→medium→high，票面循环顺序）。
+ * 选择即 setLevelPersisted（内存态 + set_session_prefs 防抖落盘，FR-14-05）；
+ * 运行中切换由后端每拍请求前重读 prefs 生效（§11.1 FR-02-07 修正案）。
+ */
+function ThinkingMenu() {
+  const sessionId = useSessionScope();
+  const level = useThinkingStore((s) => s.bySession[sessionId]);
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="relative shrink-0">
+      {open && (
+        <ul
+          data-testid="thinking-menu"
+          className="cw-pop-in absolute bottom-full left-0 z-20 mb-1 w-64 rounded-lg border border-[var(--border)] bg-[var(--card)] p-1 shadow"
+        >
+          <li>
+            <button
+              type="button"
+              className="relative flex min-h-9 w-full items-center rounded-md pr-8 pl-2 text-left hover:bg-[var(--accent)]"
+              onClick={() => {
+                setLevelPersisted(sessionId, undefined);
+                setOpen(false);
+              }}
+            >
+              <span className="flex min-w-0 flex-col">
+                <span className="text-ui-base text-[var(--foreground)]">跟随默认</span>
+                <span className="text-ui-sm text-[var(--muted-foreground)]">
+                  按模型配置的 reasoningEffort 回落
+                </span>
+              </span>
+              {level === undefined && (
+                <Check
+                  size={16}
+                  aria-hidden
+                  className="absolute top-1/2 right-2 -translate-y-1/2 text-[var(--muted-foreground)]"
+                />
+              )}
+            </button>
+          </li>
+          {THINKING_LEVELS.map((lv) => (
+            <li key={lv}>
+              <button
+                type="button"
+                className="relative flex min-h-9 w-full items-start gap-3 rounded-md py-2 pr-8 pl-2 text-left hover:bg-[var(--accent)]"
+                onClick={() => {
+                  setLevelPersisted(sessionId, lv);
+                  setOpen(false);
+                }}
+              >
+                <Brain size={16} aria-hidden className="mt-0.5 shrink-0 text-[var(--cw-dim)]" />
+                <span className="flex min-w-0 flex-col gap-0.5">
+                  <span className="text-ui-base text-[var(--foreground)]">
+                    {THINKING_LABELS[lv]}
+                  </span>
+                  <span className="text-ui-sm text-[var(--muted-foreground)]">
+                    {THINKING_DESCRIPTIONS[lv]}
+                  </span>
+                </span>
+                {level === lv && (
+                  <Check
+                    size={16}
+                    aria-hidden
+                    className="absolute top-1/2 right-2 -translate-y-1/2 text-[var(--muted-foreground)]"
+                  />
+                )}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <button
+        type="button"
+        data-testid="thinking-badge"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className="flex h-7 items-center gap-1 rounded-lg px-2 text-ui-sm text-[var(--muted-foreground)] hover:bg-[var(--accent)]"
+        title="思考力度（本会话持久保存；运行中切换在下一请求生效）"
+      >
+        <Brain size={16} aria-hidden className="inline-block shrink-0 align-[-1px]" />
+        {thinkingTriggerLabel(level)}
+        <ChevronDown size={14} aria-hidden className="shrink-0 opacity-60" />
+      </button>
+    </div>
+  );
+}
+
+/**
+ * 模型选择下拉（FR-13-05 Ctrl+L，18 号票完成持久化收尾）：列出配置里全部
+ * 供应商的模型；选中即本会话覆盖（发送时经 RunConfig.modelId 生效，§11.1）
+ * 并防抖落盘（set_session_prefs，跨重启还原），「跟随默认」回到全局
+ * activeModelId。清单在每次打开时拉取（设置页改动即时反映）；Ctrl+L 经
+ * openRequest store 唤起（SessionTab 监听派发，18 号票）。
  */
 function ModelPicker() {
   const sessionId = useSessionScope();
   const selected = useSessionModelStore((s) => s.bySession[sessionId]);
-  const setModel = useSessionModelStore((s) => s.setModel);
   const [open, setOpen] = useState(false);
+  // Ctrl+L 打开信号（18 号票）：openRequest 指向本会话即展开并消费掉
+  const openRequest = useSessionModelStore((s) => s.openRequest);
+  const consumeOpen = useSessionModelStore((s) => s.consumeOpen);
+  useEffect(() => {
+    if (openRequest === sessionId) {
+      consumeOpen(sessionId);
+      setOpen(true);
+    }
+  }, [openRequest, sessionId, consumeOpen]);
   // 全部模型（按供应商分组）与全局默认模型 id：打开时拉取
   const [groups, setGroups] = useState<
     { provider: string; models: { id: string; name: string }[] }[]
@@ -843,7 +960,7 @@ function ModelPicker() {
               type="button"
               className="relative flex min-h-8 w-full items-center rounded-md pr-8 pl-2 text-left text-ui-base text-[var(--foreground)] hover:bg-[var(--accent)]"
               onClick={() => {
-                setModel(sessionId, undefined);
+                setModelPersisted(sessionId, undefined);
                 setOpen(false);
               }}
             >
@@ -870,7 +987,7 @@ function ModelPicker() {
                       type="button"
                       className="relative flex min-h-8 w-full items-center gap-2 rounded-md pr-8 pl-2 text-left text-ui-base text-[var(--foreground)] hover:bg-[var(--accent)]"
                       onClick={() => {
-                        setModel(sessionId, model.id);
+                        setModelPersisted(sessionId, model.id);
                         setOpen(false);
                       }}
                     >

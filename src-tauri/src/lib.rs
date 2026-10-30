@@ -62,7 +62,8 @@ use host::commands::session::{CreateSessionArgs, DeleteSessionArgs, RenameSessio
 // 会话偏好两命令（18 号票，§3.3 #24/#25）
 #[allow(unused_imports)]
 use host::commands::session::{
-    GetSessionPrefsResult, SetSessionPrefsArgs, get_session_prefs, set_session_prefs,
+    GetSessionPrefsResult, SessionPrefsArgs, SetSessionPrefsArgs, get_session_prefs,
+    set_session_prefs,
 };
 #[allow(unused_imports)]
 use host::commands::session_tree::{

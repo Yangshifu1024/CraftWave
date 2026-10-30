@@ -129,8 +129,7 @@ fn model_effort_anthropic_budgets() {
     );
     // low = 40%：上调
     assert_eq!(
-        model_effort_to_request(ReasoningEffort::Low, ANTHROPIC, WINDOW, MAX_TOKENS)
-            .budget_tokens,
+        model_effort_to_request(ReasoningEffort::Low, ANTHROPIC, WINDOW, MAX_TOKENS).budget_tokens,
         Some(51_200)
     );
     // high 与 max 同预算 80%；max 叠加上调（high 也触发上调规则——上调规则

@@ -914,6 +914,7 @@ async fn run_subagent(
             &mut sink,
             resume_state.take(),
             None, // 子代理无 steer 插话
+            None, // 子代理无每拍请求刷新源（18 号票刷新面仅主 run）
             stall_timeout,
         )
         .await;
@@ -928,6 +929,9 @@ async fn run_subagent(
             Ok(RunExit::Done(_)) => break SubExit::Done,
             Ok(RunExit::Cancelled) => break SubExit::Cancelled,
             Ok(RunExit::Stalled { message }) => break SubExit::Failed(message),
+            // 每拍请求刷新失败（18 号票新变体；子代理未挂刷新源，防御面
+            // 兜底——语义与 Stalled 同形：runEnded(error) 已发出，按失败收）
+            Ok(RunExit::Failed { message, .. }) => break SubExit::Failed(message),
             Ok(RunExit::Suspended(info)) => {
                 let crate::backend::run_loop::SuspendedInfo {
                     run_json,

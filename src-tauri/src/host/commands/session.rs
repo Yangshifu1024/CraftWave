@@ -4,7 +4,7 @@
 //! 会话双形态（FR-01-02）：projectId 缺省 = 临时会话（roots=数据目录）；
 //! projectId 给定 = 项目会话（roots=项目主目录，创建时校验项目存在）。
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::agent::RunManager;
@@ -117,7 +117,7 @@ pub(crate) async fn rename_session(
     session_id: String,
     title: String,
 ) -> Result<SessionMeta, IpcError> {
-    // 契约命单一事实源：平铺形参回组为文档契约结构
+    // 契约命名单一事实源：平铺形参回组为文档契约结构
     let args = RenameSessionArgs { session_id, title };
     let trimmed = args.title.trim();
     if trimmed.is_empty() {
@@ -146,12 +146,7 @@ pub struct SessionPrefsArgs {
 
 /// 会话存在于索引的校验（#24/#25 共用；不存在 → E_NOT_FOUND）。
 fn ensure_session_exists(app: &AppState, session_id: &str) -> Result<(), IpcError> {
-    let known = app
-        .store
-        .index()
-        .list()
-        .iter()
-        .any(|m| m.id == session_id);
+    let known = app.store.index().list().iter().any(|m| m.id == session_id);
     if known {
         Ok(())
     } else {
@@ -246,7 +241,7 @@ pub(crate) async fn get_session_prefs(
     app: State<'_, AppState>,
     session_id: String,
 ) -> Result<GetSessionPrefsResult, IpcError> {
-    // 契约命单一事实源：平铺形参回组为文档契约结构
+    // 契约命名单一事实源：平铺形参回组为文档契约结构
     let args = SessionPrefsArgs { session_id };
     get_session_prefs_core(&app, &args.session_id)
 }
@@ -260,11 +255,8 @@ pub(crate) async fn set_session_prefs(
     session_id: String,
     prefs: Option<SetSessionPrefsPayload>,
 ) -> Result<(), IpcError> {
-    // 契约命单同一事实源：平铺形参回组为文档契约结构
-    let args = SetSessionPrefsArgs {
-        session_id,
-        prefs,
-    };
+    // 契约命名单一事实源：平铺形参回组为文档契约结构
+    let args = SetSessionPrefsArgs { session_id, prefs };
     set_session_prefs_core(&app, &args.session_id, args.prefs.unwrap_or_default())
 }
 

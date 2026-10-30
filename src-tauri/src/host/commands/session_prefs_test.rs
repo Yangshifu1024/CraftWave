@@ -3,10 +3,13 @@
 
 use std::sync::Arc;
 
-use super::session::{GetSessionPrefsResult, get_session_prefs_core, set_session_prefs_core};
+use super::{
+    GetSessionPrefsResult, SetSessionPrefsPayload, get_session_prefs_core, set_session_prefs_core,
+};
 use crate::host::AppState;
 use crate::providers::reasoning::ThinkingLevel;
 use crate::storage::prefs::{SessionPrefs, load_prefs, save_prefs};
+use crate::util::errors::E_NOT_FOUND;
 use crate::util::events::RecordingEventSink;
 
 /// 临时数据根 + 已注册一个会话的 AppState（index 条目，无历史文件——
@@ -73,7 +76,7 @@ fn unknown_session_rejected() {
     let err = set_session_prefs_core(
         &app,
         "no-such-session",
-        super::session::SetSessionPrefsPayload {
+        SetSessionPrefsPayload {
             thinking: Some(Some(ThinkingLevel::Low)),
             ..Default::default()
         },
@@ -90,7 +93,7 @@ fn set_prefs_merges_only_given_fields() {
     set_session_prefs_core(
         &app,
         &sid,
-        super::session::SetSessionPrefsPayload {
+        SetSessionPrefsPayload {
             model_id: Some(Some("m-1".to_owned())),
             thinking: Some(Some(ThinkingLevel::High)),
         },
@@ -100,7 +103,7 @@ fn set_prefs_merges_only_given_fields() {
     set_session_prefs_core(
         &app,
         &sid,
-        super::session::SetSessionPrefsPayload {
+        SetSessionPrefsPayload {
             thinking: Some(Some(ThinkingLevel::Off)),
             ..Default::default()
         },
@@ -118,7 +121,7 @@ fn set_prefs_null_clears_field() {
     set_session_prefs_core(
         &app,
         &sid,
-        super::session::SetSessionPrefsPayload {
+        SetSessionPrefsPayload {
             model_id: Some(Some("m-1".to_owned())),
             thinking: Some(Some(ThinkingLevel::Low)),
         },
@@ -128,7 +131,7 @@ fn set_prefs_null_clears_field() {
     set_session_prefs_core(
         &app,
         &sid,
-        super::session::SetSessionPrefsPayload {
+        SetSessionPrefsPayload {
             model_id: Some(None),
             ..Default::default()
         },
@@ -141,7 +144,7 @@ fn set_prefs_null_clears_field() {
     set_session_prefs_core(
         &app,
         &sid,
-        super::session::SetSessionPrefsPayload {
+        SetSessionPrefsPayload {
             thinking: Some(None),
             ..Default::default()
         },
@@ -157,7 +160,7 @@ fn blank_model_id_clears() {
     set_session_prefs_core(
         &app,
         &sid,
-        super::session::SetSessionPrefsPayload {
+        SetSessionPrefsPayload {
             model_id: Some(Some("  ".to_owned())),
             thinking: Some(Some(ThinkingLevel::Minimal)),
         },
@@ -172,15 +175,15 @@ fn blank_model_id_clears() {
 /// start_chat 载荷照常解析（serde default → None）。
 #[test]
 fn run_config_without_thinking_deserializes() {
-    let config: super::super::chat::RunConfig = serde_json::from_str(
-        r#"{"tier":"autoEdit","maxTurns":24,"steer":false}"#,
-    )
-    .expect("旧载荷应可解析");
+    let config: super::super::chat::RunConfig =
+        serde_json::from_str(r#"{"tier":"autoEdit","maxTurns":24,"steer":false}"#)
+            .expect("旧载荷应可解析");
     assert_eq!(config.thinking, None);
     assert_eq!(config.model_id, None);
     // 新载荷带 thinking 同样解析
-    let config: super::super::chat::RunConfig =
-        serde_json::from_str(r#"{"tier":"autoEdit","maxTurns":24,"steer":false,"thinking":"high"}"#)
-            .expect("新载荷应可解析");
+    let config: super::super::chat::RunConfig = serde_json::from_str(
+        r#"{"tier":"autoEdit","maxTurns":24,"steer":false,"thinking":"high"}"#,
+    )
+    .expect("新载荷应可解析");
     assert_eq!(config.thinking, Some(ThinkingLevel::High));
 }

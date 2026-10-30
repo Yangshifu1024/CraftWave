@@ -1,9 +1,9 @@
 import type { ChatModelAdapter, ChatModelRunResult, ThreadMessage } from "@assistant-ui/react";
 import { describe, expect, it, vi } from "vitest";
 import type { RunConfig, SequencedFrame } from "@/ipc/types";
-import { tierOf } from "./permission-tier";
-import { createTauriChatAdapter, toWire } from "./runtime";
-import { modelOf, useSessionModelStore } from "./session-model";
+import { createTauriChatAdapter, sessionRunConfig, toWire } from "./runtime";
+import { useSessionModelStore } from "./session-model";
+import { useThinkingStore } from "./thinking-level";
 
 /**
  * tauriChatModel 契约测试（§10.2 产品化）：
@@ -268,9 +268,31 @@ describe("createTauriChatAdapter：帧消费管线", () => {
   });
 });
 
-// ---- sessionAdapter：会话级内存态（权限档 + 模型覆盖）随发送生效（17 号票） ----
+// ---- sessionAdapter：会话级内存态（权限档 + 模型覆盖 + thinking）随发送
+//      生效（17 号票建面；18 号票追加了 thinking 档惰性取值） ----
 
-describe("sessionAdapter：会话内存态 runConfig", () => {
+describe("sessionRunConfig：会话内存态 runConfig", () => {
+  it("会话覆盖的模型 id / thinking 档 / 权限档在发送时生效；未设置时省略字段", () => {
+    // 全部未设置：只有 DEFAULT_RUN_CONFIG 基线（modelId/thinking 键省略）
+    const base = sessionRunConfig("sess-rc");
+    expect(base.modelId).toBeUndefined();
+    expect(base.thinking).toBeUndefined();
+    expect(base.tier).toBe("autoEdit");
+    // 设置模型与 thinking：两字段都出现
+    useSessionModelStore.getState().setModel("sess-rc", "model-xyz");
+    useThinkingStore.getState().setLevel("sess-rc", "high");
+    const covered = sessionRunConfig("sess-rc");
+    expect(covered.modelId).toBe("model-xyz");
+    expect(covered.thinking).toBe("high");
+    // 显式 off 也要带上（off 是用户明确选择，区别于未设置的回落）
+    useThinkingStore.getState().setLevel("sess-rc", "off");
+    expect(sessionRunConfig("sess-rc").thinking).toBe("off");
+    useSessionModelStore.getState().setModel("sess-rc", undefined);
+    useThinkingStore.getState().setLevel("sess-rc", undefined);
+    expect(sessionRunConfig("sess-rc").modelId).toBeUndefined();
+    expect(sessionRunConfig("sess-rc").thinking).toBeUndefined();
+  });
+
   it("会话覆盖的模型 id 与权限档在发送时带入 start_chat；未覆盖时省略 modelId", async () => {
     const sentArgs: { runConfig: RunConfig }[] = [];
     const frames: SequencedFrame[] = [
@@ -287,12 +309,8 @@ describe("sessionAdapter：会话内存态 runConfig", () => {
     // 直接注入 fake 的方式与生产 sessionAdapter 无缝衔接：经 deps 替换 startChat
     const adapter = createTauriChatAdapter({
       sessionId: "sess-model",
-      // 与 sessionAdapter 相同的惰性取值口径（tier + modelId）
-      runConfig: () => {
-        const base = { tier: tierOf("sess-model"), maxTurns: 24, steer: false };
-        const modelId = modelOf("sess-model");
-        return modelId !== undefined ? { ...base, modelId } : base;
-      },
+      // 与 sessionAdapter 相同的惰性取值口径（生产函数直用）
+      runConfig: () => sessionRunConfig("sess-model"),
       startChat: fake,
       cancelRun: async () => true,
       syncTree: async () => {},

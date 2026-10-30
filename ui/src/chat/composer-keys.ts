@@ -21,6 +21,7 @@ import { tierOf, usePermissionTierStore } from "@/chat/permission-tier";
 import { DEFAULT_RUN_CONFIG } from "@/chat/runtime";
 import { modelOf } from "@/chat/session-model";
 import { useSessionScope } from "@/chat/session-scope";
+import { thinkingOf } from "@/chat/thinking-level";
 import { cancelRun, searchWorkspacePaths, skillList } from "@/ipc/client";
 import type { SkillListEntry, WorkspacePathHit } from "@/ipc/types";
 import { matchGhost, useAskStore } from "@/stores/ask";
@@ -532,6 +533,7 @@ export function useComposerKeys(options?: {
         ...DEFAULT_RUN_CONFIG,
         tier: tierOf(sessionId),
         ...(modelOf(sessionId) !== undefined ? { modelId: modelOf(sessionId) } : {}),
+        ...(thinkingOf(sessionId) !== undefined ? { thinking: thinkingOf(sessionId) } : {}),
       };
       void queueFollowUp(sessionId, body, runConfig).then((queued) => {
         if (queued !== null) aui.composer.setText("", { origin: "user" });

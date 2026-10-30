@@ -120,6 +120,9 @@ describe("§12.3 manifest 双向扫描", () => {
       "resolve_ask",
       "approve_plan",
       "compact_session",
+      // 会话偏好两命令（18 号票，§3.3 #24/#25）
+      "get_session_prefs",
+      "set_session_prefs",
       "resolve_exit_request",
       "notification_permission_status",
       "open_notification_settings",
@@ -192,6 +195,15 @@ describe("§12.3 manifest 双向扫描", () => {
     });
     expect(find("approve_plan")).toMatchObject({
       args_type: "ApprovePlanArgs",
+      ret_type: "()",
+    });
+    // 会话偏好两命令（18 号票，§3.3 #24/#25）
+    expect(find("get_session_prefs")).toMatchObject({
+      args_type: "SessionPrefsArgs",
+      ret_type: "GetSessionPrefsResult",
+    });
+    expect(find("set_session_prefs")).toMatchObject({
+      args_type: "SetSessionPrefsArgs",
       ret_type: "()",
     });
     // 退出确认与通知引导（17/19 号票，§9.6）
