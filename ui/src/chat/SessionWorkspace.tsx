@@ -49,6 +49,7 @@ import { ChatThread } from "@/chat/Thread";
 import { cwToolkit } from "@/chat/toolkit";
 import type { RunSummary } from "@/chat/tree-persistence";
 import { deriveRunSummaries, loadedTreeToExported } from "@/chat/tree-persistence";
+import { useUsageStatsStore } from "@/chat/usage-stats";
 import { ConfirmDialog } from "@/components/ui/confirm";
 import { ContextMenu, type ContextMenuEntry } from "@/components/ui/context-menu";
 import { Dialog } from "@/components/ui/dialog";
@@ -739,6 +740,8 @@ async function deleteSessionAndClose(sessionId: string): Promise<void> {
   useCompactionStore.getState().forgetSession(sessionId);
   useRunReconnectStore.getState().forgetSession(sessionId);
   useFollowUpStore.getState().forgetSession(sessionId);
+  // 用量面收尾（20 号票）：旧数据标量回落桶摘除（明细以后端删除为准）
+  useUsageStatsStore.getState().forgetSession(sessionId);
   await useSessionsStore.getState().refresh();
 }
 

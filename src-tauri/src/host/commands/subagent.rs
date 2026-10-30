@@ -145,6 +145,9 @@ enum SubExit {
 
 /// 子代理单帧出口：历史记账 + 用量/步数事件 + 父枢纽 subFrame 包装转发。
 /// 帧序不变量：外层先发 subStarted；本出口只负责中段；subDone 由收尾补发。
+/// 20 号票：usage 差分增量同步落账（kind=sub，runs 计数不增，Q40）——
+/// 会话明细（Q37）与日/模型聚合都按实际执行模型归属（`model_identity`
+/// 为子 run 装配时解析的实际模型，子 run 不挂每拍刷新源，恒定不变）。
 struct SubRunSink {
     /// 父 run 的帧枢纽（subFrame 入环可随 attach 重放恢复）。
     hub: Arc<crate::agent::FrameHub>,
@@ -154,6 +157,10 @@ struct SubRunSink {
     session_usage: Arc<Mutex<std::collections::HashMap<String, UsageTotal>>>,
     session_id: String,
     sub_run_id: String,
+    /// 用量账本（AppState.ledger 克隆件；主/子/辅助共一入口，Q40 只计一次）。
+    ledger: crate::host::usage::UsageLedger,
+    /// 子 run 实际执行模型 `(配置 id, 显示名)`（装配时解析）。
+    model_identity: (String, String),
     /// 子 run 自身累计（sub:usage 载荷 = 该子代理的自身消耗，Q40 子面板展示；
     /// 不重复累进会话累计——会话累计由 tokens:update 单一出口承担）。
     last_total: UsageTotal,
@@ -168,6 +175,18 @@ impl FrameSink for SubRunSink {
             ChatFrame::Usage { usage, .. } => {
                 let delta = sub_usage(usage, &self.last_total);
                 self.last_total = *usage;
+                // 统计落账（20 号票：kind=sub；runs 计数不增）
+                if delta != UsageTotal::default() {
+                    self.ledger.record(
+                        &self.session_id,
+                        &self.sub_run_id,
+                        crate::host::usage::run_kind::SUB,
+                        &self.model_identity.0,
+                        &self.model_identity.1,
+                        delta,
+                        false,
+                    );
+                }
                 let total = {
                     let mut map = self
                         .session_usage
@@ -177,10 +196,12 @@ impl FrameSink for SubRunSink {
                     total.accumulate(&delta);
                     *total
                 };
-                self.events.emit(
-                    keys::TOKENS_UPDATE,
-                    serde_json::json!({ "sessionId": self.session_id, "usage": total }),
-                );
+                let mut payload =
+                    serde_json::json!({ "sessionId": self.session_id, "usage": total });
+                if !self.model_identity.0.is_empty() {
+                    payload["modelId"] = serde_json::json!(self.model_identity.0);
+                }
+                self.events.emit(keys::TOKENS_UPDATE, payload);
                 self.events.emit(
                     keys::SUB_USAGE,
                     serde_json::json!({
@@ -809,6 +830,7 @@ async fn run_subagent(
                 app,
                 ctx,
                 &sub_id,
+                &sub_run_id,
                 role,
                 handle,
                 lease,
@@ -849,6 +871,7 @@ async fn run_subagent(
                 app,
                 ctx,
                 &sub_id,
+                &sub_run_id,
                 role,
                 handle,
                 lease,
@@ -887,6 +910,8 @@ async fn run_subagent(
         }),
     );
     let gate = Arc::new(ApprovalGate::new(ctx.tier, sub_plan));
+    // 子 run 实际执行模型（20 号票落账归属；子 run 无每拍刷新源，恒定）
+    let model_identity = (resolved.id.clone(), resolved.name.clone());
     let mut sink = SubRunSink {
         hub: ctx.parent_hub.clone(),
         sub_id: sub_id.clone(),
@@ -895,6 +920,8 @@ async fn run_subagent(
         session_usage,
         session_id: ctx.session_id.clone(),
         sub_run_id: sub_run_id.clone(),
+        ledger: app.ledger.clone(),
+        model_identity,
         last_total: UsageTotal::default(),
     };
 
@@ -979,6 +1006,7 @@ async fn run_subagent(
         app,
         ctx,
         &sub_id,
+        &sub_run_id,
         role,
         handle,
         lease,
@@ -1111,6 +1139,7 @@ fn finalize_spawn(
     app: &AppState,
     ctx: &SubagentContext,
     sub_id: &str,
+    sub_run_id: &str,
     role: &SubagentRole,
     handle: Arc<SubHandle>,
     mut lease: Option<WorktreeLease>,
@@ -1119,6 +1148,11 @@ fn finalize_spawn(
     exit: SubExit,
     report_candidate: Option<String>,
 ) -> crate::backend::run_loop::ToolExecution {
+    // 子 run 明细收口（20 号票 Q37：补写 endedAt；终态只收口不搬移已记日期）
+    let _ = app
+        .ledger
+        .detail
+        .mark_run_ended(&ctx.session_id, sub_run_id);
     // 四象限（§5.9）：report / partial / no_report / cancelled
     let report = report_candidate.unwrap_or_default();
     let (outcome, error_note): (SubOutcome, Option<(String, String)>) = match exit {

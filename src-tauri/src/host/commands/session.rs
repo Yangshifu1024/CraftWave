@@ -73,32 +73,49 @@ pub struct DeleteSessionArgs {
     pub session_id: String,
 }
 
+/// 删除会话主体（公开给集成测试；命令体转调——Q43 用量联动在本函数）。
+pub fn delete_session_core(
+    app: &AppState,
+    runs: &RunManager,
+    session_id: &str,
+) -> Result<(), IpcError> {
+    if runs.get(session_id).is_some() {
+        return Err(IpcError::new(
+            crate::util::errors::E_SESSION_RUNNING,
+            format!("会话运行中，先取消运行再删除：{session_id}"),
+        ));
+    }
+    let existed = app
+        .store
+        .delete_session(session_id)
+        .map_err(|e| IpcError::internal(format!("会话删除失败：{e:?}")))?;
+    if !existed {
+        return Err(IpcError::not_found(format!("会话不存在：{session_id}")));
+    }
+    // 用量明细与内存累计摘除（Q43：删除后明细不可查询；stats_cache 与
+    // 聚合同构无会话身份，不需清理）
+    app.ledger.detail.forget_session(session_id);
+    app.session_usage
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .remove(session_id);
+    Ok(())
+}
+
 /// 删除会话（§3.3 #16）：运行中拒绝（E_SESSION_RUNNING）；index 条目 +
 /// histories/prefs/toolres 一并清除；不存在 → E_NOT_FOUND。
+/// 20 号票（Q43）：关联 run 用量明细（`<sid>.usage.json`）与内存累计表
+/// 条目随删；日/模型匿名聚合（`stats/*.json`）保留——真实消耗数字不含
+/// 会话身份（§7.7 Q43 匿名化定案）。
 #[tauri::command]
 pub(crate) async fn delete_session(
     app: State<'_, AppState>,
     runs: State<'_, RunManager>,
     session_id: String,
 ) -> Result<(), IpcError> {
+    // 契约命名单一事实源：平铺形参回组为文档契约结构
     let args = DeleteSessionArgs { session_id };
-    if runs.get(&args.session_id).is_some() {
-        return Err(IpcError::new(
-            crate::util::errors::E_SESSION_RUNNING,
-            format!("会话运行中，先取消运行再删除：{}", args.session_id),
-        ));
-    }
-    let existed = app
-        .store
-        .delete_session(&args.session_id)
-        .map_err(|e| IpcError::internal(format!("会话删除失败：{e:?}")))?;
-    if !existed {
-        return Err(IpcError::not_found(format!(
-            "会话不存在：{}",
-            args.session_id
-        )));
-    }
-    Ok(())
+    delete_session_core(&app, &runs, &args.session_id)
 }
 
 /// `rename_session` 参数契约（§3.3 #17）。

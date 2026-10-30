@@ -14,9 +14,17 @@
 import { useEffect, useState } from "react";
 import { CompactButton } from "@/chat/CompactionUI";
 import { type PlanItem, usePlanStateStore } from "@/chat/plan-state";
-import { useSessionMetrics } from "@/chat/run-metrics";
+import { useRunMetricsStore, useSessionMetrics } from "@/chat/run-metrics";
 import { useSessionScope } from "@/chat/session-scope";
-import { getConfig, loadSubagentHistory } from "@/ipc/client";
+import { compactTokens, DailyBars, ModelBars } from "@/chat/usage-charts";
+import {
+  cacheHitRate,
+  restoreSessionUsage,
+  type StatsRangeKey,
+  useUsageStats,
+  useUsageStatsStore,
+} from "@/chat/usage-stats";
+import { getConfig, loadSubagentHistory, sessionUsage } from "@/ipc/client";
 import type { MessageEntry, ProviderConfig } from "@/ipc/types";
 import {
   markHistoryLoading,
@@ -87,6 +95,14 @@ export function Inspector({
   useEffect(() => {
     if (runningCount > 0) setTab("subagents");
   }, [runningCount]);
+  // 会话累计恢复（Q37，20 号票）：会话打开/切换时拉 #59k，四口径经
+  // tokens:update 同款 replace 回填 runMetrics（旧数据标量入回落桶）。
+  // Inspector 面板常驻挂载（open 只控宽度），本副作用即会话级恢复点。
+  useEffect(() => {
+    restoreSessionUsage(sessionId, sessionUsage, (id, usage) => {
+      useRunMetricsStore.getState().applyTokensUpdate(id, usage);
+    });
+  }, [sessionId]);
 
   return (
     <aside
@@ -135,11 +151,77 @@ export function Inspector({
   );
 }
 
-/** 用量 tab（原 Inspector 主体，17 号票形态保留）。 */
+/** 统计区块（20 号票，FR-15-02）：范围切换（今天/近 7 天/近 30 天/全部）
+ *  + 按日柱状图（近 30 天）+ 按模型排行（四口径/占比条）；数据源
+ *  stats_token，tokens:update 到达时本地增量修正今日（event-bridge 接线）。
+ *  范围缓存命中率 = cacheRead/(input+cacheRead)（§10.5 公式）。 */
+const RANGE_LABELS: { key: StatsRangeKey; label: string }[] = [
+  { key: "today", label: "今天" },
+  { key: "7d", label: "近 7 天" },
+  { key: "30d", label: "近 30 天" },
+  { key: "all", label: "全部" },
+];
+
+function UsageStatsSection() {
+  const stats = useUsageStats();
+  const range = useUsageStatsStore((s) => s.range);
+  const setRange = useUsageStatsStore((s) => s.setRange);
+  const error = useUsageStatsStore((s) => s.error);
+  // 打开区块（挂载）即拉取；tokens:update 的增量修正与权威重拉在事件桥
+  useEffect(() => {
+    void useUsageStatsStore.getState().load();
+  }, []);
+  // 模型排行按 total 降序（重排不动后端数据面）
+  const byModel = [...stats.byModel].sort((a, b) => b.total - a.total);
+  const hit = cacheHitRate(stats.total);
+  return (
+    <section data-testid="inspector-stats">
+      <h3 className="mb-1 text-ui-sm text-[var(--cw-dim)]">统计</h3>
+      {/* 范围切换：四档联动重拉 */}
+      <div className="mb-2 flex gap-1" role="tablist" aria-label="统计范围">
+        {RANGE_LABELS.map(({ key, label }) => (
+          <button
+            key={key}
+            type="button"
+            data-testid={`stats-range-${key}`}
+            className={`rounded px-1.5 py-0.5 text-ui-sm ${
+              range === key
+                ? "bg-[var(--accent)] font-medium text-[var(--foreground)]"
+                : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+            }`}
+            onClick={() => setRange(key)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {error !== null ? (
+        <p className="text-ui-sm text-red-600 dark:text-red-400" data-testid="stats-error">
+          统计加载失败：{error}
+        </p>
+      ) : (
+        <>
+          <DailyBars days={stats.byDay} />
+          <div className="mt-1 mb-2 flex justify-between">
+            <span data-testid="stats-range-total">{compactTokens(stats.total.total)} tok</span>
+            <span data-testid="stats-range-hit">
+              缓存命中率 {hit === null ? "—" : `${Math.round(hit * 100)}%`}
+            </span>
+          </div>
+          <ModelBars models={byModel} />
+        </>
+      )}
+    </section>
+  );
+}
+
+/** 用量 tab（原 Inspector 主体，17 号票形态保留；20 号票增统计区块与
+ *  Q37 恢复回落显示）。 */
 function UsagePanel({ sessionId }: { sessionId: string }) {
   const { rate, turnUsage, sessionUsage, lastRun } = useSessionMetrics(sessionId);
   const contextWindow = useContextWindow();
   const planItems = usePlanStateStore((s) => s.bySession[sessionId] ?? EMPTY_PLAN);
+  const legacy = useUsageStatsStore((s) => s.legacyTotals[sessionId]);
   const total = (u: { input: number; output: number }) => u.input + u.output;
   const hitRate =
     sessionUsage.cacheRead > 0
@@ -148,6 +230,9 @@ function UsagePanel({ sessionId }: { sessionId: string }) {
   // 上下文占用：会话累计（输入侧 + 缓存读，§10.5 口径折算）
   const contextUsed = sessionUsage.input + sessionUsage.cacheRead;
   const contextRatio = Math.min(1, contextUsed / contextWindow);
+  // Q37 旧数据回落：明细四口径全零且 index.json 有历史标量 → 合计行回落
+  const legacyTotal =
+    legacy !== undefined && total(sessionUsage) === 0 && legacy > 0 ? legacy : null;
   return (
     <div className="flex flex-col gap-3 overflow-y-auto p-3 text-ui-sm tabular-nums text-[var(--muted-foreground)]">
       {/* 计划（B 组）：plan:update 驱动的当前计划（内存态，重启清空） */}
@@ -208,9 +293,14 @@ function UsagePanel({ sessionId }: { sessionId: string }) {
         </div>
         <div className="mt-1 flex justify-between text-[var(--foreground)]">
           <span>合计</span>
-          <span data-testid="inspector-session-total">{total(sessionUsage)} tok</span>
+          <span data-testid="inspector-session-total">
+            {legacyTotal !== null
+              ? `${legacyTotal} tok（旧版明细不可拆分）`
+              : `${total(sessionUsage)} tok`}
+          </span>
         </div>
       </section>
+      <UsageStatsSection />
       <section>
         <h3 className="mb-1 flex items-center text-ui-sm text-[var(--cw-dim)]">
           上下文进度

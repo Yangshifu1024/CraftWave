@@ -139,6 +139,15 @@ zip = "8.6"
 # 同版本读取 trailer 的 /Encrypt 字典——加密文档在解析前给出明确错误，
 # 不依赖解析器对加密文件的未定义行为。
 lopdf = "0.42"
+# 【M2 20 号票】派生索引库 cache/index.db（§7.8）：stats_cache 表（stats_token
+# 查询缓存，真相在 stats/*.json）。bundled feature = 自带 SQLite 源码经 cc
+# 编译静态链入（免系统 libsqlite3 依赖，三平台构建一致；macOS 侧
+# MACOSX_DEPLOYMENT_TARGET=13.0 对 C 编译同样生效）。
+rusqlite = { version = "0.41.1", features = ["bundled"] }
+# 【M2 20 号票】Q39 记账的「当时本地日期」：0.4.45 已在依赖树内（tauri 等
+# 间接依赖，锁同版本不新增下载）；仅开 clock+std（Local 日期面，无序列化
+# 需求——日期以 YYYY-MM-DD 字符串进出 stats 文件与契约）。
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 
 # 【S5 spike，cfg(unix)】进程组收割：kill(-pgid, SIGTERM/SIGKILL)
 [target.'cfg(unix)'.dependencies]

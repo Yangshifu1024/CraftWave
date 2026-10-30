@@ -2,7 +2,8 @@
 
 /**
  * §3.2 UsageTotal（帧面 usage 载荷，即模型的 token 用量统计；字段名的
- * camelCase 由 serde 层统一转换）。
+ * camelCase 由 serde 层统一转换）。20 号票：增 Deserialize——用量统计
+ * 权威明细（storage/stats.rs 的 SessionUsage）从磁盘读回时反序列化。
  */
 export type UsageTotal = { 
 /**

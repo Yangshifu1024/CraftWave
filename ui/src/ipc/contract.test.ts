@@ -529,6 +529,61 @@ describe("§12.3 manifest 双向扫描", () => {
     };
     expect(snapshot.lastSeq).toBe(0);
   });
+
+  it("用量统计两命令（20 号票，§3.3 #52/#59k）在两侧接线且元素字段级一致", () => {
+    const find = (name: string) => {
+      const command = manifest.commands.find((c) => c.name === name);
+      expect(command, `manifest 缺命令 ${name}`).toBeDefined();
+      return command!;
+    };
+    // #52 stats_token：按日/按模型聚合（FR-02-13）
+    expect(find("stats_token")).toMatchObject({
+      args_type: "StatsTokenArgs",
+      ret_type: "StatsTokenResult",
+    });
+    // #59k session_usage：会话累计四口径查询（Q37 恢复读面）
+    expect(find("session_usage")).toMatchObject({
+      args_type: "SessionUsageArgs",
+      ret_type: "SessionUsageResult",
+    });
+    // 双向：client.ts 已接线（禁止只注册不使用）
+    for (const name of ["stats_token", "session_usage"]) {
+      expect(Object.values(COMMANDS), `${name} 应在 client.ts 接线`).toContain(name);
+    }
+    // 元素字段级（§3.3 #52 回写形态）：byDay/byModel/total 与生成物同构
+    const day: import("./generated/DayUsage").DayUsage = {
+      day: "2026-10-30",
+      input: 1,
+      output: 2,
+      cacheRead: 3,
+      cacheWrite: 4,
+      total: 10,
+    };
+    const model: import("./generated/ModelUsage").ModelUsage = {
+      modelId: "m1",
+      modelName: "gpt-4o",
+      input: 1,
+      output: 2,
+      cacheRead: 3,
+      cacheWrite: 4,
+      total: 10,
+      runs: 2,
+    };
+    const result: import("./generated/StatsTokenResult").StatsTokenResult = {
+      byDay: [day],
+      byModel: [model],
+      total: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, total: 10, runs: 2 },
+    };
+    expect(result.byDay[0]!.day).toBe("2026-10-30");
+    expect(result.byModel[0]!.runs).toBe(2);
+    // #59k 返回：legacyTotalTokens 可选（旧数据标量回落，Q37 不伪造拆分）
+    const usage: import("./generated/SessionUsageResult").SessionUsageResult = {
+      sessionId: "s1",
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      legacyTotalTokens: 777,
+    };
+    expect(usage.legacyTotalTokens).toBe(777);
+  });
 });
 
 // ---- 跨语言 fixture 期望值：与 src-tauri/src/ipc_manifest_test.rs 的 fixture_entries() 逐字段一致 ----

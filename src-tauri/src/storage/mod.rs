@@ -26,12 +26,14 @@ pub mod backup;
 pub mod config_store;
 pub mod entries;
 pub mod imgblob;
+pub mod index_db;
 pub mod index_store;
 pub mod locks;
 pub mod prefs;
 pub mod project_store;
 pub mod segment;
 pub mod session_tree;
+pub mod stats;
 pub mod toolres;
 
 #[cfg(test)]
@@ -51,11 +53,19 @@ pub use imgblob::{
     BLOB_HASH_HEX_LEN, MAX_BLOB_BYTES, blob_hash, get_blob, imgblob_dir, is_valid_blob_hash,
     put_blob, sniff_image_mime,
 };
+pub use index_db::{
+    INDEX_DB_VERSION, IndexDb, StatsCacheRow, index_db_path, open as open_index_db,
+};
 pub use index_store::{IndexError, SessionIndex, SessionMeta};
 pub use locks::LockMap;
 pub use project_store::{ProjectError, ProjectManifest, ProjectMeta, ProjectStore};
 pub use segment::{SEGMETA_FILE, SegmentInfo, Segmeta, SessionLog};
 pub use session_tree::{SessionStore, SessionTreeData, StorageError};
+pub use stats::{
+    DailyStats, ModelDayStats, ModelRunUsage, RunUsage, STATS_DIR, STATS_FORMAT_VERSION,
+    STATS_RETENTION_DAYS, SessionUsage, StatsStore, UsageDetailStore, UsageRecord, is_valid_day,
+    load_session_usage, save_session_usage, shift_day, usage_detail_path,
+};
 pub use toolres::{load_outcomes, write_outcome};
 
 #[cfg(test)]

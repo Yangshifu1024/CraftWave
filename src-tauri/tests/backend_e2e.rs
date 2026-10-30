@@ -1584,6 +1584,155 @@ mod command_face {
         let _ = mock.sent_chunks().await; // 保持 sent 记录引用（Drop 语义锚点）
     }
 
+    // ---- 用量统计落账与面板数据面（20 号票，Q37/Q39/Q40/Q43 e2e） ----
+
+    /// 落账→查询→重启恢复→删除保留→缓存降级 全链：真实 mock SSE run +
+    /// suggest 后台小调用后，三面（stats/*.json、usage.json、index.db）与
+    /// #52/#59k 读面同源一致；重启后四口径恢复；删除会话保留匿名聚合；
+    /// 删库后降级直读数字不丢。
+    #[tokio::test]
+    async fn usage_stats_ledger_e2e_record_recover_delete_degrade() {
+        let mock = MockOpenAI::start().await; // 默认脚本：工具轮 + 文本轮
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path().to_path_buf();
+        std::mem::forget(dir); // 测试进程生命周期内保住数据目录
+        let events = Arc::new(RecordingEventSink::new());
+        let app = AppState::new_in(root.clone(), events.clone());
+        let config = craftwave_lib::providers::types::AppConfig {
+            providers: vec![provider_fixture(&mock.base_url)],
+            active_model_id: Some("model-1".to_owned()),
+            ..craftwave_lib::providers::types::AppConfig::default()
+        };
+        app.config.save(config).expect("save config");
+        let runs = RunManager::new();
+        let sink = SharedSink::default();
+
+        // ① 真实 run + suggest（C-9 后台小调用）
+        craftwave_lib::host::commands::chat::start_chat_core(
+            &app,
+            &runs,
+            "sess-stats".to_owned(),
+            vec![user_entry("帮我读配置文件")],
+            run_config(),
+            Box::new(sink.clone()),
+            false,
+        )
+        .await
+        .unwrap();
+        let ended = wait_ended(&sink, Duration::from_secs(10)).await;
+        assert!(matches!(
+            ended,
+            ChatFrame::RunEnded {
+                reason: EndReason::Done,
+                ..
+            }
+        ));
+        wait_event(&events, "run:suggestions", Duration::from_secs(10)).await;
+
+        // ② 日/模型聚合（Q39/Q40）：两拍 run（240/96）+ suggest（120/48）
+        //    = 360/144；runs 只计主 run 一次（子 run/辅助不计，suggest 属 aux）
+        let today = craftwave_lib::host::usage::local_today();
+        let day = app.ledger.stats.read_day(&today);
+        let m1 = day.models.get("model-1").expect("model-1 聚合条目");
+        assert_eq!(m1.input, 360, "run 两拍 + suggest 全部计入当日（Q39）");
+        assert_eq!(m1.output, 144);
+        assert_eq!(m1.runs, 1, "runs 仅主 run（suggest 辅助不计次，Q40）");
+        assert_eq!(m1.model_name, "gpt-4o-mock", "显示名快照随落账");
+
+        // ③ run/会话明细（Q37）：sessionTotal 与聚合同源；main/aux 分明
+        let detail = app.ledger.detail.load("sess-stats");
+        assert_eq!(detail.session_total.input, 360);
+        assert_eq!(detail.session_total.output, 144);
+        assert_eq!(detail.runs.len(), 2, "主 run + suggest 辅助条目");
+        let kinds: Vec<&str> = detail.runs.values().map(|r| r.kind.as_str()).collect();
+        assert!(kinds.contains(&"main"), "主 run 明细（kind=main）");
+        assert!(kinds.contains(&"aux"), "suggest 明细（kind=aux）");
+        let main_run = detail
+            .runs
+            .values()
+            .find(|r| r.kind == "main")
+            .expect("主 run 条目");
+        assert!(
+            main_run.by_model.contains_key("model-1"),
+            "按实际执行模型归属（Q37）"
+        );
+        assert!(main_run.ended_at.is_some(), "run 收口补写 endedAt");
+
+        // ④ #52 stats_token 与实时面同源一致（验收：聚合数字与 Inspector
+        //    会话累计同源）；tokens:update 带 modelId（前端增量修正依据）
+        let stats = craftwave_lib::host::commands::stats::stats_token_core(
+            &app,
+            &craftwave_lib::host::commands::stats::StatsTokenArgs { range: None },
+            &today,
+        )
+        .expect("stats_token");
+        assert_eq!(stats.total.input, 360);
+        assert_eq!(stats.total.total, 504);
+        assert_eq!(stats.total.runs, 1);
+        let by_model = &stats.by_model[0];
+        assert_eq!(by_model.model_id, "model-1");
+        assert_eq!(by_model.runs, 1);
+        let last_tokens = events
+            .payloads_of("tokens:update")
+            .last()
+            .cloned()
+            .expect("tokens:update 已发");
+        assert_eq!(last_tokens["modelId"], "model-1", "事件带实际执行模型");
+        assert_eq!(last_tokens["usage"]["input"], 360);
+
+        // ⑤ #59k 内存读面（活跃会话）
+        let live = craftwave_lib::host::commands::stats::session_usage_core(&app, "sess-stats");
+        assert_eq!(live.usage.input, 360);
+
+        // ⑥ Q37 重启恢复：新 AppState（同数据目录）从明细文件恢复四口径
+        let events2 = Arc::new(RecordingEventSink::new());
+        let app2 = AppState::new_in(root.clone(), events2);
+        let restored =
+            craftwave_lib::host::commands::stats::session_usage_core(&app2, "sess-stats");
+        assert_eq!(restored.usage.input, 360, "重启后四口径恢复（Q37）");
+        assert_eq!(restored.usage.output, 144);
+        assert_eq!(restored.legacy_total_tokens, None);
+        let stats2 = craftwave_lib::host::commands::stats::stats_token_core(
+            &app2,
+            &craftwave_lib::host::commands::stats::StatsTokenArgs { range: None },
+            &today,
+        )
+        .expect("stats_token 重启后");
+        assert_eq!(stats2.total.input, 360, "重启后日聚合数字不丢");
+
+        // ⑦ Q43 删除会话：明细不可查询、日/模型匿名数字保留、缓存重建不复活
+        craftwave_lib::host::commands::session::delete_session_core(&app2, &runs, "sess-stats")
+            .expect("删除会话");
+        assert!(
+            !root.join("sessions/sess-stats.usage.json").exists(),
+            "明细文件随删除清除"
+        );
+        let after_delete =
+            craftwave_lib::host::commands::stats::session_usage_core(&app2, "sess-stats");
+        assert_eq!(after_delete.usage.input, 0, "删除后明细不可查询（Q43）");
+        let stats3 = craftwave_lib::host::commands::stats::stats_token_core(
+            &app2,
+            &craftwave_lib::host::commands::stats::StatsTokenArgs { range: None },
+            &today,
+        )
+        .expect("删除后 stats_token");
+        assert_eq!(stats3.total.input, 360, "匿名聚合数字保留（无会话关联）");
+
+        // ⑧ 删 index.db 后：新进程重建空库 → 查询缺日回填（或降级直读），
+        //    面板数字仍正确（验收项；不重复增减）
+        std::fs::remove_file(root.join("cache/index.db")).expect("删缓存库");
+        let events3 = Arc::new(RecordingEventSink::new());
+        let app3 = AppState::new_in(root.clone(), events3);
+        let stats4 = craftwave_lib::host::commands::stats::stats_token_core(
+            &app3,
+            &craftwave_lib::host::commands::stats::StatsTokenArgs { range: None },
+            &today,
+        )
+        .expect("stats_token 降级/回填读面");
+        assert_eq!(stats4.total.input, 360, "缓存重建/降级后数字一致");
+        assert_eq!(stats4.total.runs, 1, "回填不重复增减 runs");
+    }
+
     // ---- 帧重放与热重连（05 号票，§5.8/D16）：中途 attach 续流 / 终态空重放 /
     // 快照对账 / 审批挂起中 attach 与待审批恢复查询 / 窗口耗尽摘要帧 ----
 

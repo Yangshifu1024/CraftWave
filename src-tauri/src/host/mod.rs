@@ -15,6 +15,7 @@ pub mod followup;
 pub mod notify;
 pub mod run_persistence;
 pub mod shell;
+pub mod usage;
 
 #[cfg(test)]
 #[path = "run_persistence_test.rs"]
@@ -89,6 +90,9 @@ pub struct AppState {
     /// save_config 时经 [`Self::apply_proxy_config`] 热重建（进行中 run
     /// 不切换——客户端按 run 构建，下一次 start_chat 用新代理）。
     pub http: Arc<crate::providers::http::HttpClientFactory>,
+    /// 用量账本（20 号票，§7.7）：日/模型聚合 + run/会话四口径明细 +
+    /// stats_cache 查询缓存三面的聚合句柄（落账与查询编排见 `usage` 模块）。
+    pub ledger: usage::UsageLedger,
 }
 
 impl AppState {
@@ -132,6 +136,7 @@ impl AppState {
                 crate::providers::types::DEFAULT_MAX_CONCURRENT_SUBAGENTS as usize,
             )),
             http,
+            ledger: usage::UsageLedger::new(&data_dir),
         }
     }
 
@@ -181,6 +186,7 @@ impl AppState {
             resource_skills_dir: self.resource_skills_dir.clone(),
             subs: self.subs.clone(),
             http: self.http.clone(),
+            ledger: self.ledger.clone(),
         }
     }
 

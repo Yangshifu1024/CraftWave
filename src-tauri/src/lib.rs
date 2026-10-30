@@ -114,6 +114,12 @@ use host::commands::preview::{PreviewRegisterArgs, PreviewRegisterResult, previe
 use host::commands::image::{
     AttachImageArgs, AttachImageResult, ReadImageBlobArgs, ReadImageBlobResult,
 };
+// 用量统计两命令（20 号票，§3.3 #52/#59k）
+#[allow(unused_imports)]
+use host::commands::stats::{
+    SessionUsageArgs, SessionUsageResult, StatsTokenArgs, StatsTokenResult, session_usage,
+    stats_token,
+};
 #[allow(unused_imports)]
 use providers::types::{AppConfig, ProviderConfig};
 #[allow(unused_imports)]
@@ -270,6 +276,9 @@ ipc_commands! {
     host::commands::image::attach_image => args: AttachImageArgs, ret: AttachImageResult;
     host::commands::image::read_image_blob => args: ReadImageBlobArgs, ret: ReadImageBlobResult;
     host::commands::workspace::path_kind => args: PathKindArgs, ret: PathKindResult;
+    // 用量统计（20 号票，§3.3 #52/#59k）
+    host::commands::stats::stats_token => args: StatsTokenArgs, ret: StatsTokenResult;
+    host::commands::stats::session_usage => args: SessionUsageArgs, ret: SessionUsageResult;
     #[cfg(debug_assertions)]
     mock_chat::mock_chat_run => args: (), ret: ();
     select_dir => args: (), ret: Option<String>;

@@ -52,6 +52,7 @@ export * from "./generated/CompactSessionArgs";
 export * from "./generated/CompactSessionResult";
 export * from "./generated/CompleteReason";
 export * from "./generated/CreateSessionArgs";
+export * from "./generated/DayUsage";
 export * from "./generated/DeleteProjectArgs";
 export * from "./generated/DeleteProviderArgs";
 export * from "./generated/DeleteSessionArgs";
@@ -95,6 +96,7 @@ export * from "./generated/MessageEntry";
 export * from "./generated/MessageRole";
 export * from "./generated/MessageStatus";
 export * from "./generated/MetaEntry";
+export * from "./generated/ModelUsage";
 export * from "./generated/NetworkConfig";
 export * from "./generated/NewProjectInput";
 export * from "./generated/NotificationConfig";
@@ -152,6 +154,9 @@ export * from "./generated/SessionPendingAskArgs";
 export * from "./generated/SessionPrefsArgs";
 export * from "./generated/SessionRunSnapshotArgs";
 export * from "./generated/SessionTreeData";
+// 用量统计（20 号票，§3.3 #52/#59k）
+export * from "./generated/SessionUsageArgs";
+export * from "./generated/SessionUsageResult";
 export * from "./generated/SetSessionPrefsArgs";
 export * from "./generated/SetSessionPrefsPayload";
 export * from "./generated/SetUiStateArgs";
@@ -163,6 +168,9 @@ export * from "./generated/SkillToggleArgs";
 export * from "./generated/SkillTrustScope";
 export * from "./generated/StartChatArgs";
 export * from "./generated/StartChatResult";
+export * from "./generated/StatsRange";
+export * from "./generated/StatsTokenArgs";
+export * from "./generated/StatsTokenResult";
 export * from "./generated/StopSubagentArgs";
 export * from "./generated/StoredCompactionEntry";
 export * from "./generated/StoredEntry";
@@ -177,6 +185,7 @@ export * from "./generated/ThinkingLevel";
 export * from "./generated/ToolError";
 export * from "./generated/ToolOutcome";
 export * from "./generated/ToolsConfig";
+export * from "./generated/TotalUsage";
 export * from "./generated/UiConfig";
 export * from "./generated/UsageTotal";
 export * from "./generated/WatchdogConfig";
@@ -221,10 +230,13 @@ export type RunSuggestionsEvent = {
   text: string;
 };
 
-/** tokens:update 事件载荷：会话累计 token 用量的权威校正（覆盖前端累计值）。 */
+/** tokens:update 事件载荷：会话累计 token 用量的权威校正（覆盖前端累计值）。
+ *  20 号票增补 modelId：本次增量贡献的实际执行模型（Inspector 统计区块对
+ *  当日/该模型条目做本地增量修正的依据；缺省 = 老载荷兼容，回退整段重拉）。 */
 export type TokensUpdateEvent = {
   sessionId: string;
   usage: UsageTotal;
+  modelId?: string;
 };
 
 /** run:compacting 事件载荷：上下文压缩开始（Composer 指示条驱动，04 号票）。 */

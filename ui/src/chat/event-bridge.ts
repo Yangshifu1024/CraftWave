@@ -22,6 +22,7 @@ import { useFollowUpStore } from "@/chat/followup-store";
 import { usePlanStateStore } from "@/chat/plan-state";
 import { useRunMetricsStore } from "@/chat/run-metrics";
 import { reconnectIfNeeded } from "@/chat/run-reconnect";
+import { usageDelta, useUsageStatsStore } from "@/chat/usage-stats";
 import { EVENT_KEYS, listenEvent, loadSessionTree } from "@/ipc/client";
 import type {
   AskClosedEvent,
@@ -95,7 +96,13 @@ export function useBackendEvents(deps: EventBridgeDeps = defaultEventBridgeDeps)
         useAskStore.getState().setHint(p.sessionId, p.text);
       }),
       deps.listen(EVENT_KEYS.tokensUpdate, (p: TokensUpdateEvent) => {
+        // 本地增量差分（20 号票）：先取旧会话累计再 replace——Inspector 统计
+        // 区块据此对今日/该模型条目做本地增量修正（不等轮询）
+        const prev = useRunMetricsStore.getState().bySession[p.sessionId]?.sessionUsage;
         useRunMetricsStore.getState().applyTokensUpdate(p.sessionId, p.usage);
+        if (prev) {
+          useUsageStatsStore.getState().applyTokensDelta(usageDelta(prev, p.usage), p.modelId);
+        }
       }),
       deps.listen(EVENT_KEYS.planUpdate, (p: PlanUpdateEvent) => {
         usePlanStateStore.getState().applyUpdate(p.sessionId, p.items);

@@ -319,6 +319,9 @@ pub struct StartChatResult {
 
 /// 解析后的运行模型（§11.1 ResolvedModel 的当前子集）。
 pub(crate) struct ResolvedModel {
+    /// 模型配置 id（`ProviderModel.id`；20 号票：用量统计按实际执行模型
+    /// 归属的记账面——显示名可改可删，配置 id 是稳定聚合键）。
+    pub id: String,
     /// 显示名（runStarted.model，= wire id）。
     pub name: String,
     pub driver: rig::driver::Model<Chat>,
@@ -397,6 +400,8 @@ pub(crate) fn resolve_model(
     let http = rig_reqwest::ReqwestClient::from(app.http.client().as_ref().clone());
     let driver = wire_config.connect(http).chat(model.model.clone());
     Ok(ResolvedModel {
+        // 配置 id（wanted 已归一：参数 id 或 activeModelId 的命中项）
+        id: wanted.to_owned(),
         name: model.model.clone(),
         driver,
         context_window: u64::from(model.context_window),
@@ -474,20 +479,36 @@ impl SequencedSink for ChannelSink {
 /// 05 号票增补：同一处同步 RunHandle 的运行时状态（RunState）——turn 取
 /// stepStarted 帧、工具计数按收到的工具结果帧递增、usage 取 usage 帧的
 /// 运行累计载荷；`session_run_snapshot` / attach 摘要帧据此对账（§5.6）。
+/// 20 号票增补：usage 差分增量同步落账（日/模型聚合 + run/会话明细 +
+/// stats_cache 写穿，§7.7）——记账日取当时本地日期（Q39）；主 run 首个
+/// 有计量的帧计当日该模型 runs 一次（Q40）；模型身份取 `current_model`
+/// 槽（HostRequestRefresher 每拍刷新，run 内切模型按拍真实归属，Q37）。
 struct EventfulSink {
     inner: Box<dyn FrameSink>,
     events: Arc<dyn EventSink>,
     session_id: String,
+    /// 本 sink 所属的 run id（明细落账键，Q37）。
+    run_id: String,
     last_run_total: UsageTotal,
     session_usage: Arc<Mutex<HashMap<String, UsageTotal>>>,
     /// 所属 run 的句柄（运行时状态同步目标；测试直驱路径可为 None）。
     handle: Option<Arc<RunHandle>>,
+    /// 用量账本（20 号票，AppState.ledger 的克隆件——spawn 闭包内无整体）。
+    ledger: crate::host::usage::UsageLedger,
+    /// 当前生效模型槽 `(配置 id, 显示名)`：run 装配时置初值，
+    /// HostRequestRefresher 每拍刷新（模型切换时更新）——Usage 帧落账时
+    /// 读到的即「本拍实际执行模型」（Q37 真实归属）。
+    current_model: Arc<Mutex<Option<(String, String)>>>,
+    /// 本 run 是否已计当日该模型的 runs 次数（首个有计量的 usage 帧计一次；
+    /// 无计量不伪造，Q40）。
+    run_counted: bool,
 }
 
 impl EventfulSink {
     /// 把本轮增量累进共享的会话用量表，并发出全量快照事件
-    /// （前端只认事件里的全量值，不自己加总）。
-    fn send_tokens_update(&mut self, delta: &UsageTotal) {
+    /// （前端只认事件里的全量值，不自己加总）。`model_id` 随载荷带出
+    /// （20 号票：前端统计区块当日/该模型本地增量修正的依据）。
+    fn send_tokens_update(&mut self, delta: &UsageTotal, model_id: &str) {
         let mut map = self
             .session_usage
             .lock()
@@ -495,9 +516,35 @@ impl EventfulSink {
         let total = map.entry(self.session_id.clone()).or_default();
         total.accumulate(delta);
         let snapshot = *total;
-        self.events.emit(
-            keys::TOKENS_UPDATE,
-            serde_json::json!({ "sessionId": self.session_id, "usage": snapshot }),
+        let mut payload = serde_json::json!({ "sessionId": self.session_id, "usage": snapshot });
+        if !model_id.is_empty() {
+            payload["modelId"] = serde_json::json!(model_id);
+        }
+        self.events.emit(keys::TOKENS_UPDATE, payload);
+    }
+
+    /// 20 号票：usage 差分增量落账（§7.7 三面）。`counts_run` = 本 run
+    /// 尚未计次且本次有真实计量（Q40：主 run 计一次，无计量不伪造）。
+    fn record_stats(&mut self, delta: &UsageTotal) {
+        if *delta == UsageTotal::default() {
+            return; // 零计量不落账（未知用量不伪造，Q39）
+        }
+        let (model_id, model_name) = self
+            .current_model
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .unwrap_or_default();
+        let counts_run = !self.run_counted;
+        self.run_counted = true;
+        self.ledger.record(
+            &self.session_id,
+            &self.run_id,
+            crate::host::usage::run_kind::MAIN,
+            &model_id,
+            &model_name,
+            *delta,
+            counts_run,
         );
     }
 
@@ -533,7 +580,16 @@ impl FrameSink for EventfulSink {
             self.last_run_total = *usage;
             // usage 帧载荷即运行累计值：先同步状态再发事件（快照与帧面一致）
             self.sync_run_state(&frame, Some(*usage));
-            self.send_tokens_update(&delta);
+            // 统计落账在事件之前（同帧同源：事件 modelId 与落账模型一致）
+            self.record_stats(&delta);
+            let model_id = self
+                .current_model
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone()
+                .map(|(id, _)| id)
+                .unwrap_or_default();
+            self.send_tokens_update(&delta, &model_id);
         } else {
             self.sync_run_state(&frame, None);
         }
@@ -679,6 +735,9 @@ struct HostRequestRefresher {
     initial: EffectiveRuntime,
     /// 当前生效快照（与上一次刷新后的驱动状态一致）。
     current: Mutex<EffectiveRuntime>,
+    /// 当前生效模型槽 `(配置 id, 显示名)`（20 号票：与 EventfulSink 共享——
+    /// 每拍刷新时更新，usage 帧落账读到的即本拍实际执行模型，Q37）。
+    current_model: Arc<Mutex<Option<(String, String)>>>,
 }
 
 impl RequestRefresher for HostRequestRefresher {
@@ -714,6 +773,12 @@ impl RequestRefresher for HostRequestRefresher {
             // Q30 运行中切非 vision（票面）：历史图片在请求面降级为占位，
             // 允许纯文字继续；切回 vision 模型自动恢复原图。
             self.driver.set_downgrade_images(!resolved.vision);
+            // 20 号票：模型槽同步（下一拍 usage 帧落账归属新模型，Q37）
+            *self
+                .current_model
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                Some((resolved.id.clone(), resolved.name.clone()));
         }
         // —— thinking 生效值重算（模型切换与档位变化都刷新；回落链以
         // 当前生效模型配置为准）——
@@ -1087,14 +1152,20 @@ pub(crate) fn denied_finish(sink: &mut dyn FrameSink, pending: &PendingCall, sta
 /// suggest 后台小调用（C-9）：一次非流式补全 → run:suggestions；失败静默、
 /// 空文本静默；用量计入会话累计（tokens:update，不计 turnUsage——run 已终态）。
 /// 驱动经共享句柄传入（18 号票：run 任务收尾时把 Arc 交给本任务，suggest
-/// 以 run 终态时的最新模型客户端执行）。
+/// 以 run 终态时的最新模型客户端执行）。20 号票：已知实际用量同步落账
+/// （日/模型聚合 + 明细 kind=aux + 缓存写穿；runs 计数不增，Q40）——失败
+/// /无计量的未知用量不伪造，已返回的用量不因辅助身份被丢弃（Q39）。
+/// `final_model` = run 终态时的模型槽快照 `(配置 id, 显示名)`。
+#[allow(clippy::too_many_arguments)]
 fn spawn_suggest<W, T>(
     driver: Arc<TurnDriver<W, T>>,
     events: Arc<dyn EventSink>,
     session_usage: Arc<Mutex<HashMap<String, UsageTotal>>>,
+    ledger: crate::host::usage::UsageLedger,
     session_id: String,
     run_id: String,
     context_tail: String,
+    final_model: (String, String),
 ) where
     W: rig::wire::Wire<Op = rig::operation::Completion>,
     T: rig::driver::Transport<W>,
@@ -1116,6 +1187,18 @@ fn spawn_suggest<W, T>(
         }
         // 用量计入会话累计（帧通道已收，走事件通道补计）
         let delta = crate::backend::turn::usage_total(&usage);
+        if delta != UsageTotal::default() {
+            // 辅助调用落账（Q39：已返回 usage 必记账；runs 计数不增）
+            ledger.record(
+                &session_id,
+                &format!("{run_id}:suggest"),
+                crate::host::usage::run_kind::AUX,
+                &final_model.0,
+                &final_model.1,
+                delta,
+                false,
+            );
+        }
         let total = {
             let mut map = session_usage
                 .lock()
@@ -1124,10 +1207,11 @@ fn spawn_suggest<W, T>(
             total.accumulate(&delta);
             *total
         };
-        events.emit(
-            keys::TOKENS_UPDATE,
-            serde_json::json!({ "sessionId": session_id, "usage": total }),
-        );
+        let mut payload = serde_json::json!({ "sessionId": session_id, "usage": total });
+        if !final_model.0.is_empty() {
+            payload["modelId"] = serde_json::json!(final_model.0);
+        }
+        events.emit(keys::TOKENS_UPDATE, payload);
         events.emit(
             keys::RUN_SUGGESTIONS,
             serde_json::json!({ "sessionId": session_id, "runId": run_id, "text": trimmed }),
@@ -1231,10 +1315,16 @@ fn tool_estimate_inputs(
 /// 把压缩摘要调用的实际用量计入会话累计（C-9：tokens:update 照发、
 /// 不计 turnUsage——压缩不属主 run 轮次）。共享表 + 事件汇为细粒度参数
 /// （run 任务的 spawn 闭包里没有 AppState 整体，只有这些克隆件）。
+/// 20 号票：已知实际用量同步落账（kind=aux，`{runId}:compact`；runs 计数
+/// 不增，Q40；未知用量不伪造，Q39）。
+#[allow(clippy::too_many_arguments)]
 fn accumulate_compaction_usage(
     session_usage: &Mutex<HashMap<String, UsageTotal>>,
     events: &Arc<dyn EventSink>,
+    ledger: &crate::host::usage::UsageLedger,
     session_id: &str,
+    run_id: &str,
+    summary_model: (&str, &str),
     usages: &[rig::completion::Usage],
 ) {
     let mut delta = UsageTotal::default();
@@ -1244,6 +1334,15 @@ fn accumulate_compaction_usage(
     if delta == UsageTotal::default() {
         return; // 无计量（mock/未知用量不伪造，Q39）
     }
+    ledger.record(
+        session_id,
+        &format!("{run_id}:compact"),
+        crate::host::usage::run_kind::AUX,
+        summary_model.0,
+        summary_model.1,
+        delta,
+        false,
+    );
     let total = {
         let mut map = session_usage
             .lock()
@@ -1252,10 +1351,11 @@ fn accumulate_compaction_usage(
         total.accumulate(&delta);
         *total
     };
-    events.emit(
-        keys::TOKENS_UPDATE,
-        serde_json::json!({ "sessionId": session_id, "usage": total }),
-    );
+    let mut payload = serde_json::json!({ "sessionId": session_id, "usage": total });
+    if !summary_model.0.is_empty() {
+        payload["modelId"] = serde_json::json!(summary_model.0);
+    }
+    events.emit(keys::TOKENS_UPDATE, payload);
 }
 
 /// 压缩后的上下文占用估算（tokensAfter 口径，§6.2）：裁剪后条目 + 摘要
@@ -1286,8 +1386,10 @@ pub(crate) async fn execute_compaction<W, T>(
     store: &Arc<crate::storage::SessionStore>,
     events: &Arc<dyn EventSink>,
     session_usage: &Mutex<HashMap<String, UsageTotal>>,
+    ledger: &crate::host::usage::UsageLedger,
     session_id: &str,
     owner: &str,
+    summary_model: (&str, &str),
     scope: &crate::backend::compaction::CompactionScope,
     summary_driver: &TurnDriver<W, T>,
     policy: &CompactionRuntimePolicy,
@@ -1319,7 +1421,15 @@ where
     store
         .append_compaction(session_id, entry)
         .map_err(|e| crate::backend::compaction::CompactionError::Failed(e.to_string()))?;
-    accumulate_compaction_usage(session_usage, events, session_id, &usages);
+    accumulate_compaction_usage(
+        session_usage,
+        events,
+        ledger,
+        session_id,
+        owner,
+        summary_model,
+        &usages,
+    );
     Ok(CompactionOutcome {
         boundary: crate::backend::wire::CompactionBoundary {
             cut_entry_id: scope.cut_entry_id.clone(),
@@ -1337,6 +1447,7 @@ where
 ///
 /// 压缩成功后的新边界立即生效于本次 run 的全部请求（§6.2 生效面定稿）；
 /// `summary_driver` 由调用方按配置解析（专用小模型或当前模型，§6.2）。
+/// `summary_model` = 摘要模型身份 `(配置 id, 显示名)`（20 号票落账归属）。
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn maybe_compact_before_run<W, T>(
     app: &AppState,
@@ -1346,6 +1457,7 @@ pub(crate) async fn maybe_compact_before_run<W, T>(
     tools: &[Arc<rig::completion::request::ToolDefinition>],
     policy: &CompactionRuntimePolicy,
     summary_driver: &TurnDriver<W, T>,
+    summary_model: (&str, &str),
     sink: &mut dyn FrameSink,
     custom_prompt: Option<&str>,
 ) -> Result<(Option<crate::backend::wire::CompactionBoundary>, u64), IpcError>
@@ -1416,8 +1528,10 @@ where
                 &app.store,
                 &app.events,
                 &app.session_usage,
+                &app.ledger,
                 session_id,
                 run_id,
+                summary_model,
                 &scope,
                 summary_driver,
                 policy,
@@ -1504,13 +1618,16 @@ fn boundary_ref_slice<'a>(
 /// 参数 + 工具表 + 回复预留。失败只发 run:compact_failed、不阻断恢复
 /// （落盘面优化不承载硬预算义务——硬预算判定在恢复后的请求面）。
 /// 存储器/事件汇/用量表为细粒度参数（spawn 闭包内无 AppState 整体）。
+/// `ledger` 与 `summary_model`（摘要模型身份）随闭包传入（20 号票落账面）。
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn maybe_compact_after_ask<W, T>(
     store: &Arc<crate::storage::SessionStore>,
     events: &Arc<dyn EventSink>,
     session_usage: &Mutex<HashMap<String, UsageTotal>>,
+    ledger: &crate::host::usage::UsageLedger,
     session_id: &str,
     run_id: &str,
+    summary_model: (&str, &str),
     pending: &PendingCall,
     state: &DriveState,
     tools: &[Arc<rig::completion::request::ToolDefinition>],
@@ -1562,8 +1679,10 @@ pub(crate) async fn maybe_compact_after_ask<W, T>(
             store,
             events,
             session_usage,
+            ledger,
             session_id,
             run_id,
+            summary_model,
             &scope,
             summary_driver,
             policy,
@@ -1686,8 +1805,10 @@ pub async fn compact_session_core(
         &app.store,
         &app.events,
         &app.session_usage,
+        &app.ledger,
         session_id,
         "manual",
+        (&summary_resolved.id, &summary_resolved.name),
         &scope,
         &summary_driver,
         &policy,
@@ -1870,6 +1991,23 @@ pub async fn start_chat_core(
     // user 条目幂等兜底提前到压缩前（§7.3 首行）：输入先落盘再谈压缩——
     // 压缩失败/E_CONTEXT_OVERFLOW 暂停时「输入已保留」在史册面成立
     persist_user_fallback(app, &session_id, &messages);
+    // 当前生效模型槽（20 号票，Q37）：run 装配时置初值，HostRequestRefresher
+    // 每拍刷新（模型切换时更新），EventfulSink 的 usage 帧落账读取——
+    // run 内切模型按拍真实归属。子代理/压缩各有独立身份面。
+    let current_model: Arc<Mutex<Option<(String, String)>>> =
+        Arc::new(Mutex::new(Some((model.id.clone(), model.name.clone()))));
+    // 会话累计恢复（Q37）：进程内首次触达该会话时从明细文件灌入内存表——
+    // 后续 tokens:update 全量校正事件的快照从首个增量起即完整。
+    {
+        let mut map = app
+            .session_usage
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !map.contains_key(&session_id) {
+            let restored = app.ledger.detail.load(&session_id).session_total;
+            map.insert(session_id.clone(), restored);
+        }
+    }
     let hub = Arc::new(FrameHub::new(sink));
     let (boundary, estimated_after) = maybe_compact_before_run(
         app,
@@ -1879,6 +2017,7 @@ pub async fn start_chat_core(
         &tools,
         &policy,
         &summary_driver,
+        (&summary_resolved.id, &summary_resolved.name),
         &mut HubSink { hub: hub.clone() },
         custom_prompt.as_deref(),
     )
@@ -1941,6 +2080,7 @@ pub async fn start_chat_core(
             model_id: initial_model_id.clone(),
             thinking: initial_thinking,
         }),
+        current_model: current_model.clone(),
     });
     let model_name = model.name;
     let cancel = handle.cancel.clone();
@@ -2058,9 +2198,17 @@ pub async fn start_chat_core(
     // MCP 宿主句柄（08 号票）：恢复循环的「始终允许」许可授予面（spawn
     // 任务不能借用 app，提前克隆共享句柄）。
     let mcp_for_task = app.mcp.clone();
+    // 用量账本克隆件（20 号票）：帧面落账与压缩辅助落账各自一份（clone 即
+    // 同源句柄）；run 收尾的明细收口（endedAt）再用一份；suggest 的终态
+    // 模型快照在收尾处从槽读取。
+    let ledger_for_sink = app.ledger.clone();
+    let ledger_for_compaction = app.ledger.clone();
+    let ledger_for_finalize = app.ledger.clone();
+    let current_model_for_sink = current_model.clone();
+    let model_slot_for_suggest = current_model.clone();
     tokio::spawn(async move {
-        // 帧出口 = 事件层（usage → tokens:update + RunState 同步）包 canonical
-        // 落盘器（§7.3）包帧枢纽（§5.8：seq 递增 → 入环 → 下发）
+        // 帧出口 = 事件层（usage → tokens:update + RunState 同步 + 统计落账）
+        // 包 canonical 落盘器（§7.3）包帧枢纽（§5.8：seq 递增 → 入环 → 下发）
         let mut sink = EventfulSink {
             inner: Box::new(PersistingSink::new(
                 recorder,
@@ -2070,9 +2218,13 @@ pub async fn start_chat_core(
             )),
             events: events.clone(),
             session_id: session_id.clone(),
+            run_id: run_id.clone(),
             last_run_total: UsageTotal::default(),
             session_usage: session_usage.clone(),
             handle: Some(handle.clone()),
+            ledger: ledger_for_sink,
+            current_model: current_model_for_sink,
+            run_counted: false,
         };
         let mut run = AgentRun::from_spec(&spec, (*prompt).clone(), Some(history));
         let mut resume_state: Option<DriveState> = None;
@@ -2156,8 +2308,10 @@ pub async fn start_chat_core(
                                 &store_for_task,
                                 &events,
                                 &session_usage,
+                                &ledger_for_compaction,
                                 &session_id,
                                 &run_id,
+                                (&summary_resolved.id, &summary_resolved.name),
                                 &pending,
                                 &state,
                                 &tools,
@@ -2204,15 +2358,27 @@ pub async fn start_chat_core(
 
         // suggest 后台小调用（仅自然终态；C-9：静默失败、独立于 run 生命周期）
         if matches!(final_exit, RunExit::Done(_)) {
+            let final_model = model_slot_for_suggest
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone()
+                .unwrap_or_default();
             spawn_suggest(
                 driver,
                 events.clone(),
                 session_usage.clone(),
+                ledger_for_compaction.clone(),
                 session_id.clone(),
                 run_id.clone(),
                 suggest_tail,
+                final_model,
             );
         }
+
+        // run 收口（Q37 明细面）：补写 endedAt（终态只收口，不搬移已记日期）
+        let _ = ledger_for_finalize
+            .detail
+            .mark_run_ended(&session_id, &run_id);
 
         // run 终态事件（§3.5，17 号票补实装）：前端 Tab 指示与系统通知门
         // （TauriEventSink 旁路）共用这三个键；payload 口径照文档。失败终态

@@ -15,6 +15,8 @@ pub mod provider;
 pub mod search;
 pub mod session;
 pub mod session_tree;
+// 用量统计命令（20 号票，§3.3 #52/#59k）
+pub mod stats;
 // 子代理命令与委派装配（10 号票，§3.3 #58/#59 + §5.9）
 pub mod subagent;
 pub mod system;

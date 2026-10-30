@@ -63,6 +63,7 @@ import type {
   SessionPendingAsk,
   SessionPrefsArgs,
   SessionTreeData,
+  SessionUsageResult,
   SetSessionPrefsArgs,
   SetSessionPrefsPayload,
   SkillInspectArgs,
@@ -71,6 +72,8 @@ import type {
   SkillToggleArgs,
   StartChatArgs,
   StartChatResult,
+  StatsTokenArgs,
+  StatsTokenResult,
   StopSubagentArgs,
   TestProviderArgs,
   TestProviderResult,
@@ -138,6 +141,9 @@ export const COMMANDS = {
   // 子代理两命令（10 号票，§3.3 #58/#59）
   stopSubagent: "stop_subagent",
   loadSubagentHistory: "load_subagent_history",
+  // 用量统计两命令（20 号票，§3.3 #52/#59k）
+  statsToken: "stats_token",
+  sessionUsage: "session_usage",
   // 网络搜索连通测试（13 号票，§3.3 #59f）
   searchTest: "search_test",
   // 供应商连接测试（19 号票，§3.3 #32）
@@ -397,6 +403,20 @@ export function sessionRunSnapshot(sessionId: string): Promise<RunSnapshot | nul
  *  未知 → null（幂等查询语义）。 */
 export function sessionPendingAsk(sessionId: string): Promise<SessionPendingAsk | null> {
   return invoke<SessionPendingAsk | null>(COMMANDS.sessionPendingAsk, { sessionId });
+}
+
+// ---- 用量统计（§3.3 #52/#59k，20 号票）----
+
+/** §3.3 #52：stats_token 按日/按模型用量聚合（FR-02-13/FR-15-02 面板数据
+ *  源）。range 缺省 = 全部保留期（≤90 天）。 */
+export function statsToken(args: StatsTokenArgs = {}): Promise<StatsTokenResult> {
+  return invoke<StatsTokenResult>(COMMANDS.statsToken, { range: args.range });
+}
+
+/** §3.3 #59k：会话累计四口径查询（Q37 恢复读面）。会话打开时拉取回填
+ *  runMetrics.sessionUsage；旧数据无明细时 legacyTotalTokens 带标量回落。 */
+export function sessionUsage(sessionId: string): Promise<SessionUsageResult> {
+  return invoke<SessionUsageResult>(COMMANDS.sessionUsage, { sessionId });
 }
 
 /** 把 invoke 失败抛出的错误归一为 §3.1 统一错误负载（{code, message, detail?}）。
