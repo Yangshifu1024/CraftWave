@@ -50,6 +50,10 @@ import type {
   SessionMeta,
   SessionPendingAsk,
   SessionTreeData,
+  SkillInspectArgs,
+  SkillInspectResult,
+  SkillListEntry,
+  SkillToggleArgs,
   StartChatArgs,
   StartChatResult,
   ToolOutcome,
@@ -106,6 +110,10 @@ export const COMMANDS = {
   mcpTest: "mcp_test",
   mcpSetLaunchTrust: "mcp_set_launch_trust",
   mcpSnapshot: "mcp_snapshot",
+  skillList: "skill_list",
+  skillToggle: "skill_toggle",
+  skillReload: "skill_reload",
+  skillInspect: "skill_inspect",
 } as const;
 
 /**
@@ -473,4 +481,34 @@ export function mcpSetLaunchTrust(fingerprint: string, decision: LaunchDecision)
 /** §3.3 #47：连接池状态快照（管理页服务器行：名称/状态/工具数）。 */
 export function mcpSnapshot(): Promise<McpSnapshotResult> {
   return invoke<McpSnapshotResult>(COMMANDS.mcpSnapshot, {});
+}
+
+// ---- 技能系统（§3.3 #48–51，09 号票）----
+
+/** §3.3 #48：技能清单（三来源合并视图，同名覆盖后唯一 + 启停标注）。
+ *  后端按当前活跃会话锚定项目作用域（设置页无会话参数的收敛点，08 号票
+ *  同款）。 */
+export function skillList(): Promise<SkillListEntry[]> {
+  return invoke<SkillListEntry[]>(COMMANDS.skillList, {});
+}
+
+/** §3.3 #49：启停切换（FR-14-04「禁用技能」，落 skills-state.json 原子写，
+ *  跨重启保留）。名字不存在 reject E_NOT_FOUND。 */
+export function skillToggle(name: string, enabled: boolean): Promise<void> {
+  const args: SkillToggleArgs = { name, enabled };
+  return invoke<void>(COMMANDS.skillToggle, { name: args.name, enabled: args.enabled });
+}
+
+/** §3.3 #50：重扫全部来源并重建索引。活跃 run 的技能快照不受影响
+ *  （Q20 版本固定），只更新管理页与下一 run。 */
+export function skillReload(): Promise<void> {
+  return invoke<void>(COMMANDS.skillReload, {});
+}
+
+/** §3.3 #51：正文预览（SKILL.md 剥离 frontmatter 后的 Markdown；只读，
+ *  不走工具、不进上下文）。名字不存在 reject E_NOT_FOUND。 */
+export function skillInspect(args: SkillInspectArgs): Promise<SkillInspectResult> {
+  return invoke<SkillInspectResult>(COMMANDS.skillInspect, {
+    name: args.name,
+  } satisfies SkillInspectArgs);
 }

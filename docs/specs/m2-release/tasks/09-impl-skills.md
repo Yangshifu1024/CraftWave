@@ -1,7 +1,7 @@
 # 实现：技能系统（SKILL.md 发现、渐进披露、/ 触发符、管理页）
 
 Type: task
-Status: open
+Status: resolved
 
 ## 要做什么
 
@@ -45,8 +45,28 @@ Status: open
 
 ## 验收
 
-- [ ] 装 Claude 格式技能目录到项目 `.craftwave/skills/`，skill_list 三来源可见且项目覆盖全局同名
-- [ ] 仅 description 常驻上下文（注入文本不含正文），`skill` 工具调用按需加载全文
-- [ ] `/` 菜单可选技能，与 @ 菜单、ghost hint 互不干扰
-- [ ] 设置页启停/重扫/预览可用，重启后禁用态保留
-- [ ] 未信任项目技能首用弹信任确认，拒绝后 E_PROJECT_UNTRUSTED
+- [x] 装 Claude 格式技能目录到项目 `.craftwave/skills/`，skill_list 三来源可见且项目覆盖全局同名
+- [x] 仅 description 常驻上下文（注入文本不含正文），`skill` 工具调用按需加载全文
+- [x] `/` 菜单可选技能，与 @ 菜单、ghost hint 互不干扰
+- [x] 设置页启停/重扫/预览可用，重启后禁用态保留
+- [x] 未信任项目技能首用弹信任确认，拒绝后 E_PROJECT_UNTRUSTED
+
+## 决议记录（2026-10-30 实施完成）
+
+**设计文档回写（实现前，§7.7/§9.8，文档版本 v2.17）**：
+
+- `skills-state.json` 路径与 schema（票面点名的字段级缺口）：数据目录根 `~/.craftwave/skills-state.json`，`{ version: 1, disabled: string[] }`，util/atomic 原子写；文件缺失/损坏按全启用处理（宁缺勿炸）。
+- §9.8 技能信任与版本字段级细则：三来源目录清单（内置=打包态 `<Resource>/resources/skills/`、开发态回退源码树 `src-tauri/resources/skills/`；全局 `<data>/skills/`；项目 `<项目主目录>/.craftwave/skills/`）、frontmatter 校验（name ≤64 字符 `[a-zA-Z0-9_-]`、description 必填、额外字段忽略，name 不要求等于目录名——以 frontmatter 为准，覆盖与启停按它寻址）、路径边界（symlink 不追随、每技能 ≤512 文件 / 64MiB 参与指纹，超限不入索引）、Q21 版本摘要算法（`sha256("craftwave-skill-v1|" + name + "|" + Σ(相对路径=sha256(文件)) )` 按路径字典序）、projectTrust 载荷字段级（name/scope/fingerprint 前 16 位/options，应答走 `AskAnswer::Approval` 不新增协议形态）。
+
+**票内定案**：
+
+1. **模块落位**：新建 `knowledge/` 域（§2.2 域清单既有）——`skills.rs`（发现/覆盖/指纹/注册表单例/skill 工具规格/run 快照）、`trust.rs`（`trust/project.json` 存储）、`commands.rs`（#48–51 + run 装配面信任核验）。tools→knowledge 反查（`skill_spec` 经 `SkillRegistry::global()` 进程级单例现读启用清单生成动态 description，与 08 号票 tools→mcp 反查同精神）；build_registry 每次现算，toggle/reload 后下一 run 生效。
+2. **run 内版本固定（Q20）**：start_chat 装配时拍 `SkillSnapshot`（启用+已信任技能的正文全文进内存），`skill` 工具只读快照不触盘；reload/toggle 只影响管理页与下一 run。「旧版本不可得」分支不触发（快照持有全文恒可得）——若未来改按需读盘须重引入该分支（§9.8 已记录）。
+3. **信任接缝最小版（24 号票收敛点）**：`projectTrust` 询问在 run 开始装配时同步等待（用户主动发消息触发，仿 08 号票 MCP TOFU）；`remember` 落 `trust/project.json`（decision 值域当前仅 `"remember"`，revoke/撤销 UI 随 24 号票）；`allow_once` 记进程内存会话信任集（同会话下一 run 免问，重启失效）；`deny` 不产生记录（TOFU 同 MCP 口径，下一 run 重新询问，拒绝提示引导去设置页禁用）。**应用级询问桶泛化**：08 号票的 `AppState.mcp_asks`/`PendingTrustAsk` 泛化为 `app_asks`/`AppAskSlot`（backend/ask.rs 承载），resolve_ask 的 run 槽未命中兜底收敛为 `AppState::resolve_app_ask`；mcp 侧保留 `resolve_trust_ask` 薄包装与 `PendingTrustAsk`/`TrustAskMap` 类型别名，08 号票测试面零破坏。
+4. **项目作用域锚定**：设置页与 run 装配均无会话参数——项目技能根锚定「当前活跃会话的项目」（复用 08 号票 `mcp::commands::project_context_of` 同一解析面）；每次 run 装配与命令调用都全量重扫三来源（技能目录小，成本可忽略）。
+5. **skill 工具执行面**：Meta 能力全档放行（§8.5 既有矩阵，tests/tools_registry_test 同步钉死 9 工具）；结果头部标注「以下是技能 X 的正文」，超长截断复用 `tools::truncate_middle`（§8.2 同口径头 4KB+尾 8KB）；边车 data={name, body} 供卡片正文预览；未信任调用回 `E_PROJECT_UNTRUSTED`（错误码常量随本票首次实装进 util/errors.rs）、未知技能回 `E_INVALID_ARG` 带可用清单。
+6. **前端 `/` 菜单插入形态**（票面定案授权）：选中展开为「请用 skill 工具加载技能 X 并按其指引行动 」+ 保留用户后续文本（剥首段空白防双空格）；`detectSlashQuery` 与 detectAtQuery 同构且首字符互斥（光标前最近触发符归主，`/` 须行首或空白后——排除路径文本误触），键位优先级并入 §10.6 既有链（菜单 > ghost hint）；技能清单挂载时拉一次，不轮询。
+7. **内置示例技能**：`src-tauri/resources/skills/hello-craftwave/`（SKILL.md + 附加资源 greeting.txt）随票入库，兼作 Claude 格式兼容样例与集成测试资源；`tauri.conf.json` bundle.resources 增 `resources/skills/**/*`。
+8. **已知无关抖动**：`ui/src/chat/thread-rendering.test.tsx`「建议填入实际 composer」用例偶发失败，复跑即绿（按任务说明未追修），最终全套复跑 230/230 通过。
+
+**检查链（2026-10-30 全部亲自重跑通过）**：cargo fmt --all -- --check ✓；cargo build ✓；cargo clippy --all-targets 0 警告 ✓；cargo test 全目标 8 个 ok（lib 378 + 集成 backend_e2e 30 + tools_registry 5 等）✓；pnpm typecheck ✓；pnpm test 27 文件 230 用例 ✓；pnpm lint（Biome）✓。

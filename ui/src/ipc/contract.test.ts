@@ -255,7 +255,7 @@ describe("§12.3 manifest 双向扫描", () => {
     }
   });
 
-  it("manifest.tools 覆盖工具注册表 8 工具（§8.3 M1 模型可见子集）", () => {
+  it("manifest.tools 覆盖工具注册表 9 工具（§8.3 M1 模型可见子集 + 09 号票 skill）", () => {
     expect(manifest.tools).toEqual([
       "read",
       "write",
@@ -265,12 +265,13 @@ describe("§12.3 manifest 双向扫描", () => {
       "command",
       "plan",
       "ask",
+      "skill",
     ]);
   });
 
   it("toolkit 参数表与 manifest.toolSpecs 逐字同源（§10.3 镜像声明）", () => {
     // Rust 工具参数 schema 与前端 toolkit 声明必须逐字一致（模型卡渲染依赖它）
-    expect(manifest.toolSpecs).toHaveLength(8);
+    expect(manifest.toolSpecs).toHaveLength(9);
     for (const spec of manifest.toolSpecs) {
       const local = (CW_TOOL_PARAMETERS as Record<string, unknown>)[spec.name];
       expect(local, `toolkit 缺工具 ${spec.name} 的参数声明`).toBeDefined();
@@ -376,6 +377,29 @@ describe("§12.3 manifest 双向扫描", () => {
     // mcp:status 事件（§3.5 M2 键）已在 EVENT_KEYS 注册（与 manifest 一致性
     // 由上方 events 断言把守，这里防误删）
     expect(Object.values(EVENT_KEYS)).toContain("mcp:status");
+  });
+
+  it("技能四命令（09 号票，§3.3 #48–51）在两侧接线且契约类型名一致", () => {
+    const find = (name: string) => {
+      const command = manifest.commands.find((c) => c.name === name);
+      expect(command, `manifest 缺命令 ${name}`).toBeDefined();
+      return command!;
+    };
+    // #48 多来源合并清单（返回数组，元素 SkillListEntry 非名义根）
+    expect(find("skill_list")).toMatchObject({ args_type: "()", ret_type: "Vec<SkillListEntry>" });
+    // #49 启停切换（FR-14-04 禁用技能，skills-state.json 持久化）
+    expect(find("skill_toggle")).toMatchObject({ args_type: "SkillToggleArgs", ret_type: "()" });
+    // #50 重扫全部来源（Q20：活跃 run 快照不受影响）
+    expect(find("skill_reload")).toMatchObject({ args_type: "()", ret_type: "()" });
+    // #51 正文预览（SKILL.md 剥离 frontmatter，只读不进上下文）
+    expect(find("skill_inspect")).toMatchObject({
+      args_type: "SkillInspectArgs",
+      ret_type: "SkillInspectResult",
+    });
+    // 双向：client.ts 已接线（禁止只注册不使用）
+    for (const name of ["skill_list", "skill_toggle", "skill_reload", "skill_inspect"]) {
+      expect(Object.values(COMMANDS), `${name} 应在 client.ts 接线`).toContain(name);
+    }
   });
 
   it("帧重放与热重连三命令（05 号票，§3.3 #20/#57/#59c）在两侧接线", () => {

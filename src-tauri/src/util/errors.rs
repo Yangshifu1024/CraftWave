@@ -133,6 +133,9 @@ pub const E_CONTEXT_OVERFLOW: &str = "E_CONTEXT_OVERFLOW";
 pub const E_TOOL_SKIPPED: &str = "E_TOOL_SKIPPED";
 /// 流停滞看门狗终止：模型流停滞超过阈值或重复失败/空转越界（§5.7，37 号票）。
 pub const E_RUN_STALLED: &str = "E_RUN_STALLED";
+/// 未信任的项目资源访问/注入（§9.8，09 号票首次实装：未信任技能的
+/// `skill` 工具调用按本码拒绝回喂，模型须先经用户信任确认）。
+pub const E_PROJECT_UNTRUSTED: &str = "E_PROJECT_UNTRUSTED";
 
 /// IPC 命令统一错误负载（§3.1/§3.6，D14）：`{ code, message, detail? }`，camelCase。
 ///

@@ -1566,14 +1566,18 @@ pub async fn start_chat_core(
     crate::backend::wire::split_prompt(&messages)
         .map_err(|e| IpcError::invalid_arg(e.to_string()))?;
     // ② 系统级前缀与压缩策略（§6.2 注入次序：customPrompt → 压缩 summary →
-    //    当前计划）。save_config 即时生效于下次 run（config.load 命中缓存热
-    //    替换后的值，§7.6）。
+    //    当前计划 → 技能清单）。save_config 即时生效于下次 run（config.load
+    //    命中缓存热替换后的值，§7.6）。
     let custom_prompt = app
         .config
         .load()?
         .agent
         .as_ref()
         .and_then(|a| a.custom_prompt.clone());
+    // 技能快照与渐进披露（09 号票，Q20：run 开始固定版本——重扫/启停只
+    // 影响下一 run；未信任技能询问在本步同步完成，拒绝者不进清单）。
+    let run_skills = crate::knowledge::commands::ensure_skills_snapshot(app, &session_id).await;
+    let disclosure = run_skills.disclosure.clone();
     let policy = compaction_policy(app, &model);
     // 摘要驱动（§6.2：专用小模型未配则当前 run 模型——无会话覆盖时即
     // active model；与 run 模型同源解析，独立客户端实例）
@@ -1625,9 +1629,15 @@ pub async fn start_chat_core(
     let (history, prompt, compaction_summary) =
         crate::backend::wire::split_prompt_with_boundary(&messages, boundary.as_ref())
             .map_err(|e| IpcError::invalid_arg(e.to_string()))?;
+    // 技能渐进披露清单（09 号票，FR-09-02）在注入层末位（§6.2 次序：
+    // customPrompt → 压缩 summary → 技能清单；计划注入随计划票）。
     let history = crate::backend::wire::with_system_prefix_layers(
         history,
-        [custom_prompt.as_deref(), compaction_summary.as_deref()],
+        [
+            custom_prompt.as_deref(),
+            compaction_summary.as_deref(),
+            disclosure.as_deref(),
+        ],
     );
 
     // ⑥ 注册 run（同会话互斥 E_SESSION_RUNNING；帧枢纽随句柄挂载）+ run:start
@@ -1681,6 +1691,9 @@ pub async fn start_chat_core(
             mcp: Some(Arc::new(crate::mcp::commands::McpCallerAdapter {
                 host: app.mcp.clone(),
             })),
+            // run 内技能快照（09 号票，Q20）：`skill` 工具只读快照——正文
+            // 全文与 description 同版本固定，reload/toggle 不影响活跃 run。
+            skills: Some(Arc::new(run_skills.snapshot)),
         }),
     );
     // 审批门装配 MCP 判定视图（08 号票：Q44 动态许可核验 + 未声明
@@ -2296,8 +2309,9 @@ pub async fn resolve_ask_core(
     Ok(())
 }
 
-/// resolve_ask 命令（§3.3 #22；08 号票增补：run 槽未命中时落 MCP TOFU
-/// 信任询问槽——信任询问不属任何 run，挂在应用级槽表）。
+/// resolve_ask 命令（§3.3 #22；08 号票增补：run 槽未命中时落应用级询问槽
+/// （MCP TOFU / 09 号票起技能 projectTrust 同槽），槽表 `AppState.app_asks`
+/// ——信任询问不属任何 run）。
 #[tauri::command]
 pub(crate) async fn resolve_ask(
     app: State<'_, AppState>,
@@ -2308,7 +2322,7 @@ pub(crate) async fn resolve_ask(
     match resolve_ask_core(&runs, &ask_id, answer.clone()).await {
         Ok(()) => Ok(()),
         Err(err) if err.code == crate::util::errors::E_NOT_FOUND => {
-            if crate::mcp::commands::resolve_trust_ask(&app, &ask_id, answer).await {
+            if app.resolve_app_ask(&ask_id, answer) {
                 Ok(())
             } else {
                 Err(err)

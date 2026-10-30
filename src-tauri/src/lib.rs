@@ -23,6 +23,8 @@ use tauri_plugin_decoration::WebviewWindowExt;
 pub mod agent;
 pub mod backend;
 pub mod host;
+// knowledge 知识域（09 号票，§2.2 域清单）：技能系统与技能命令
+pub mod knowledge;
 // MCP 客户端（08 号票，FR-08 域；与 host 同层的独立域模块，§2.2/§9.7）
 pub mod mcp;
 pub mod providers;
@@ -78,6 +80,12 @@ use mcp::commands::{
     McpSetLaunchTrustArgs, McpSnapshotArgs, McpSnapshotResult, McpTestArgs, McpTestResult,
     mcp_connect, mcp_disconnect, mcp_list_config, mcp_reconnect, mcp_save_config,
     mcp_set_launch_trust, mcp_snapshot, mcp_test,
+};
+// 技能四命令（09 号票，§3.3 #48–51）
+#[allow(unused_imports)]
+use knowledge::commands::{
+    SkillInspectArgs, SkillInspectResult, SkillListEntry, SkillToggleArgs, skill_inspect,
+    skill_list, skill_reload, skill_toggle,
 };
 #[allow(unused_imports)]
 use providers::types::{AppConfig, ProviderConfig};
@@ -210,6 +218,11 @@ ipc_commands! {
     mcp::commands::mcp_test => args: McpTestArgs, ret: McpTestResult;
     mcp::commands::mcp_set_launch_trust => args: McpSetLaunchTrustArgs, ret: ();
     mcp::commands::mcp_snapshot => args: McpSnapshotArgs, ret: McpSnapshotResult;
+    // 技能四命令（09 号票，§3.3 #48–51 逐字）
+    knowledge::commands::skill_list => args: (), ret: Vec<SkillListEntry>;
+    knowledge::commands::skill_toggle => args: SkillToggleArgs, ret: ();
+    knowledge::commands::skill_reload => args: (), ret: ();
+    knowledge::commands::skill_inspect => args: SkillInspectArgs, ret: SkillInspectResult;
     #[cfg(debug_assertions)]
     mock_chat::mock_chat_run => args: (), ret: ();
     select_dir => args: (), ret: Option<String>;
@@ -292,6 +305,17 @@ pub fn run() {
             );
             state.config = config;
             state.active_session = active_session;
+            // 内置技能根（09 号票，§9.8 目录清单）：打包态经 Resource 目录
+            // 解析（bundle.resources 声明的 resources/skills/**）；解析失败
+            // （dev/headless）留 None——knowledge::commands::resolve_builtin_root
+            // 回退源码树路径。
+            state.resource_skills_dir = app
+                .path()
+                .resolve("resources/skills", tauri::path::BaseDirectory::Resource)
+                .ok();
+            // 技能注册表装配（09 号票）：三来源根一次配齐 + 首扫（进程级
+            // 单例；后续 run 装配与命令面按活跃会话上下文重扫）。
+            knowledge::commands::configure_registry(&state);
             // RunManager 以共享句柄单独 manage：start_chat/cancel_run/
             // resolve_ask/approve_plan 以 State<RunManager> 注入（Clone =
             // 同一注册表，§5.1）；漏 manage 会报 "state not managed for

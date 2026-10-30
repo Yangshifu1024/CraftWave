@@ -11,8 +11,9 @@
  * M1 数据面：providers / activeModelId / ui / proxy / approval / log 真实接线；
  * 03 号票补工作区与智能体页（customPrompt + 项目数据目录入口）与关于/日志页
  * 的目录入口（open_dir）；37 号票补看门狗停滞超时；08 号票补 MCP 管理页
- * （McpPage：双作用域配置编辑 / 启停 / 测试连接 / mcp:status 状态徽标）。
- * 技能 / 写入后检查两页保留导航占位，随后续票接线。
+ * （McpPage：双作用域配置编辑 / 启停 / 测试连接 / mcp:status 状态徽标）；
+ * 09 号票补技能管理页（SkillsPage：skill_list 列表 / 启停 / 重扫 / 预览）。
+ * 写入后检查页保留导航占位，随后续票接线。
  */
 
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
@@ -50,6 +51,7 @@ import {
   PAGE_ORDER,
   type PageKey,
 } from "@/settings/registry";
+import { SkillsPage } from "@/settings/SkillsPage";
 import { useSessionsStore } from "@/stores/sessions";
 import { useSettingsStore } from "@/stores/settings";
 import { applyTheme } from "@/theme";
@@ -263,7 +265,7 @@ export function SettingsPage({
     { key: "network", body: config ? <NetworkPage /> : null },
     { key: "security", body: config ? <SecurityPage /> : null },
     { key: "mcp", body: <McpPage /> },
-    { key: "skills", body: <PlaceholderPage page="skills" /> },
+    { key: "skills", body: <SkillsPage /> },
     { key: "tools", body: <PlaceholderPage page="tools" /> },
     { key: "agent", body: config ? <AgentPage /> : null },
     { key: "logs", body: config ? <LogsPage /> : null },
@@ -1027,7 +1029,6 @@ function AboutPage() {
 function PlaceholderPage({ page }: { page: PageKey }) {
   const hints: Record<string, string> = {
     mcp: "MCP 服务器管理（连接状态与 mcp.json 编辑）随后续里程碑提供。",
-    skills: "技能发现与启停管理随后续里程碑提供。",
     tools: "写入后检查与结果校验的配置随后续里程碑提供。",
   };
   return (

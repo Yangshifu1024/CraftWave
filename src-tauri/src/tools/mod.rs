@@ -221,7 +221,9 @@ pub fn compact_text(outcome: &ToolOutcome) -> String {
 }
 
 /// 头 `head` + 尾 `tail` 字节截断，中间以省略标记连接。按 UTF-8 字符边界切。
-fn truncate_middle(s: &str, head: usize, tail: usize) -> String {
+/// `pub(crate)`：backend 执行器（exec.rs）的 skill 工具分支复用同一 §8.2
+/// 截断口径（09 号票）。
+pub(crate) fn truncate_middle(s: &str, head: usize, tail: usize) -> String {
     if s.len() <= head + tail {
         return s.to_string();
     }
@@ -250,8 +252,10 @@ fn floor_char_boundary(s: &str, mut index: usize) -> usize {
 /// （§8.3 P0 9 个中的模型可见子集；suggest 仅 run 尾调用不开放模型）。
 /// 08 号票改名 STATIC_TOOL_NAMES：注册表分「静态段 + 动态段（MCP）」两段，
 /// 动态段运行时可变，钉死测试改为两断言（见 mod 的 compact_test 与
-/// ipc_manifest_test）。
-pub const STATIC_TOOL_NAMES: [&str; 8] = [
+/// ipc_manifest_test）。09 号票增 skill（§8.3 M2 表 Meta 行；description
+/// 动态列出启用技能名清单——build_registry 每次现读技能注册表，
+/// toggle/reload 后下一 run 生效）：静态 9 个。
+pub const STATIC_TOOL_NAMES: [&str; 9] = [
     "read",
     "write",
     "edit",
@@ -260,6 +264,7 @@ pub const STATIC_TOOL_NAMES: [&str; 8] = [
     "command",
     "plan",
     "ask",
+    "skill",
 ];
 
 /// 静态注册表（§8.1：启动时构建）。顺序与 [`STATIC_TOOL_NAMES`] 一致。
@@ -273,6 +278,7 @@ pub fn build_registry() -> Vec<ToolSpec> {
         command::spec(),
         plan::spec(),
         ask::spec(),
+        crate::knowledge::skills::skill_spec(),
     ]
 }
 

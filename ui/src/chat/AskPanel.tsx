@@ -1,15 +1,17 @@
 /**
- * AskPanel（§3.2 AskPayload 三形态，14 号票起 question/approval，08 号票
- * 增 mcpTrust）：
+ * AskPanel（§3.2 AskPayload 四形态，14 号票起 question/approval，08 号票
+ * 增 mcpTrust，09 号票增 projectTrust）：
  * - question：逐题选项点选 + 自由文本输入 → resolveAsk(kind=question)；
  * - approval：diff 预览 / 命令行 + 围栏原因 → 允许/拒绝 → resolveAsk(kind=approval)；
  * - mcpTrust：MCP 启动信任（TOFU）摘要 + 三选项 → resolveAsk(kind=approval，
  *   optionId = allow_once/remember/deny)。后端以 sessionId=""（应用级询问）
- *   发 ask:opened——不属任何会话桶，任意会话上下文都渲染（设置页连接触发）。
+ *   发 ask:opened——不属任何会话桶，任意会话上下文都渲染（设置页连接触发）；
+ * - projectTrust：项目资源信任（技能首用，§9.8）摘要 + 三选项 → 应答同
+ *   Approval 协议；sessionId="" 应用级桶（run 开始装配时触发，09 号票）。
  *
  * 事件驱动：ask:opened 置 store.current、ask:closed 清除（App.tsx 事件桥）。
  * 后端默认无限等待，autoConfirm 300s 由 Rust 侧兜底（前端无需计时）；
- * mcpTrust 无推荐项，不参与自动批准（FR-08-04：高危外部调用永远过人）。
+ * mcpTrust/projectTrust 无推荐项，不参与自动批准（高危外部资源永远过人）。
  *
  * 失效面（05 号票，§5.6 待审批恢复）：重连后恢复的审批可能在重连期间已被
  * 解决/取消——resolveAsk 返回 E_NOT_FOUND 时按 askId 关闭弹窗（不残留可
@@ -43,6 +45,18 @@ export function AskPanel() {
       </div>
     );
   }
+  // 应用级项目资源信任询问（09 号票，§9.8）：run 开始装配触发，不属任何 run。
+  if (!current && appLevel?.payload.kind === "projectTrust") {
+    return (
+      <div
+        data-testid="ask-panel"
+        data-kind="projectTrust"
+        className="fixed inset-x-4 bottom-4 z-50 mx-auto max-w-xl rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 shadow-2xl"
+      >
+        <ProjectTrustForm sessionId="" askId={appLevel.askId} payload={appLevel.payload} />
+      </div>
+    );
+  }
   if (!current) return null;
   return (
     <div
@@ -54,6 +68,8 @@ export function AskPanel() {
         <QuestionForm sessionId={sessionId} askId={current.askId} payload={current.payload} />
       ) : current.payload.kind === "mcpTrust" ? (
         <McpTrustForm sessionId={sessionId} askId={current.askId} payload={current.payload} />
+      ) : current.payload.kind === "projectTrust" ? (
+        <ProjectTrustForm sessionId={sessionId} askId={current.askId} payload={current.payload} />
       ) : (
         <ApprovalForm sessionId={sessionId} askId={current.askId} payload={current.payload} />
       )}
@@ -252,6 +268,70 @@ function McpTrustForm({
         </p>
         <p className="text-ui-sm text-[var(--muted-foreground)]">
           首次连接需要确认服务器身份；「记住此版本」后同指纹不再询问，配置被改动会重新确认。
+        </p>
+      </div>
+      <div className="flex justify-end gap-2">
+        {payload.options.map((opt) => (
+          <button
+            key={opt.id}
+            type="button"
+            data-testid={`ask-option-${opt.id}`}
+            onClick={() => submit(opt.id)}
+            className={`rounded-full px-4 py-1.5 text-ui-sm ${
+              opt.id === "deny"
+                ? "border border-[var(--border)] text-[var(--foreground)] hover:border-[var(--destructive)]"
+                : "bg-[var(--primary)] text-[var(--primary-foreground)]"
+            }`}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+      {error !== null && (
+        <p
+          data-testid="ask-error"
+          className="rounded border border-[var(--destructive)]/30 bg-[var(--destructive)]/5 px-2 py-1 text-ui-sm text-[var(--destructive)]"
+        >
+          应答提交失败：{error}（可重试）
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** 项目资源信任表单（09 号票，§9.8 第四形态）：技能名/作用域/指纹摘要 +
+ *  三选项按钮 → resolveAsk(approval)。技能首用未信任时后端在 run 装配时
+ *  弹出（挂应用级槽），「记住此版本」后同指纹免问；拒绝后该技能本次运行
+ *  不可用，模型侧调用回 E_PROJECT_UNTRUSTED。 */
+function ProjectTrustForm({
+  sessionId,
+  askId,
+  payload,
+}: {
+  sessionId: string;
+  askId: string;
+  payload: Extract<AskPayload, { kind: "projectTrust" }>;
+}) {
+  const [error, reportError, clearError] = useSubmitError(sessionId);
+  const submit = (optionId: string) => {
+    clearError();
+    resolveAsk(askId, { kind: "approval", optionId }).catch(reportError);
+  };
+  return (
+    <div className="space-y-3">
+      <h3 className="flex items-center gap-2 text-ui-base font-medium text-[var(--foreground)]">
+        <ShieldCheck size={16} aria-hidden className="shrink-0 text-[var(--warning)]" />
+        信任技能 {payload.resourceName}？
+      </h3>
+      <div className="space-y-1 rounded border border-[var(--border)] bg-[var(--background)] px-3 py-2">
+        <p className="text-ui-sm text-[var(--foreground)]">
+          来源：{payload.scope === "global" ? "全局技能目录" : "项目技能目录"}
+        </p>
+        <p className="text-ui-sm text-[var(--muted-foreground)]">
+          版本指纹：<code data-testid="skill-trust-fingerprint">{payload.fingerprint}</code>
+        </p>
+        <p className="text-ui-sm text-[var(--muted-foreground)]">
+          技能包含说明与随附脚本、模板等全部文件；「记住此版本」后同版本不再询问，内容变更会重新确认。拒绝后本次运行不加载该技能。
         </p>
       </div>
       <div className="flex justify-end gap-2">

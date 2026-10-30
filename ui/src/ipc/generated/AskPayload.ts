@@ -3,10 +3,11 @@ import type { ApprovalDiff } from "./ApprovalDiff";
 import type { AskOption } from "./AskOption";
 import type { AskQuestion } from "./AskQuestion";
 import type { McpTransportKind } from "./McpTransportKind";
+import type { SkillTrustScope } from "./SkillTrustScope";
 
 /**
  * 询问/审批载荷（§3.2；08 号票起实装 question/approval/mcpTrust 三形态，
- * projectTrust 项目资源信任随 24 号票）。
+ * projectTrust 项目资源信任随 09 号票实装）。
  */
 export type AskPayload = { "kind": "question", 
 /**
@@ -54,6 +55,23 @@ fingerprint: string,
  * 启动命令或 URL（stdio = command+args 拼接；HTTP = url）。
  */
 commandOrUrl: string, 
+/**
+ * 三选项（allow_once / remember / deny）。
+ */
+options: Array<AskOption>, } | { "kind": "projectTrust", 
+/**
+ * 资源名（当前 = 技能名；24 号票扩展 memory 等资源时沿用本形态）。
+ */
+resourceName: string, 
+/**
+ * 信任作用域（"global" | "project"；内置技能豁免不询问）。
+ */
+scope: SkillTrustScope, 
+/**
+ * 整目录版本指纹（Q21 [`crate::knowledge::skills::version_fingerprint`]，
+ * 展示前 16 位）。
+ */
+fingerprint: string, 
 /**
  * 三选项（allow_once / remember / deny）。
  */

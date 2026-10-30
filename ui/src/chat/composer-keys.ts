@@ -21,8 +21,8 @@ import { tierOf, usePermissionTierStore } from "@/chat/permission-tier";
 import { DEFAULT_RUN_CONFIG } from "@/chat/runtime";
 import { modelOf } from "@/chat/session-model";
 import { useSessionScope } from "@/chat/session-scope";
-import { cancelRun, searchWorkspacePaths } from "@/ipc/client";
-import type { WorkspacePathHit } from "@/ipc/types";
+import { cancelRun, searchWorkspacePaths, skillList } from "@/ipc/client";
+import type { SkillListEntry, WorkspacePathHit } from "@/ipc/types";
 import { matchGhost, useAskStore } from "@/stores/ask";
 import { useSessionsStore } from "@/stores/sessions";
 
@@ -30,6 +30,13 @@ import { useSessionsStore } from "@/stores/sessions";
 export interface AtMenuState {
   query: string;
   items: WorkspacePathHit[];
+  activeIndex: number;
+}
+
+/** / 技能菜单快照（FR-01-17 技能半边，09 号票；浮层渲染面）。 */
+export interface SkillMenuState {
+  query: string;
+  items: SkillListEntry[];
   activeIndex: number;
 }
 
@@ -66,6 +73,61 @@ export function detectAtQuery(text: string, cursor: number): { at: number; query
   return { at: i, query: text.slice(i + 1, cursor) };
 }
 
+/**
+ * 从 (text, cursor) 检测 `/` 技能触发（FR-01-17 技能半边，09 号票；与
+ * detectAtQuery 同构的光标锚定 + 首字符互斥）：
+ * - 光标往回到最近的 `/` 之间无空白 → 查询中；
+ * - `/` 必须在行首或前一字符是空白（排除 `src/main.rs` 这类路径文本误触）；
+ * - 与 `@` 互斥：光标前最近的触发符是谁就归谁的菜单（先于本函数的 @ 检测
+ *   命中时本函数不会被调用——useComposerKeys 内先测 @ 再测 /）。
+ * 返回插入位（`/` 的下标）与查询词；非触发态返回 null。
+ */
+export function detectSlashQuery(
+  text: string,
+  cursor: number,
+): { at: number; query: string } | null {
+  let i = cursor - 1;
+  while (i >= 0) {
+    const ch = text[i];
+    if (ch === "/") {
+      // `/` 的前一字符（若有）必须是空白——行首或空白后的 `/` 才是触发符
+      if (i > 0 && !/\s/.test(text[i - 1])) return null;
+      return { at: i, query: text.slice(i + 1, cursor) };
+    }
+    if (ch === "@") return null; // 更近的 @ 触发归 @ 菜单
+    if (/\s/.test(ch)) return null; // / 与光标间隔了空白：非触发态
+    i -= 1;
+  }
+  return null;
+}
+
+/** 选中技能的插入文本（票面定案：展开为明确指令文本，避免依赖模型对裸
+ *  `/名` 的理解；尾部空格衔接用户后续输入——后续文本若以空白开头则剥掉
+ *  首段空白，避免出现双空格）。 */
+export function insertSkillInvocation(
+  text: string,
+  at: number,
+  cursor: number,
+  name: string,
+): string {
+  const rest = text.slice(cursor).replace(/^\s+/, "");
+  return `${text.slice(0, at)}请用 skill 工具加载技能 ${name} 并按其指引行动 ${rest}`;
+}
+
+/** 技能清单的查询过滤（名称前缀优先、其次包含；大小写不敏感）。 */
+export function filterSkills(skills: SkillListEntry[], query: string): SkillListEntry[] {
+  const q = query.trim().toLowerCase();
+  if (q === "") return skills;
+  const starts: SkillListEntry[] = [];
+  const contains: SkillListEntry[] = [];
+  for (const skill of skills) {
+    const name = skill.name.toLowerCase();
+    if (name.startsWith(q)) starts.push(skill);
+    else if (name.includes(q)) contains.push(skill);
+  }
+  return [...starts, ...contains];
+}
+
 /** 补全项的插入文本（目录补全保留 @ 语义，文件同样直接插入相对路径）。 */
 export function insertAtCompletion(text: string, at: number, cursor: number, path: string): string {
   return `${text.slice(0, at + 1)}${path} ${text.slice(cursor)}`;
@@ -73,15 +135,21 @@ export function insertAtCompletion(text: string, at: number, cursor: number, pat
 
 /**
  * Composer 键盘体系主 hook：返回输入框要挂的 onKeyDown/onCursor 回调、
- * @ 补全菜单状态（atMenu）与菜单交互方法（pickActive 选中/hoverIndex 悬停）。
- * 同时内部承担两件记账：@ 菜单的触发检测与防抖搜索、草稿实时写入会话 store。
+ * @ 补全菜单状态（atMenu）与 / 技能菜单状态（skillMenu）（FR-01-17 两半边，
+ * 09 号票；触发符按首字符互斥：光标前最近的 @ / / 各归其菜单）与菜单交互
+ * 方法（pickActive/pickSkill 选中、hoverIndex/hoverSkill 悬停）。
+ * 同时内部承担三件记账：@ 菜单的触发检测与防抖搜索、/ 菜单的技能清单拉取、
+ * 草稿实时写入会话 store。键位优先级（§10.6）：触发符菜单 > ghost hint。
  */
 export function useComposerKeys(): {
   onKeyDown: (event: React.KeyboardEvent<HTMLTextAreaElement>) => void;
   onCursor: (cursor: number) => void;
   atMenu: AtMenuState | null;
+  skillMenu: SkillMenuState | null;
   pickActive: () => void;
+  pickSkill: () => void;
   hoverIndex: (index: number) => void;
+  hoverSkill: (index: number) => void;
 } {
   const sessionId = useSessionScope();
   const aui = useAui();
@@ -109,7 +177,7 @@ export function useComposerKeys(): {
     cursorRef.current = cursor;
   }, []);
 
-  // ---- @ 菜单状态机 ----
+  // ---- @ 菜单状态机（与 / 技能菜单互斥：先测 @，命中即不再测 /）----
   const [atMenu, setAtMenu] = useState<AtMenuState | null>(null);
   // 文本变化 → 重检测触发态（光标取 ref 快照）；查询词变化 → 防抖拉补全。
   // detected 在 effect 内现算，避免对象引用进依赖数组。
@@ -119,6 +187,7 @@ export function useComposerKeys(): {
       setAtMenu(null);
       return;
     }
+    setSkillMenu(null); // @ 触发优先：关掉可能开着的 / 菜单（互斥）
     setAtMenu((prev) =>
       prev !== null && prev.query === detected.query
         ? prev
@@ -135,6 +204,35 @@ export function useComposerKeys(): {
     }, 150);
     return () => clearTimeout(timer);
   }, [text, sessionId]);
+
+  // ---- / 技能菜单状态机（FR-01-17 技能半边，09 号票）----
+  // 技能清单：挂载时拉一次（skill_list），reload/toggle 后由调用方重开菜单
+  // 时刷新（清单数据量小，不轮询）。
+  const [skills, setSkills] = useState<SkillListEntry[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    void skillList()
+      .then((entries) => {
+        if (!cancelled) setSkills(entries.filter((e) => e.enabled));
+      })
+      .catch(() => {
+        // IPC 异常（纯浏览器等）：清单留空，/ 菜单不出现
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const [skillMenu, setSkillMenu] = useState<SkillMenuState | null>(null);
+  useEffect(() => {
+    const detected = detectSlashQuery(text, cursorRef.current);
+    if (detected === null) {
+      setSkillMenu(null);
+      return;
+    }
+    setAtMenu(null); // / 触发：关掉可能开着的 @ 菜单（互斥）
+    const items = filterSkills(skills, detected.query);
+    setSkillMenu({ query: detected.query, items, activeIndex: 0 });
+  }, [text, skills]);
 
   /** 插入当前选中项（键盘 Tab/Enter 与浮层点击共用）。 */
   const pickActive = useCallback(() => {
@@ -153,12 +251,28 @@ export function useComposerKeys(): {
     setAtMenu(null);
   }, [aui, atMenu, text]);
 
+  /** 插入选中技能的明确指令文本（09 号票定案：展开为「请用 skill 工具加载
+   *  技能 X…」+ 保留用户后续输入）。 */
+  const pickSkill = useCallback(() => {
+    const snapshot = skillMenu;
+    if (snapshot === null) return;
+    const skill = snapshot.items[snapshot.activeIndex];
+    if (skill !== undefined) {
+      const at = cursorRef.current;
+      aui.composer.setText(
+        insertSkillInvocation(text, detectSlashQuery(text, at)?.at ?? at - 1, at, skill.name),
+        { origin: "user" },
+      );
+    }
+    setSkillMenu(null);
+  }, [aui, skillMenu, text]);
+
   // ---- 历史翻阅（↑↓ 空输入，§10.6）----
   const historyRef = useRef<{ index: number; draft: string }>({ index: -1, draft: "" });
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     onCursor(event.currentTarget.selectionStart ?? 0);
-    // 1) @ 菜单导航（Tab 优先级：菜单 > ghost hint，FR-13-05）
+    // 1) 触发符菜单导航（§10.6 键位优先级：菜单 > ghost hint；@ 与 / 互斥开）
     if (atMenu !== null) {
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
         event.preventDefault();
@@ -181,6 +295,31 @@ export function useComposerKeys(): {
       if (event.key === "Escape") {
         event.preventDefault();
         setAtMenu(null);
+        return;
+      }
+    }
+    if (skillMenu !== null && skillMenu.items.length > 0) {
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        const delta = event.key === "ArrowDown" ? 1 : -1;
+        setSkillMenu((prev) =>
+          prev === null
+            ? prev
+            : {
+                ...prev,
+                activeIndex: (prev.activeIndex + delta + prev.items.length) % prev.items.length,
+              },
+        );
+        return;
+      }
+      if (event.key === "Tab" || event.key === "Enter") {
+        event.preventDefault();
+        pickSkill();
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setSkillMenu(null);
         return;
       }
     }
@@ -261,10 +400,15 @@ export function useComposerKeys(): {
     setDraft(sessionId, text);
   }, [sessionId, text, setDraft]);
 
-  /** 浮层 hover 高亮（键盘 ↑↓ 导航共享 activeIndex）。 */
+  /** @ 浮层 hover 高亮（键盘 ↑↓ 导航共享 activeIndex）。 */
   const hoverIndex = useCallback((index: number) => {
     setAtMenu((prev) => (prev === null ? prev : { ...prev, activeIndex: index }));
   }, []);
 
-  return { onKeyDown, onCursor, atMenu, pickActive, hoverIndex };
+  /** / 技能菜单浮层 hover 高亮。 */
+  const hoverSkill = useCallback((index: number) => {
+    setSkillMenu((prev) => (prev === null ? prev : { ...prev, activeIndex: index }));
+  }, []);
+
+  return { onKeyDown, onCursor, atMenu, skillMenu, pickActive, pickSkill, hoverIndex, hoverSkill };
 }

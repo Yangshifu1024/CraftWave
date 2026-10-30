@@ -18,7 +18,7 @@
 use tokio::sync::oneshot;
 
 /// 询问/审批载荷（§3.2；08 号票起实装 question/approval/mcpTrust 三形态，
-/// projectTrust 项目资源信任随 24 号票）。
+/// projectTrust 项目资源信任随 09 号票实装）。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(
@@ -69,6 +69,43 @@ pub enum AskPayload {
         /// 三选项（allow_once / remember / deny）。
         options: Vec<AskOption>,
     },
+    /// 项目资源信任（§9.8 字段级，09 号票实装）：首次使用未信任技能
+    /// （SKILL.md 及随附脚本、模板整体，Q21）前的确认。应答同走
+    /// [`AskAnswer::Approval`]（optionId = allow_once/remember/deny）。
+    ProjectTrust {
+        /// 资源名（当前 = 技能名；24 号票扩展 memory 等资源时沿用本形态）。
+        resource_name: String,
+        /// 信任作用域（"global" | "project"；内置技能豁免不询问）。
+        scope: SkillTrustScope,
+        /// 整目录版本指纹（Q21 [`crate::knowledge::skills::version_fingerprint`]，
+        /// 展示前 16 位）。
+        fingerprint: String,
+        /// 三选项（allow_once / remember / deny）。
+        options: Vec<AskOption>,
+    },
+}
+
+/// 项目资源信任的作用域（§9.8：全局 `~/.craftwave/skills/` 与项目
+/// `<home>/.craftwave/skills/` 均属信任资源；内置豁免）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "lowercase")]
+pub enum SkillTrustScope {
+    /// 全局作用域（`<data>/skills/`）。
+    Global,
+    /// 项目作用域（`<项目主目录>/.craftwave/skills/`）。
+    Project,
+}
+
+/// 应用级询问槽（AppState.app_asks 的元素；09 号票由 08 号票的 MCP 专用
+/// `mcp_asks`/`PendingTrustAsk` 泛化而来——应用级询问不属任何 run，统一挂
+/// 本槽表，`resolve_ask` 命令在 run 槽未命中时落到这里）：ask_id → 原始
+/// 载荷 + 应答通道（oneshot 一次性通道）。
+pub struct AppAskSlot {
+    /// 原始载荷（mcpTrust / projectTrust 等应用级形态）。
+    pub payload: AskPayload,
+    /// 应答发送端。
+    pub tx: oneshot::Sender<AskAnswer>,
 }
 
 /// MCP 传输方式（§3.2 mcpTrust.transport："stdio" | "http"）。
@@ -192,11 +229,14 @@ pub enum DiffLineKind {
 /// AskPayload 的固有方法实现。
 impl AskPayload {
     /// 推荐选项的 id（自动确认超时时选它，§5.4）；问卷形态没有推荐选项，
-    /// 返回 None。mcpTrust 同样返回 None——MCP 启动信任不参与 autoConfirm
-    /// 自动批准（FR-08-04 高危外部调用永远过人，票面验收）。
+    /// 返回 None。mcpTrust/projectTrust 同样返回 None——启动信任与项目资源
+    /// 信任不参与 autoConfirm 自动批准（高危外部资源永远过人，FR-08-04
+    /// 同精神）。
     pub fn recommended_option_id(&self) -> Option<&str> {
         match self {
-            AskPayload::Question { .. } | AskPayload::McpTrust { .. } => None,
+            AskPayload::Question { .. }
+            | AskPayload::McpTrust { .. }
+            | AskPayload::ProjectTrust { .. } => None,
             AskPayload::Approval { options, .. } => options
                 .iter()
                 .find(|o| o.recommended == Some(true))

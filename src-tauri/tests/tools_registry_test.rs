@@ -10,7 +10,8 @@ fn registry_names_and_order_are_pinned() {
     let names: Vec<String> = registry.iter().map(|s| s.name.clone()).collect();
     assert_eq!(names, STATIC_TOOL_NAMES.to_vec());
     // 顺序钉死（追加新工具在尾部，不重排既有顺序；suggest 仅 run 尾调用
-    // 不开放模型，不在注册表——14 号票）。
+    // 不开放模型，不在注册表——14 号票；skill 随 09 号票 §8.3 M2 表进
+    // 静态段尾部，description 动态列出启用技能名）。
     assert_eq!(
         names,
         [
@@ -21,7 +22,8 @@ fn registry_names_and_order_are_pinned() {
             "grep",
             "command",
             "plan",
-            "ask"
+            "ask",
+            "skill"
         ]
     );
 }
@@ -83,6 +85,9 @@ fn capabilities_match_design() {
     assert_eq!(cap_of("command"), Capability::Network);
     assert_eq!(cap_of("plan"), Capability::Meta);
     assert_eq!(cap_of("ask"), Capability::Interactive);
+    // skill（09 号票，§8.3 M2 表）：Meta 能力——全档放行（加载技能正文
+    // 是无副作用操作，信任控制在技能面自身，§9.8）。
+    assert_eq!(cap_of("skill"), Capability::Meta);
 }
 
 #[test]
@@ -92,7 +97,7 @@ fn filter_for_tier_matches_matrix() {
         .iter()
         .map(|s| s.name.to_string())
         .collect();
-    assert_eq!(plan, ["read", "list_files", "grep", "plan", "ask"]);
+    assert_eq!(plan, ["read", "list_files", "grep", "plan", "ask", "skill"]);
 
     // confirm_each / auto_edit / full_access：全保留（审批在门控做）。
     for tier in [
@@ -102,7 +107,7 @@ fn filter_for_tier_matches_matrix() {
     ] {
         assert_eq!(
             filter_for_tier(build_registry(), tier).len(),
-            8,
+            9,
             "{tier:?} 应全保留"
         );
     }

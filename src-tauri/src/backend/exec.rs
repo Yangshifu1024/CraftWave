@@ -44,7 +44,7 @@ use super::run_loop::{BatchCall, CancellableExecutor, ToolExecution};
 use crate::safety::tier::PermissionTier;
 use crate::tools::plan::PlanState;
 use crate::tools::{ToolOutcome, ToolsContext, compact_text, edit, grep, list_files, read, write};
-use crate::util::errors::{E_INVALID_ARG, ToolError};
+use crate::util::errors::{E_INVALID_ARG, E_PROJECT_UNTRUSTED, ToolError};
 use crate::util::events::EventSink;
 use crate::util::events::keys;
 
@@ -83,6 +83,9 @@ pub struct ExecutorEnv {
     pub data_root: std::path::PathBuf,
     /// MCP 动态工具调用面（None = 未装配 MCP；08 号票）。
     pub mcp: Option<Arc<dyn McpCaller>>,
+    /// run 内技能快照（09 号票，Q20 版本固定：run 开始时拍定正文全文，
+    /// `skill` 工具只读快照不触盘；None = 未装配快照——无技能环境）。
+    pub skills: Option<Arc<crate::knowledge::skills::SkillSnapshot>>,
 }
 
 /// 工具注册表全集的执行器：模型可见的 8 个工具（§8.3）都经它执行。
@@ -298,6 +301,60 @@ impl ToolsetExecutor {
                     ToolExecution::Cancelled { executed: false, message: "询问中断".to_owned() }
                 }
             }
+        }
+    }
+
+    /// skill 工具（§8.3 M2 表 Meta 行，09 号票）：从 run 快照取正文全文
+    /// 回喂（Q20 版本固定——不触盘，活跃 run 不混用旧 description 与新
+    /// 正文）。头部标注「以下是技能 X 的正文」；超长截断同 §8.2 compact
+    /// 口径（头 4KB + 尾 8KB）。未信任技能回 E_PROJECT_UNTRUSTED（§9.8）。
+    fn run_skill(&self, args_json: &str) -> ToolExecution {
+        let Some(snapshot) = self.env.as_ref().and_then(|e| e.skills.clone()) else {
+            return completed_failure("skill 工具需要执行环境（未装配技能快照）");
+        };
+        let args: crate::knowledge::skills::SkillToolArgs = match serde_json::from_str(args_json) {
+            Ok(a) => a,
+            Err(e) => return completed_failure(&format!("skill 参数解析失败：{e}")),
+        };
+        let name = args.name.as_str();
+        if let Some(entry) = snapshot.find(name) {
+            // 命中：正文全文 + 头部标注（§8.3 结果要点），超长 compact 截断。
+            let full = format!("以下是技能 {} 的正文：\n\n{}", entry.name, entry.body);
+            let model_text = crate::tools::truncate_middle(&full, 4 * 1024, 8 * 1024);
+            ToolExecution::Completed {
+                ok: true,
+                ui_summary: format!("已加载技能 {}", entry.name),
+                error: None,
+                model_text,
+            }
+        } else if snapshot.is_rejected(name) {
+            // 未信任（projectTrust 被拒/未决）：E_PROJECT_UNTRUSTED 回喂，
+            // 引导模型不再尝试（§9.8）。
+            let message = format!(
+                "技能 {name} 未获信任（用户未允许访问项目技能资源）；\
+                 不要重复调用，可向用户说明需要信任该技能后重试"
+            );
+            ToolExecution::Completed {
+                ok: false,
+                ui_summary: format!("已拦截：技能 {name} 未信任"),
+                error: Some(FrameError::new(E_PROJECT_UNTRUSTED, message.clone())),
+                model_text: format!("{E_PROJECT_UNTRUSTED} {message}"),
+            }
+        } else {
+            let available = snapshot
+                .entries
+                .iter()
+                .map(|e| e.name.as_str())
+                .collect::<Vec<_>>()
+                .join("、");
+            completed_failure(&format!(
+                "未知技能：{name}（当前可用：{}）",
+                if available.is_empty() {
+                    "无"
+                } else {
+                    &available
+                }
+            ))
         }
     }
 
@@ -541,6 +598,31 @@ impl CancellableExecutor for ToolsetExecutor {
                                 ui_summary.clone(),
                             )
                         };
+                        self.persist_outcome(call_id, &outcome);
+                    }
+                    execution
+                }
+                "skill" => {
+                    // 技能加载（09 号票，§8.3 Meta 行）：快照正文回喂 +
+                    // 边车（卡片正文折叠预览的数据面）；失败路径（未信任/
+                    // 未知技能）帧面 uiSummary+error 足够，不写边车。
+                    let execution = self.run_skill(args_json);
+                    if let ToolExecution::Completed {
+                        ok: true,
+                        ui_summary,
+                        ..
+                    } = &execution
+                        && let Some(snapshot) = self.env.as_ref().and_then(|e| e.skills.as_ref())
+                        && let Some(args) = serde_json::from_str::<
+                            crate::knowledge::skills::SkillToolArgs,
+                        >(args_json)
+                        .ok()
+                        && let Some(entry) = snapshot.find(&args.name)
+                    {
+                        let outcome = ToolOutcome::success(
+                            serde_json::json!({ "name": entry.name, "body": entry.body }),
+                            ui_summary.clone(),
+                        );
                         self.persist_outcome(call_id, &outcome);
                     }
                     execution

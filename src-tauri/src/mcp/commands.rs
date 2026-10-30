@@ -1,9 +1,11 @@
 //! MCP 命令实现（§3.3 #40–47 逐字；08 号票）+ TOFU 启动信任询问槽。
 //!
-//! TOFU 询问不属任何 run（管理页连接触发），因此挂在 AppState 的专用槽表
-//! （`mcp_asks`）而非 RunHandle.ask；`resolve_ask` 命令在 run 槽未命中时
-//! 落到这里。应答经既有 [`crate::backend::ask::AskAnswer::Approval`]（
-//! optionId = allow_once/remember/deny），协议面不新增应答形态。
+//! TOFU 询问不属任何 run（管理页连接触发），因此挂在 AppState 的应用级槽表
+//! （`app_asks`，09 号票由本模块专用的 `mcp_asks`/`PendingTrustAsk` 泛化；
+//! 元素 = backend/ask [`crate::backend::ask::AppAskSlot`]）而非
+//! RunHandle.ask；`resolve_ask` 命令在 run 槽未命中时落到这里。应答经既有
+//! [`crate::backend::ask::AskAnswer::Approval`]（optionId =
+//! allow_once/remember/deny），协议面不新增应答形态。
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -22,14 +24,9 @@ use crate::host::AppState;
 use crate::tools::ToolOutcome;
 use crate::util::errors::IpcError;
 
-/// MCP TOFU 询问槽（AppState.mcp_asks 的元素）：ask_id → 原始载荷 + 应答
-/// 通道（oneshot 一次性通道）。
-pub struct PendingTrustAsk {
-    /// 原始载荷（mcpTrust 形态）。
-    pub payload: AskPayload,
-    /// 应答发送端。
-    pub tx: oneshot::Sender<AskAnswer>,
-}
+/// MCP TOFU 询问槽（09 号票前的专用形状；现 = [`crate::backend::ask::AppAskSlot`]
+/// 别名，08 号票测试面沿用）。
+pub type PendingTrustAsk = crate::backend::ask::AppAskSlot;
 
 /// mcpTrust 三选项（§3.2 options id 逐字）。
 fn trust_options() -> Vec<AskOption> {
@@ -287,7 +284,7 @@ async fn ensure_launch_trust(
     let ask_id = uuid::Uuid::new_v4().to_string();
     {
         let mut asks = app
-            .mcp_asks
+            .app_asks
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         asks.insert(
@@ -314,7 +311,7 @@ async fn ensure_launch_trust(
         Err(_) => String::from("deny"),
     };
     // 单一出口：清槽 + ask:closed（answered=决策已达）。
-    app.mcp_asks
+    app.app_asks
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .remove(&ask_id);
@@ -344,20 +341,12 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
-/// TOFU 询问槽的应答投递（resolve_ask 的 run 槽未命中兜底；host 装配）。
-/// 命中即取走槽位（oneshot 发送端不可克隆；取走后等待方收到应答并自清
-/// ask:closed——见 [`ensure_launch_trust`] 的单一出口）。
+/// TOFU 询问槽的应答投递（resolve_ask 的 run 槽未命中兜底；09 号票起收敛
+/// 为 [`AppState::resolve_app_ask`] 的薄包装——泛化桶共用一个投递面，08 号
+/// 票测试沿用本入口）。命中即取走槽位（oneshot 发送端不可克隆；取走后
+/// 等待方收到应答并自清 ask:closed——见 [`ensure_launch_trust`] 的单一出口）。
 pub async fn resolve_trust_ask(app: &AppState, ask_id: &str, answer: AskAnswer) -> bool {
-    let tx = app
-        .mcp_asks
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .remove(ask_id)
-        .map(|slot| slot.tx);
-    match tx {
-        Some(tx) => tx.send(answer).is_ok(),
-        None => false,
-    }
+    app.resolve_app_ask(ask_id, answer)
 }
 
 // —— 8 个命令（§3.3 #40–47 逐字）——
@@ -685,5 +674,6 @@ pub fn state_of(
     app.mcp.state_of(&key)
 }
 
-/// 测试辅助：trust ask 槽表类型（AppState 构造面）。
+/// 测试辅助：应用级 ask 槽表类型（AppState 构造面；09 号票随 `app_asks`
+/// 泛化改指 [`crate::backend::ask::AppAskSlot`]）。
 pub type TrustAskMap = std::collections::HashMap<String, PendingTrustAsk>;

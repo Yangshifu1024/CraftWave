@@ -25,8 +25,10 @@ import {
   Plug,
   Search,
   SquareTerminal,
+  Zap,
 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { Markdown } from "@/chat/Markdown";
 import { useSessionScope } from "@/chat/session-scope";
 import { Button } from "@/components/ui/button";
 import * as client from "@/ipc/client";
@@ -472,6 +474,42 @@ export function AskCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
       summary={str(args, "title")}
     >
       <p className="text-[var(--muted-foreground)]">回答在下方询问面板中进行</p>
+    </ToolCardShell>
+  );
+}
+
+/**
+ * skill 工具卡（09 号票，§8.3 Meta 行）：技能名 + 加载状态 + 正文折叠预览
+ * （终态按 callId 拉边车 data.body，Markdown 只读渲染；加载中显示技能名
+ * 扫光）。失败态（未信任/未知技能）沿 Shell 的错误展开展示 uiSummary。
+ */
+export function SkillCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
+  const args = (props.args ?? {}) as CardArgs;
+  const { toolCallId, result, isError } = props;
+  // 正文来源：边车 data.body（帧面 result 是模型通道压缩文本，不含结构化
+  // data——与 read 等卡的边车恢复口径一致，FR-04-07）。失败路径不写边车
+  // （执行器约定），不拉取。
+  const settled = result !== undefined && !isError;
+  const outcome = useToolOutcomeDetail(toolCallId, settled);
+  const rawBody = (outcome?.data as { body?: unknown } | undefined)?.body;
+  const body = typeof rawBody === "string" ? rawBody : null;
+  const optional = typeof args.args === "string" && args.args.length > 0;
+  return (
+    <ToolCardShell
+      {...props}
+      icon={<Zap size={16} />}
+      label="技能"
+      runningLabel="正在加载技能"
+      summary={str(args, "name") + (optional ? "（带参数）" : "")}
+    >
+      {body !== null && (
+        <details>
+          <summary className="cursor-pointer text-[var(--muted-foreground)]">正文预览</summary>
+          <div className="mt-1 max-h-60 overflow-auto rounded border border-[var(--border)] p-2">
+            <Markdown>{body}</Markdown>
+          </div>
+        </details>
+      )}
     </ToolCardShell>
   );
 }

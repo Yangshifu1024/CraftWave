@@ -29,6 +29,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::Value;
 
 use crate::agent::RunManager;
+use crate::backend::ask::{AppAskSlot, AskAnswer};
 use crate::backend::frames::UsageTotal;
 use crate::host::followup::FollowUpManager;
 use crate::providers::types::AppConfig;
@@ -70,9 +71,14 @@ pub struct AppState {
     pub followups: FollowUpManager,
     /// MCP 宿主（08 号票，§9.7）：连接池 + 启动信任 + 工具级许可。
     pub mcp: Arc<crate::mcp::pool::McpHost>,
-    /// MCP TOFU 信任询问槽表（08 号票：管理页连接触发的信任询问不属任何
-    /// run，挂在应用级；resolve_ask 在 run 槽未命中时落到这里）。
-    pub mcp_asks: Arc<Mutex<HashMap<String, crate::mcp::commands::PendingTrustAsk>>>,
+    /// 应用级询问槽表（09 号票由 08 号票 `mcp_asks` 泛化；backend/ask
+    /// `AppAskSlot`）：不属任何 run 的询问（MCP TOFU、技能 projectTrust）
+    /// 挂这里，resolve_ask 在 run 槽未命中时落到这里。
+    pub app_asks: Arc<Mutex<HashMap<String, AppAskSlot>>>,
+    /// 内置技能根的打包态路径（09 号票，§9.8 目录清单）：lib.rs setup 经
+    /// AppHandle 的 Resource 目录解析好传入；None = 走源码树回退（dev/
+    /// headless）或无内置来源。
+    pub resource_skills_dir: Option<PathBuf>,
 }
 
 impl AppState {
@@ -98,7 +104,8 @@ impl AppState {
                 data_dir.clone(),
                 events_rcvd,
             )),
-            mcp_asks: Arc::new(Mutex::new(HashMap::new())),
+            app_asks: Arc::new(Mutex::new(HashMap::new())),
+            resource_skills_dir: None,
         }
     }
 
@@ -118,7 +125,24 @@ impl AppState {
             exit_confirm: self.exit_confirm.clone(),
             followups: self.followups.clone(),
             mcp: self.mcp.clone(),
-            mcp_asks: self.mcp_asks.clone(),
+            app_asks: self.app_asks.clone(),
+            resource_skills_dir: self.resource_skills_dir.clone(),
+        }
+    }
+
+    /// 应用级询问槽的应答投递（resolve_ask 的 run 槽未命中兜底；09 号票由
+    /// mcp::commands::resolve_trust_ask 泛化收编）。命中即取走槽位（oneshot
+    /// 发送端不可克隆；取走后等待方收到应答并自清 ask:closed）。
+    pub fn resolve_app_ask(&self, ask_id: &str, answer: AskAnswer) -> bool {
+        let tx = self
+            .app_asks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(ask_id)
+            .map(|slot| slot.tx);
+        match tx {
+            Some(tx) => tx.send(answer).is_ok(),
+            None => false,
         }
     }
 

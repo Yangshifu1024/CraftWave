@@ -36,6 +36,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   Square,
+  Zap,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { ChatErrorBanner } from "@/chat/ChatErrorBanner";
@@ -296,11 +297,13 @@ function SteerNodes() {
   );
 }
 
-/** Composer 区（§10.6 / FR-13-02，17 号票）：输入框 + 权限档指示 + @ 菜单浮层。
+/** Composer 区（§10.6 / FR-13-02，17 号票）：输入框 + 权限档指示 + @ 菜单
+ *  浮层 + / 技能菜单浮层（09 号票）。
  *  Enter 三态路由（06 号票）/Shift+Enter 换行/IME 组合期防误发由
  *  useComposerKeys + ComposerPrimitive.Input 共同承担。 */
 function ComposerBar() {
-  const { onKeyDown, onCursor, atMenu, pickActive, hoverIndex } = useComposerKeys();
+  const { onKeyDown, onCursor, atMenu, skillMenu, pickActive, pickSkill, hoverIndex, hoverSkill } =
+    useComposerKeys();
   return (
     <div className="relative">
       {/* @ 路径补全浮层（search_workspace_paths 驱动；Tab/Enter 选中，Esc 关闭） */}
@@ -327,6 +330,37 @@ function ComposerBar() {
                   <File size={12} aria-hidden className="shrink-0" />
                 )}
                 <span className="truncate">{hit.path}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {/* / 技能菜单浮层（09 号票，FR-01-17 技能半边：skill_list 驱动，
+          ↑↓ 导航、Tab/Enter 选中展开为明确指令文本，Esc 关闭） */}
+      {skillMenu !== null && skillMenu.items.length > 0 && (
+        <ul
+          data-testid="skill-menu"
+          className="cw-pop-in absolute bottom-full left-0 z-20 mb-1 max-h-56 w-80 overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--card)] p-1 text-ui-sm shadow"
+        >
+          {skillMenu.items.map((skill, index) => (
+            <li key={skill.name}>
+              <button
+                type="button"
+                className={`flex w-full items-start gap-2 rounded-md px-2 py-1 text-left ${
+                  index === skillMenu.activeIndex
+                    ? "bg-[var(--accent)] text-[var(--foreground)]"
+                    : "text-[var(--muted-foreground)]"
+                }`}
+                onClick={pickSkill}
+                onMouseEnter={() => hoverSkill(index)}
+              >
+                <Zap size={12} aria-hidden className="mt-0.5 shrink-0" />
+                <span className="flex min-w-0 flex-col">
+                  <span className="truncate text-[var(--foreground)]">{skill.name}</span>
+                  <span className="truncate text-ui-sm text-[var(--muted-foreground)]">
+                    {skill.description}
+                  </span>
+                </span>
               </button>
             </li>
           ))}

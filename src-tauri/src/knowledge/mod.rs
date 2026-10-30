@@ -1,0 +1,29 @@
+//! knowledge 模块（§2.2）：知识域资源——系统提示面与技能/记忆（FR-09 域）。
+//!
+//! 本票（09 号，M2）承载技能系统（`skills.rs`）与技能命令（`commands.rs`）；
+//! M1 的系统提示组装面此前散在 backend/wire（`with_system_prefix_layers`）
+//! 与 host/commands/chat.rs（§6.2 注入次序），不迁址——本域只收编新资源。
+//! memory/RAG 同域资源随 M3 落地（FR-09-03/04）。
+//!
+//! 依赖方向（§2.2 单向）：knowledge 只依赖 util（原子写/错误码）与存储形状，
+//! 不依赖 tools/agent/host；tools 经 [`crate::knowledge::skills::SkillRegistry`]
+//! 进程级单例反查 skill 工具的动态 description（与 tools→mcp 反查同精神）。
+
+pub mod commands;
+pub mod skills;
+pub mod trust;
+
+/// 技能测试的进程级单例互斥面（cfg(test)）：SkillRegistry::global() 是
+/// 进程唯一实例，skills_test / commands_test / chat_test 并行时会互相
+/// 改写三来源根——知识域测试以本锁串行化（chat_test 不经本锁，但其
+/// configure 只影响 skill_spec 的 description 文本，无断言依赖）。
+#[cfg(test)]
+pub(crate) static REGISTRY_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
+#[path = "skills_test.rs"]
+mod skills_test;
+
+#[cfg(test)]
+#[path = "commands_test.rs"]
+mod commands_test;

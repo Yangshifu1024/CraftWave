@@ -22,6 +22,7 @@ import {
   ListFilesCard,
   PlanCard,
   ReadCard,
+  SkillCard,
   WriteCard,
 } from "./ToolCards";
 
@@ -145,6 +146,17 @@ export const CW_TOOL_PARAMETERS: Record<string, JSONSchema7> = {
     required: ["title", "questions"],
     additionalProperties: false,
   },
+  // skill 工具（§8.3 M2 表 Meta 行，09 号票；与 knowledge/skills.rs 的
+  // skill_spec params_schema 逐字镜像，contract.test 双向锁定）
+  skill: {
+    type: "object",
+    properties: {
+      name: { type: "string", description: "技能名（系统提示清单中的名称）" },
+      args: { type: "string", description: "可选的自由参数，透传给技能语境" },
+    },
+    required: ["name"],
+    additionalProperties: false,
+  },
 };
 
 /**
@@ -200,5 +212,11 @@ export const cwToolkit = defineToolkit({
     description: "向用户提问（交互在 AskPanel）",
     parameters: CW_TOOL_PARAMETERS.ask,
     render: AskCard,
+  },
+  skill: {
+    type: "frontend",
+    description: "加载技能的完整操作指引（正文按需进上下文）",
+    parameters: CW_TOOL_PARAMETERS.skill,
+    render: SkillCard,
   },
 });
