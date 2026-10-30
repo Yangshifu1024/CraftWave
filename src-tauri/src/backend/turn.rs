@@ -8,14 +8,22 @@
 //! 由早期验证原型（S2/S3 spike）产品化而来，当前版本要点：
 //! - 桥接器由调用方（主循环）持有并传入，流收口后主循环用它的映射发同源
 //!   的 toolResult 帧（§3.4 调用 id 同源）；
-//! - 流收口返回该轮的 rig `Usage`（主循环发 usage 帧并累计，§10.5 口径）。
+//! - 流收口返回该轮的 rig `Usage`（主循环发 usage 帧并累计，§10.5 口径）；
+//! - 模型客户端与运行规格收进互斥锁（18 号票，FR-02-07 修正案）：每拍模型
+//!   请求前宿主可经 [`TurnDriver::swap_model`] / [`TurnDriver::set_options`]
+//!   热更新（运行中切模型/thinking 下一请求生效），正在进行的请求不被打断
+//!   ——锁只在请求装配瞬间持有（clone 出快照后即释放），不影响流式收发。
 
 use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use futures::StreamExt;
 use rig::completion::Message;
 use rig::completion::Usage;
+use rig::completion::options::{GenerationOptions, OnUnsupported};
 use rig::completion::request::{CompletionRequest, ToolDefinition};
+use rig::completion::{Effort, Reasoning};
 use rig::driver::{Model, Transport};
 use rig::operation::Completion;
 use rig::run::prepare::{PreparedRequest, prepare_request};
@@ -28,6 +36,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::frames::ChatFrame;
 use super::rig_bridge::{Bridged, RigEventBridge};
+use crate::providers::reasoning::ReasoningDirective;
 
 /// 单轮流式调用的退出态：自然收尾，或取消中途丢弃流（§5.3 取消传播）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,17 +56,29 @@ pub enum StreamExit {
 /// 以"剧本假模型 + 假执行器"直驱 `drive_run` 全链。泛型只改客户端类型，
 /// 流事件面（`Item<StreamEvent>`）与响应面（`CompletionResponse`）对
 /// `Op = Completion` 的全部 wire 同形，方法体零改动。
+///
+/// 可热更新（18 号票，FR-02-07 运行中切换）：`model` 与 `spec` 收进互斥锁，
+/// 每拍请求前宿主可替换模型客户端 / 运行参数（§11.1：每次模型请求前读取
+/// 最新会话模型/thinking 偏好，切换时更新所需客户端和参数，不打断正在
+/// 进行的请求）。`downgrade_images` 承载 Q30 运行中切到非 vision 模型的
+/// 请求面降级（历史图片块替换为占位文本）。
 pub struct TurnDriver<W, T>
 where
     W: Wire<Op = Completion>,
     T: Transport<W>,
 {
-    /// 模型客户端（rig 封装的 completion 端点形态）。
-    model: Model<W, T>,
-    /// 运行规格（rig 的 RunSpec：采样参数与执行策略）。
-    spec: RunSpec,
+    /// 模型客户端（rig 封装的 completion 端点形态）。锁内替换（swap_model），
+    /// 请求装配时 clone 快照使用——锁不跨 await。
+    model: Mutex<Model<W, T>>,
+    /// 运行规格（rig 的 RunSpec：采样参数与执行策略）。锁内更新（set_options
+    /// / set_max_tokens），请求装配时 clone 快照使用。
+    spec: Mutex<RunSpec>,
     /// 本轮广播给模型的工具定义表。
     tools: Vec<Arc<ToolDefinition>>,
+    /// 请求面历史图片降级开关（18 号票 Q30）：true = 当前模型非 vision，
+    /// 发送前把请求 history 中的多模态图片块替换为占位文本（允许纯文字
+    /// 继续）；AgentRun 内部历史不动，切回 vision 模型自动恢复原图。
+    downgrade_images: AtomicBool,
 }
 
 /// 一次流式调用的收口产出。
@@ -69,6 +90,45 @@ pub struct TurnOutcome {
     pub usage: Option<Usage>,
 }
 
+/// [`ReasoningDirective`] → rig 请求参数（§11.4 → GenerationOptions）。
+///
+/// 只翻译 OpenAI 系面（effort 词）；Anthropic 面的预算字段由 38 号票三协议
+/// 接入消费（本票先定表）。off 档（"none"）走 `Reasoning::Off`；其余档走
+/// `Reasoning::Effort`。`OnUnsupported::Ignore`：模型/目录不支持的档位跳过
+/// 而非报错（§11.4「不支持者忽略」——目录内的官方模型按其 catalog 裁决，
+/// 目录外的兼容端点直接透传）。
+///
+/// 注意：设置任一 options 字段（含 on_unsupported）都会让 rig 对目录内
+/// 模型启用档位校验；`None` 指令返回默认空 options（请求不携带任何推理
+/// 参数，也不触发校验——与"不传"语义一致）。
+pub fn reasoning_directive_to_options(directive: &ReasoningDirective) -> GenerationOptions {
+    let Some(word) = directive.effort_word else {
+        return GenerationOptions::default();
+    };
+    let reasoning = if word == "none" {
+        Reasoning::Off
+    } else {
+        Reasoning::Effort(effort_from_word(word))
+    };
+    GenerationOptions::default()
+        .reasoning(reasoning)
+        .on_unsupported(OnUnsupported::Ignore)
+}
+
+/// effort 词 → rig `Effort`（词表与 [`crate::providers::reasoning::
+/// ThinkingLevel::effort_word`] 同源，未知词按 Medium 兜底——正常路径不会
+/// 出现，防御性收口）。
+fn effort_from_word(word: &str) -> Effort {
+    match word {
+        "minimal" => Effort::Minimal,
+        "low" => Effort::Low,
+        "high" => Effort::High,
+        "xhigh" => Effort::XHigh,
+        "max" => Effort::Max,
+        _ => Effort::Medium,
+    }
+}
+
 /// TurnDriver 的流式调用与一次性调用。
 impl<W, T> TurnDriver<W, T>
 where
@@ -77,7 +137,38 @@ where
 {
     /// 构造：给定模型客户端、运行规格与工具表。
     pub fn new(model: Model<W, T>, spec: RunSpec, tools: Vec<Arc<ToolDefinition>>) -> Self {
-        Self { model, spec, tools }
+        Self {
+            model: Mutex::new(model),
+            spec: Mutex::new(spec),
+            tools,
+            downgrade_images: AtomicBool::new(false),
+        }
+    }
+
+    /// 热替换模型客户端（18 号票，运行中切模型）：下一拍请求起用新模型，
+    /// 正在进行的请求不受影响（其客户端快照已在流式调用期间持有）。
+    pub fn swap_model(&self, model: Model<W, T>) {
+        *self
+            .model
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = model;
+    }
+
+    /// 热更新运行参数（18 号票，运行中切 thinking / 模型窗口参数）：
+    /// 以 `apply` 变换当前 RunSpec（通常只动 `options` 与 `max_tokens`，
+    /// max_turns 等执行策略保持 run 内一致）。
+    pub fn update_spec(&self, apply: impl FnOnce(&mut RunSpec)) {
+        let mut spec = self
+            .spec
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        apply(&mut spec);
+    }
+
+    /// 设置请求面历史图片降级开关（18 号票 Q30）：true = 当前模型非 vision，
+    /// 后续请求把 history 中的多模态图片块替换为占位文本。
+    pub fn set_downgrade_images(&self, flag: bool) {
+        self.downgrade_images.store(flag, Ordering::Relaxed);
     }
 
     /// 不可取消版本（直通语义保留给单元测试）：内部取消令牌永不触发。
@@ -126,8 +217,13 @@ where
     /// 静默处理。
     pub async fn complete_once(&self, prompt: &str) -> Result<(String, Usage), PromptError> {
         let request = CompletionRequest::new(prompt.to_owned());
+        let model = self
+            .model
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
         let response =
-            self.model.call(request).await.map_err(|e| {
+            model.call(request).await.map_err(|e| {
                 PromptError::from(rig::error::ProviderError::request(e.to_string()))
             })?;
         let text = response
@@ -155,9 +251,28 @@ where
         bridge: &mut RigEventBridge,
         on_frame: &mut (dyn FnMut(ChatFrame) + Send),
     ) -> Result<TurnOutcome, PromptError> {
-        let capabilities = self.model.capabilities().completion;
+        // 客户端与规格快照（18 号票：锁内 clone 即释放，不跨 await——
+        // 每拍请求前宿主可能已经 swap 过，本拍用最新组合）
+        let model = self
+            .model
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let spec = self
+            .spec
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        // Q30 请求面降级（18 号票）：当前模型非 vision 时把历史图片块替换
+        // 为占位文本（AgentRun 内部历史不动，切回 vision 模型自动恢复）
+        let history = if self.downgrade_images.load(Ordering::Relaxed) {
+            downgrade_history_images(history)
+        } else {
+            history
+        };
+        let capabilities = model.capabilities().completion;
         let prepared: PreparedRequest = prepare_request(
-            &self.spec,
+            &spec,
             &capabilities,
             &history,
             self.tools.clone(),
@@ -171,8 +286,7 @@ where
         let policy = prepared.policy.clone();
 
         let request = prepared.apply(CompletionRequest::new(prompt));
-        let mut stream = self
-            .model
+        let mut stream = model
             .stream(request)
             .map_err(|e| PromptError::from(rig::error::ProviderError::request(e.to_string())))?;
 
@@ -222,6 +336,40 @@ where
             usage: Some(usage),
         })
     }
+}
+
+/// 请求面历史图片降级（18 号票，Q30 运行中切非 vision 模型）：遍历请求
+/// history，把 user 消息里的多模态图片块替换为占位文本（允许纯文字继续）。
+/// AgentRun 内部历史不动——切回 vision 模型后原图自动恢复。
+///
+/// 与存储面占位（`wire::image_placeholder`，带 blobHash 逐字格式）不同：
+/// rig 多模态块已不携带哈希，此处用通用文案；请求面降级不入史册，前端
+/// 展示不受影响（17 号票的气泡提示行按模型能力独立判定）。
+pub fn downgrade_history_images(history: Vec<Arc<Message>>) -> Vec<Arc<Message>> {
+    const RUNTIME_PLACEHOLDER: &str = "[历史图片已省略：当前模型无法查看图片]";
+    history
+        .into_iter()
+        .map(|message| match Arc::unwrap_or_clone(message) {
+            Message::User { content } if content.iter().any(is_image_content) => {
+                Arc::new(Message::User {
+                    content: content
+                        .into_iter()
+                        .map(|c| if is_image_content(&c) {
+                            rig::message::UserContent::text(RUNTIME_PLACEHOLDER.to_owned())
+                        } else {
+                            c
+                        })
+                        .collect(),
+                })
+            }
+            other => Arc::new(other),
+        })
+        .collect()
+}
+
+/// 是否图片多模态块。
+fn is_image_content(content: &rig::message::UserContent) -> bool {
+    matches!(content, rig::message::UserContent::Image(_))
 }
 
 /// 把一个待执行调用的执行结果打包为工具应答（取消路径也复用：已完成的

@@ -16,6 +16,7 @@ fn entry(text: &str, model_id: Option<&str>) -> FollowUpEntry {
         created_at: 1_760_000_000_000,
         run_config: QueuedRunConfig {
             model_id: model_id.map(str::to_owned),
+            thinking: None,
             tier: crate::safety::tier::PermissionTier::AutoEdit,
             max_turns: 24,
         },

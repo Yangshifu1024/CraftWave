@@ -57,7 +57,8 @@ use crate::backend::frames::{
 };
 use crate::backend::gate::ApprovalGate;
 use crate::backend::run_loop::{
-    DriveState, PendingCall, RunExit, SteerSource, drive_run, resume_run,
+    DriveState, PendingCall, RefreshFailure, RequestRefresher, RunExit, SteerSource, drive_run,
+    resume_run,
 };
 use crate::backend::turn::TurnDriver;
 use crate::host::AppState;
@@ -173,6 +174,13 @@ pub struct RunConfig {
     #[serde(default)]
     #[cfg_attr(test, ts(optional))]
     pub model_id: Option<String>,
+    /// 会话 thinking 档（FR-02-08，18 号票）：本次 run 的起点档位（serde
+    /// default 向后兼容——旧前端载荷无此字段照常解析）。运行中以后端
+    /// prefs 文件为权威（每拍请求前刷新，§11.1）；None = 未显式设置，按
+    /// per-model reasoningEffort 回落（§11.4 优先级链）。
+    #[serde(default)]
+    #[cfg_attr(test, ts(optional))]
+    pub thinking: Option<crate::providers::reasoning::ThinkingLevel>,
     pub tier: PermissionTier,
     #[serde(default = "default_max_turns")]
     pub max_turns: u32,
@@ -323,6 +331,11 @@ pub(crate) struct ResolvedModel {
     /// 是否支持图片输入（`ProviderModel.vision`，§3.2；17 号票：wire 重建
     /// 双形态与 read(kind=image) 前置校验的判定面）。
     pub vision: bool,
+    /// 请求方言（18 号票：thinking 档位按方言走 §11.4 映射表）。
+    pub api_format: ApiFormat,
+    /// per-model reasoning 档配置（§3.2 ProviderModel.reasoningEffort；
+    /// 会话未显式设置 thinking 时的回落源，§11.4 优先级链第二级）。
+    pub reasoning_effort: Option<crate::providers::types::ReasoningEffort>,
 }
 
 /// §11.1 模型解析：RunConfig.modelId > AppConfig.activeModelId →
@@ -377,7 +390,37 @@ pub(crate) fn resolve_model(
         max_tokens: u64::from(model.max_tokens),
         // vision 缺省 false（保守：未标记的模型按不支持图片处理，§3.2「可空 = 未知」）
         vision: model.vision.unwrap_or(false),
+        api_format: provider.api_format,
+        reasoning_effort: model.reasoning_effort,
     })
+}
+
+/// 生效 thinking 档的解析（§11.4 优先级链，18 号票）：会话显式档 >
+/// per-model reasoningEffort 配置 > 不传。输出 §11.4 映射指令供请求参数
+/// 装配（纯函数在 `providers::reasoning`，本函数只做取值与回落）。
+pub(crate) fn effective_thinking_directive(
+    session_thinking: Option<crate::providers::reasoning::ThinkingLevel>,
+    model: &ResolvedModel,
+) -> crate::providers::reasoning::ReasoningDirective {
+    let window = model.context_window;
+    let max_tokens = model.max_tokens;
+    match session_thinking {
+        Some(level) => crate::providers::reasoning::thinking_to_request(
+            level,
+            model.api_format,
+            window,
+            max_tokens,
+        ),
+        None => match model.reasoning_effort {
+            Some(effort) => crate::providers::reasoning::model_effort_to_request(
+                effort,
+                model.api_format,
+                window,
+                max_tokens,
+            ),
+            None => crate::providers::reasoning::ReasoningDirective::none(),
+        },
+    }
 }
 
 /// ToolSpec → rig ToolDefinition（广播给模型的工具表，§8.1）。
@@ -592,6 +635,90 @@ struct DetachedSink;
 
 impl SequencedSink for DetachedSink {
     fn send_seq(&mut self, _frame: SequencedFrame) {}
+}
+
+/// 每拍请求刷新的当前生效快照（对比面：判断本拍是否需要换模型/换参数）。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct EffectiveRuntime {
+    /// 生效的模型配置 id（ProviderModel.id）。
+    model_id: Option<String>,
+    /// 生效的会话 thinking 档（None = 未显式设置，按 per-model 回落）。
+    thinking: Option<crate::providers::reasoning::ThinkingLevel>,
+}
+
+/// 每拍模型请求前的偏好刷新源（§11.1 FR-02-07 修正案，18 号票）：
+/// 重读会话 prefs 文件（`<sid>.prefs.json`），模型或 thinking 变了就热更新
+/// TurnDriver（换客户端 / 换请求参数 / 换图片降级开关），切到窗口更小的
+/// 模型时先做预算重查（放不下即 E_CONTEXT_OVERFLOW 终止，§6.2 暂停保留
+/// 输入）。副作用全部收在本实现——backend 层的 `RequestRefresher` 契约
+/// 只见判定结果。
+///
+/// 生效值 = prefs 文件值 > run 起点快照（RunConfig，合并了 start_chat 时的
+/// prefs 初值）> 不设。正在进行的请求不被打断（驱动只在拍间读本实现）。
+struct HostRequestRefresher {
+    /// 共享句柄副本（config/store 读取面；spawn 闭包不能借用 AppState，
+    /// 与 followUp 投递同款 [`AppState::share_handles`]）。
+    app: AppState,
+    session_id: String,
+    /// 目标驱动的共享句柄（换模型/换参数的写入口）。
+    driver: Arc<TurnDriver<Chat, rig::http_client::DynHttpClient>>,
+    /// run 起点快照（RunConfig + start_chat 时的 prefs 初值合并）。
+    initial: EffectiveRuntime,
+    /// 当前生效快照（与上一次刷新后的驱动状态一致）。
+    current: Mutex<EffectiveRuntime>,
+}
+
+impl RequestRefresher for HostRequestRefresher {
+    fn before_request(&self, state: &DriveState) -> Result<(), RefreshFailure> {
+        let prefs = crate::storage::prefs::load_prefs(self.app.store.root(), &self.session_id);
+        let wanted = EffectiveRuntime {
+            model_id: prefs.model_id.or_else(|| self.initial.model_id.clone()),
+            thinking: prefs.thinking.or(self.initial.thinking),
+        };
+        let mut current = self
+            .current
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if *current == wanted {
+            return Ok(());
+        }
+        // —— 模型变化：重新解析 + 预算重查 + 换客户端 ——
+        if current.model_id != wanted.model_id {
+            let resolved = resolve_model(&self.app, wanted.model_id.as_deref())
+                .map_err(|e| RefreshFailure::Failed(e.message))?;
+            // Q18 预算接缝（票面）：切换后的模型窗口须装得下最近请求的真实
+            // 输入 + 新模型的回复预留；last_input=0（尚无 usage，首拍前）
+            // 也不跳过——按 0 + 预留做下限检查（run 开始前已有完整编排，
+            // 该场景仅剩能力面切换）。
+            let estimated = state.last_input.saturating_add(resolved.max_tokens);
+            if crate::backend::estimator::is_over_wire_budget(estimated, resolved.context_window) {
+                return Err(RefreshFailure::ContextOverflow {
+                    estimated,
+                    window: resolved.context_window,
+                });
+            }
+            self.driver.swap_model(resolved.driver);
+            // Q30 运行中切非 vision（票面）：历史图片在请求面降级为占位，
+            // 允许纯文字继续；切回 vision 模型自动恢复原图。
+            self.driver.set_downgrade_images(!resolved.vision);
+        }
+        // —— thinking 生效值重算（模型切换与档位变化都刷新；回落链以
+        // 当前生效模型配置为准）——
+        let model_id = wanted.model_id.clone().or(current.model_id.clone());
+        let directive = match model_id.as_deref() {
+            Some(id) => resolve_model(&self.app, Some(id))
+                .map(|resolved| effective_thinking_directive(wanted.thinking, &resolved))
+                .map_err(|e| RefreshFailure::Failed(e.message))?,
+            // 无模型可解析（防御面）：不传参数
+            None => crate::providers::reasoning::ReasoningDirective::none(),
+        };
+        let options = crate::backend::turn::reasoning_directive_to_options(&directive);
+        self.driver.update_spec(|spec| {
+            spec.options = options;
+        });
+        *current = wanted;
+        Ok(())
+    }
 }
 
 /// 取走并清空某会话活跃 run 的 steer 未消费残余（run 收尾分流用：
@@ -946,8 +1073,10 @@ pub(crate) fn denied_finish(sink: &mut dyn FrameSink, pending: &PendingCall, sta
 
 /// suggest 后台小调用（C-9）：一次非流式补全 → run:suggestions；失败静默、
 /// 空文本静默；用量计入会话累计（tokens:update，不计 turnUsage——run 已终态）。
+/// 驱动经共享句柄传入（18 号票：run 任务收尾时把 Arc 交给本任务，suggest
+/// 以 run 终态时的最新模型客户端执行）。
 fn spawn_suggest<W, T>(
-    driver: TurnDriver<W, T>,
+    driver: Arc<TurnDriver<W, T>>,
     events: Arc<dyn EventSink>,
     session_usage: Arc<Mutex<HashMap<String, UsageTotal>>>,
     session_id: String,
@@ -1663,8 +1792,14 @@ pub async fn start_chat_core(
     if session_id.trim().is_empty() {
         return Err(IpcError::invalid_arg("sessionId 不能为空"));
     }
+    // ① 会话偏好起点快照（18 号票，FR-14-05/FR-02-07）：prefs 文件优先于
+    //    RunConfig（前端两者同步写，文件缺失/字段未设时回落 RunConfig——
+    //    旧前端载荷兼容面）。模型解析与 thinking 初值都按此快照生效。
+    let prefs_initial = crate::storage::prefs::load_prefs(app.store.root(), &session_id);
+    let initial_model_id = prefs_initial.model_id.or(run_config.model_id.clone());
+    let initial_thinking = prefs_initial.thinking.or(run_config.thinking);
     // ① 模型解析（§11.1）
-    let model = resolve_model(app, run_config.model_id.as_deref())?;
+    let model = resolve_model(app, initial_model_id.as_deref())?;
     // ①a 图片 blob 装配（17 号票，§6.2）：收集消息里全部 image part 的哈希，
     //    从会话 imgblob 目录读出（mime 按魔数嗅探恢复）。读取失败跳过该表项
     //    （vision 模型下对应图片降级为占位文本，不拒绝请求——历史图片的
@@ -1698,7 +1833,7 @@ pub async fn start_chat_core(
     let summary_model_id = app.config.load()?.compaction.model_id.clone();
     let summary_resolved = match summary_model_id.as_deref() {
         Some(id) => resolve_model(app, Some(id))?,
-        None => resolve_model(app, run_config.model_id.as_deref())?,
+        None => resolve_model(app, initial_model_id.as_deref())?,
     };
     let summary_driver = TurnDriver::new(summary_resolved.driver, RunSpec::new(), Vec::new());
     // ③ 工具集（§8.1 三处同源过滤）——静态段 + MCP 动态段（08 号票：
@@ -1767,11 +1902,33 @@ pub async fn start_chat_core(
     );
 
     // ⑤ spawn RunLoop 任务（帧生产 + 审批挂起恢复 + 取消 + 终态摘除）。
+    //    thinking 起点参数（18 号票，§11.4）：按会话显式档 > per-model
+    //    reasoningEffort > 不传的优先级链翻译为 rig 请求参数。
+    let initial_directive = effective_thinking_directive(initial_thinking, &model);
     let spec = RunSpec {
         max_turns: Some(run_config.max_turns as usize),
+        options: crate::backend::turn::reasoning_directive_to_options(&initial_directive),
         ..RunSpec::new()
     };
-    let driver = TurnDriver::new(model.driver, spec.clone(), tools.clone());
+    // 驱动共享句柄（18 号票）：每拍请求刷新源（HostRequestRefresher）持有
+    // 同一 Arc 热更新模型客户端与请求参数；suggest 后台小调用也经 Arc 复用
+    // 终态时的最新模型。
+    let driver = Arc::new(TurnDriver::new(model.driver, spec.clone(), tools.clone()));
+    // 每拍请求刷新源（§11.1，18 号票）：运行中切换模型/thinking 在同一 run
+    // 的下一次模型请求生效。起点快照 = ①步合并值；当前快照同起点。
+    let refresher: Arc<dyn RequestRefresher> = Arc::new(HostRequestRefresher {
+        app: app.share_handles(),
+        session_id: session_id.clone(),
+        driver: driver.clone(),
+        initial: EffectiveRuntime {
+            model_id: initial_model_id.clone(),
+            thinking: initial_thinking,
+        },
+        current: Mutex::new(EffectiveRuntime {
+            model_id: initial_model_id.clone(),
+            thinking: initial_thinking,
+        }),
+    });
     let model_name = model.name;
     let cancel = handle.cancel.clone();
     let executor: Arc<dyn crate::backend::run_loop::CancellableExecutor> = Arc::new(
@@ -1922,6 +2079,7 @@ pub async fn start_chat_core(
                 &mut sink,
                 resume_state.take(),
                 Some(steer_source.as_ref()),
+                Some(refresher.as_ref()),
                 stall_timeout,
             )
             .await;
@@ -1935,6 +2093,16 @@ pub async fn start_chat_core(
                     // 错误终态兜底：任何 rig 失败都以 runEnded(error) 收场（§5.3 终态不变量）
                     send_error_ended(&mut sink, message);
                     break RunExit::Cancelled;
+                }
+                // 每拍请求刷新失败（18 号票）：runEnded(error) 已在 drive_run
+                // 内发出（预算越界 E_CONTEXT_OVERFLOW 等），记录失败终态供
+                // run:error 事件与队列暂停分流（§6.2 暂停保留输入）。
+                Ok(RunExit::Failed { code, message }) => {
+                    errored = Some(RunFailure {
+                        code,
+                        message: message.clone(),
+                    });
+                    break RunExit::Failed { code, message };
                 }
                 Ok(RunExit::Suspended(info)) => {
                     let crate::backend::run_loop::SuspendedInfo {
@@ -2162,6 +2330,7 @@ fn followup_entry_from_text(text: &str, run_config: &RunConfig) -> FollowUpEntry
         created_at: now_ms(),
         run_config: QueuedRunConfig {
             model_id: run_config.model_id.clone(),
+            thinking: run_config.thinking,
             tier: run_config.tier,
             max_turns: run_config.max_turns,
         },
@@ -2230,6 +2399,7 @@ async fn deliver_followup_head(
     };
     let run_config = RunConfig {
         model_id: entry.run_config.model_id.clone(),
+        thinking: entry.run_config.thinking,
         tier: entry.run_config.tier,
         max_turns: entry.run_config.max_turns,
         steer: false,
@@ -2327,6 +2497,7 @@ pub fn inject_run_message_core(
     // 缺省回退默认档位组合（§3.3 #21 注记）。
     let effective = run_config.cloned().unwrap_or_else(|| RunConfig {
         model_id: None,
+        thinking: None,
         tier: PermissionTier::AutoEdit,
         max_turns: default_max_turns(),
         steer: false,

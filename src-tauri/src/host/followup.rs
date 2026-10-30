@@ -38,6 +38,12 @@ pub struct QueuedRunConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub model_id: Option<String>,
+    /// 会话 thinking 档快照（18 号票，FR-02-08）：投递新 run 时按它设置
+    /// 起点档位（serde default 向后兼容——旧队列文件无此字段照常恢复）；
+    /// 运行中以后端 prefs 为权威（每拍刷新，§11.1）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub thinking: Option<crate::providers::reasoning::ThinkingLevel>,
     pub tier: PermissionTier,
     pub max_turns: u32,
 }

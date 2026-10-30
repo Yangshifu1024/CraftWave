@@ -219,6 +219,56 @@ pub enum RunExit {
     /// 已执行工具不重放副作用）；message 说明停滞或重复失败原因，宿主随
     /// `run:error` 事件带出、followUp 队列按失败暂停（§5.5）。
     Stalled { message: String },
+    /// 每拍请求刷新失败终态（18 号票，§11.1 运行中切换的预算重查）：常见
+    /// 为切到窗口更小的模型后现有上下文放不下（E_CONTEXT_OVERFLOW，§6.2
+    /// 兜底语义——暂停保留输入）。runEnded(error, {code, message}) 已由
+    /// [`drive_run`] 发出，宿主按失败分流（`run:error` 事件 + 队列暂停）。
+    Failed { code: String, message: String },
+}
+
+/// 每拍模型请求前的刷新契约（18 号票，FR-02-07 修正案 / §11.1）：
+/// "下一请求生效"覆盖同一 run 内的下一次模型请求——每拍 CallModel 前
+/// [`drive_run`] 调用宿主实现，宿主读最新会话偏好，需要时替换模型客户端
+/// （`TurnDriver::swap_model`）与请求参数（`TurnDriver::update_spec`），
+/// 并对新模型重做预算检查；正在进行的模型请求不被切换打断。
+///
+/// 测试直驱路径传 None（无刷新源）。宿主副作用（读 prefs 文件、解析模型
+/// 配置、预算估算）都收在宿主实现内，backend 层只见判定结果。
+pub trait RequestRefresher: Send + Sync {
+    /// 本拍请求前的刷新。`state` 提供最近请求的真实输入 token 数
+    /// （`last_input`，预算估算基准）；首拍前为 0（run 开始前已做过完整
+    /// 预算编排，此时只做能力面切换）。
+    ///
+    /// Err = 本拍请求不得发出，run 以 [`RunExit::Failed`] 终止（错误码随
+    /// [`RefreshFailure`]，帧面 runEnded(error) 由 drive_run 发出）。
+    fn before_request(&self, state: &DriveState) -> Result<(), RefreshFailure>;
+}
+
+/// 刷新失败（§3.6 错误码面）。
+#[derive(Debug, Clone)]
+pub enum RefreshFailure {
+    /// 切换后的模型窗口装不下现有上下文 + 回复预留（§6.2：暂停保留输入，
+    /// 提示压缩或新会话）。
+    ContextOverflow { estimated: u64, window: u64 },
+    /// 其他刷新失败（模型解析失败等，参数面问题——E_INVALID_ARG 面向上抛
+    /// 为终止原因）。
+    Failed(String),
+}
+
+impl RefreshFailure {
+    /// (错误码, 消息)（§3.6）。
+    fn parts(&self) -> (&'static str, String) {
+        match self {
+            RefreshFailure::ContextOverflow { estimated, window } => (
+                "E_CONTEXT_OVERFLOW",
+                format!(
+                    "上下文占用约 {estimated} token，超过切换后模型窗口（{window}）的硬预算：\
+                     已暂停本次运行，输入与已产出内容均已保留，可重试压缩或切换窗口更大的模型"
+                ),
+            ),
+            RefreshFailure::Failed(message) => ("E_INVALID_ARG", message.clone()),
+        }
+    }
 }
 
 /// 挂起信息（[`RunExit::Suspended`] 的载体）。
@@ -273,6 +323,10 @@ pub trait SteerSource: Send + Sync {
 /// - **steer 消费（§5.5，06 号票）**：非首拍的 CallModel 前（即上一 turn
 ///   已收尾——工具批结果回喂后）经 `steer` 取一条插话，以 user 消息追加进
 ///   本拍请求的 history（落盘与回执副作用在宿主实现内）；
+/// - **每拍请求刷新（§11.1，18 号票）**：每拍 CallModel 前经 `refresh`
+///   询问宿主（会话模型/thinking 偏好可能已变）——宿主换模型/换参数后
+///   本拍即用新组合；刷新失败按 [`RunExit::Failed`] 终止（预算越界暂停
+///   保留输入）；
 /// - CallTools（执行工具批）：**先策略门筛选、再整批判定、后受控并发**
 ///   （§5.4 ①–⑤，07 号票）——批内含 ask 时只执行源序首个 ask（其余回喂
 ///   E_TOOL_SKIPPED"未执行"）；真正执行的调用中首个 Suspend 即把整只 run
@@ -295,6 +349,7 @@ pub async fn drive_run<W, T>(
     sink: &mut dyn FrameSink,
     resume: Option<DriveState>,
     steer: Option<&dyn SteerSource>,
+    refresh: Option<&dyn RequestRefresher>,
     stall_timeout: Duration,
 ) -> Result<RunExit, PromptError>
 where
@@ -336,6 +391,24 @@ where
                 turn,
             } => {
                 state.last_turn = turn as u32;
+                // 每拍请求刷新（§11.1，18 号票）：会话模型/thinking 偏好在
+                // 上一拍结束后可能已变——宿主实现重读偏好并按需换模型客户端
+                // 与请求参数（FR-02-07「下一请求生效」= 同 run 内的下一次
+                // 模型请求，不只下一次 start_chat）。失败按 E_CONTEXT_
+                // OVERFLOW 等错误码终止（§6.2 暂停保留输入语义）。
+                if let Some(refresh) = refresh
+                    && let Err(failure) = refresh.before_request(&state)
+                {
+                    let (code, message) = failure.parts();
+                    sink.send(ChatFrame::RunEnded {
+                        reason: EndReason::Error,
+                        duration_ms: started_at.elapsed().as_millis() as u64,
+                        tool_count: state.tool_count,
+                        turn: state.last_turn,
+                        error: Some(FrameError::new(code, message.clone())),
+                    });
+                    return Ok(RunExit::Failed { code, message });
+                }
                 // steer 消费点（§5.5，06 号票）：turn 边界 = 上一拍已收尾
                 // （turn > 1 意味着走完了「模型输出 → 工具批回喂」的边界）。
                 // 首拍（turn == 1）不消费——插话不并入模型见到的第一批输入。

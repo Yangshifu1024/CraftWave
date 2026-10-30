@@ -59,6 +59,11 @@ use host::commands::provider::{
 };
 #[allow(unused_imports)]
 use host::commands::session::{CreateSessionArgs, DeleteSessionArgs, RenameSessionArgs};
+// 会话偏好两命令（18 号票，§3.3 #24/#25）
+#[allow(unused_imports)]
+use host::commands::session::{
+    GetSessionPrefsResult, SetSessionPrefsArgs, get_session_prefs, set_session_prefs,
+};
 #[allow(unused_imports)]
 use host::commands::session_tree::{
     ListSessionsArgs, LoadSessionTreeArgs, LoadToolOutcomesArgs, SaveSessionTreeArgs,
@@ -208,6 +213,9 @@ ipc_commands! {
     host::commands::session::create_session => args: CreateSessionArgs, ret: SessionMeta;
     host::commands::session::delete_session => args: DeleteSessionArgs, ret: ();
     host::commands::session::rename_session => args: RenameSessionArgs, ret: SessionMeta;
+    // 会话偏好两命令（18 号票，§3.3 #24/#25 实装）
+    host::commands::session::get_session_prefs => args: SessionPrefsArgs, ret: GetSessionPrefsResult;
+    host::commands::session::set_session_prefs => args: SetSessionPrefsArgs, ret: ();
     host::commands::workspace::search_workspace_paths => args: SearchWorkspacePathsArgs, ret: Vec<WorkspacePathHit>;
     host::commands::workspace::read_workspace_file => args: ReadWorkspaceFileArgs, ret: ReadWorkspaceResult;
     host::commands::ui_state::get_ui_state => args: GetUiStateArgs, ret: Value;

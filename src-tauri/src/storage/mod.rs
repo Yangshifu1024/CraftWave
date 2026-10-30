@@ -28,6 +28,7 @@ pub mod entries;
 pub mod imgblob;
 pub mod index_store;
 pub mod locks;
+pub mod prefs;
 pub mod project_store;
 pub mod segment;
 pub mod session_tree;
@@ -36,6 +37,10 @@ pub mod toolres;
 #[cfg(test)]
 #[path = "index_store_test.rs"]
 mod index_store_test;
+
+#[cfg(test)]
+#[path = "prefs_test.rs"]
+mod prefs_test;
 
 pub use entries::{
     CompleteReason, IncompleteReason, MessageEntry, MessageRole, MessageStatus, MetaEntry,

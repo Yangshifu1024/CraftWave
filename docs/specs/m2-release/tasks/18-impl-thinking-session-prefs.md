@@ -1,7 +1,7 @@
 # 实现：Thinking 档位与会话偏好（FR-02-08 + FR-14-05/07 + Ctrl+L）
 
 Type: task
-Status: open
+Status: claimed
 
 ## 要做什么
 

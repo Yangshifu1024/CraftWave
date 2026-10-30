@@ -13,6 +13,7 @@
 //! ConfigStore，即仅文件属主可读写）。
 
 pub mod presets;
+pub mod reasoning;
 pub mod service;
 pub mod types;
 
