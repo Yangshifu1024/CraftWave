@@ -118,15 +118,27 @@ describe("供应商卡片「测试连接」状态机（FR-02-09）", () => {
     });
   });
 
-  it("非 openai_chat 供应商的测试按钮禁用（38 号票三协议接通前的边界）", () => {
+  it("anthropic_messages 供应商的测试按钮可点并发起探测（38 号票三协议接通）", async () => {
     useSettingsStore.setState({
       config: configFixture([savedProvider({ id: "prov-a", apiFormat: "anthropic_messages" })]),
       baseline: configFixture([]),
     });
+    testProvider.mockResolvedValue({
+      ok: true,
+      latencyMs: 88,
+      models: ["claude-mock"],
+    });
     render(<ProvidersPage />);
-    expect((screen.getByRole("button", { name: "测试连接" }) as HTMLButtonElement).disabled).toBe(
-      true,
-    );
+    const button = screen.getByRole("button", { name: "测试连接" }) as HTMLButtonElement;
+    expect(button.disabled).toBe(false);
+    fireEvent.click(button);
+    await waitFor(() => {
+      expect(screen.getByTestId("connection-test-ok").textContent).toContain("已连通 · 88ms");
+    });
+    expect(testProvider).toHaveBeenCalledWith({
+      providerId: "prov-a",
+      baseUrlOverride: undefined,
+    });
   });
 });
 

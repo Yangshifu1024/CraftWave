@@ -27,7 +27,9 @@
 //!   （#57/#20/#59c）承载 WebView 重载后的帧重放续流与状态对账；自动投递的
 //!   新 run 无前端通道，以 `DetachedSink` 起手（帧只入环不下发，前端经
 //!   `run:start` 事件 → attach 观察态续流）；
-//! - provider 只接 openai_chat 方言（§11.1），Key 经 config 读取；
+//! - provider 三方言（38 号票，§11.1：openai_chat / openai_responses /
+//!   anthropic_messages 按 `ProviderConfig.apiFormat` 装配，差异收敛在
+//!   `providers::wire` 防腐层），Key 经 config 读取；
 //! - 错误终态兜底：RunLoop 内部失败（PromptError）由 run 任务发
 //!   runEnded(error)（§11.3 分类器为 provider 适配层后续票，本票 E_INTERNAL）。
 
@@ -37,7 +39,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rig::completion::request::ToolDefinition;
 use rig::message::ToolName;
-use rig::providers::openai::wire::{Chat, OpenAIConfig};
 use rig::run::AgentRun;
 use rig::run::spec::RunSpec;
 use serde::{Deserialize, Serialize};
@@ -67,6 +68,7 @@ use crate::host::followup::{
 };
 use crate::host::run_persistence::{PersistingSink, RunRecorder};
 use crate::providers::types::{ApiFormat, ProviderConfig, ProviderModel};
+use crate::providers::wire::DialectWire;
 use crate::safety::tier::PermissionTier;
 use crate::storage::{MessageEntry, MessageRole, StoredEntry};
 use crate::util::errors::{E_INTERNAL, E_RUN_STALLED, IpcError};
@@ -324,12 +326,16 @@ pub(crate) struct ResolvedModel {
     pub id: String,
     /// 显示名（runStarted.model，= wire id）。
     pub name: String,
-    pub driver: rig::driver::Model<Chat>,
+    /// 三方言统一驱动（38 号票，§11.1：`providers::wire::DialectWire` 按
+    /// apiFormat 构造——openai_chat / openai_responses /
+    /// anthropic_messages 三协议在此收口为单一生产类型）。
+    pub driver: rig::driver::Model<DialectWire>,
     /// 上下文窗口 token 数（`ProviderModel.contextWindow`，§3.2 缺省 128000；
     /// 压缩预算检查的窗口面，§6.2）。
     pub context_window: u64,
     /// 单次回复 token 上限（`ProviderModel.maxTokens`，§3.2 缺省 32768；
-    /// 每请求预算的回复预留面，§6.2 Q18）。
+    /// 每请求预算的回复预留面，§6.2 Q18；Anthropic 方言的请求级
+    /// max_tokens 注入面，38 号票）。
     pub max_tokens: u64,
     /// 是否支持图片输入（`ProviderModel.vision`，§3.2；17 号票：wire 重建
     /// 双形态与 read(kind=image) 前置校验的判定面）。
@@ -342,7 +348,7 @@ pub(crate) struct ResolvedModel {
 }
 
 /// §11.1 模型解析：RunConfig.modelId > AppConfig.activeModelId →
-/// (provider, model) → rig OpenAI 兼容客户端（baseUrl 可覆写）。
+/// (provider, model) → 三方言统一 rig 客户端（38 号票；baseUrl 可覆写）。
 pub(crate) fn resolve_model(
     app: &AppState,
     model_id: Option<&str>,
@@ -367,15 +373,9 @@ pub(crate) fn resolve_model(
             "activeModelId 无对应模型：{wanted}"
         )));
     };
-    if provider.api_format != ApiFormat::OpenaiChat {
-        return Err(IpcError::invalid_arg(format!(
-            "M1 仅支持 openai_chat 方言（当前 {:?}）",
-            provider.api_format
-        )));
-    }
     // Key 装配（FR-02-04 免 Key，19 号票）：本地服务（local=true）不校验
-    // 凭据，缺 Key 时以占位值过 rig 的必填面（本地端点忽略 Authorization
-    // 头）；远端仍强制要求。
+    // 凭据，缺 Key 时以占位值过 rig 的必填面（本地端点忽略凭据头）；远端
+    // 仍强制要求。
     let key = match provider.api_key.as_deref() {
         Some(key) => key.to_owned(),
         None if provider.local => "local".to_owned(),
@@ -386,19 +386,27 @@ pub(crate) fn resolve_model(
             )));
         }
     };
-    let wire_config = OpenAIConfig::new(key).with_base_url(
-        provider
-            .base_url
-            .clone()
-            .unwrap_or_else(|| provider.api_format.official_base_url().to_owned()),
-    );
+    let base_url = provider
+        .base_url
+        .clone()
+        .unwrap_or_else(|| provider.api_format.official_base_url().to_owned());
     // 代理注入（19 号票，附录 B"代理经 rig-reqwest builder"）：不再用 rig
     // 的共享 reqwest client（`client()`），改取代理工厂当前快照包一层
     // ReqwestClient 经 `connect` 挂上——模型请求与探测/网络工具共用
     // none/system/manual 三模式语义（rig-http 0.45 注入口径，§11.1 回写）。
     // client 按 run 取用且 run 内复用；代理热生效后下一次 start_chat 换新。
-    let http = rig_reqwest::ReqwestClient::from(app.http.client().as_ref().clone());
-    let driver = wire_config.connect(http).chat(model.model.clone());
+    // 三方言统一构造（38 号票，providers::wire 防腐层）：按 apiFormat
+    // 装配 Chat / Responses / Messages wire，差异收敛在 providers 域。
+    let http = rig::http_client::DynHttpClient::new(rig_reqwest::ReqwestClient::from(
+        app.http.client().as_ref().clone(),
+    ));
+    let driver = crate::providers::wire::dialect_model(
+        provider.api_format,
+        &base_url,
+        &key,
+        &model.model,
+        http,
+    );
     Ok(ResolvedModel {
         // 配置 id（wanted 已归一：参数 id 或 activeModelId 的命中项）
         id: wanted.to_owned(),
@@ -730,7 +738,7 @@ struct HostRequestRefresher {
     app: AppState,
     session_id: String,
     /// 目标驱动的共享句柄（换模型/换参数的写入口）。
-    driver: Arc<TurnDriver<Chat, rig::http_client::DynHttpClient>>,
+    driver: Arc<TurnDriver<DialectWire, rig::http_client::DynHttpClient>>,
     /// run 起点快照（RunConfig + start_chat 时的 prefs 初值合并）。
     initial: EffectiveRuntime,
     /// 当前生效快照（与上一次刷新后的驱动状态一致）。
@@ -783,16 +791,35 @@ impl RequestRefresher for HostRequestRefresher {
         // —— thinking 生效值重算（模型切换与档位变化都刷新；回落链以
         // 当前生效模型配置为准）——
         let model_id = wanted.model_id.clone().or(current.model_id.clone());
-        let directive = match model_id.as_deref() {
-            Some(id) => resolve_model(&self.app, Some(id))
-                .map(|resolved| effective_thinking_directive(wanted.thinking, &resolved))
-                .map_err(|e| RefreshFailure::Failed(e.message))?,
+        // 指令与请求级 max_tokens 同源重算（38 号票）：Anthropic 方言恒带
+        // 请求级 max_tokens（协议必填；有 thinking 预算时按 §11.4 上调
+        // 规则），OpenAI 系维持 None（请求不带 max_tokens，不回归）
+        let (options, max_tokens) = match model_id.as_deref() {
+            Some(id) => {
+                let resolved = resolve_model(&self.app, Some(id))
+                    .map_err(|e| RefreshFailure::Failed(e.message))?;
+                let directive = effective_thinking_directive(wanted.thinking, &resolved);
+                (
+                    crate::backend::turn::reasoning_directive_to_options(&directive),
+                    crate::backend::turn::directive_max_tokens(
+                        &directive,
+                        resolved.max_tokens,
+                        resolved.api_format,
+                    ),
+                )
+            }
             // 无模型可解析（防御面）：不传参数
-            None => crate::providers::reasoning::ReasoningDirective::none(),
+            None => {
+                let directive = crate::providers::reasoning::ReasoningDirective::none();
+                (
+                    crate::backend::turn::reasoning_directive_to_options(&directive),
+                    None,
+                )
+            }
         };
-        let options = crate::backend::turn::reasoning_directive_to_options(&directive);
         self.driver.update_spec(|spec| {
             spec.options = options;
+            spec.max_tokens = max_tokens;
         });
         *current = wanted;
         Ok(())
@@ -2055,13 +2082,22 @@ pub async fn start_chat_core(
 
     // ⑤ spawn RunLoop 任务（帧生产 + 审批挂起恢复 + 取消 + 终态摘除）。
     //    thinking 起点参数（18 号票，§11.4）：按会话显式档 > per-model
-    //    reasoningEffort > 不传的优先级链翻译为 rig 请求参数。
+    //    reasoningEffort > 不传的优先级链翻译为 rig 请求参数。38 号票：
+    //    Anthropic 方言同源给出请求级 max_tokens（协议必填 + 预算校验的
+    //    output cap，§11.4 上调规则）；OpenAI 系维持不带 max_tokens。
     let initial_directive = effective_thinking_directive(initial_thinking, &model);
-    let spec = RunSpec {
+    let mut spec = RunSpec {
         max_turns: Some(run_config.max_turns as usize),
         options: crate::backend::turn::reasoning_directive_to_options(&initial_directive),
         ..RunSpec::new()
     };
+    if let Some(cap) = crate::backend::turn::directive_max_tokens(
+        &initial_directive,
+        model.max_tokens,
+        model.api_format,
+    ) {
+        spec.max_tokens = Some(cap);
+    }
     // 驱动共享句柄（18 号票）：每拍请求刷新源（HostRequestRefresher）持有
     // 同一 Arc 热更新模型客户端与请求参数；suggest 后台小调用也经 Arc 复用
     // 终态时的最新模型。

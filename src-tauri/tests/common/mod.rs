@@ -6,7 +6,9 @@
 // 各集成测试二进制独立链接本模块，未用到的导出属预期。
 #![allow(dead_code)]
 
+pub mod mock_anthropic;
 pub mod mock_openai;
+pub mod mock_responses;
 
 use std::sync::{Arc, Mutex};
 use std::time::Instant;

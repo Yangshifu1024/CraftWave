@@ -19,6 +19,7 @@ pub mod quota;
 pub mod reasoning;
 pub mod service;
 pub mod types;
+pub mod wire;
 
 #[cfg(test)]
 #[path = "types_test.rs"]

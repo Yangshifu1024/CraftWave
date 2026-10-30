@@ -301,7 +301,7 @@ export function ProvidersPage() {
         });
       }
     } catch (err) {
-      // 参数面错误（供应商不存在/方言暂不支持）：兜底展示为 protocol 分类
+      // 参数面错误（供应商不存在等）：兜底展示为 protocol 分类
       const message = err instanceof Error ? err.message : String(err);
       slot({ state: "error", error: { code: "E_PROVIDER_PROTOCOL", message } });
     }
@@ -503,14 +503,10 @@ export function ProvidersPage() {
                       key="test"
                       variant="ghost"
                       size="sm"
-                      // FR-02-09 探测当前仅覆盖 openai_chat 方言（anthropic/
-                      // responses 由 38 号票三协议接入接通本探测入口）
-                      disabled={p.apiFormat !== "openai_chat"}
-                      title={
-                        p.apiFormat !== "openai_chat"
-                          ? "该协议的连接测试即将支持（三协议接入）"
-                          : undefined
-                      }
+                      // FR-02-09 探测三方言全接通（38 号票）：连接测试与
+                      // 实际对话走同一 apiFormat 选择（openai_chat 与
+                      // openai_responses 同 /models + Bearer，anthropic
+                      // 用 x-api-key + anthropic-version），不再限制方言
                       onClick={() => testSavedProvider(p)}
                     >
                       测试连接

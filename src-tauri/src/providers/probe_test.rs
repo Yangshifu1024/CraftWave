@@ -1,13 +1,14 @@
-//! 供应商连接探测测试（19 号票）：全本地 fixture（127.0.0.1 axum mock +
-//! 手写最小 SOCKS5 转发器），不连真实外网。
+//! 供应商连接探测测试（19 号票建面；38 号票扩为三方言）：全本地 fixture
+//! （127.0.0.1 axum mock + 手写最小 SOCKS5 转发器），不连真实外网。
 //!
 //! 覆盖面（票面"测试"节）：
 //! - models 拉取成功（OpenAI data[] 形状 + Ollama 兼容形状）；
-//! - /models 404 → 回退最小补全成功；
+//! - /models 404 → 回退最小补全成功（三方言各自的回退端点）；
 //! - 401→auth / 429→rate_limited / 500→server / 402→billing / 400→bad_request；
 //! - 不可达地址 → network 分类；
 //! - 延迟计量 > 0；
 //! - 错误消息脱敏（不含 Key）；
+//! - Anthropic 鉴权头（x-api-key + anthropic-version）与地址归一；
 //! - 代理三模式 e2e：manual socks5 经本地转发器可达、none 直连恢复
 //!   （FR-02-10 验收的自动化等价面）。
 
@@ -15,6 +16,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use axum::Json;
+use axum::extract::Request as AxumRequest;
 use axum::routing::{get, post};
 use serde_json::json;
 
@@ -360,4 +362,254 @@ fn parse_models_three_shapes() {
     assert_eq!(parse_models(bare), Some(vec!["y".into(), "z".into()]));
     assert_eq!(parse_models("not json"), None);
     assert_eq!(parse_models("{}"), None);
+}
+
+// ---- 三方言探测（38 号票）----
+
+/// 断言：openai_responses 方言——/models 成功即连通（与 chat 方言同端点）；
+/// /models 404 时回退打 /responses（最小补全，max_output_tokens=16）。
+#[tokio::test]
+async fn probe_openai_responses_falls_back_to_responses_endpoint() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let hit = Arc::new(AtomicUsize::new(0));
+    let hit_route = hit.clone();
+    let app = axum::Router::new()
+        .route(
+            "/v1/models",
+            get(|| async { (axum::http::StatusCode::NOT_FOUND, "no models") }),
+        )
+        .route(
+            "/v1/responses",
+            post(move |body: Option<Json<serde_json::Value>>| {
+                let hit = hit_route.clone();
+                async move {
+                    hit.fetch_add(1, Ordering::SeqCst);
+                    // 断言最小补全体形状（input + max_output_tokens 下限）
+                    if let Some(Json(body)) = body {
+                        assert_eq!(body["input"], "ping");
+                        assert_eq!(body["max_output_tokens"], 16);
+                    }
+                    Json(json!({
+                        "id": "resp-mock",
+                        "output": [],
+                        "status": "completed"
+                    }))
+                }
+            }),
+        );
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let client = build_proxy_client(None).unwrap();
+    let result = probe(
+        &client,
+        ApiFormat::OpenaiResponses,
+        &format!("http://{addr}/v1"),
+        None,
+    )
+    .await;
+    assert!(
+        result.ok,
+        "responses 方言 404 回退应连通：{:?}",
+        result.error
+    );
+    assert!(result.models.is_none(), "补全路径无模型列表");
+    assert_eq!(
+        hit.load(Ordering::SeqCst),
+        1,
+        "应恰好打了一次 /responses 回退段"
+    );
+}
+
+/// 断言：anthropic_messages 方言——x-api-key + anthropic-version 鉴权头
+/// （对话请求同款，Bearer 不适用）；/v1/models 404 → 回退 /v1/messages。
+#[tokio::test]
+async fn probe_anthropic_uses_api_key_header_and_messages_fallback() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    // 记录面只留请求头（http::Request 不可 Clone，鉴权头断言只需要头）
+    let seen_models = Arc::new(std::sync::Mutex::new(None::<axum::http::HeaderMap>));
+    let seen_models_route = seen_models.clone();
+    let seen_messages = Arc::new(std::sync::Mutex::new(None::<axum::http::HeaderMap>));
+    let seen_messages_route = seen_messages.clone();
+    let app = axum::Router::new()
+        .route(
+            "/v1/models",
+            get(move |request: AxumRequest| {
+                let seen = seen_models_route.clone();
+                async move {
+                    *seen.lock().unwrap() = Some(request.headers().clone());
+                    (axum::http::StatusCode::NOT_FOUND, "no models")
+                }
+            }),
+        )
+        .route(
+            "/v1/messages",
+            post(move |request: AxumRequest| {
+                let seen = seen_messages_route.clone();
+                async move {
+                    *seen.lock().unwrap() = Some(request.headers().clone());
+                    Json(json!({
+                        "id": "msg-mock",
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "p"}],
+                        "stop_reason": "end_turn",
+                        "usage": {"input_tokens": 1, "output_tokens": 1}
+                    }))
+                }
+            }),
+        );
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let client = build_proxy_client(None).unwrap();
+    let secret = "sk-ant-SECRET-0123456789";
+    let result = probe(
+        &client,
+        ApiFormat::AnthropicMessages,
+        &format!("http://{addr}"),
+        Some(secret),
+    )
+    .await;
+    assert!(result.ok, "anthropic 方言回退应连通：{:?}", result.error);
+    assert!(result.models.is_none(), "回退路径无模型列表");
+
+    // /models 段的鉴权头是 x-api-key + anthropic-version（不是 Bearer）
+    let headers = seen_models
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("应收到 /models 请求");
+    assert_eq!(
+        headers.get("x-api-key").and_then(|v| v.to_str().ok()),
+        Some(secret)
+    );
+    assert_eq!(
+        headers
+            .get("anthropic-version")
+            .and_then(|v| v.to_str().ok()),
+        Some("2023-06-01")
+    );
+    assert!(
+        headers.get(axum::http::header::AUTHORIZATION).is_none(),
+        "Anthropic 方言不得携带 Bearer 头"
+    );
+
+    // 回退段同款鉴权头；错误消息脱敏由通用测试覆盖（同一装配路径）
+    let headers = seen_messages
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("应收到 /messages 请求");
+    assert_eq!(
+        headers.get("x-api-key").and_then(|v| v.to_str().ok()),
+        Some(secret)
+    );
+}
+
+/// 断言：anthropic baseUrl 归一——用户把 /v1、/messages、/v1/messages
+/// 尾缀一并粘进地址时，探测仍落在唯一的 /v1/messages（剥尾缀规则与
+/// rig wire 同口径）。
+#[tokio::test]
+async fn probe_anthropic_base_url_suffixes_normalized() {
+    for suffix in ["", "/", "/v1", "/messages", "/v1/messages"] {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = axum::Router::new().route(
+            "/v1/messages",
+            post(|| async {
+                Json(json!({
+                    "id": "msg-mock",
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [],
+                    "stop_reason": "end_turn"
+                }))
+            }),
+        );
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let client = build_proxy_client(None).unwrap();
+        let base = format!("http://{addr}{suffix}");
+        let result = probe(&client, ApiFormat::AnthropicMessages, &base, None).await;
+        assert!(
+            result.ok,
+            "baseUrl「{base}」归一后应连通：{:?}",
+            result.error
+        );
+    }
+}
+
+/// 断言：分发入口按 ApiFormat 路由（同一路径下 responses 方言不再打
+/// chat/completions——连接测试与实际对话同源选择）。
+#[tokio::test]
+async fn probe_dispatches_by_api_format() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let chat_hits = Arc::new(AtomicUsize::new(0));
+    let chat_route = chat_hits.clone();
+    let responses_hits = Arc::new(AtomicUsize::new(0));
+    let responses_route = responses_hits.clone();
+    let app = axum::Router::new()
+        .route(
+            "/v1/models",
+            get(|| async { (axum::http::StatusCode::NOT_FOUND, "no models") }),
+        )
+        .route(
+            "/v1/chat/completions",
+            post(move || {
+                let hit = chat_route.clone();
+                async move {
+                    hit.fetch_add(1, Ordering::SeqCst);
+                    Json(json!({"choices": [{"message": {"content": "p"}}]}))
+                }
+            }),
+        )
+        .route(
+            "/v1/responses",
+            post(move || {
+                let hit = responses_route.clone();
+                async move {
+                    hit.fetch_add(1, Ordering::SeqCst);
+                    Json(json!({"id": "resp-mock", "output": [], "status": "completed"}))
+                }
+            }),
+        );
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let client = build_proxy_client(None).unwrap();
+
+    let result = probe(
+        &client,
+        ApiFormat::OpenaiChat,
+        &format!("http://{addr}/v1"),
+        None,
+    )
+    .await;
+    assert!(result.ok, "chat 方言应连通：{:?}", result.error);
+    assert_eq!(chat_hits.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        responses_hits.load(Ordering::SeqCst),
+        0,
+        "chat 方言不得打 /responses"
+    );
+
+    let result = probe(
+        &client,
+        ApiFormat::OpenaiResponses,
+        &format!("http://{addr}/v1"),
+        None,
+    )
+    .await;
+    assert!(result.ok, "responses 方言应连通：{:?}", result.error);
+    assert_eq!(responses_hits.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        chat_hits.load(Ordering::SeqCst),
+        1,
+        "responses 方言不得打 /chat/completions"
+    );
 }

@@ -11,7 +11,7 @@ use tauri::State;
 use crate::host::AppState;
 use crate::providers::probe;
 use crate::providers::service;
-use crate::providers::types::{ApiFormat, ProviderConfig};
+use crate::providers::types::ProviderConfig;
 use crate::util::errors::{E_NOT_FOUND, IpcError};
 
 /// `save_provider` 参数契约（§3.3 #8；文档命名锚点，命令形参按字段平铺展开）。
@@ -87,10 +87,11 @@ pub struct TestProviderResult {
 }
 
 /// §3.3 #32：保存供应商前的连通性测试（FR-02-09）。探测请求走代理工厂
-/// 当前客户端（与模型请求同一条代理语义）；OpenAI 方言先 `GET {base}/models`，
-/// 404/405 回退最小补全（`providers::probe` 两段策略）。探测结果不落库；
-/// anthropic_messages / openai_responses 方言由三协议接入票（38 号）接通
-/// 本入口，当前按参数错误拒绝。
+/// 当前客户端（与模型请求同一条代理语义）；按方言两段探测（38 号票接通
+/// 三协议：openai_chat 与 openai_responses 共用 /models + Bearer，回退段
+/// 各自打 chat/completions 或 responses；anthropic_messages 用 x-api-key +
+/// anthropic-version 鉴权，路径 /v1/models → /v1/messages）——连接测试与
+/// 实际对话走同一 `ApiFormat` 选择。探测结果不落库。
 #[tauri::command]
 pub async fn test_provider(
     state: State<'_, AppState>,
@@ -117,12 +118,6 @@ pub(crate) async fn test_provider_core(
     provider: &ProviderConfig,
     base_url_override: Option<&str>,
 ) -> Result<TestProviderResult, IpcError> {
-    if provider.api_format != ApiFormat::OpenaiChat {
-        return Err(probe::unsupported_format(&format!(
-            "{:?}",
-            provider.api_format
-        )));
-    }
     // 地址优先级：草稿覆写 > 已存 baseUrl > 官方缺省（§3.2 注记）
     let base_url = base_url_override
         .map(str::to_string)
@@ -137,7 +132,7 @@ pub(crate) async fn test_provider_core(
         provider.api_key.as_deref()
     };
     let client = state.http.client();
-    let result = probe::probe_openai_compatible(&client, &base_url, api_key).await;
+    let result = probe::probe(&client, provider.api_format, &base_url, api_key).await;
     Ok(TestProviderResult {
         ok: result.ok,
         latency_ms: result.latency_ms,

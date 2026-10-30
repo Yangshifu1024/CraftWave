@@ -68,6 +68,6 @@ FR 依据（原文摘引）：
 - **保存不强制阻塞**：FR-02-09 的"保存前"实现为引导而非强制——添加弹框文案"建议保存前测试"，无校验拦截（本地/离线场景必须可保存，票面取舍原文）。
 - **免 Key 判定**：仅按 `ProviderConfig.local` 显式判定（serde default false，schemaVersion 维持 2）；不做"baseUrl 是 localhost 即本地"的隐式推断（远端自建网关同样可能是回环地址）。rig 侧必填 Key 以占位值 `"local"` 过面（本地端点忽略 Authorization 头）。
 - **本地预设取舍**：三家全走 OpenAI 兼容端点（Ollama `/v1`、llama.cpp server `/v1`、LM Studio `/v1`），零新方言代码；llama.cpp server 不校验 model 值（占位名 `local-model` 即可用），LM Studio 需按实际加载模型名修改（预设仅开箱建议值）。UI 预设入口 = 添加弹框顶部预设 chips（M1 的 `newProviderFromPreset` 有实例化辅助但无 UI 入口，本票补上）。
-- **协议边界**：`test_provider` 仅 openai_chat；anthropic_messages/openai_responses 的按钮禁用 + 提示，38 号票三协议接入接通本探测入口（票面边界原文）。
+- **协议边界**：`test_provider` 仅 openai_chat；anthropic_messages/openai_responses 的按钮禁用 + 提示，38 号票三协议接入接通本探测入口（票面边界原文）。**【38 号票接缝闭合（2026-10-30 回写）】**三方言探测已接通——openai_responses 与 chat 同 `/models` + Bearer、回退段打 `/responses`（max_output_tokens=16 最小合法值）；anthropic_messages 用 `x-api-key` + `anthropic-version` 鉴权（对话请求同款），路径 `/v1/models` → `/v1/messages`，baseUrl 剥 `/v1`、`/messages`、`/v1/messages` 尾缀归一（对齐 rig wire）；分发入口 `probe::probe` 按 `ApiFormat` 路由，连接测试与实际对话同源选择；前端按钮禁用解除。
 - **reqwest feature 扩张**：`socks`（socks5/socks5h 代理支持）与 `system-proxy`（系统代理探测）为本票功能面必需；`arc-swap`（1.9，锁面已有）与 `rig-reqwest`（0.45.0，锁面已有）为票面点名载体，均不新增下载。
 - **模型请求不设整体超时**：代理工厂 client 仅设 connect_timeout(10s)——流式回复可达分钟级；探测请求经 `RequestBuilder::timeout` 按请求覆盖 30s。

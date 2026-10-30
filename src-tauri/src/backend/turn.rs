@@ -51,10 +51,12 @@ pub enum StreamExit {
 /// "流式请求 → 事件装配 → 出帧 → 回喂 run"的整个过程。
 ///
 /// 模型端泛型化（37 号票）：`W: Wire<Op = Completion>` + `T: Transport<W>`
-/// 的任意组合——生产 = OpenAI Chat wire（`Model<Chat>`）；测试 = rig
-/// test_utils 的剧本模型（`MockCompletionModel`），供看门狗（37 号票）等
-/// 以"剧本假模型 + 假执行器"直驱 `drive_run` 全链。泛型只改客户端类型，
-/// 流事件面（`Item<StreamEvent>`）与响应面（`CompletionResponse`）对
+/// 的任意组合——生产 = 三方言统一 wire（`Model<DialectWire>`，38 号票
+/// providers::wire 防腐层，openai_chat / openai_responses /
+/// anthropic_messages 三协议按 `ApiFormat` 构造）；测试 = rig test_utils
+/// 的剧本模型（`MockCompletionModel`），供看门狗（37 号票）等以"剧本假
+/// 模型 + 假执行器"直驱 `drive_run` 全链。泛型只改客户端类型，流事件面
+/// （`Item<StreamEvent>`）与响应面（`CompletionResponse`）对
 /// `Op = Completion` 的全部 wire 同形，方法体零改动。
 ///
 /// 可热更新（18 号票，FR-02-07 运行中切换）：`model` 与 `spec` 收进互斥锁，
@@ -92,16 +94,32 @@ pub struct TurnOutcome {
 
 /// [`ReasoningDirective`] → rig 请求参数（§11.4 → GenerationOptions）。
 ///
-/// 只翻译 OpenAI 系面（effort 词）；Anthropic 面的预算字段由 38 号票三协议
-/// 接入消费（本票先定表）。off 档（"none"）走 `Reasoning::Off`；其余档走
-/// `Reasoning::Effort`。`OnUnsupported::Ignore`：模型/目录不支持的档位跳过
-/// 而非报错（§11.4「不支持者忽略」——目录内的官方模型按其 catalog 裁决，
-/// 目录外的兼容端点直接透传）。
+/// 按指令面分派（指令自身即方言标识——`budget_tokens` 只有 Anthropic 映射
+/// 产出、`effort_word` 只有 OpenAI 系产出）：
+/// - **Anthropic 面（38 号票消费）**：`budget_tokens` 有值 → rig
+///   `Reasoning::Budget`（anthropic options 层映射为
+///   `{"thinking":{"type":"enabled","budget_tokens":N}}`，§11.4 比例轴）；
+///   off 档在 `providers::reasoning` 即折算为空指令（§11.4「off → 不启用
+///   thinking（缺省行为）」——不显式发 disabled 字段）。
+/// - **OpenAI 系面**：effort 词翻译，off 档（"none"）走 `Reasoning::Off`；
+///   其余档走 `Reasoning::Effort`。
+///
+/// `OnUnsupported::Ignore`：模型/目录不支持的档位跳过而非报错（§11.4
+/// 「不支持者忽略」——目录内的官方模型按其 catalog 裁决，目录外的兼容
+/// 端点直接透传）。
 ///
 /// 注意：设置任一 options 字段（含 on_unsupported）都会让 rig 对目录内
 /// 模型启用档位校验；`None` 指令返回默认空 options（请求不携带任何推理
 /// 参数，也不触发校验——与"不传"语义一致）。
 pub fn reasoning_directive_to_options(directive: &ReasoningDirective) -> GenerationOptions {
+    if let Some(tokens) = directive.budget_tokens {
+        // Anthropic 预算轴：u64 指令值收进 rig 的 u32 预算面（窗口缺省
+        // 128k 时 20% ≈ 25.6k，远在 u32 内；溢出钳到 u32::MAX 属防御面）
+        let tokens = u32::try_from(tokens).unwrap_or(u32::MAX);
+        return GenerationOptions::default()
+            .reasoning(Reasoning::Budget { tokens })
+            .on_unsupported(OnUnsupported::Ignore);
+    }
     let Some(word) = directive.effort_word else {
         return GenerationOptions::default();
     };
@@ -113,6 +131,27 @@ pub fn reasoning_directive_to_options(directive: &ReasoningDirective) -> Generat
     GenerationOptions::default()
         .reasoning(reasoning)
         .on_unsupported(OnUnsupported::Ignore)
+}
+
+/// Anthropic 面的请求级 `max_tokens`（§11.4 + rig Messages wire 的硬性
+/// 要求，38 号票）：Anthropic API 必填 max_tokens 且须大于 thinking 预算
+/// （目录外模型 rig 无按模型缺省可兜，缺失即 EncodeError 拒发）——因此
+/// anthropic_messages 方言**恒**注入：有上调规则值时用上调值
+/// （`max_tokens_override`），否则用模型配置的输出上限
+/// （`ProviderModel.maxTokens`）。OpenAI 系返回 None——维持 openai_chat /
+/// openai_responses 现状（请求不带 max_tokens，不回归）。
+pub fn directive_max_tokens(
+    directive: &ReasoningDirective,
+    base_max_tokens: u64,
+    api_format: crate::providers::types::ApiFormat,
+) -> Option<u64> {
+    match api_format {
+        crate::providers::types::ApiFormat::AnthropicMessages => {
+            Some(directive.max_tokens_override.unwrap_or(base_max_tokens))
+        }
+        crate::providers::types::ApiFormat::OpenaiChat
+        | crate::providers::types::ApiFormat::OpenaiResponses => None,
+    }
 }
 
 /// effort 词 → rig `Effort`（词表与 [`crate::providers::reasoning::
