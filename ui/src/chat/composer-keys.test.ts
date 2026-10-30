@@ -186,3 +186,58 @@ describe("insertDollarInvocation（$ 角色插入）", () => {
     );
   });
 });
+
+// ---- 28 号票：@ 引号路径（detectAtQuery 未闭合引号回扫 / insertAtCompletion
+// 空格路径引号包裹 / 引号内搜索词剥引号）----
+
+describe("detectAtQuery（28 号票引号路径升级）", () => {
+  it('未闭合引号内的空白不终止触发（`@"a b/c` 输入中）', () => {
+    const text = '看 @"a b/c';
+    expect(detectAtQuery(text, text.length)).toEqual({ at: 2, query: '"a b/c' });
+  });
+
+  it('闭合引号即止：完整引用形态 `@"a b/c.txt"` 后不再触发', () => {
+    const text = '看 @"a b/c.txt"';
+    expect(detectAtQuery(text, text.length)).toBeNull();
+  });
+
+  it("完整引用后的后续输入照常触发", () => {
+    const text = '看 @"a b/c.txt" 然后 @';
+    expect(detectAtQuery(text, text.length)).toEqual({ at: 18, query: "" });
+  });
+
+  it('引号内的 @ 不嵌套触发（`@"a@b/c.txt"` 光标在闭合引号后）', () => {
+    const text = '看 @"a@b/c.txt"';
+    expect(detectAtQuery(text, text.length)).toBeNull();
+  });
+
+  it("引号内空白判定对多行文本同样成立（换行在引号内不终止）", () => {
+    const text = '@"a\nb/c';
+    expect(detectAtQuery(text, text.length)).toEqual({ at: 0, query: '"a\nb/c' });
+  });
+
+  it("引号外空白照常终止（普通路径输入不受引号升级影响）", () => {
+    expect(detectAtQuery("看看 @src 之后", 9)).toBeNull();
+  });
+
+  it("光标落在引用中间（未闭合段内）保持触发", () => {
+    const text = '看 @"a b/c.txt" 尾部';
+    // 光标移到 b 后（下标 7：0看 1空 2@ 3" 4a 5空 6b）
+    expect(detectAtQuery(text, 7)).toEqual({ at: 2, query: '"a b' });
+  });
+});
+
+describe("insertAtCompletion（28 号票空格路径引号包裹）", () => {
+  it('路径含空格 → 插入 @"path" 引号形态', () => {
+    expect(insertAtCompletion("看 @", 2, 3, "a b/c.txt")).toBe('看 @"a b/c.txt" ');
+  });
+
+  it("路径无空格 → 维持裸路径", () => {
+    expect(insertAtCompletion("看 @", 2, 3, "src/main.rs")).toBe("看 @src/main.rs ");
+  });
+
+  it('替换范围含查询中已敲出的开引号（`@"a b` 选中 c.txt → 完整形态）', () => {
+    const text = '看 @"a b';
+    expect(insertAtCompletion(text, 2, text.length, "a b/c.txt")).toBe('看 @"a b/c.txt" ');
+  });
+});

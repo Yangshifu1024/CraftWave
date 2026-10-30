@@ -138,6 +138,9 @@ pub(crate) fn search_workspace_paths_core(
     query: &str,
     limit: Option<usize>,
 ) -> Result<Vec<WorkspacePathHit>, IpcError> {
+    // 性能埋点（28 号票验收：万级文件库 P95 < 300ms）：单次搜索全耗时，
+    // 超过 100ms 才输出 warn（避免正常小目录的日志噪音）。
+    let started = std::time::Instant::now();
     let needle = query.trim().to_lowercase();
     if needle.is_empty() {
         return Ok(Vec::new());
@@ -163,6 +166,14 @@ pub(crate) fn search_workspace_paths_core(
         }
     }
     hits.truncate(limit);
+    let elapsed = started.elapsed();
+    if elapsed.as_millis() > 100 {
+        eprintln!(
+            "[craftwave] @ 补全搜索耗时 {elapsed_ms}ms（session={session_id} query={query:?} 命中 {}）",
+            hits.len(),
+            elapsed_ms = elapsed.as_millis()
+        );
+    }
     Ok(hits)
 }
 

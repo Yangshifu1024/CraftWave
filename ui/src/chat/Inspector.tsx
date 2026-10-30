@@ -12,6 +12,7 @@
  */
 
 import { useEffect, useState } from "react";
+import { ArtifactsPanel } from "@/chat/ArtifactsPanel";
 import { ChangesPanel } from "@/chat/ChangesPanel";
 import { CompactButton } from "@/chat/CompactionUI";
 import { useChangesStore } from "@/chat/changes-store";
@@ -90,8 +91,11 @@ export function Inspector({
 }) {
   const sessionId = useSessionScope();
   // tab 态（内存态：重载回「用量」缺省页）；「变更」tab（26 号票）= 打开
-  // 宽弹窗的入口（§10.7 变更面板为 Dialog 形态，tab 只承载入口按钮）。
-  const [tab, setTab] = useState<"usage" | "quota" | "subagents" | "grants" | "changes">("usage");
+  // 宽弹窗的入口（§10.7 变更面板为 Dialog 形态，tab 只承载入口按钮）；
+  // 「产物」tab（28 号票）= 会话产物登记页（write/edit 自动登记 + 一键打开）。
+  const [tab, setTab] = useState<
+    "usage" | "artifacts" | "quota" | "subagents" | "grants" | "changes"
+  >("usage");
   const subs = useSubagentsStore((s) => s.bySession[sessionId] ?? EMPTY_SUBS);
   // 运行中有子代理时自动切到子代理页（盯着它干活；用户可手动切回）
   const runningCount = subs.filter((s) => s.state === "running").length;
@@ -130,6 +134,18 @@ export function Inspector({
             onClick={() => setTab("usage")}
           >
             用量
+          </button>
+          <button
+            type="button"
+            data-testid="inspector-tab-artifacts"
+            className={`rounded-md px-2 py-1 ${
+              tab === "artifacts"
+                ? "font-medium text-[var(--foreground)]"
+                : "text-[var(--muted-foreground)]"
+            }`}
+            onClick={() => setTab("artifacts")}
+          >
+            产物
           </button>
           <button
             type="button"
@@ -182,6 +198,8 @@ export function Inspector({
         </div>
         {tab === "usage" ? (
           <UsagePanel sessionId={sessionId} />
+        ) : tab === "artifacts" ? (
+          <ArtifactsPanel sessionId={sessionId} />
         ) : tab === "quota" ? (
           <QuotaPanel sessionId={sessionId} onOpenSettings={onOpenSettings} />
         ) : tab === "grants" ? (

@@ -128,6 +128,13 @@ use host::commands::stats::{
 // 根，经 quota_snapshots 返回），导出需显式补根（ipc_manifest_test）
 #[allow(unused_imports)]
 use host::commands::quota::quota_snapshots;
+// 产物面板与编辑器打开（28 号票，§3.3 #59l/#35/#36）
+#[allow(unused_imports)]
+use host::commands::artifacts::{
+    EditorEntry, ListArtifactsArgs, OpenInEditorArgs, list_artifacts, list_editors, open_in_editor,
+};
+#[allow(unused_imports)]
+use storage::ListArtifactsResult;
 // git 三命令（26 号票，§3.3 #37–#39）
 #[allow(unused_imports)]
 use git::{
@@ -302,6 +309,10 @@ ipc_commands! {
     host::commands::stats::session_usage => args: SessionUsageArgs, ret: SessionUsageResult;
     // 配额快照（21 号票，§3.3 #53）
     host::commands::quota::quota_snapshots => args: (), ret: Vec<QuotaSnapshot>;
+    // 产物面板与编辑器打开（28 号票，§3.3 #59l 增补 + #35/#36 实装）
+    host::commands::artifacts::list_artifacts => args: ListArtifactsArgs, ret: ListArtifactsResult;
+    host::commands::artifacts::list_editors => args: (), ret: Vec<EditorEntry>;
+    host::commands::artifacts::open_in_editor => args: OpenInEditorArgs, ret: ();
     // git 只读三命令（26 号票，§3.3 #37–#39）
     git::git_status => args: GitStatusArgs, ret: GitStatusResult;
     git::git_diff => args: GitDiffArgs, ret: GitDiffResult;

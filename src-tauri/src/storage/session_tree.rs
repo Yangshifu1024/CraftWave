@@ -523,6 +523,8 @@ impl SessionStore {
         let _ = std::fs::remove_dir_all(self.histories_dir().join(session_id));
         let sessions_dir = self.root.join("sessions");
         let _ = std::fs::remove_file(sessions_dir.join(format!("{session_id}.prefs.json")));
+        // 产物登记（28 号票，§7.7 GC 口径：随 `<sid>.*` 家族一并删除）
+        let _ = std::fs::remove_file(sessions_dir.join(format!("{session_id}.artifacts.json")));
         let _ = std::fs::remove_dir_all(sessions_dir.join(format!("{session_id}.toolres")));
         // 图片 blob 目录（17 号票：§7.7 v1 GC——会话删除即整体删除；
         // 跨会话不共享 blob，无引用计数问题）
@@ -533,6 +535,34 @@ impl SessionStore {
     /// 会话日志根目录：数据根下的 `histories/`，每个会话占其中一个子目录。
     fn histories_dir(&self) -> PathBuf {
         self.root.join("histories")
+    }
+
+    /// 登记一条产物（28 号票，FR-10-06）：`<sid>.artifacts.json` 追加/计数。
+    /// 持本会话 `MutexMap` 锁（与 segments/prefs 同锁序）串行化——与
+    /// `delete_session` 的并发以锁为界（先写者持锁，删除等锁）。
+    /// 失败原样上抛，调用方（工具执行器）只记日志不阻塞工具结果。
+    pub fn record_artifact(
+        &self,
+        session_id: &str,
+        run_id: &str,
+        path: &str,
+    ) -> Result<(), std::io::Error> {
+        let mutex = self.locks.get(session_id);
+        let _guard = mutex
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        super::artifacts::record(&self.root, session_id, run_id, path)
+    }
+
+    /// 产物清单查询（28 号票，§3.3 #59l 读面）：存在探测就地完成，排序
+    /// = 存在优先 + lastSeenAt 倒序。读路径与登记同一把会话锁（避免读到
+    /// 写了一半的中间态——原子写下非必然，但保持同锁序纪律）。
+    pub fn list_artifacts(&self, session_id: &str) -> Vec<super::artifacts::ArtifactRow> {
+        let mutex = self.locks.get(session_id);
+        let _guard = mutex
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        super::artifacts::list(&self.root, session_id)
     }
 }
 

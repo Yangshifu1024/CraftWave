@@ -632,6 +632,7 @@ async fn child_env_rejects_delegation_and_outside_tools() {
                 subagents: None,
                 allowed_tools: allowed,
                 network: None,
+                store: None,
             },
         )
     };

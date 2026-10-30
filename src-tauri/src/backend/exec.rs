@@ -111,9 +111,14 @@ pub struct ExecutorEnv {
     /// None = 不限（主代理环境）。
     pub allowed_tools: Option<Vec<String>>,
     /// 网络工具执行环境（12 号票，web_fetch/http_request）：SSRF 策略 +
-    /// 代理 + 进程级节流器，宿主按 AppConfig 装配；None = 未装配
+    /// 代理 + 进程级节流器，宿主按 AppConfig 装配注入；None = 未装配
     /// （无网络环境的纯文件工具测试）。
     pub network: Option<Arc<crate::tools::NetworkEnv>>,
+    /// 会话存储器（28 号票产物登记，FR-10-06）：write/edit 成功落盘后经
+    /// 它写 `<sid>.artifacts.json`（锁表与 delete_session 共享，串行化
+    /// 同会话读写）。None = 不登记（headless 测试与子代理环境——子代理
+    /// 写入落在独立 worktree，不进会话产物面，ADR-0001 汇回由主代理协调）。
+    pub store: Option<Arc<crate::storage::SessionStore>>,
 }
 
 /// 工具注册表全集的执行器：模型可见的 8 个工具（§8.3）都经它执行。
@@ -244,8 +249,25 @@ impl ToolsetExecutor {
                 }
                 run_typed(&self.ctx, &args, read::run)
             }
-            "write" => run_typed(&self.ctx, &args, write::run),
-            "edit" => run_typed(&self.ctx, &args, edit::run),
+            "write" => {
+                let outcome = run_typed(&self.ctx, &args, write::run);
+                // 产物登记（28 号票）：成功落盘才登记（失败不登）。
+                if outcome.ok
+                    && let Some(path) = args.get("path").and_then(|p| p.as_str())
+                {
+                    self.record_artifact(path);
+                }
+                outcome
+            }
+            "edit" => {
+                let outcome = run_typed(&self.ctx, &args, edit::run);
+                if outcome.ok
+                    && let Some(path) = args.get("path").and_then(|p| p.as_str())
+                {
+                    self.record_artifact(path);
+                }
+                outcome
+            }
             "list_files" => run_typed(&self.ctx, &args, list_files::run),
             "grep" => run_typed(&self.ctx, &args, grep::run),
             // batch_read（14 号票）：带 tools.batchReadLimit 上限的三参入口
@@ -470,6 +492,36 @@ impl ToolsetExecutor {
     fn persist_outcome(&self, call_id: &str, outcome: &ToolOutcome) {
         if let Some(env) = &self.env {
             crate::storage::write_outcome(&env.data_root, &env.session_id, call_id, outcome);
+        }
+    }
+
+    /// 产物登记（28 号票，FR-10-06 / §7.7）：write/edit 成功落盘后把目标
+    /// 路径追加进 `<sid>.artifacts.json`（去重计数，工具面板回看数据面）。
+    /// 未装配存储器（headless 测试 / 子代理环境——worktree 内写入不进会话
+    /// 产物面，ADR-0001 汇回由主代理协调）跳过；登记失败只记日志不阻塞
+    /// 工具结果（§7.3 ⑤ 落盘失败同口径）。`raw_path` 为工具参数原文——
+    /// 规范化（safe_join resolve，symlink 解析）在守卫内完成，解析失败视为
+    /// 不入 roots 的异常参数，静默跳过（工具结果本身已回喂错误）。
+    fn record_artifact(&self, raw_path: &str) {
+        let Some(env) = &self.env else {
+            return;
+        };
+        let Some(store) = &env.store else {
+            return;
+        };
+        let resolved = match self.ctx.guard() {
+            Ok(guard) => match guard.resolve(raw_path) {
+                Ok(p) => p.to_string_lossy().into_owned(),
+                Err(_) => return,
+            },
+            Err(_) => return,
+        };
+        if let Err(e) = store.record_artifact(&env.session_id, &env.run_id, &resolved) {
+            // warn 级埋点（eprintln，与 git/标题落盘失败同款）：登记失败不阻塞工具结果
+            eprintln!(
+                "[craftwave] 产物登记失败（不阻塞工具结果）：session={session_id} path={resolved}：{e}",
+                session_id = env.session_id
+            );
         }
     }
 }
@@ -1083,7 +1135,12 @@ impl ToolsetExecutor {
             let outcomes = edit::apply_edit_group(&self.ctx, &path, &args_list, |p, b| {
                 write::atomic_write_utf8(p, b)
             });
-            for ((index, call_id, _), outcome) in mergeable.into_iter().zip(outcomes) {
+            for ((index, call_id, args), outcome) in mergeable.into_iter().zip(outcomes) {
+                // 产物登记（28 号票）：合并提交的每个接受成员都是一次成功
+                // 编辑（runCount 逐次 +1）；失败成员不登记。
+                if outcome.ok {
+                    self.record_artifact(&args.path);
+                }
                 self.persist_outcome(&call_id, &outcome);
                 outputs.push((index, completed_of(outcome)));
             }

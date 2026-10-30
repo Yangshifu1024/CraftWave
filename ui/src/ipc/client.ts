@@ -26,6 +26,7 @@ import type {
   CompactSessionArgs,
   CompactSessionResult,
   DeleteProviderArgs,
+  EditorEntry,
   ExternalRootsResult,
   GetSessionPrefsResult,
   GitDiffArgs,
@@ -38,6 +39,7 @@ import type {
   InjectRunMessageResult,
   IpcError,
   LaunchDecision,
+  ListArtifactsResult,
   LoadSubagentHistoryArgs,
   McpListConfigResult,
   McpSaveConfigArgs,
@@ -169,6 +171,10 @@ export const COMMANDS = {
   gitStatus: "git_status",
   gitDiff: "git_diff",
   gitRecentLog: "git_recent_log",
+  // 产物面板与编辑器打开（28 号票，§3.3 #59l/#35/#36）
+  listArtifacts: "list_artifacts",
+  listEditors: "list_editors",
+  openInEditor: "open_in_editor",
   // 网络搜索连通测试（13 号票，§3.3 #59f）
   searchTest: "search_test",
   // 供应商连接测试（19 号票，§3.3 #32）
@@ -472,6 +478,33 @@ export function gitDiff(args: GitDiffArgs): Promise<GitDiffResult> {
 /** §3.3 #39：git_recent_log 最近提交（limit 缺省 20）。 */
 export function gitRecentLog(args: GitLogArgs): Promise<GitLogResult> {
   return invoke<GitLogResult>(COMMANDS.gitRecentLog, { args });
+}
+
+// ---- 产物面板与编辑器打开（§3.3 #59l/#35/#36，28 号票）----
+
+/** §3.3 #59l：本会话产物清单（write/edit 登记面）。exists 后端探测（已删除
+ *  灰显置底由排序保证）；文件缺失/会话未知 → 空清单（幂等查询）。 */
+export function listArtifacts(sessionId: string): Promise<ListArtifactsResult> {
+  return invoke<ListArtifactsResult>(COMMANDS.listArtifacts, { sessionId });
+}
+
+/** §3.3 #35：编辑器探测（PATH 上 CLI + macOS open -a 候选；探测不到返回
+ *  空表不报错——产物页「打开」按钮的可用性提示面）。 */
+export function listEditors(): Promise<EditorEntry[]> {
+  return invoke<EditorEntry[]>(COMMANDS.listEditors, {});
+}
+
+/** §3.3 #36：用探测到的第一个编辑器打开文件（VS Code 系带行号定位）。
+ *  越界 reject E_PATH_OUTSIDE_ROOTS；探测不到可用编辑器 reject E_NOT_FOUND
+ *  （前端 Toast/行内提示）。 */
+export function openInEditor(path: string, line?: number): Promise<void> {
+  return invoke<void>(COMMANDS.openInEditor, { path, line } satisfies OpenInEditorShape);
+}
+
+/** open_in_editor 的 invoke 形参形状（平铺形参，Rust 侧 OpenInEditorArgs）。 */
+interface OpenInEditorShape {
+  path: string;
+  line?: number;
 }
 
 /** 把 invoke 失败抛出的错误归一为 §3.1 统一错误负载（{code, message, detail?}）。

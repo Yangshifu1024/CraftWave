@@ -2470,6 +2470,9 @@ pub async fn start_chat_core(
             session_id: session_id.clone(),
             run_id: run_id.clone(),
             data_root: app.store.root().to_path_buf(),
+            // 产物登记（28 号票，FR-10-06）：主代理环境装配存储器——
+            // write/edit 成功落盘后写 <sid>.artifacts.json（子代理环境不装配）
+            store: Some(app.store.clone()),
             // MCP 动态工具调用面（08 号票）：归一名反查 + 结果未知语义在
             // mcp/pool 收口。
             mcp: Some(Arc::new(crate::mcp::commands::McpCallerAdapter {

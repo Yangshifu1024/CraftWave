@@ -3,6 +3,8 @@
 //! 命令注册与 IPC manifest 由 crate 根 lib.rs 的 `ipc_commands!` 宏同源展开
 //! （§12.3/NFR-12 防漂移，全命令统一收编）；本模块只承载 manifest 的事件帧键面。
 
+// 产物面板与编辑器打开（28 号票，§3.3 #59l/#35/#36）
+pub mod artifacts;
 pub mod chat;
 pub mod config;
 // 图片附件承载命令（17 号票，§3.3 #59h/#59i）
@@ -32,6 +34,10 @@ pub mod traffic_lights;
 #[cfg(test)]
 #[path = "chat_test.rs"]
 mod chat_test;
+
+#[cfg(test)]
+#[path = "artifacts_test.rs"]
+mod artifacts_test;
 
 #[cfg(test)]
 #[path = "image_test.rs"]

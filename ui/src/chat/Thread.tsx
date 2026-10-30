@@ -41,6 +41,7 @@ import {
   Zap,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { extractAtTokenSpans } from "@/chat/at-refs";
 import { ChatErrorBanner } from "@/chat/ChatErrorBanner";
 import { CompactionDivider, CompactionIndicator } from "@/chat/CompactionUI";
 import {
@@ -430,6 +431,8 @@ function ComposerBar() {
 
   // 附件按钮的文件选择（accept 限定白名单四格式；multiple 支持 ≤4 张）
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // @ chip 高亮 overlay 的定位基准（输入框壳）
+  const composerInputShellRef = useRef<HTMLDivElement>(null);
 
   // 粘贴图片提取（FR-12-02 三入口之一）：clipboardData 的图片 File 走附件
   // 通道；无图片文件的粘贴（文本等）不受影响
@@ -613,15 +616,22 @@ function ComposerBar() {
         <AttachmentBar attachments={attachments} onRemove={remove} />
         {/* 附件提示行（超限/失败/vision 拦截；自动消退） */}
         <AttachmentHintLine hint={hint} />
-        <ComposerPrimitive.Input
-          minRows={2}
-          placeholder="发一条消息，Alt+Enter 排队待发…"
-          className="max-h-40 w-full resize-none bg-transparent py-0.5 text-ui-base leading-5 placeholder:text-[var(--muted-foreground)] focus:outline-none"
-          onKeyDown={onKeyDown}
-          onKeyUp={(e) => onCursor(e.currentTarget.selectionStart ?? 0)}
-          onClick={(e) => onCursor(e.currentTarget.selectionStart ?? 0)}
-          onPaste={onPaste}
-        />
+        {/* 输入框壳（relative）：承载 @ chip 高亮 overlay 的定位基准 */}
+        <div className="relative" ref={composerInputShellRef}>
+          <ComposerPrimitive.Input
+            minRows={2}
+            placeholder="发一条消息，Alt+Enter 排队待发…"
+            className="max-h-40 w-full resize-none bg-transparent py-0.5 text-ui-base leading-5 placeholder:text-[var(--muted-foreground)] focus:outline-none"
+            onKeyDown={onKeyDown}
+            onKeyUp={(e) => onCursor(e.currentTarget.selectionStart ?? 0)}
+            onClick={(e) => onCursor(e.currentTarget.selectionStart ?? 0)}
+            onPaste={onPaste}
+          />
+          {/* @ 引用 chip 高亮（28 号票）：透明 overlay 叠在输入框上，对 @…token
+              着色（同字体/行高/padding + 滚动同步；不接收指针事件，输入框原文
+              不变——textarea 原生无法内嵌 chip 的 §10.6 定案形态） */}
+          <AtHighlightOverlay text={composerText} containerRef={composerInputShellRef} />
+        </div>
         {/* 附件按钮的隐藏文件选择器（accept 限定白名单四格式） */}
         <input
           ref={fileInputRef}
@@ -717,6 +727,74 @@ function ComposerBar() {
       </ComposerPrimitive.Root>
       {/* 拖拽目录「添加为项目」确认（FR-13-16；save_project 既有命令） */}
       <DropDirectoryDialog drop={dropDir} onClose={() => setDropDir(null)} />
+    </div>
+  );
+}
+
+/**
+ * @ 引用 chip 高亮 overlay（28 号票，§10.6「真实路径高亮」定案形态）：
+ * `ComposerPrimitive.Input` 是 textarea，原生无法内嵌 chip——本组件以透明
+ * 文本层叠在输入框正上方，按 extractAtTokenSpans 的区间对 `@…` token 着色
+ * （chip 观感）。对齐三要素：同字体/行高（text-ui-base leading-5）、同
+ * padding（py-0.5）、滚动同步（textarea 滚动经捕获监听同步到本层）。
+ * `pointer-events-none` 保证点击/选择都落在 textarea 上，输入框原文不变。
+ */
+export function AtHighlightOverlay({
+  text,
+  containerRef,
+}: {
+  text: string;
+  containerRef: React.RefObject<HTMLDivElement | null>;
+}) {
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const spans = extractAtTokenSpans(text);
+  // 滚动同步：textarea 的 scroll 事件不冒泡，捕获监听兜住（滚动偏移一致
+  // 才能保证高亮与光标处的文本不错位）
+  useEffect(() => {
+    const shell = containerRef.current;
+    const overlay = overlayRef.current;
+    if (!shell || !overlay) return;
+    const onScroll = (event: Event) => {
+      const target = event.target;
+      if (target instanceof HTMLTextAreaElement) {
+        overlay.scrollTop = target.scrollTop;
+      }
+    };
+    shell.addEventListener("scroll", onScroll, true);
+    return () => shell.removeEventListener("scroll", onScroll, true);
+  }, [containerRef]);
+  if (spans.length === 0) return null;
+  // 按 token 区间切分原文：普通段原样、token 段套着色 span（区间无重叠，
+  // extractAtTokenSpans 保证引号形态优先且普通形态跳过引号区间）
+  const pieces: React.ReactNode[] = [];
+  let cursor = 0;
+  spans.forEach(({ start, end }) => {
+    if (start > cursor) pieces.push(text.slice(cursor, start));
+    pieces.push(
+      <span
+        key={`at-${start}`}
+        data-testid="at-chip"
+        className="rounded bg-[var(--primary)]/15 px-0.5 font-medium text-[var(--primary)]"
+      >
+        {text.slice(start, end)}
+      </span>,
+    );
+    cursor = end;
+  });
+  if (cursor < text.length) pieces.push(text.slice(cursor));
+  return (
+    <div
+      ref={overlayRef}
+      data-testid="at-highlight-overlay"
+      aria-hidden
+      className="pointer-events-none absolute inset-0 max-h-40 overflow-hidden py-0.5 text-ui-base leading-5 text-transparent"
+    >
+      <div className="w-full break-words whitespace-pre-wrap">
+        {pieces}
+        {/* 尾部占位换行：与 textarea 末行行为一致（多行时不因缺尾换行少一
+            行高度——纯对齐兜底，无行为面） */}
+        {"\u200b"}
+      </div>
     </div>
   );
 }

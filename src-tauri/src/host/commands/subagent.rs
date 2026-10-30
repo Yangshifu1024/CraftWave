@@ -906,6 +906,9 @@ async fn run_subagent(
             session_id: ctx.session_id.clone(),
             run_id: sub_run_id.clone(),
             data_root: data_root.clone(),
+            // 产物登记（28 号票）：子代理环境不装配——worktree 内写入不进
+            // 会话产物面（ADR-0001：改动经汇回进主工作区，主代理写操作登记）
+            store: None,
             // 子代理边界（Q13 + 公共操作）：无 MCP 动态段、无委派面、
             // 执行入口按白名单过滤（工具可见面 = 执行许可）
             mcp: None,

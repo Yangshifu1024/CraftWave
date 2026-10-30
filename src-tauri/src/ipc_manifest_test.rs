@@ -102,6 +102,9 @@ fn export_contract_types_and_match_manifest() {
     // 非名义根，显式补根导出（连带 QuotaStatus/QuotaData/QuotaEntry 依赖）。
     // 类型本体在 providers::quota（命令壳只是转调，契约类型不重复归属）。
     <crate::providers::quota::QuotaSnapshot as ts_rs::TS>::export_all(&cfg).unwrap();
+    // 产物面板契约（28 号票，§3.3 #59l/#35）：list_editors 返回
+    // Vec<EditorEntry> 非名义根，显式补根导出。
+    <crate::host::commands::artifacts::EditorEntry as ts_rs::TS>::export_all(&cfg).unwrap();
 
     // ①b 内置预设清单常量（03 号票单源定稿）：serde 序列化权威清单写入
     //    BuiltinPresets.ts（前端 settings/presets.ts re-export 消费）——

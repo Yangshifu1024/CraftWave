@@ -123,6 +123,7 @@ fn assemble(
                 tavily_endpoint: None,
             },
         })),
+        store: None,
     });
     let gate = ApprovalGate::new(tier, plan);
     (executor, gate)

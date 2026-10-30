@@ -271,6 +271,67 @@ describe("createTauriChatAdapter：帧消费管线", () => {
 // ---- sessionAdapter：会话级内存态（权限档 + 模型覆盖 + thinking）随发送
 //      生效（17 号票建面；18 号票追加了 thinking 档惰性取值） ----
 
+// ---- 发送合成引用段（28 号票，§10.6）：wire 面最后一条 user 尾部追加
+// [引用文件] 段；树同步（syncTree）与输入框原文不受影响。----
+
+describe("createTauriChatAdapter：发送合成引用段（28 号票）", () => {
+  /** 收到 startChat 的 wire messages（断言面）。 */
+  async function captureSentWire(messages: ThreadMessage[]) {
+    const sent: unknown[][] = [];
+    const startChat = vi.fn(
+      async (args: { messages: unknown[]; onFrame: (frame: SequencedFrame) => void }) => {
+        sent.push(args.messages);
+        args.onFrame(f({ type: "runEnded", reason: "done", durationMs: 0, toolCount: 0, turn: 1 }));
+        return { runId: "run-refs" };
+      },
+    );
+    const syncTree = vi.fn(async () => {});
+    const adapter = createTauriChatAdapter({
+      sessionId: "sess-refs",
+      runConfig: { tier: "autoEdit", maxTurns: 4, steer: false },
+      startChat,
+      cancelRun: async () => true,
+      syncTree,
+    });
+    for await (const _ of asAsync(adapter.run({ ...runOptions(), messages }))) void _;
+    return { sent, syncTree };
+  }
+
+  it("@token 消息发送时正文尾部合成引用段；树同步仍收原文", async () => {
+    const messages = [
+      msg("u1", "user", [{ type: "text", text: '看 @src/main.rs 和 @"a b/c.md" 说明了什么' }]),
+    ];
+    const { sent, syncTree } = await captureSentWire(messages);
+    const wire = sent[0] as Array<{ parts: Array<{ type: string; text?: string }> }>;
+    const lastText = wire[0].parts
+      .filter((p) => p.type === "text")
+      .map((p) => p.text)
+      .join("");
+    expect(lastText).toBe(
+      '看 @src/main.rs 和 @"a b/c.md" 说明了什么\n\n[引用文件]\n- @src/main.rs\n- @a b/c.md',
+    );
+    // 树同步收原始 messages（原文落盘，引用段只在 wire 面）
+    expect(syncTree).toHaveBeenCalledExactlyOnceWith(messages);
+  });
+
+  it("无 @token 消息 wire 面原样（与 toWire 基线一致）", async () => {
+    const messages = [msg("u1", "user", [{ type: "text", text: "普通消息没有引用" }])];
+    const { sent } = await captureSentWire(messages);
+    expect(sent[0]).toEqual(toWire(messages));
+  });
+
+  it("绝对路径 token 原样保留不进引用段（拖拽形态，read 照走授权链）", async () => {
+    const messages = [msg("u1", "user", [{ type: "text", text: "看 @/tmp/x.txt 和 @ok.txt" }])];
+    const { sent } = await captureSentWire(messages);
+    const wire = sent[0] as Array<{ parts: Array<{ type: string; text?: string }> }>;
+    const lastText = wire[0].parts
+      .filter((p) => p.type === "text")
+      .map((p) => p.text)
+      .join("");
+    expect(lastText).toBe("看 @/tmp/x.txt 和 @ok.txt\n\n[引用文件]\n- @ok.txt");
+  });
+});
+
 describe("sessionRunConfig：会话内存态 runConfig", () => {
   it("会话覆盖的模型 id / thinking 档 / 权限档在发送时生效；未设置时省略字段", () => {
     // 全部未设置：只有 DEFAULT_RUN_CONFIG 基线（modelId/thinking 键省略）

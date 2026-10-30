@@ -80,18 +80,39 @@ export function routeEnterKey(opts: {
   return "none";
 }
 
-/** 从 (text, cursor) 检测未闭合的 `@` 触发（§10.6 光标锚定）：
- *  光标往回到最近 '@' 之间无空白即视为路径查询中，返回插入位与查询词。 */
+/**
+ * 从 (text, cursor) 检测未闭合的 `@` 触发（§10.6 光标锚定，28 号票引号升级）：
+ * - 光标往回到最近 `@` 之间无引号外空白即视为路径查询中，返回插入位与查询词；
+ * - 引号路径（`@"a b/c.txt"`，28 号票）：回扫遇**未闭合** `"` 内空白不终止
+ *   （引号闭合即止——闭合的引用段视为完整，不再触发菜单）；引号内的 `@`
+ *   不嵌套触发（`@"a@b/c.txt"` 中间的 @ 是普通字符）。
+ *
+ * 算法：先按光标左侧引号总数定起步状态（奇 = 光标在未闭合引号段内），
+ * 再向左逐字符扫描——`"` 翻转引号内态（翻出引号段且起步就在段外 = 闭合点，
+ * 即止返回 null）；`@` 在引号外即触发符；引号外空白即分隔符。
+ */
 export function detectAtQuery(text: string, cursor: number): { at: number; query: string } | null {
+  // 起步状态：光标左侧的引号配对余量（奇数 = 光标处于某个未闭合引号内）
+  let inQuote = (text.slice(0, cursor).match(/"/g)?.length ?? 0) % 2 === 1;
+  const startInQuote = inQuote;
   let i = cursor - 1;
   while (i >= 0) {
     const ch = text[i];
-    if (ch === "@") break;
-    if (/\s/.test(ch)) return null; // @ 与光标间隔了空白：非触发态
+    if (ch === '"') {
+      inQuote = !inQuote;
+      if (!inQuote && !startInQuote) return null; // 引号闭合即止：引用已完整
+      i -= 1;
+      continue;
+    }
+    if (ch === "@") {
+      if (!inQuote) return { at: i, query: text.slice(i + 1, cursor) };
+      i -= 1;
+      continue; // 引号内的 @：普通字符，不嵌套触发
+    }
+    if (/\s/.test(ch) && !inQuote) return null; // 引号外空白：非触发态
     i -= 1;
   }
-  if (i < 0) return null;
-  return { at: i, query: text.slice(i + 1, cursor) };
+  return null;
 }
 
 /**
@@ -206,9 +227,15 @@ export function filterSkills(skills: SkillListEntry[], query: string): SkillList
   return [...starts, ...contains];
 }
 
-/** 补全项的插入文本（目录补全保留 @ 语义，文件同样直接插入相对路径）。 */
+/**
+ * 补全项的插入文本（28 号票引号升级）：路径含空格 → 引号包裹
+ * `@"a b/c.txt"`（发送合成引用段与模型 read 都按整段路径消费）；无空格
+ * 维持裸路径。替换范围 = [at+1, cursor)（即查询段整体——含查询中已敲出的
+ * 开引号，选中补全后引号形态归一）。目录与文件同形态。
+ */
 export function insertAtCompletion(text: string, at: number, cursor: number, path: string): string {
-  return `${text.slice(0, at + 1)}${path} ${text.slice(cursor)}`;
+  const token = /\s/.test(path) ? `"${path}"` : path;
+  return `${text.slice(0, at + 1)}${token} ${text.slice(cursor)}`;
 }
 
 /**
@@ -286,7 +313,10 @@ export function useComposerKeys(options?: {
         : { query: detected.query, items: [], activeIndex: 0 },
     );
     const timer = setTimeout(() => {
-      void searchWorkspacePaths(sessionId, detected.query, 8)
+      // 引号路径查询（28 号票）：搜索词剥引号字符（`"a b/c` → `a b/c`，
+      // 后端基名子串匹配不含引号形态）
+      const needle = detected.query.replace(/"/g, "");
+      void searchWorkspacePaths(sessionId, needle, 8)
         .then((items) => {
           setAtMenu((prev) => (prev !== null ? { ...prev, items, activeIndex: 0 } : prev));
         })

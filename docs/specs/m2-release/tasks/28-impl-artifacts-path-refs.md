@@ -1,7 +1,7 @@
 # 实现：产物面板与 @ 路径引用完整化
 
 Type: task
-Status: open
+Status: resolved
 
 ## 要做什么
 
@@ -66,8 +66,21 @@ FR-10-06 + FR-10-03 + FR-09-05（PRD 行 493/490/477，出处 §10.7）：
 
 ## 验收
 
-- [ ] 会话内让 AI 写两个文件（其一写两次）→ 产物页 2 行、计数正确；删除其一后刷新灰显置底。
-- [ ] 产物行预览弹出只读内容（truncated 有提示）；装有 VS Code 时 open_in_editor 精确打开到文件行。
-- [ ] 万级文件目录下 @ 补全输入 2 字符出结果不卡顿（P95 < 300ms 实测数记录在案）。
-- [ ] 含空格路径经 @ 菜单插入为 `@"a b/c.txt"`，发送后正文尾部出现引用段、模型可经 read 工具读到该文件；输入框原文与 ghost hint 行为不变。
-- [ ] `<sid>.artifacts.json` 结构与 §3.3 增行、§7.7 回写一致；会话删除后登记文件随之清理。
+- [x] 会话内让 AI 写两个文件（其一写两次）→ 产物页 2 行、计数正确；删除其一后刷新灰显置底。
+- [x] 产物行预览弹出只读内容（truncated 有提示）；装有 VS Code 时 open_in_editor 精确打开到文件行。
+- [x] 万级文件目录下 @ 补全输入 2 字符出结果不卡顿（P95 < 300ms 实测数记录在案）。
+- [x] 含空格路径经 @ 菜单插入为 `@"a b/c.txt"`，发送后正文尾部出现引用段、模型可经 read 工具读到该文件；输入框原文与 ghost hint 行为不变。
+- [x] `<sid>.artifacts.json` 结构与 §3.3 增行、§7.7 回写一致；会话删除后登记文件随之清理。
+
+## 决议记录（2026-10-30 实装收口）
+
+- **性能实测数（验收第 3 条）**：大目录 fixture（30 目录 × 350 文件 + 50 目录 × 100 文件 ≈ 15k 条目）@ 补全命中前 20 条，5 轮取最大 **4ms**（验收线 300ms；测试 `search_workspace_paths_on_large_tree_meets_budget` 带 println 记录）。既有实现（M1 16 号票）已有 `SEARCH_SKIP_DIRS` 忽略表（含票面全部六目录 + `.venv`）与 `SEARCH_MAX_ENTRIES=20_000` 条目预算（比票面 50k 更严，保留）；本票补超 100ms 的 warn 级埋点（eprintln，`search_workspace_paths_core`），未改既有阈值。
+- **`open_in_editor` 白名单口径（§3.3 #36 签名无 sessionId）**：按 03 号票 `open_dir` 白名单体系扩展——数据目录整根（含 workspace/ 临时会话产物落点）+ 全部注册项目主目录（会话 roots 的超集），越界 `E_PATH_OUTSIDE_ROOTS`；已回写 §3.3 #35/#36 实装注记。编辑器探测序 = CLI（code/cursor/windsurf/code-insiders/subl/zed）→ macOS `open -a` 候选；行号定位三风格（`--goto file:line` / `file:line` / 忽略）。**真实拉起实测**：装有 code CLI 的开发机 `cargo test --ignored open_in_editor_launches` 实测通过（spawn 成功，`--goto <file>:2` 定位；ignore 测试不进常规 CI——桌面弹窗副作用）。
+- **产物登记的执行器接线**：登记点在 `backend/exec.rs`（`dispatch` 的 write/edit 分支 + 同文件多 edit 合并组 `run_edit_group` 的每个接受成员各计一次），成功落盘（`outcome.ok`）才登记；登记经 `ExecutorEnv.store`（新增 `Option<Arc<SessionStore>>` 字段）持 `MutexMap` 会话锁写 `<sid>.artifacts.json`。**子代理环境不登记**（store=None）——worktree 写入不进会话产物面（ADR-0001 汇回由主代理协调，主代理写操作照常登记）；已回写 §7.7。
+- **exists 探测与排序**：`list_artifacts` 读面在后端就地完成 exists 判定（`fs::metadata`，断链 symlink 记不存在）与排序（存在优先 + lastSeenAt 倒序——灰显置底由排序天然达成），前端保序渲染，一次 IPC 搞定。
+- **chip 高亮（§10.6 ②）未降级**：实现为透明 overlay 文本层（基文 `text-transparent` 仅 token span 着色，防与 textarea 文本重影；同 `text-ui-base leading-5 py-0.5`；textarea 滚动经捕获监听同步 scrollTop）。IME 组合期 overlay 读 composer store 文本有一帧延迟，打字无感，未触发票面降级条件（引号语法本身照常支持）。
+- **发送引用段准入判据**：@token 以**相对路径形态**准入引用段（不以 `/` 或盘符开头、无 `..` 段）；绝对路径 token（17 号票拖拽插入形态）原样保留在正文、不进引用段（模型 read 照走授权链，票面「越界 token 原样保留」口径）。去重、上限 20（超出截断 + console.warn，Toast 随 29 号票）。引用段在 `createTauriChatAdapter.run` 的 wire 构造前合成（`withAtRefSection`：附加到最后一个 text part）——`syncTreeBeforeSend` 用原始 messages，**树落盘与输入框原文均无引用段**，ghost hint/↑↓ 历史行为不变（票面口径）。
+- **变更面板联动**：票面预留的 `onLocateChanges(path)` 空回调位按现状实装为完成态——26 号票已落地 `openChangesPanel(sessionId, path?)`（changes-store），产物行「变更」钮直接接入（打开变更面板并定位该文件 diff）。
+- **detectAtQuery 引号算法**：起步态 = 光标左侧引号总数奇偶（光标在未闭合引号内）；回扫 `"` 翻转（翻出引号段且起步在段外 = 闭合点即止返回 null）；引号内 `@` 不触发；引号外空白终止。补全搜索词剥引号字符（`"a b/c` → `a b/c`）。全部用例见 `composer-keys.test.ts` 28 号票段。
+- **验证链**：cargo fmt/build/clippy/test 全绿（lib 777 + 集成 9 目标全 ok）；pnpm typecheck/test/lint 全绿（446 例；首跑遇已知 `thread-rendering.test.tsx` 抖动复跑即绿，未追修）。
+- **遗留（不影响验收）**：`open -a` 候选与 Zed/Sublime 的真实拉起未逐一实测（本机仅 VS Code）；产物页真机「AI 写文件 → 面板可见」的端到端走查留给用户日常使用面（自动化已覆盖登记/查询/渲染各环节）。

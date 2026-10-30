@@ -702,6 +702,51 @@ describe("§12.3 manifest 双向扫描", () => {
     );
     expect(approvalConfig).toContain("gitAllowStageCommit");
   });
+
+  it("产物面板与编辑器打开（28 号票，§3.3 #59l/#35/#36）在两侧接线且契约字段级一致", () => {
+    const find = (name: string) => {
+      const command = manifest.commands.find((c) => c.name === name);
+      expect(command, `manifest 缺命令 ${name}`).toBeDefined();
+      return command!;
+    };
+    // #59l list_artifacts：产物清单（exists 探测就地完成）
+    expect(find("list_artifacts")).toMatchObject({
+      args_type: "ListArtifactsArgs",
+      ret_type: "ListArtifactsResult",
+    });
+    // #35 list_editors：编辑器探测
+    expect(find("list_editors")).toMatchObject({
+      args_type: "()",
+      ret_type: "Vec<EditorEntry>",
+    });
+    // #36 open_in_editor：编辑器打开（path + line?）
+    expect(find("open_in_editor")).toMatchObject({
+      args_type: "OpenInEditorArgs",
+      ret_type: "()",
+    });
+    // 双向：client.ts 已接线（禁止只注册不使用）
+    for (const name of ["list_artifacts", "list_editors", "open_in_editor"]) {
+      expect(Object.values(COMMANDS), `${name} 应在 client.ts 接线`).toContain(name);
+    }
+    // 生成物字段级（§3.3 #59l/#35 回写形态：ArtifactRow 四字段 + EditorEntry 两字段）
+    const row: import("./generated/ArtifactRow").ArtifactRow = {
+      path: "/proj/a.txt",
+      runCount: 2,
+      lastSeenAt: 1760000000000,
+      exists: true,
+    };
+    expect(row.runCount).toBe(2);
+    expect(row.exists).toBe(true);
+    const result: import("./generated/ListArtifactsResult").ListArtifactsResult = {
+      artifacts: [row],
+    };
+    expect(result.artifacts).toHaveLength(1);
+    const editor: import("./generated/EditorEntry").EditorEntry = {
+      name: "VS Code",
+      path: "/usr/local/bin/code",
+    };
+    expect(editor.name).toBe("VS Code");
+  });
 });
 
 // ---- 跨语言 fixture 期望值：与 src-tauri/src/ipc_manifest_test.rs 的 fixture_entries() 逐字段一致 ----

@@ -23,6 +23,9 @@
 //! `crate::storage::…` 引用，不必关心具体藏在哪个子文件里。
 
 pub mod backup;
+// 产物登记（28 号票，§7.7 sessions/<sid>.artifacts.json）：write/edit 成功
+// 落盘的路径登记面（去重计数 + 存在探测查询）。
+pub mod artifacts;
 pub mod config_store;
 pub mod entries;
 pub mod imgblob;
@@ -51,6 +54,14 @@ mod index_store_test;
 #[path = "prefs_test.rs"]
 mod prefs_test;
 
+#[cfg(test)]
+#[path = "artifacts_test.rs"]
+mod artifacts_test;
+
+pub use artifacts::{
+    ArtifactEntry, ArtifactRow, ArtifactsFile, ListArtifactsResult, artifacts_path,
+    list as list_artifacts_rows, load as load_artifacts, record as record_artifact_entry,
+};
 pub use entries::{
     CompleteReason, IncompleteReason, MessageEntry, MessageRole, MessageStatus, MetaEntry,
     PlanItem, PlanItemStatus, RequiresActionReason, SessionEntry, StoredCompactionEntry,

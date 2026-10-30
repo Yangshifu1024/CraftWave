@@ -617,3 +617,181 @@ async fn cross_session_batches_write_lock_keeps_files_consistent() {
         "两个批次的合并提交按序生效"
     );
 }
+
+// ---- 产物登记接线（28 号票，FR-10-06）：write/edit 成功落盘后登记、
+// 失败不登记、合并组逐成员计数、未装配 store 不登记。----
+
+use std::sync::Mutex as StdMutex;
+
+/// 带会话存储器环境的执行器（登记测试脚手架）：数据根 = 临时目录上的
+/// SessionStore，events 用录制桩（ask/plan 槽空装配）。
+fn executor_with_store() -> (
+    ToolsetExecutor,
+    Arc<crate::storage::SessionStore>,
+    std::path::PathBuf,
+) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path().to_path_buf();
+    std::mem::forget(dir);
+    let ctx = ToolsContext::new(root.clone(), root.clone());
+    let store = Arc::new(crate::storage::SessionStore::with_root(root.clone()));
+    let executor =
+        ToolsetExecutor::new(ctx, PermissionTier::FullAccess).with_env(super::exec::ExecutorEnv {
+            events: Arc::new(crate::util::events::RecordingEventSink::new()),
+            ask: Arc::new(StdMutex::new(None)),
+            plan: Arc::new(StdMutex::new(None)),
+            session_id: "s-art".to_owned(),
+            run_id: "run-1".to_owned(),
+            data_root: root.clone(),
+            mcp: None,
+            skills: None,
+            subagents: None,
+            allowed_tools: None,
+            network: None,
+            store: Some(store.clone()),
+        });
+    (executor, store, root)
+}
+
+/// write 成功 → 登记一条（runCount=1）；write 失败（已存在）→ 不登记。
+#[tokio::test]
+async fn write_success_records_artifact_failure_does_not() {
+    let (executor, store, root) = executor_with_store();
+    let token = CancellationToken::new();
+    executor
+        .execute(
+            "c1",
+            "write",
+            r#"{"path": "a.txt", "content": "v1"}"#,
+            &token,
+        )
+        .await;
+    executor
+        .execute(
+            "c2",
+            "write",
+            r#"{"path": "b.txt", "content": "v1"}"#,
+            &token,
+        )
+        .await;
+    // 已存在 → write 拒绝（仅新建语义）→ 不登记
+    executor
+        .execute(
+            "c3",
+            "write",
+            r#"{"path": "a.txt", "content": "v2"}"#,
+            &token,
+        )
+        .await;
+    let rows = store.list_artifacts("s-art");
+    assert_eq!(rows.len(), 2, "成功两条各一条记录，失败的 a.txt 覆盖不追加");
+    let a = rows.iter().find(|r| r.path.ends_with("a.txt")).unwrap();
+    assert_eq!(a.run_count, 1);
+    let _ = root;
+}
+
+/// edit 成功 → 同一路径重复编辑 runCount 递增。
+#[tokio::test]
+async fn edit_repeat_increments_run_count() {
+    let (executor, store, _root) = executor_with_store();
+    let token = CancellationToken::new();
+    executor
+        .execute(
+            "c1",
+            "write",
+            r#"{"path": "s.txt", "content": "x\n"}"#,
+            &token,
+        )
+        .await;
+    executor
+        .execute(
+            "c2",
+            "edit",
+            r#"{"path": "s.txt", "oldText": "x", "newText": "y"}"#,
+            &token,
+        )
+        .await;
+    executor
+        .execute(
+            "c3",
+            "edit",
+            r#"{"path": "s.txt", "oldText": "y", "newText": "z"}"#,
+            &token,
+        )
+        .await;
+    let rows = store.list_artifacts("s-art");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].run_count, 3, "write 1 次 + edit 2 次");
+}
+
+/// 同批同文件多 edit 合并提交：每个接受成员都登记一次（runCount 逐次 +1）。
+#[tokio::test]
+async fn merged_edit_group_records_each_member() {
+    let (executor, store, _root) = executor_with_store();
+    let token = CancellationToken::new();
+    executor
+        .execute(
+            "c0",
+            "write",
+            r#"{"path": "m.txt", "content": "a b\n"}"#,
+            &token,
+        )
+        .await;
+    let batch = vec![
+        BatchCall {
+            call_id: "c1".to_owned(),
+            name: "edit".to_owned(),
+            args_json: r#"{"path": "m.txt", "oldText": "a", "newText": "A"}"#.to_owned(),
+        },
+        BatchCall {
+            call_id: "c2".to_owned(),
+            name: "edit".to_owned(),
+            args_json: r#"{"path": "m.txt", "oldText": "b", "newText": "B"}"#.to_owned(),
+        },
+    ];
+    let results = executor.execute_batch(&batch, &token).await;
+    assert!(
+        results
+            .iter()
+            .all(|e| matches!(e, ToolExecution::Completed { ok: true, .. }))
+    );
+    let rows = store.list_artifacts("s-art");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].run_count, 3, "write 1 次 + 合并组两个成员各 1 次");
+}
+
+/// 未装配 store（子代理/headless 形态）：write 成功但不登记、不报错。
+#[tokio::test]
+async fn write_without_store_skips_recording() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path().to_path_buf();
+    std::mem::forget(dir);
+    let ctx = ToolsContext::new(root.clone(), root.clone());
+    let executor =
+        ToolsetExecutor::new(ctx, PermissionTier::FullAccess).with_env(super::exec::ExecutorEnv {
+            events: Arc::new(crate::util::events::RecordingEventSink::new()),
+            ask: Arc::new(StdMutex::new(None)),
+            plan: Arc::new(StdMutex::new(None)),
+            session_id: "s-x".to_owned(),
+            run_id: "run-1".to_owned(),
+            data_root: root.clone(),
+            mcp: None,
+            skills: None,
+            subagents: None,
+            allowed_tools: None,
+            network: None,
+            store: None,
+        });
+    let token = CancellationToken::new();
+    let out = executor
+        .execute(
+            "c1",
+            "write",
+            r#"{"path": "a.txt", "content": "v"}"#,
+            &token,
+        )
+        .await;
+    assert!(matches!(out, ToolExecution::Completed { ok: true, .. }));
+    // 无 store 可写 → 无登记文件
+    assert!(!root.join("sessions").join("s-x.artifacts.json").exists());
+}

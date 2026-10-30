@@ -20,6 +20,7 @@ import * as client from "@/ipc/client";
 import type { MessageEntry, RunConfig, SequencedFrame } from "@/ipc/types";
 import { syncTreeBeforeSend, useSessionPersistStore } from "@/stores/session";
 import { applySubagentFrame } from "@/stores/subagents";
+import { buildRefSection, collectRefs } from "./at-refs";
 import { bindCancelToRun } from "./cancel-bridge";
 import { type ChatPart, FrameBuffer, type FrameSnapshot, toParts } from "./frames";
 import { parseCwImageUrl } from "./image-ref";
@@ -264,6 +265,35 @@ export function sessionAdapter(sessionId: string): ChatModelAdapter {
 }
 
 /**
+ * 发送变换（28 号票，§10.6 合成引用段）：对最后一条 user 消息的文本 part
+ * 尾部追加 @ 引用段（相对路径准入、去重、上限 20——collectRefs）。
+ * 输入框原文与树落盘不受影响：syncTree 在变换前用原始 messages（树里存
+ * 原文），本变换只作用于 start_chat 的 wire 面——模型侧按需 read，不复制
+ * 内容。返回新数组（最后一条浅替换），无 @token 时原样返回。
+ */
+function withAtRefSection(messages: readonly ThreadMessage[]): ThreadMessage[] {
+  const list: ThreadMessage[] = [...messages];
+  const last = list[list.length - 1];
+  if (last === undefined || last.role !== "user") return list;
+  const text = last.content.map((part) => (part.type === "text" ? part.text : "")).join("");
+  const refs = collectRefs(text);
+  if (refs.length === 0) return list;
+  const section = buildRefSection(refs);
+  // 引用段附加到最后一个 text part（无 text part 时新建一个——纯文本
+  // 消息恒有，防御面）
+  const content = [...last.content];
+  const lastTextIndex = content.map((p) => p.type).lastIndexOf("text");
+  if (lastTextIndex >= 0) {
+    const part = content[lastTextIndex] as { type: "text"; text: string };
+    content[lastTextIndex] = { ...part, text: `${part.text}${section}` };
+  } else {
+    content.push({ type: "text", text: section.trimStart() });
+  }
+  list[list.length - 1] = { ...last, content };
+  return list;
+}
+
+/**
  * 可注入 adapter 工厂：start_chat 带 channel → FrameBuffer 累积 → 64ms 节流
  * 快照全量 yield（打字机，§10.2）→ runEnded 快照以终态 status 收口；abortSignal
  * 桥 cancel_run（S5：fire-and-forget，终态以 runEnded 帧为权威）。
@@ -299,7 +329,7 @@ export function createTauriChatAdapter(deps: TauriAdapterDeps): ChatModelAdapter
         const invokePromise = deps
           .startChat({
             sessionId: deps.sessionId,
-            messages: toWire(messages),
+            messages: toWire(withAtRefSection(messages)),
             runConfig,
             onFrame: (frame: SequencedFrame) => {
               maxSeq = Math.max(maxSeq, frame.seq);
