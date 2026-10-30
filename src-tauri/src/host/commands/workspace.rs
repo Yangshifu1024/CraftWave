@@ -1,8 +1,11 @@
 //! 工作区只读域命令（§3.3 #27 `search_workspace_paths` / #28
-//! `read_workspace_file`，16 号票）：@ 引用补全与前端预览读取。
+//! `read_workspace_file`，16 号票）+ 外部目录授权（§3.3 #33
+//! `check_external_path` / #34 `allow_external_dir`，24 号票）。
 //!
 //! 路径校验复用 safety::PathGuard（§9.1 safe_join 单一实现；C-8 收窄后
-//! roots = 项目主目录 + 数据目录下 `workspace/` 子目录，21 号票）；解码复用
+//! roots = 项目主目录 + 数据目录下 `workspace/` 子目录，21 号票；24 号票起
+//! 追加会话级授权目录——`authorized_external_dirs` 持久于 SessionMeta，
+//! §9.9「授权持久于会话 roots 快照，不全局生效」）；解码复用
 //! util::encoding（与 read 工具共用，C-10）；单次响应 ≤512KB（MAX_RESPONSE_BYTES）。
 //!
 //! @ 补全的返回路径约定（16 号票钉死）：项目主目录下的条目返回相对路径
@@ -20,19 +23,47 @@ use crate::host::AppState;
 use crate::host::IpcError;
 use crate::safety::safe_join::PathGuard;
 use crate::util::encoding::{MAX_RESPONSE_BYTES, decode_text, is_probably_binary};
-use crate::util::errors::ToolError;
+use crate::util::errors::{E_PATH_OUTSIDE_ROOTS, ToolError};
 
-/// 会话 roots 解析（§6.2/§9.1，C-8 复判收窄，21 号票）：
+/// 会话 roots 解析（§6.2/§9.1，C-8 复判收窄，21 号票；24 号票扩授权目录）：
 ///
 /// - 项目会话：两根 = 项目主目录 + `<data_root>/workspace/`；
-/// - 临时会话（含未知会话兜底）：两根同目录 = `<data_root>/workspace/`。
+/// - 临时会话（含未知会话兜底）：两根同目录 = `<data_root>/workspace/`；
+/// - 第三集合 = SessionMeta 授权的外部目录（§9.9 会话 roots 快照：#34
+///   「始终允许」并入后随 index.json 持久化，会话内跨 run 生效、跨会话
+///   不延续；Q41 备份恢复由恢复流程清空）。
 ///
-/// 返回 (project_root, data_root)——第二根语义为「数据目录下的 agent
-/// workspace 子目录」，PathGuard 构造（tools guard / read_workspace_file）
-/// 与 @ 补全遍历都以它为 roots：数据目录本体（config.json/sessions/ 等存储
-/// 内部文件）退出模型文件工具与 @ 补全的可见面。目录不在这里落盘创建，
-/// 由使用方 create_dir_all（chat.rs 既有习惯）或按不存在口径报错。
-pub(crate) fn resolve_session_roots(app: &AppState, session_id: &str) -> (PathBuf, PathBuf) {
+/// 数据目录本体（config.json/sessions/ 等存储内部文件）退出模型文件工具
+/// 与 @ 补全的可见面。目录不在这里落盘创建，由使用方 create_dir_all
+/// （chat.rs 既有习惯）或按不存在口径报错。
+#[derive(Debug, Clone)]
+pub(crate) struct SessionRoots {
+    /// 项目主目录（相对路径解析基准与首个 root；临时会话 = workspace 根）。
+    pub project_root: PathBuf,
+    /// 数据目录下的 workspace 子目录（第二根）。
+    pub workspace_root: PathBuf,
+    /// 已授权外部目录（canonical 绝对路径；授权记录按字符串保留，此处
+    /// canonicalize 失败的条目跳过——PathGuard 对不存在的根会报错）。
+    pub extra_dirs: Vec<PathBuf>,
+}
+
+// SessionRoots 的根集合方法。
+impl SessionRoots {
+    /// 全部根（PathGuard 构造序：项目主目录在前——相对路径解析基准）。
+    pub fn all(&self) -> Vec<PathBuf> {
+        let mut roots = vec![self.project_root.clone(), self.workspace_root.clone()];
+        roots.extend(self.extra_dirs.iter().cloned());
+        roots
+    }
+
+    /// 初始两根（不含授权目录；#33 insideRoots 判定口径）。
+    pub fn core(&self) -> Vec<PathBuf> {
+        vec![self.project_root.clone(), self.workspace_root.clone()]
+    }
+}
+
+/// 会话 roots 解析（含授权目录；命令面与 run 装配共用）。
+pub(crate) fn resolve_session_roots(app: &AppState, session_id: &str) -> SessionRoots {
     let workspace_root = app.store.root().join("workspace");
     let project_root = app
         .store
@@ -41,7 +72,22 @@ pub(crate) fn resolve_session_roots(app: &AppState, session_id: &str) -> (PathBu
         .and_then(|meta| meta.project_id)
         .and_then(|pid| app.projects.home_of(&pid))
         .unwrap_or_else(|| workspace_root.clone());
-    (project_root, workspace_root)
+    let extra_dirs = app
+        .store
+        .index()
+        .get(session_id)
+        .map(|meta| {
+            meta.authorized_external_dirs
+                .iter()
+                .filter_map(|d| fs::canonicalize(d).ok())
+                .collect()
+        })
+        .unwrap_or_default();
+    SessionRoots {
+        project_root,
+        workspace_root,
+        extra_dirs,
+    }
 }
 
 /// ToolError → D14 错误码（safe_join 语义原样透传）。
@@ -97,12 +143,13 @@ pub(crate) fn search_workspace_paths_core(
         return Ok(Vec::new());
     }
     let limit = limit.unwrap_or(SEARCH_DEFAULT_LIMIT).clamp(1, 100);
-    let (project_root, data_root) = resolve_session_roots(app, session_id);
+    let roots = resolve_session_roots(app, session_id);
 
     let mut hits: Vec<WorkspacePathHit> = Vec::new();
     let mut visited: HashSet<PathBuf> = HashSet::new();
-    let project_canon = fs::canonicalize(&project_root).unwrap_or_else(|_| project_root.clone());
-    for root in [project_root, data_root] {
+    let project_canon =
+        fs::canonicalize(&roots.project_root).unwrap_or_else(|_| roots.project_root.clone());
+    for root in roots.all() {
         let Ok(canon) = fs::canonicalize(&root) else {
             continue;
         };
@@ -233,12 +280,12 @@ pub(crate) fn read_workspace_file_core(
         (Some(offset), Some(limit)) => Some(ReadRange { offset, limit }),
         _ => None,
     };
-    let (project_root, data_root) = resolve_session_roots(app, session_id);
+    let roots = resolve_session_roots(app, session_id);
     // roots 需真实存在（canonicalize）：项目目录按需补建；workspace 子目录
     // 首次使用即建（chat.rs 同款习惯，21 号票收窄后的第二根）
-    let _ = fs::create_dir_all(&project_root);
-    let _ = fs::create_dir_all(&data_root);
-    let guard = PathGuard::new(vec![project_root, data_root]).map_err(to_ipc_error)?;
+    let _ = fs::create_dir_all(&roots.project_root);
+    let _ = fs::create_dir_all(&roots.workspace_root);
+    let guard = PathGuard::new(roots.all()).map_err(to_ipc_error)?;
     let abs = guard.resolve(path).map_err(to_ipc_error)?;
 
     let bytes = match fs::read(&abs) {
@@ -364,4 +411,279 @@ pub(crate) async fn path_kind(path: String) -> Result<PathKindResult, IpcError> 
         return Err(IpcError::invalid_arg("path 不能为空"));
     }
     Ok(path_kind_core(&args.path))
+}
+
+// ---- 外部目录授权（§3.3 #33/#34，FR-05-12/§9.9，24 号票）----
+
+/// `check_external_path` 参数契约（§3.3 #33）。
+#[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct CheckExternalPathArgs {
+    pub session_id: String,
+    pub path: String,
+}
+
+/// `check_external_path` 返回契约（§3.3 #33 逐字段）：insideRoots = 路径在
+/// 初始两根（项目主目录 + workspace）内（无需授权）；allowed = 路径当前
+/// 可访问（初始两根内，或已授权目录内）。外部未授权 → allowed=false,
+/// insideRoots=false。
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct CheckExternalPathResult {
+    pub allowed: bool,
+    pub inside_roots: bool,
+}
+
+/// `check_external_path` 主体：按会话 roots 全集（含授权目录）做 safe_join
+/// 同款解析；解析结果落在初始两根下 → insideRoots。会话未知按临时会话
+/// 兜底（与 roots 解析一致，幂等查询语义）。
+pub(crate) fn check_external_path_core(
+    app: &AppState,
+    session_id: &str,
+    path: &str,
+) -> Result<CheckExternalPathResult, IpcError> {
+    let roots = resolve_session_roots(app, session_id);
+    let core: Vec<PathBuf> = roots
+        .core()
+        .iter()
+        .filter_map(|r| fs::canonicalize(r).ok())
+        .collect();
+    let guard = PathGuard::new(roots.all()).map_err(to_ipc_error)?;
+    match guard.resolve(path) {
+        Ok(resolved) => {
+            let inside_roots = core
+                .iter()
+                .any(|r| resolved == *r || resolved.starts_with(r));
+            Ok(CheckExternalPathResult {
+                allowed: true,
+                inside_roots,
+            })
+        }
+        Err(err) if err.code == E_PATH_OUTSIDE_ROOTS => Ok(CheckExternalPathResult {
+            allowed: false,
+            inside_roots: false,
+        }),
+        Err(err) => Err(to_ipc_error(err)),
+    }
+}
+
+/// `check_external_path` 命令（§3.3 #33）。
+#[tauri::command]
+pub(crate) async fn check_external_path(
+    app: State<'_, AppState>,
+    args: CheckExternalPathArgs,
+) -> Result<CheckExternalPathResult, IpcError> {
+    check_external_path_core(&app, &args.session_id, &args.path)
+}
+
+/// `allow_external_dir` 参数契约（§3.3 #34）。
+#[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct AllowExternalDirArgs {
+    pub session_id: String,
+    pub dir: String,
+}
+
+/// `allow_external_dir` 返回契约（§3.3 #34）：授权后的会话 roots 全集
+/// （初始两根 + 全部已授权外部目录，canonical 字符串）。
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalRootsResult {
+    pub roots: Vec<String>,
+}
+
+/// 当前用户家目录（HOME / USERPROFILE；system.rs 展开同一口径）。
+fn home_dir() -> Option<PathBuf> {
+    std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .ok()
+        .map(PathBuf::from)
+}
+
+/// 授权目标是否属「整体放行」禁区（§9.9，命中即 E_INVALID_ARG 拒绝）：
+/// 文件系统根、家目录本身、宿主托管目录（`~/.craftwave` = 数据目录）。
+/// 从严口径：家目录的**祖先**（比家目录粒度更大）与数据目录的**祖先及
+/// 后代**一并拒绝——授权托管目录的子目录会拆穿 C-8 收窄防线（数据目录
+/// 本体退出 agent 可见面），家目录以上粒度违背「目录及子目录」的授权
+/// 精神。项目主目录恰在数据目录内属于配置异常，同样被拒（防线优先）。
+pub(crate) fn is_protected_grant_target(dir: &Path, data_dir: &Path) -> bool {
+    // 文件系统根：除 RootDir/Prefix 外没有任何组件。
+    let is_root = dir.components().all(|c| {
+        matches!(
+            c,
+            std::path::Component::RootDir | std::path::Component::Prefix(_)
+        )
+    });
+    if is_root {
+        return true;
+    }
+    if let Some(home) = home_dir() {
+        // 家目录本身，或目录是家目录的祖先（粒度 ≥ 家目录）。
+        if dir == home || home.starts_with(dir) {
+            return true;
+        }
+    }
+    // 数据目录本身、其祖先（粒度 ≥ 托管目录）或其内部（拆穿 C-8 收窄）。
+    dir == data_dir || data_dir.starts_with(dir) || dir.starts_with(data_dir)
+}
+
+/// 会话 roots 全集字符串（授权后的返回面；canonical 失败的根按原路径
+/// 保留——展示面尽力而为）。
+fn roots_as_strings(roots: &SessionRoots) -> Vec<String> {
+    roots
+        .all()
+        .iter()
+        .map(|r| {
+            fs::canonicalize(r)
+                .unwrap_or_else(|_| r.clone())
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect()
+}
+
+/// `allow_external_dir` 主体：校验禁授权目标 → canonical → 并入
+/// SessionMeta 授权表（§9.9 会话 roots 快照持久化）→ 返回 roots 全集。
+/// 幂等：已授权的目录重复授权直接返回现状。
+pub(crate) fn allow_external_dir_core(
+    app: &AppState,
+    session_id: &str,
+    dir: &str,
+) -> Result<ExternalRootsResult, IpcError> {
+    if dir.trim().is_empty() {
+        return Err(IpcError::invalid_arg("dir 不能为空"));
+    }
+    // 会话必须存在：授权持久化在 SessionMeta 上，未知会话无处可写。
+    if app.store.index().get(session_id).is_none() {
+        return Err(IpcError::not_found(format!("会话不存在：{session_id}")));
+    }
+    let canonical = fs::canonicalize(dir).map_err(|e| {
+        IpcError::invalid_arg(format!("授权目录无法解析（须真实存在）：{dir}：{e}"))
+    })?;
+    // 禁授权目标判定统一在 canonical 域（macOS /var ↔ /private/var symlink
+    // 歧义：数据目录根与目标同域归一后才可比较，否则禁区判定被符号链接
+    // 绕过）。
+    let data_canonical =
+        fs::canonicalize(app.store.root()).unwrap_or_else(|_| app.store.root().to_path_buf());
+    if is_protected_grant_target(&canonical, &data_canonical) {
+        return Err(IpcError::invalid_arg(
+            "拒绝整体放行：不允许授权文件系统根、家目录本身或宿主托管目录（~/.craftwave）及其上/下范围",
+        ));
+    }
+    let text = canonical.to_string_lossy().into_owned();
+    let updated = app
+        .store
+        .index()
+        .mutate(session_id, |meta| {
+            if !meta.authorized_external_dirs.iter().any(|d| d == &text) {
+                meta.authorized_external_dirs.push(text.clone());
+            }
+        })
+        .map_err(|e| IpcError::internal(format!("会话索引写入失败：{e:?}")))?
+        .ok_or_else(|| IpcError::not_found(format!("会话不存在：{session_id}")))?;
+    let roots = SessionRoots {
+        project_root: resolve_session_roots(app, session_id).project_root,
+        workspace_root: app.store.root().join("workspace"),
+        extra_dirs: updated
+            .authorized_external_dirs
+            .iter()
+            .filter_map(|d| fs::canonicalize(d).ok())
+            .collect(),
+    };
+    Ok(ExternalRootsResult {
+        roots: roots_as_strings(&roots),
+    })
+}
+
+/// `allow_external_dir` 命令（§3.3 #34）。
+#[tauri::command]
+pub(crate) async fn allow_external_dir(
+    app: State<'_, AppState>,
+    args: AllowExternalDirArgs,
+) -> Result<ExternalRootsResult, IpcError> {
+    allow_external_dir_core(&app, &args.session_id, &args.dir)
+}
+
+/// `revoke_external_dir` 参数契约（24 号票补充面，§9.9 撤销入口：Inspector
+/// 已授权目录列表的移除按钮）。
+#[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct RevokeExternalDirArgs {
+    pub session_id: String,
+    pub dir: String,
+}
+
+/// `revoke_external_dir` 主体：按 canonical 字符串移除一条授权（不存在不
+/// 报错——幂等撤销）；返回剩余 roots 全集。移除后下次访问重新询问（§9.9）。
+pub(crate) fn revoke_external_dir_core(
+    app: &AppState,
+    session_id: &str,
+    dir: &str,
+) -> Result<ExternalRootsResult, IpcError> {
+    if dir.trim().is_empty() {
+        return Err(IpcError::invalid_arg("dir 不能为空"));
+    }
+    if app.store.index().get(session_id).is_none() {
+        return Err(IpcError::not_found(format!("会话不存在：{session_id}")));
+    }
+    // 输入允许非 canonical 形态：先 canonicalize 对齐存储口径；失败则按
+    // 原串匹配（目录已被删的场景也能撤掉遗留授权）。
+    let canonical = fs::canonicalize(dir)
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| dir.to_owned());
+    let updated = app
+        .store
+        .index()
+        .mutate(session_id, |meta| {
+            meta.authorized_external_dirs.retain(|d| d != &canonical);
+        })
+        .map_err(|e| IpcError::internal(format!("会话索引写入失败：{e:?}")))?
+        .ok_or_else(|| IpcError::not_found(format!("会话不存在：{session_id}")))?;
+    let roots = SessionRoots {
+        project_root: resolve_session_roots(app, session_id).project_root,
+        workspace_root: app.store.root().join("workspace"),
+        extra_dirs: updated
+            .authorized_external_dirs
+            .iter()
+            .filter_map(|d| fs::canonicalize(d).ok())
+            .collect(),
+    };
+    Ok(ExternalRootsResult {
+        roots: roots_as_strings(&roots),
+    })
+}
+
+/// `revoke_external_dir` 命令（24 号票补充面）。
+#[tauri::command]
+pub(crate) async fn revoke_external_dir(
+    app: State<'_, AppState>,
+    args: RevokeExternalDirArgs,
+) -> Result<ExternalRootsResult, IpcError> {
+    revoke_external_dir_core(&app, &args.session_id, &args.dir)
+}
+
+/// Q41 恢复授权接线面：清空**全部会话**的外部目录授权（33 号票备份恢复
+/// 流程调用——「恢复不自动启用备份中的外部 roots」；普通重启不调用）。
+/// 返回清理的会话条数。资源信任（trust/project.json）的同等清空面在
+/// [`crate::storage::trust::TrustStore::clear_all`]。
+/// 本票只出接口与测试（33 号票未动工），生产调用点随 33 号票接线。
+#[allow(dead_code)]
+pub(crate) fn clear_all_external_grants(app: &AppState) -> Result<usize, IpcError> {
+    let mut cleared = 0usize;
+    for meta in app.store.index().list() {
+        if meta.authorized_external_dirs.is_empty() {
+            continue;
+        }
+        app.store
+            .index()
+            .mutate(&meta.id, |m| m.authorized_external_dirs.clear())
+            .map_err(|e| IpcError::internal(format!("会话索引写入失败：{e:?}")))?;
+        cleared += 1;
+    }
+    Ok(cleared)
 }

@@ -1,6 +1,6 @@
 /**
- * AskPanel（§3.2 AskPayload 四形态，14 号票起 question/approval，08 号票
- * 增 mcpTrust，09 号票增 projectTrust）：
+ * AskPanel（§3.2 AskPayload 五形态，14 号票起 question/approval，08 号票
+ * 增 mcpTrust，09 号票增 projectTrust，24 号票增 externalDir）：
  * - question：逐题选项点选 + 自由文本输入 → resolveAsk(kind=question)；
  * - approval：diff 预览 / 命令行 + 围栏原因 → 允许/拒绝 → resolveAsk(kind=approval，
  *   optionId = allow_once/always_session/deny；23 号票起命令类审批增
@@ -9,19 +9,24 @@
  * - mcpTrust：MCP 启动信任（TOFU）摘要 + 三选项 → resolveAsk(kind=approval，
  *   optionId = allow_once/remember/deny)。后端以 sessionId=""（应用级询问）
  *   发 ask:opened——不属任何会话桶，任意会话上下文都渲染（设置页连接触发）；
- * - projectTrust：项目资源信任（技能首用，§9.8）摘要 + 三选项 → 应答同
- *   Approval 协议；sessionId="" 应用级桶（run 开始装配时触发，09 号票）。
+ * - projectTrust：项目资源信任（技能/项目指令首用，§9.8）摘要 + 三选项 →
+ *   应答同 Approval 协议；sessionId="" 应用级桶（run 开始装配时触发）；
+ * - externalDir：外部目录授权（§9.9，24 号票）——AI 访问会话 roots 外
+ *   路径前的「始终允许」确认：路径 + 粒度说明 + 允许/拒绝 → 应答同
+ *   Approval 协议（optionId = allow/deny），允许后后端把该目录并入会话
+ *   roots 快照（授权仅本会话有效）。
  *
  * 事件驱动：ask:opened 置 store.current、ask:closed 清除（App.tsx 事件桥）。
  * 后端默认无限等待，autoConfirm 300s 由 Rust 侧兜底（前端无需计时）；
- * mcpTrust/projectTrust 无推荐项，不参与自动批准（高危外部资源永远过人）。
+ * mcpTrust/projectTrust/externalDir 无推荐项，不参与自动批准（高危外部
+ * 资源永远过人）。
  *
  * 失效面（05 号票，§5.6 待审批恢复）：重连后恢复的审批可能在重连期间已被
  * 解决/取消——resolveAsk 返回 E_NOT_FOUND 时按 askId 关闭弹窗（不残留可
  * 操作面板）；其余错误原位显示可重试。
  */
 
-import { CircleAlert, Eye, ShieldCheck } from "lucide-react";
+import { CircleAlert, Eye, FolderOpen, ShieldCheck } from "lucide-react";
 import { useState } from "react";
 import { HtmlPreview } from "@/chat/HtmlPreview";
 import { useSessionScope } from "@/chat/session-scope";
@@ -87,6 +92,8 @@ export function AskPanel() {
         <McpTrustForm sessionId={sessionId} askId={current.askId} payload={current.payload} />
       ) : current.payload.kind === "projectTrust" ? (
         <ProjectTrustForm sessionId={sessionId} askId={current.askId} payload={current.payload} />
+      ) : current.payload.kind === "externalDir" ? (
+        <ExternalDirForm sessionId={sessionId} askId={current.askId} payload={current.payload} />
       ) : (
         <ApprovalForm sessionId={sessionId} askId={current.askId} payload={current.payload} />
       )}
@@ -406,6 +413,69 @@ function ProjectTrustForm({
         </p>
         <p className="text-ui-sm text-[var(--muted-foreground)]">
           技能包含说明与随附脚本、模板等全部文件；「记住此版本」后同版本不再询问，内容变更会重新确认。拒绝后本次运行不加载该技能。
+        </p>
+      </div>
+      <div className="flex justify-end gap-2">
+        {payload.options.map((opt) => (
+          <button
+            key={opt.id}
+            type="button"
+            data-testid={`ask-option-${opt.id}`}
+            onClick={() => submit(opt.id)}
+            className={`rounded-full px-4 py-1.5 text-ui-sm ${
+              opt.id === "deny"
+                ? "border border-[var(--border)] text-[var(--foreground)] hover:border-[var(--destructive)]"
+                : "bg-[var(--primary)] text-[var(--primary-foreground)]"
+            }`}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+      {error !== null && (
+        <p
+          data-testid="ask-error"
+          className="rounded border border-[var(--destructive)]/30 bg-[var(--destructive)]/5 px-2 py-1 text-ui-sm text-[var(--destructive)]"
+        >
+          应答提交失败：{error}（可重试）
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** 外部目录授权表单（24 号票，§9.9 第五形态）：授权目标路径 + 粒度说明 +
+ *  允许/拒绝按钮 → resolveAsk(approval，optionId = allow/deny)。工具访问
+ *  会话 roots 外路径时后端在审批门挂起弹出；允许后后端把该目录并入会话
+ *  roots 快照（「该目录及子目录的读/写/列」粒度，授权仅本会话有效，
+ *  Inspector「授权」页可移除）。无推荐项，不参与自动批准。 */
+function ExternalDirForm({
+  sessionId,
+  askId,
+  payload,
+}: {
+  sessionId: string;
+  askId: string;
+  payload: Extract<AskPayload, { kind: "externalDir" }>;
+}) {
+  const [error, reportError, clearError] = useSubmitError(sessionId);
+  const submit = (optionId: string) => {
+    clearError();
+    resolveAsk(askId, { kind: "approval", optionId }).catch(reportError);
+  };
+  return (
+    <div className="space-y-3">
+      <h3 className="flex items-center gap-2 text-ui-base font-medium text-[var(--foreground)]">
+        <FolderOpen size={16} aria-hidden className="shrink-0 text-[var(--warning)]" />
+        允许访问项目外的目录？
+      </h3>
+      <div className="space-y-1 rounded border border-[var(--border)] bg-[var(--background)] px-3 py-2">
+        <p className="min-w-0 font-mono text-ui-sm break-all text-[var(--foreground)]">
+          <code data-testid="external-dir-path">{payload.path}</code>
+        </p>
+        <p className="text-ui-sm text-[var(--muted-foreground)]">
+          授权粒度：该目录及子目录的读/写/列。授权仅本会话有效（可在
+          Inspector「授权」页移除）；项目内的目录不需要授权。
         </p>
       </div>
       <div className="flex justify-end gap-2">

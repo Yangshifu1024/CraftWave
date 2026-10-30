@@ -2,7 +2,7 @@
 import type { SkillSource } from "./SkillSource";
 
 /**
- * `skill_list` 行契约（§3.3 #48 逐字段）。
+ * `skill_list` 行契约（§3.3 #48 逐字段 + 24 号票补充面 trustStatus）。
  */
 export type SkillListEntry = { 
 /**
@@ -20,4 +20,10 @@ enabled: boolean,
 /**
  * 一句话简介（frontmatter description）。
  */
-description: string, };
+description: string, 
+/**
+ * 信任状态（24 号票，§9.8 撤销 UI 数据面）："trusted"（记住此版本）/
+ * "pending"（待决策）/ "revoked"（已显式撤销）；内置技能豁免信任恒
+ * "trusted"。
+ */
+trustStatus: string, };

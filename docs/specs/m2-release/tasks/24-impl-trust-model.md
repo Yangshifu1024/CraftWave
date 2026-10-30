@@ -1,7 +1,7 @@
 # 实现：信任模型——项目 TOFU 与外部目录授权（FR-05-10 + FR-05-12）
 
 Type: task
-Status: open
+Status: resolved
 
 ## 要做什么
 
@@ -61,8 +61,22 @@ FR 依据（原文摘引）：
 
 ## 验收
 
-- [ ] 未信任项目首次加载 AGENTS.md 出信任卡；"记住"后重启不再问；改动该文件后重新问
-- [ ] "拒绝"后项目指令不进系统提示（行为可观测），相关资源访问报 E_PROJECT_UNTRUSTED
-- [ ] 项目外目录经授权后 read/write/list_files 正常放行；未授权路径仍 E_PATH_OUTSIDE_ROOTS；对家目录/文件系统根请求授权被拒
-- [ ] 授权随会话持久、跨会话不延续
-- [ ] 契约测试 #33/#34；§7.7（scope 字段）与 FR-05-10 引注回写完成
+- [x] 未信任项目首次加载 AGENTS.md 出信任卡；"记住"后重启不再问；改动该文件后重新问
+- [x] "拒绝"后项目指令不进系统提示（行为可观测），相关资源访问报 E_PROJECT_UNTRUSTED
+- [x] 项目外目录经授权后 read/write/list_files 正常放行；未授权路径仍 E_PATH_OUTSIDE_ROOTS；对家目录/文件系统根请求授权被拒
+- [x] 授权随会话持久、跨会话不延续
+- [x] 契约测试 #33/#34；§7.7（scope 字段）与 FR-05-10 引注回写完成
+
+## 决议记录（2026-10-30 实现）
+
+1. **存储收敛落法**：`storage/trust.rs`（TrustStore trait + FileTrustStore）承载 `trust/project.json` 单一文件，记录增 `scope: "project"|"mcp"` 判别字段（§7.7 回写）；`mcp/trust.rs` 与 `knowledge/trust.rs` 保留 08/09 号票域门面（接口面不变、内部转调统一存储），**指纹算法不变**——已记住的 MCP 服务器/技能跨收敛不重问；08 号票遗留 `trust/mcp.json` 读取时只读迁入内存视图（统一文件优先、按 (scope, resourceName, fingerprint) 去重，旧文件保留不删，迁移幂等）。`trust/mcp-tools.json`（Q44 工具级许可）维持独立文件——调用审批记忆与资源信任语义不同，§9.7 字段级未变。damage 兜底：缺失/损坏按空表（宁缺勿炸）。
+2. **项目指令挂接（票面前提勘误）**：票面写「M1 knowledge 已读 AGENTS.md/CRAFTWAVE.md/CLAUDE.md」，实况是 M1/M2 无任何读取实现——本票随信任挂接一并实装读取（`knowledge/instructions.rs`，run 开始装配时按固定清单序读项目主目录根下存在的指令文件），指纹 = 内容 SHA-256，注入层插 §6.2 次序第二位（customPrompt 之后）。deny/不存在/非 UTF-8 零注入。
+3. **projectTrust options id 归一**：09 号票最小版实装 `allow_once`，§3.2 主键面为 `allow_session`——本票统一为 `allow_session`（语义不变：本次会话允许，会话内存面），既有测试适配（行为语义不回退）。会话信任集统一到 `knowledge/session_trust.rs::SessionTrustSet`（AppState 持有，键含会话/作用域/资源名/指纹），从 SkillRegistry 收敛迁出（技能与项目指令共用）。
+4. **worktree 信任（Q19）落法**：记录键 = (scope, resourceName, 指纹) 不含项目身份——worktree 归属原项目时同名同内容同指纹命中既有信任（不因副本路径重复询问）；内容变更指纹变自然重问；「其他项目不继承」在按内容信任语义下成立（不同内容不命中；同内容视为同内容信任，与 §9.8 记录字段级一致——设计文档未定义 projectId 维度，如需按项目隔离须回写字段级，暂按现口径）。
+5. **外部目录授权链路**：审批门新增外部判定层（第 0.5 步，内部状态硬拒之后、已批准签名检查**之前**）——文件类七工具路径越界 → 挂 `AskPayload{kind:"externalDir"}`（新形态，§3.2 回写）；置于签名前使恢复重放（授权已并入 roots）不再命中、批量 batch_read 跨多外部目录逐个询问（签名放行不吞并未授权路径）。授权目标：文件类工具取父目录、目录类工具（list_files/glob/grep）取路径本身。允许 → 恢复循环调 #34 同源核心落 SessionMeta.authorizedExternalDirs + 门热追加 roots → 重放放行；内存面 grant 用最长存在前缀归一（目标目录不存在时持久面被拒——#34 要求目录真实存在——内存面仍生效防重放死循环）。
+6. **禁区从严口径**：#34 与审批门同校验「整体放行」禁区——文件系统根、家目录本身、宿主托管目录（数据目录）**本身/祖先/后代**全部 E_INVALID_ARG（票面只列三个本体；从严理由：授权托管目录后代会拆穿 C-8 收窄防线，家目录以上粒度违背「目录及子目录」授权精神），判定统一在 canonical 域（macOS /var ↔ /private/var symlink 歧义实测绕过，已修）。回写 §9.9。
+7. **既有瑕疵修正（顺带）**：23 号票主 run 装配 InternalStateGuard 误传 workspace 子目录当数据目录根（子代理装配是对的）——主 run 数据侧禁区判定落空（防御纵深小缺口，模型本就写不到该区域故无实害），本票装配面改传数据目录根并经 gate_test 确认（read 数据目录 config.json → 授权禁区 E_INVALID_ARG；写路径禁区硬拒不变）。
+8. **Q41 接线口径**：本票出两个清空面（统一信任存储 `clear_all` + `clear_all_external_grants` 遍历 index 清会话授权），33 号票恢复流程接线（33 未动工，生产调用点随其落地）；正常重启保留有效授权（不调清空面）。测试验证两口径（clear 后失效 / 新 AppState 同目录读回保留）。
+9. **撤销 UI（09 号票移交收敛点）**：skill_list 增 `trustStatus` 列（内置恒 trusted）+ 新命令 `skill_revoke_trust`（写 revoke 记录覆盖旧 remember，内置技能 E_INVALID_ARG 无入口）+ 技能页行内「撤销信任」按钮（pending/revoked/内置隐藏）+ Inspector 新「授权」页（当前会话已授权目录列表 + 行内移除 → `revoke_external_dir` 补充命令）。
+10. **e2e 剧本适配**：三协议 mock 剧本的 read 目标从 `/etc/app/config.toml`（roots 外——新信任面下正确触发授权挂起，剧本级测试无应答者会挂死）改为会话 roots 内相对路径 `config.toml`（临时会话 = workspace 子目录），「read 失败回喂 → 第二轮作答收尾」剧本语义不变；spike_s2/s3 的参数断言同步适配。
+11. **已知抖动**：`skills_spec_description`/`builtin_skills_skip_trust` 全量并跑偶发（SkillRegistry 进程级单例时序，09 号票既有面），单跑/复跑即绿，与已知前端 thread-rendering 抖动同类，未追修。

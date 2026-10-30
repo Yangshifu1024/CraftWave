@@ -36,6 +36,7 @@ fn app_with_session(tag: &str) -> (tempfile::TempDir, AppState, String) {
             revision: 0,
             message_count: 0,
             total_tokens: 0,
+            authorized_external_dirs: Vec::new(),
         })
         .expect("建索引条目失败");
     (dir, app, sid)

@@ -800,7 +800,10 @@ impl ToolGate for SuspendOnceGate {
             GateVerdict::Allow
         } else {
             *fired = true;
-            GateVerdict::Suspend { fence_reason: None }
+            GateVerdict::Suspend {
+                fence_reason: None,
+                external_dir: None,
+            }
         }
     }
 }

@@ -147,11 +147,15 @@ pub trait ToolGate: Send + Sync {
 pub enum GateVerdict {
     /// 放行：直接执行。
     Allow,
-    /// 挂起等待审批（`fence_reason`：围栏要求确认的写信号原因，构造询问
-    /// 载荷时用）。
-    Suspend { fence_reason: Option<String> },
+    /// 挂起等待审批（`fence_reason`：围栏要求确认的写信号原因；`external_dir`：
+    /// 外部目录授权目标（24 号票，§9.9——roots 外路径须"始终允许"授权该
+    /// 目录及子目录），构造询问载荷时用；与 fence_reason 互斥，最多一个 Some）。
+    Suspend {
+        fence_reason: Option<String>,
+        external_dir: Option<String>,
+    },
     /// 硬拦：错误结果帧回喂（code 取值为 E_FENCE_BLOCKED / E_TOOL_BLOCKED /
-    /// E_PLAN_STALE 之一）。
+    /// E_PLAN_STALE / E_INVALID_ARG 之一）。
     Blocked { code: &'static str, message: String },
 }
 
@@ -177,6 +181,10 @@ pub struct PendingCall {
     pub args_json: String,
     /// 围栏要求确认的写信号原因（None = 纯权限矩阵审批）。
     pub fence_reason: Option<String>,
+    /// 外部目录授权目标（24 号票，§9.9）：Some = 外部目录授权挂起（载荷
+    /// 形态 externalDir，恢复循环在允许后调 allow_external_dir 并入会话
+    /// roots 快照）；None = 普通审批/围栏挂起。
+    pub external_dir: Option<String>,
 }
 
 /// 跨挂起/恢复延续的驱动状态（恢复后不重发 runStarted、用量与工具计数
@@ -521,7 +529,13 @@ where
                         (idx, gate.judge(name, args_json))
                     })
                     .collect();
-                if let Some((idx, GateVerdict::Suspend { fence_reason })) = verdicts
+                if let Some((
+                    idx,
+                    GateVerdict::Suspend {
+                        fence_reason,
+                        external_dir,
+                    },
+                )) = verdicts
                     .iter()
                     .find(|(_, v)| matches!(v, GateVerdict::Suspend { .. }))
                     .map(|(i, v)| (*i, v.clone()))
@@ -538,6 +552,7 @@ where
                             name,
                             args_json,
                             fence_reason: fence_reason.clone(),
+                            external_dir: external_dir.clone(),
                         },
                         state,
                     })));

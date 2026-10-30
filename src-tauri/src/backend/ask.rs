@@ -18,7 +18,8 @@
 use tokio::sync::oneshot;
 
 /// 询问/审批载荷（§3.2；08 号票起实装 question/approval/mcpTrust 三形态，
-/// projectTrust 项目资源信任随 09 号票实装）。
+/// projectTrust 项目资源信任随 09 号票实装，externalDir 外部目录授权随
+/// 24 号票实装）。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(
@@ -77,16 +78,27 @@ pub enum AskPayload {
     },
     /// 项目资源信任（§9.8 字段级，09 号票实装）：首次使用未信任技能
     /// （SKILL.md 及随附脚本、模板整体，Q21）前的确认。应答同走
-    /// [`AskAnswer::Approval`]（optionId = allow_once/remember/deny）。
+    /// [`AskAnswer::Approval`]（optionId = allow_session/remember/deny）。
     ProjectTrust {
-        /// 资源名（当前 = 技能名；24 号票扩展 memory 等资源时沿用本形态）。
+        /// 资源名（技能名或项目指令文件名；24 号票起两挂接点共用本形态）。
         resource_name: String,
         /// 信任作用域（"global" | "project"；内置技能豁免不询问）。
         scope: SkillTrustScope,
         /// 整目录版本指纹（Q21 [`crate::knowledge::skills::version_fingerprint`]，
         /// 展示前 16 位）。
         fingerprint: String,
-        /// 三选项（allow_once / remember / deny）。
+        /// 三选项（allow_session / remember / deny）。
+        options: Vec<AskOption>,
+    },
+    /// 外部目录授权（§9.9 字段级，24 号票实装）：工具访问会话 roots 外
+    /// 路径前的「始终允许」确认（FR-05-12）。应答同走
+    /// [`AskAnswer::Approval`]（optionId = allow/deny）；允许后宿主经
+    /// `allow_external_dir`（#34）把该目录并入会话 roots 快照（粒度 =
+    /// 该目录及子目录的读/写/列，授权仅本会话有效，§9.9）。
+    ExternalDir {
+        /// 授权目标目录（canonical 绝对路径）。
+        path: String,
+        /// 两选项（allow / deny）。
         options: Vec<AskOption>,
     },
 }
@@ -236,14 +248,15 @@ pub enum DiffLineKind {
 /// AskPayload 的固有方法实现。
 impl AskPayload {
     /// 推荐选项的 id（自动确认超时时选它，§5.4）；问卷形态没有推荐选项，
-    /// 返回 None。mcpTrust/projectTrust 同样返回 None——启动信任与项目资源
-    /// 信任不参与 autoConfirm 自动批准（高危外部资源永远过人，FR-08-04
-    /// 同精神）。
+    /// 返回 None。mcpTrust/projectTrust/externalDir 同样返回 None——启动
+    /// 信任、项目资源信任与外部目录授权不参与 autoConfirm 自动批准（高危
+    /// 外部资源永远过人，FR-08-04 同精神）。
     pub fn recommended_option_id(&self) -> Option<&str> {
         match self {
             AskPayload::Question { .. }
             | AskPayload::McpTrust { .. }
-            | AskPayload::ProjectTrust { .. } => None,
+            | AskPayload::ProjectTrust { .. }
+            | AskPayload::ExternalDir { .. } => None,
             AskPayload::Approval { options, .. } => options
                 .iter()
                 .find(|o| o.recommended == Some(true))

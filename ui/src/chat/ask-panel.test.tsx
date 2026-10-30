@@ -321,3 +321,48 @@ describe("23 号票：审批记忆与白名单（ApprovalForm 增量）", () => 
     expect(saveConfigMock).not.toHaveBeenCalled();
   });
 });
+
+/** 外部目录授权载荷样例（24 号票，§9.9）：路径 + 粒度说明 + 允许/拒绝。 */
+const externalDirPayload: AskPayload = {
+  kind: "externalDir",
+  path: "/Users/demo/外部资料",
+  options: [
+    { id: "allow", label: "始终允许（本会话）" },
+    { id: "deny", label: "拒绝" },
+  ],
+};
+
+describe("externalDir 外部目录授权卡（24 号票，§9.9）", () => {
+  it("渲染授权路径与粒度说明（data-kind=externalDir）", () => {
+    useAskStore.getState().open("s1", "ask-ext", externalDirPayload);
+    const { container } = renderPanel();
+    const panel = container.querySelector('[data-testid="ask-panel"]');
+    expect(panel?.getAttribute("data-kind")).toBe("externalDir");
+    expect(screen.getByTestId("external-dir-path").textContent).toBe("/Users/demo/外部资料");
+    expect(container.textContent).toContain("该目录及子目录的读/写/列");
+  });
+
+  it("点允许 → resolveAsk(approval) 载荷 optionId=allow", async () => {
+    useAskStore.getState().open("s1", "ask-ext", externalDirPayload);
+    renderPanel();
+    fireEvent.click(screen.getByTestId("ask-option-allow"));
+    await waitFor(() =>
+      expect(resolveAskMock).toHaveBeenCalledWith("ask-ext", {
+        kind: "approval",
+        optionId: "allow",
+      }),
+    );
+  });
+
+  it("点拒绝 → resolveAsk(approval) 载荷 optionId=deny", async () => {
+    useAskStore.getState().open("s1", "ask-ext2", externalDirPayload);
+    renderPanel();
+    fireEvent.click(screen.getByTestId("ask-option-deny"));
+    await waitFor(() =>
+      expect(resolveAskMock).toHaveBeenCalledWith("ask-ext2", {
+        kind: "approval",
+        optionId: "deny",
+      }),
+    );
+  });
+});

@@ -69,7 +69,7 @@ async fn s2_passthrough_no_loss_no_reorder() {
         "工具参数增量（含半截 JSON 片段）无丢失"
     );
     let parsed: serde_json::Value = serde_json::from_str(&args).expect("拼接后的参数是完整 JSON");
-    assert_eq!(parsed["path"], "/etc/app/config.toml");
+    assert_eq!(parsed["path"], "config.toml");
 
     // —— 乱序断言：rig 事件顺序 = mock 发送顺序 ——
     let kind_of = |f: &ChatFrame| match f {

@@ -7,7 +7,8 @@ import type { SkillTrustScope } from "./SkillTrustScope";
 
 /**
  * 询问/审批载荷（§3.2；08 号票起实装 question/approval/mcpTrust 三形态，
- * projectTrust 项目资源信任随 09 号票实装）。
+ * projectTrust 项目资源信任随 09 号票实装，externalDir 外部目录授权随
+ * 24 号票实装）。
  */
 export type AskPayload = { "kind": "question", 
 /**
@@ -66,7 +67,7 @@ commandOrUrl: string,
  */
 options: Array<AskOption>, } | { "kind": "projectTrust", 
 /**
- * 资源名（当前 = 技能名；24 号票扩展 memory 等资源时沿用本形态）。
+ * 资源名（技能名或项目指令文件名；24 号票起两挂接点共用本形态）。
  */
 resourceName: string, 
 /**
@@ -79,6 +80,14 @@ scope: SkillTrustScope,
  */
 fingerprint: string, 
 /**
- * 三选项（allow_once / remember / deny）。
+ * 三选项（allow_session / remember / deny）。
+ */
+options: Array<AskOption>, } | { "kind": "externalDir", 
+/**
+ * 授权目标目录（canonical 绝对路径）。
+ */
+path: string, 
+/**
+ * 两选项（allow / deny）。
  */
 options: Array<AskOption>, };

@@ -128,8 +128,9 @@ fn is_windows_reserved(name: &str) -> bool {
 
 /// 整条路径存在则 canonicalize；否则对最长存在前缀 canonicalize +
 /// 剩余段词法归一（ParentDir 在已解析基上弹栈、CurDir 去除；不存在段
-/// 无 symlink，`..` 逃逸由最终前缀检查拦截）。
-fn canonicalize_best_effort(absolute: &Path) -> Result<PathBuf, ToolError> {
+/// 无 symlink，`..` 逃逸由最终前缀检查拦截）。crate 内单一实现（24 号票
+/// 起审批门的外部目录判定与 #33 预检共用，避免第二份归一逻辑漂移）。
+pub(crate) fn canonicalize_best_effort(absolute: &Path) -> Result<PathBuf, ToolError> {
     if let Ok(c) = std::fs::canonicalize(absolute) {
         return Ok(c);
     }

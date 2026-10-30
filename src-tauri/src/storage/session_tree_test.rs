@@ -518,6 +518,7 @@ fn index_upsert_list_and_toolres_roundtrip() {
             revision: 1,
             message_count: 2,
             total_tokens: 100,
+            authorized_external_dirs: Vec::new(),
         })
         .unwrap();
     store
@@ -531,6 +532,7 @@ fn index_upsert_list_and_toolres_roundtrip() {
             revision: 1,
             message_count: 1,
             total_tokens: 50,
+            authorized_external_dirs: Vec::new(),
         })
         .unwrap();
     let list = store.index().list();
@@ -571,6 +573,7 @@ fn delete_session_clears_index_and_disk_artifacts() {
             revision: 1,
             message_count: 1,
             total_tokens: 0,
+            authorized_external_dirs: Vec::new(),
         })
         .unwrap();
     fs::write(root.join("sessions").join("gone.prefs.json"), b"{}").unwrap();
@@ -630,6 +633,7 @@ fn save_syncs_index_but_preserves_registry_fields() {
             revision: 0,
             message_count: 0,
             total_tokens: 42,
+            authorized_external_dirs: Vec::new(),
         })
         .unwrap();
     store

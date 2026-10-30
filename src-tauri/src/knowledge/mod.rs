@@ -10,6 +10,11 @@
 //! 进程级单例反查 skill 工具的动态 description（与 tools→mcp 反查同精神）。
 
 pub mod commands;
+// 项目指令（AGENTS.md/CRAFTWAVE.md/CLAUDE.md）的信任核验与注入（24 号票，
+// §9.8 挂接点①）。
+pub mod instructions;
+// 会话级信任集（§9.8 allow_session 内存面；24 号票起技能与项目指令共用）。
+pub mod session_trust;
 pub mod skills;
 pub mod trust;
 
@@ -27,3 +32,7 @@ mod skills_test;
 #[cfg(test)]
 #[path = "commands_test.rs"]
 mod commands_test;
+
+#[cfg(test)]
+#[path = "instructions_test.rs"]
+mod instructions_test;

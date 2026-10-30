@@ -738,7 +738,9 @@ async fn run_subagent(
 
     // ③ worktree 决策（Q7）：写入角色 + Git 项目 → 独立 worktree；
     //    非 Git 项目写入子代理直接拒绝（由主代理修改）；只读角色读当前工作区
-    let (project_root, workspace_root) = resolve_session_roots(app, &ctx.session_id);
+    let session_roots = resolve_session_roots(app, &ctx.session_id);
+    let project_root = session_roots.project_root.clone();
+    let workspace_root = session_roots.workspace_root.clone();
     let data_root = app.store.root().to_path_buf();
     let mut lease: Option<WorktreeLease> = None;
     if role.workspace == WorkspaceKind::WriteWorkspace {
@@ -850,11 +852,14 @@ async fn run_subagent(
         sub_tool_definitions(role, ctx.tier),
     );
 
-    // 写入角色 → 工具根指向 worktree（写边界隔离）；只读角色 → 当前工作区
+    // 写入角色 → 工具根指向 worktree（写边界隔离）；只读角色 → 当前工作区。
+    // 会话授权的外部目录（24 号票，§9.9）对子代理同样放行（只读角色访问
+    // 授权目录与主代理同口径）。
     let (roots_project, roots_data) = match &lease {
         Some(l) => (PathBuf::from(&l.worktree_root), workspace_root.clone()),
         None => (project_root.clone(), workspace_root.clone()),
     };
+    let sub_extra_roots = session_roots.extra_dirs.clone();
     // 审批门装配用副本（roots 本体移入执行器 ToolsContext）
     let gate_project = roots_project.clone();
     let gate_data = roots_data.clone();
@@ -890,7 +895,8 @@ async fn run_subagent(
     };
     let executor: Arc<dyn CancellableExecutor> = Arc::new(
         ToolsetExecutor::new(
-            crate::tools::ToolsContext::new(roots_project, roots_data),
+            crate::tools::ToolsContext::new(roots_project, roots_data)
+                .with_extra_roots(sub_extra_roots.clone()),
             ctx.tier,
         )
         .with_env(ExecutorEnv {
@@ -920,11 +926,21 @@ async fn run_subagent(
     // 与主 run 共用会话桶）、审批策略快照（四开关 ①④ + 白名单条目）。
     // 无 MCP 视图（子代理不装配动态段，§5.9）。围栏工作区上下文同主 run
     // 口径装配（roots/base canonical 后传入；失败退化为有写目标即 Confirm）。
+    // 外部目录授权（24 号票，§9.9）：初始集合 = 会话已授权目录 + 热追加
+    // 接缝（恢复循环授权后 grant），数据目录根做禁授权目标判定。
     let gate = {
         let canonical = |p: &std::path::Path| std::fs::canonicalize(p).ok();
         let gate_ws = match (canonical(&gate_project), canonical(&gate_data)) {
             (Some(project), Some(data)) => Some(crate::backend::gate::GateWorkspace {
-                roots: vec![project, data],
+                roots: {
+                    let mut all = vec![project.clone(), data];
+                    for extra in &sub_extra_roots {
+                        if let Some(c) = canonical(extra) {
+                            all.push(c);
+                        }
+                    }
+                    all
+                },
                 base: PathBuf::from(&project_root),
             }),
             _ => None,
@@ -939,6 +955,7 @@ async fn run_subagent(
                 &data_root,
                 &project_root,
             ))
+            .with_external_dirs(sub_extra_roots, data_root.clone())
             .with_session_memory(app.approval_memory.bucket(&ctx.session_id))
             .with_policy(crate::backend::gate::ApprovalPolicy {
                 enabled: approval.enabled,
@@ -1018,6 +1035,26 @@ async fn run_subagent(
                 .await
                 {
                     ApprovalResolution::Allowed { option_id } => {
+                        // 外部目录授权（24 号票，§9.9）：与主 run 同款——
+                        // 并入会话 roots 快照（持久化）+ 门热追加；内存面
+                        // 授权用最长存在前缀归一（目标目录不存在时持久面
+                        // 被拒，内存面仍生效防重放死循环）。
+                        if let Some(dir) = &pending.external_dir
+                            && option_id == "allow"
+                        {
+                            let _ = crate::host::commands::workspace::allow_external_dir_core(
+                                app,
+                                &ctx.session_id,
+                                dir,
+                            );
+                            if let Ok(canonical) =
+                                crate::safety::safe_join::canonicalize_best_effort(
+                                    std::path::Path::new(dir),
+                                )
+                            {
+                                gate.grant_external_dir(canonical);
+                            }
+                        }
                         gate.approve(&pending.name, &pending.args_json);
                         // 23 号票：always_session → 会话级免批桶登记
                         //（与主 run 共用会话桶，跨 run 生效、不持久化）

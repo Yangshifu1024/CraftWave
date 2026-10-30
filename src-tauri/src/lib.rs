@@ -77,8 +77,9 @@ use host::commands::system::{NotificationPermissionStatus, OpenDirArgs, ResolveE
 use host::commands::ui_state::{GetUiStateArgs, SetUiStateArgs};
 #[allow(unused_imports)]
 use host::commands::workspace::{
+    AllowExternalDirArgs, CheckExternalPathArgs, CheckExternalPathResult, ExternalRootsResult,
     PathKindArgs, PathKindResult, ReadWorkspaceFileArgs, ReadWorkspaceResult,
-    SearchWorkspacePathsArgs, WorkspacePathHit,
+    RevokeExternalDirArgs, SearchWorkspacePathsArgs, WorkspacePathHit,
 };
 // MCP 八命令（08 号票，§3.3 #40–47）：契约类型与命令实现同源进宏清单
 #[allow(unused_imports)]
@@ -88,11 +89,11 @@ use mcp::commands::{
     mcp_connect, mcp_disconnect, mcp_list_config, mcp_reconnect, mcp_save_config,
     mcp_set_launch_trust, mcp_snapshot, mcp_test,
 };
-// 技能四命令（09 号票，§3.3 #48–51）
+// 技能四命令（09 号票，§3.3 #48–51）+ 信任撤销（24 号票补充面）
 #[allow(unused_imports)]
 use knowledge::commands::{
-    SkillInspectArgs, SkillInspectResult, SkillListEntry, SkillToggleArgs, skill_inspect,
-    skill_list, skill_reload, skill_toggle,
+    SkillInspectArgs, SkillInspectResult, SkillListEntry, SkillRevokeTrustArgs, SkillToggleArgs,
+    skill_inspect, skill_list, skill_reload, skill_revoke_trust, skill_toggle,
 };
 // 子代理两命令（10 号票，§3.3 #58/#59）
 #[allow(unused_imports)]
@@ -234,6 +235,10 @@ ipc_commands! {
     host::commands::session::set_session_prefs => args: SetSessionPrefsArgs, ret: ();
     host::commands::workspace::search_workspace_paths => args: SearchWorkspacePathsArgs, ret: Vec<WorkspacePathHit>;
     host::commands::workspace::read_workspace_file => args: ReadWorkspaceFileArgs, ret: ReadWorkspaceResult;
+    // 外部目录授权（24 号票，§3.3 #33/#34 + 撤销补充面）
+    host::commands::workspace::check_external_path => args: CheckExternalPathArgs, ret: CheckExternalPathResult;
+    host::commands::workspace::allow_external_dir => args: AllowExternalDirArgs, ret: ExternalRootsResult;
+    host::commands::workspace::revoke_external_dir => args: RevokeExternalDirArgs, ret: ExternalRootsResult;
     host::commands::ui_state::get_ui_state => args: GetUiStateArgs, ret: Value;
     host::commands::ui_state::set_ui_state => args: SetUiStateArgs, ret: ();
     host::commands::config::get_config => args: (), ret: AppConfig;
@@ -264,11 +269,12 @@ ipc_commands! {
     mcp::commands::mcp_test => args: McpTestArgs, ret: McpTestResult;
     mcp::commands::mcp_set_launch_trust => args: McpSetLaunchTrustArgs, ret: ();
     mcp::commands::mcp_snapshot => args: McpSnapshotArgs, ret: McpSnapshotResult;
-    // 技能四命令（09 号票，§3.3 #48–51 逐字）
+    // 技能四命令（09 号票，§3.3 #48–51 逐字）+ 信任撤销（24 号票补充面）
     knowledge::commands::skill_list => args: (), ret: Vec<SkillListEntry>;
     knowledge::commands::skill_toggle => args: SkillToggleArgs, ret: ();
     knowledge::commands::skill_reload => args: (), ret: ();
     knowledge::commands::skill_inspect => args: SkillInspectArgs, ret: SkillInspectResult;
+    knowledge::commands::skill_revoke_trust => args: SkillRevokeTrustArgs, ret: ();
     // 子代理两命令（10 号票，§3.3 #58/#59 逐字）
     host::commands::subagent::stop_subagent => args: StopSubagentArgs, ret: ();
     host::commands::subagent::load_subagent_history => args: LoadSubagentHistoryArgs, ret: Vec<MessageEntry>;

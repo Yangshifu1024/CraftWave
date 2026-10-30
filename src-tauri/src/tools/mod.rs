@@ -44,13 +44,17 @@ use crate::safety::tier::{Capability, GateDecision, PermissionTier, decide_gate}
 use crate::util::errors::ToolError;
 
 /// 工具执行上下文：roots（项目主目录 + 数据目录）由调用方构造。
-/// M1 无 extra_roots（§9.1）。
+/// M1 无 extra_roots（§9.1）；24 号票起可追加会话授权的外部目录
+/// （§9.9 会话 roots 快照）。
 #[derive(Debug, Clone)]
 pub struct ToolsContext {
     /// 项目主目录（canonical），相对路径的解析基准与首个 root。
     pub project_root: PathBuf,
     /// 数据目录（canonical）。
     pub data_root: PathBuf,
+    /// 会话已授权的外部目录（§9.9，24 号票；canonical 绝对路径）。
+    /// 空 = 无授权（缺省）。
+    pub extra_roots: Vec<PathBuf>,
 }
 
 /// 网络工具执行环境（12 号票，web_fetch/http_request 共用；13 号票扩
@@ -101,12 +105,30 @@ impl ToolsContext {
         Self {
             project_root,
             data_root,
+            extra_roots: Vec::new(),
         }
     }
 
-    /// 构造路径守卫（roots canonicalize 失败时返回参数错误）。
+    /// 追加会话授权的外部目录（§9.9，24 号票；run 装配时从 SessionMeta
+    /// 读取——授权跨 run 生效、跨会话不延续）。
+    pub fn with_extra_roots(mut self, extra_roots: Vec<PathBuf>) -> Self {
+        self.extra_roots = extra_roots;
+        self
+    }
+
+    /// 构造路径守卫（roots canonicalize 失败时返回参数错误；授权目录
+    /// canonicalize 失败的条目跳过——不存在的授权根不阻塞其余根）。
     pub fn guard(&self) -> Result<PathGuard, ToolError> {
-        PathGuard::new(vec![self.project_root.clone(), self.data_root.clone()])
+        let mut roots = vec![self.project_root.clone(), self.data_root.clone()];
+        for extra in &self.extra_roots {
+            // PathGuard::new 对任一根 canonicalize 失败都会整体报错；
+            // 授权目录可能已被删除（跨 run 后），跳过即可（下次访问该
+            // 目录重新走授权询问）。
+            if std::fs::canonicalize(extra).is_ok() {
+                roots.push(extra.clone());
+            }
+        }
+        PathGuard::new(roots)
     }
 }
 

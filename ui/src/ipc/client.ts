@@ -15,14 +15,18 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type {
+  AllowExternalDirArgs,
   AppConfig,
   AskAnswer,
   AttachImageArgs,
   AttachImageResult,
   AttachRunResult,
+  CheckExternalPathArgs,
+  CheckExternalPathResult,
   CompactSessionArgs,
   CompactSessionResult,
   DeleteProviderArgs,
+  ExternalRootsResult,
   GetSessionPrefsResult,
   InjectRunMessageArgs,
   InjectRunMessageResult,
@@ -51,6 +55,7 @@ import type {
   ReadWorkspaceResult,
   RemoveFollowupResult,
   ResumeFollowupQueueResult,
+  RevokeExternalDirArgs,
   RunSnapshot,
   SaveConfigArgs,
   SaveProjectArgs,
@@ -70,6 +75,7 @@ import type {
   SkillInspectArgs,
   SkillInspectResult,
   SkillListEntry,
+  SkillRevokeTrustArgs,
   SkillToggleArgs,
   StartChatArgs,
   StartChatResult,
@@ -139,6 +145,12 @@ export const COMMANDS = {
   skillToggle: "skill_toggle",
   skillReload: "skill_reload",
   skillInspect: "skill_inspect",
+  // 技能信任撤销（24 号票补充面，§9.8 撤销 UI）
+  skillRevokeTrust: "skill_revoke_trust",
+  // 外部目录授权（24 号票，§3.3 #33/#34 + 撤销补充面）
+  checkExternalPath: "check_external_path",
+  allowExternalDir: "allow_external_dir",
+  revokeExternalDir: "revoke_external_dir",
   // 子代理两命令（10 号票，§3.3 #58/#59）
   stopSubagent: "stop_subagent",
   loadSubagentHistory: "load_subagent_history",
@@ -631,6 +643,45 @@ export function skillInspect(args: SkillInspectArgs): Promise<SkillInspectResult
   return invoke<SkillInspectResult>(COMMANDS.skillInspect, {
     name: args.name,
   } satisfies SkillInspectArgs);
+}
+
+/** 24 号票补充面（§9.8 撤销 UI）：显式撤销技能信任（写 revoke 记录覆盖
+ *  旧 remember）——下次 run 装配重新询问。内置技能豁免信任 reject
+ *  E_INVALID_ARG；名字不存在 reject E_NOT_FOUND。 */
+export function skillRevokeTrust(args: SkillRevokeTrustArgs): Promise<void> {
+  return invoke<void>(COMMANDS.skillRevokeTrust, {
+    name: args.name,
+  } satisfies SkillRevokeTrustArgs);
+}
+
+// ---- 外部目录授权（§3.3 #33/#34 + 撤销补充面，24 号票）----
+
+/** §3.3 #33：外部目录预检（FR-05-12）——insideRoots = 在初始两根内
+ *  （无需授权）；allowed = 当前可访问（初始两根内或已授权目录内）。 */
+export function checkExternalPath(args: CheckExternalPathArgs): Promise<CheckExternalPathResult> {
+  return invoke<CheckExternalPathResult>(COMMANDS.checkExternalPath, {
+    sessionId: args.sessionId,
+    path: args.path,
+  } satisfies CheckExternalPathArgs);
+}
+
+/** §3.3 #34：「始终允许」授权并入会话 roots 快照（粒度 = 该目录及子目录
+ *  的读/写/列；授权仅本会话有效）。返回授权后的 roots 全集。禁授权目标
+ *  （文件系统根/家目录/宿主托管目录）reject E_INVALID_ARG。 */
+export function allowExternalDir(args: AllowExternalDirArgs): Promise<ExternalRootsResult> {
+  return invoke<ExternalRootsResult>(COMMANDS.allowExternalDir, {
+    sessionId: args.sessionId,
+    dir: args.dir,
+  } satisfies AllowExternalDirArgs);
+}
+
+/** 24 号票补充面：移除一条外部目录授权（幂等；移除后下次访问重新询问）。
+ *  返回剩余 roots 全集。 */
+export function revokeExternalDir(args: RevokeExternalDirArgs): Promise<ExternalRootsResult> {
+  return invoke<ExternalRootsResult>(COMMANDS.revokeExternalDir, {
+    sessionId: args.sessionId,
+    dir: args.dir,
+  } satisfies RevokeExternalDirArgs);
 }
 
 // ---- 子代理（§3.3 #58/#59，10 号票）----

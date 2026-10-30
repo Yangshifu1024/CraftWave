@@ -19,14 +19,14 @@ use super::skills::{
     RegistryRoots, SkillEntry, SkillRegistry, SkillSnapshot, SkillSnapshotEntry, SkillSource,
     disclosure_text, parse_skill_md,
 };
-use super::trust::{ProjectTrustStore, now_ms};
+use super::trust::ProjectTrustStore;
 use crate::backend::ask::{AskAnswer, AskOption, AskPayload, SkillTrustScope};
 use crate::host::AppState;
 use crate::util::errors::IpcError;
 
 // —— 命令契约类型（§3.3 #48–51；derive TS 进生成物）——
 
-/// `skill_list` 行契约（§3.3 #48 逐字段）。
+/// `skill_list` 行契约（§3.3 #48 逐字段 + 24 号票补充面 trustStatus）。
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -39,6 +39,19 @@ pub struct SkillListEntry {
     pub enabled: bool,
     /// 一句话简介（frontmatter description）。
     pub description: String,
+    /// 信任状态（24 号票，§9.8 撤销 UI 数据面）："trusted"（记住此版本）/
+    /// "pending"（待决策）/ "revoked"（已显式撤销）；内置技能豁免信任恒
+    /// "trusted"。
+    pub trust_status: String,
+}
+
+/// `skill_revoke_trust` 参数契约（24 号票补充面，§9.8 撤销 UI 落盘面）。
+#[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct SkillRevokeTrustArgs {
+    /// 技能名。
+    pub name: String,
 }
 
 /// `skill_toggle` 参数契约（§3.3 #49 逐字）。
@@ -118,15 +131,16 @@ pub struct RunSkills {
     pub disclosure: Option<String>,
 }
 
-/// 逐技能核验信任并拍快照（§9.8 最小版接缝）：
+/// 逐技能核验信任并拍快照（§9.8）：
 ///
 /// - 内置技能豁免信任（与应用同源分发）；
-/// - 全局/项目技能：`trust/project.json` 同指纹「记住」记录 或 会话级
-///   `allow_once` 内存标记 → 已信任；
+/// - 全局/项目技能：统一存储（scope=project）同指纹「记住」记录 或 会话级
+///   「本次会话允许」内存标记（[`SessionTrustSet`]，24 号票统一承载）→
+///   已信任；
 /// - 未信任 → 同步弹 `projectTrust` 询问（仿 MCP TOFU 挂 `app_asks`，用户
-///   主动发消息触发所以等得起）：allow_once → 会话内存标记（同会话下一
-///   run 免问）；remember → 写 `trust/project.json`（此后跨重启免问）；
-///   deny → 本 run 按未信任处理（不产生记录，下一 run 重新询问）；
+///   主动发消息触发所以等得起）：allow_session → 会话内存标记（同会话下一
+///   run 免问）；remember → 写统一存储（此后跨重启免问）；deny → 本 run
+///   按未信任处理（不产生记录，下一 run 重新询问）；
 /// - 已信任技能读正文全文进快照；正文读取失败（文件被删/损坏）→
 ///   「旧版本不可得则停止相关加载」：跳过该技能并提示（eprintln，§9.8）。
 ///
@@ -138,7 +152,7 @@ pub async fn ensure_skills_snapshot(app: &AppState, session_id: &str) -> RunSkil
     let mut entries: Vec<SkillSnapshotEntry> = Vec::new();
     let mut rejected: Vec<String> = Vec::new();
     for entry in registry.enabled_entries() {
-        match trust_of(app, session_id, registry, &trust_store, &entry).await {
+        match trust_of(app, session_id, &trust_store, &entry).await {
             SkillTrustVerdict::Trusted => {}
             SkillTrustVerdict::Denied => {
                 rejected.push(entry.name);
@@ -186,31 +200,62 @@ enum SkillTrustVerdict {
 async fn trust_of(
     app: &AppState,
     session_id: &str,
-    registry: &SkillRegistry,
     trust_store: &ProjectTrustStore,
     entry: &SkillEntry,
 ) -> SkillTrustVerdict {
     if entry.source == SkillSource::Builtin {
         return SkillTrustVerdict::Trusted;
     }
-    if trust_store.is_trusted(&entry.name, &entry.fingerprint)
-        || registry.is_session_trusted(session_id, &entry.fingerprint)
-    {
-        return SkillTrustVerdict::Trusted;
-    }
+    // 作用域字符串（projectTrust 载荷与 SessionTrustSet 键同源）。
     let scope = match entry.source.trust_scope() {
-        Some("global") => SkillTrustScope::Global,
-        Some(_) => SkillTrustScope::Project,
+        Some("global") => {
+            if trust_store.is_trusted(&entry.name, &entry.fingerprint)
+                || app
+                    .session_trust
+                    .contains(session_id, "global", &entry.name, &entry.fingerprint)
+            {
+                return SkillTrustVerdict::Trusted;
+            }
+            SkillTrustScope::Global
+        }
+        Some(_) => {
+            if trust_store.is_trusted(&entry.name, &entry.fingerprint)
+                || app.session_trust.contains(
+                    session_id,
+                    "project",
+                    &entry.name,
+                    &entry.fingerprint,
+                )
+            {
+                return SkillTrustVerdict::Trusted;
+            }
+            SkillTrustScope::Project
+        }
         // 内置技能（trust_scope None）已在入口豁免；防御分支按已信任收口。
         None => return SkillTrustVerdict::Trusted,
     };
-    match ensure_project_trust_ask(app, entry, scope).await.as_str() {
-        "allow_once" => {
-            registry.mark_session_trusted(session_id, &entry.fingerprint);
+    let payload = AskPayload::ProjectTrust {
+        resource_name: entry.name.clone(),
+        scope,
+        fingerprint: entry.fingerprint.chars().take(16).collect(),
+        options: project_trust_options(),
+    };
+    match ensure_project_trust_ask(app, payload).await.as_str() {
+        "allow_session" => {
+            let scope_str = match entry.source.trust_scope() {
+                Some(s) => s,
+                None => return SkillTrustVerdict::Trusted,
+            };
+            app.session_trust
+                .mark(session_id, scope_str, &entry.name, &entry.fingerprint);
             SkillTrustVerdict::Trusted
         }
         "remember" => {
-            let _ = trust_store.remember(&entry.name, &entry.fingerprint, now_ms());
+            let _ = trust_store.remember(
+                &entry.name,
+                &entry.fingerprint,
+                crate::storage::trust::now_ms(),
+            );
             SkillTrustVerdict::Trusted
         }
         _ => SkillTrustVerdict::Denied,
@@ -218,11 +263,12 @@ async fn trust_of(
 }
 
 /// projectTrust 三选项（§9.8：本次会话允许 / 记住此版本 / 拒绝；与 mcpTrust
-/// 同 id 面，前端按同一 Approval 应答协议处理）。
-fn trust_options() -> Vec<AskOption> {
+/// 同 id 面，前端按同一 Approval 应答协议处理）。技能与项目指令共用
+/// （24 号票统一询问面）。
+pub(crate) fn project_trust_options() -> Vec<AskOption> {
     vec![
         AskOption {
-            id: "allow_once".to_owned(),
+            id: "allow_session".to_owned(),
             label: "本次会话允许".to_owned(),
             recommended: None,
             mode: None,
@@ -242,21 +288,12 @@ fn trust_options() -> Vec<AskOption> {
     ]
 }
 
-/// 弹 `projectTrust` 询问并等待应答（§9.8 最小版）：挂 `app_asks` 应用级
-/// 槽表 + ask:opened（sessionId="" 应用级桶，任意会话 Tab 都能应答）→
-/// await resolve_ask 投递。返回选中的 optionId（deny/异常应答/通道断开
-/// 统一归 "deny"）。单一出口清槽 + ask:closed。
-async fn ensure_project_trust_ask(
-    app: &AppState,
-    entry: &SkillEntry,
-    scope: SkillTrustScope,
-) -> String {
-    let payload = AskPayload::ProjectTrust {
-        resource_name: entry.name.clone(),
-        scope,
-        fingerprint: entry.fingerprint.chars().take(16).collect(),
-        options: trust_options(),
-    };
+/// 弹 `projectTrust` 询问并等待应答（§9.8；技能与项目指令共用，24 号票
+/// 抽取为统一询问面）：挂 `app_asks` 应用级槽表 + ask:opened（sessionId=""
+/// 应用级桶，任意会话 Tab 都能应答）→ await resolve_ask 投递。返回选中的
+/// optionId（deny/异常应答/通道断开统一归 "deny"）。单一出口清槽 +
+/// ask:closed。
+pub(crate) async fn ensure_project_trust_ask(app: &AppState, payload: AskPayload) -> String {
     let (tx, rx) = oneshot::channel::<AskAnswer>();
     let ask_id = uuid::Uuid::new_v4().to_string();
     {
@@ -311,14 +348,28 @@ pub fn skill_list_core(app: &AppState) -> Vec<SkillListEntry> {
     configure_registry(app);
     let registry = SkillRegistry::global();
     let disabled = registry.disabled_names();
+    let trust_store = ProjectTrustStore::new(app.store.root());
     registry
         .list()
         .into_iter()
-        .map(|entry| SkillListEntry {
-            enabled: !disabled.iter().any(|n| n == &entry.name),
-            name: entry.name,
-            source: entry.source,
-            description: entry.description,
+        .map(|entry| {
+            // 信任状态（24 号票）：内置豁免恒 trusted；其余按统一存储的
+            // (project, 指纹) 状态。
+            let trust_status = if entry.source == SkillSource::Builtin {
+                "trusted".to_owned()
+            } else {
+                trust_store
+                    .status_of_project(&entry.fingerprint)
+                    .as_str()
+                    .to_owned()
+            };
+            SkillListEntry {
+                enabled: !disabled.iter().any(|n| n == &entry.name),
+                name: entry.name,
+                source: entry.source,
+                description: entry.description,
+                trust_status,
+            }
         })
         .collect()
 }
@@ -339,6 +390,37 @@ pub fn skill_toggle_core(app: &AppState, name: &str, enabled: bool) -> Result<()
         return Err(IpcError::not_found(format!("技能不存在：{name}")));
     }
     Ok(())
+}
+
+/// `skill_revoke_trust`（24 号票补充面，§9.8 撤销 UI 落盘面）：显式撤销
+/// 技能信任（写 revoke 记录，覆盖旧 remember）——下次 run 装配重新询问
+/// （安全权限撤销立即生效，Q20 口径：不受 run 快照冻结延迟——快照只冻结
+/// 正文版本，信任判定每 run 重做）。技能不存在 → E_NOT_FOUND；内置技能
+/// 豁免信任，撤销无意义 → E_INVALID_ARG。
+#[tauri::command]
+pub(crate) async fn skill_revoke_trust(
+    app: tauri::State<'_, AppState>,
+    args: SkillRevokeTrustArgs,
+) -> Result<(), IpcError> {
+    skill_revoke_trust_core(&app, &args.name)
+}
+
+/// skill_revoke_trust 主体（headless 测试直驱）。
+pub fn skill_revoke_trust_core(app: &AppState, name: &str) -> Result<(), IpcError> {
+    configure_registry(app);
+    let entry = SkillRegistry::global()
+        .find(name)
+        .ok_or_else(|| IpcError::not_found(format!("技能不存在：{name}")))?;
+    if entry.source == SkillSource::Builtin {
+        return Err(IpcError::invalid_arg(format!(
+            "内置技能 {} 与应用同源分发，豁免信任，无需撤销",
+            name
+        )));
+    }
+    let trust_store = ProjectTrustStore::new(app.store.root());
+    trust_store
+        .revoke(name, &entry.fingerprint, crate::storage::trust::now_ms())
+        .map_err(IpcError::invalid_arg)
 }
 
 /// `skill_reload`（§3.3 #50）：重扫全部来源并重建索引（活跃 run 的快照

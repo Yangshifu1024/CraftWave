@@ -5,4 +5,12 @@
  * 也是 `list_sessions` 命令返回给前端的条目形状。revision 是只增不减的修订号，
  * 用来识别同一会话的哪个版本最新。
  */
-export type SessionMeta = { id: string, projectId?: string, title: string, createdAt: number, updatedAt: number, revision: number, messageCount: number, totalTokens: number, };
+export type SessionMeta = { id: string, projectId?: string, title: string, createdAt: number, updatedAt: number, revision: number, messageCount: number, totalTokens: number, 
+/**
+ * 已授权的外部目录（§9.9 会话 roots 快照，24 号票）："始终允许"授权
+ * 经 #34 `allow_external_dir` 并入后持久于本字段（canonical 绝对路径
+ * 字符串），会话内跨 run 生效、跨会话不延续。旧索引无此字段时 serde
+ * default 回填空表；备份恢复（Q41）由恢复流程清空（33 号票接线，
+ * 本票提供 `clear_all_external_grants`）。
+ */
+authorizedExternalDirs: Array<string>, };

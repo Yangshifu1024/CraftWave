@@ -149,6 +149,7 @@ fn delete_session_removes_imgblob_dir() {
             revision: 1,
             message_count: 0,
             total_tokens: 0,
+            authorized_external_dirs: Vec::new(),
         })
         .unwrap();
     let bytes = decode(PNG_1X1);

@@ -7,7 +7,9 @@ use std::fs;
 use std::sync::Arc;
 
 use super::workspace::{
-    read_workspace_file_core, resolve_session_roots, search_workspace_paths_core,
+    allow_external_dir_core, check_external_path_core, clear_all_external_grants,
+    read_workspace_file_core, resolve_session_roots, revoke_external_dir_core,
+    search_workspace_paths_core,
 };
 use crate::host::AppState;
 use crate::storage::SessionMeta;
@@ -29,6 +31,7 @@ fn meta(id: &str, project_id: Option<&str>) -> SessionMeta {
         revision: 0,
         message_count: 0,
         total_tokens: 0,
+        authorized_external_dirs: Vec::new(),
     }
 }
 
@@ -49,7 +52,8 @@ fn resolve_roots_project_session_uses_home_dir() {
         .upsert(meta("s-proj", Some(&project.id)))
         .unwrap();
 
-    let (project_root, data_root) = resolve_session_roots(&state, "s-proj");
+    let roots = resolve_session_roots(&state, "s-proj");
+    let (project_root, data_root) = (roots.project_root, roots.workspace_root);
     assert_eq!(
         fs::canonicalize(&project_root).unwrap(),
         fs::canonicalize(home.path()).unwrap()
@@ -68,7 +72,8 @@ fn resolve_roots_temp_session_two_roots_at_workspace_subdir() {
     let dir = tempfile::tempdir().unwrap();
     let state = app(dir.path());
     state.store.index().upsert(meta("s-temp", None)).unwrap();
-    let (project_root, data_root) = resolve_session_roots(&state, "s-temp");
+    let roots = resolve_session_roots(&state, "s-temp");
+    let (project_root, data_root) = (roots.project_root, roots.workspace_root);
     assert_eq!(project_root, data_root, "临时会话两根同目录");
     fs::create_dir_all(dir.path().join("workspace")).unwrap();
     assert_eq!(
@@ -88,7 +93,8 @@ fn resolve_roots_temp_session_two_roots_at_workspace_subdir() {
 fn resolve_roots_unknown_session_falls_back_to_workspace_subdir() {
     let dir = tempfile::tempdir().unwrap();
     let state = app(dir.path());
-    let (project_root, data_root) = resolve_session_roots(&state, "幽灵会话");
+    let roots = resolve_session_roots(&state, "幽灵会话");
+    let (project_root, data_root) = (roots.project_root, roots.workspace_root);
     assert_eq!(project_root, data_root);
     fs::create_dir_all(dir.path().join("workspace")).unwrap();
     assert_eq!(
@@ -275,4 +281,257 @@ fn read_preview_allows_workspace_subdir_file_in_project_session() {
     )
     .unwrap_err();
     assert_eq!(err.code, "E_PATH_OUTSIDE_ROOTS", "数据目录本体绝对路径拒绝");
+}
+
+// ---- 外部目录授权（§3.3 #33/#34，24 号票）----
+
+/// #33 三态：初始两根内（insideRoots=true, allowed=true）/ 已授权目录
+/// （insideRoots=false, allowed=true）/ 未授权外部（both=false）。
+#[test]
+fn check_external_path_three_states() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = app(dir.path());
+    let home = tempfile::tempdir().unwrap();
+    let project = state
+        .projects
+        .save(None, "项目", home.path().to_string_lossy().as_ref())
+        .unwrap();
+    state
+        .store
+        .index()
+        .upsert(meta("s-1", Some(&project.id)))
+        .unwrap();
+    fs::create_dir_all(home.path().join("src")).unwrap();
+    fs::create_dir_all(dir.path().join("workspace")).unwrap();
+    // 外部目录（数据目录外，供授权）
+    let external = tempfile::tempdir().unwrap();
+
+    // 初始两根内：allowed + insideRoots
+    let r = check_external_path_core(&state, "s-1", "src/lib.rs").unwrap();
+    assert!(r.allowed && r.inside_roots, "项目主目录内：{r:?}");
+    // 未授权外部：both false
+    let r = check_external_path_core(
+        &state,
+        "s-1",
+        &external.path().join("docs").to_string_lossy(),
+    )
+    .unwrap();
+    assert!(!r.allowed && !r.inside_roots, "未授权外部：{r:?}");
+    // 授权后：allowed=true, insideRoots=false
+    let ext_dir = external.path().join("docs");
+    fs::create_dir_all(&ext_dir).unwrap();
+    allow_external_dir_core(&state, "s-1", ext_dir.to_str().unwrap()).unwrap();
+    let r =
+        check_external_path_core(&state, "s-1", &ext_dir.join("a.md").to_string_lossy()).unwrap();
+    assert!(r.allowed && !r.inside_roots, "授权目录内：{r:?}");
+}
+
+/// #34 行为：授权并入 SessionMeta（跨重启持久）、roots 全集返回、重复
+/// 授权幂等；会话不存在 E_NOT_FOUND；目录不存在 E_INVALID_ARG。
+#[test]
+fn allow_external_dir_persists_and_validates() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = app(dir.path());
+    let home = tempfile::tempdir().unwrap();
+    let project = state
+        .projects
+        .save(None, "项目", home.path().to_string_lossy().as_ref())
+        .unwrap();
+    state
+        .store
+        .index()
+        .upsert(meta("s-1", Some(&project.id)))
+        .unwrap();
+    let external = tempfile::tempdir().unwrap();
+    let ext_dir = external.path().join("docs");
+    fs::create_dir_all(&ext_dir).unwrap();
+
+    let r = allow_external_dir_core(&state, "s-1", ext_dir.to_str().unwrap()).unwrap();
+    assert_eq!(r.roots.len(), 3, "两核心根 + 一个授权目录");
+    let ext_canon = ext_dir
+        .canonicalize()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    assert!(
+        r.roots.contains(&ext_canon),
+        "roots 含授权目录（canonical 形态）"
+    );
+    // 持久化在 SessionMeta（重启 = 新 AppState 同数据目录读回）
+    assert_eq!(
+        state
+            .store
+            .index()
+            .get("s-1")
+            .unwrap()
+            .authorized_external_dirs
+            .len(),
+        1,
+        "授权记录持久于索引"
+    );
+    // 重复授权幂等
+    let r2 = allow_external_dir_core(&state, "s-1", ext_dir.to_str().unwrap()).unwrap();
+    assert_eq!(r2.roots.len(), 3, "重复授权不重复追加");
+    assert_eq!(
+        state
+            .store
+            .index()
+            .get("s-1")
+            .unwrap()
+            .authorized_external_dirs
+            .len(),
+        1
+    );
+    // 会话不存在
+    let err = allow_external_dir_core(&state, "幽灵", ext_dir.to_str().unwrap()).unwrap_err();
+    assert_eq!(err.code, "E_NOT_FOUND");
+    // 目录不存在（canonicalize 失败）
+    let err = allow_external_dir_core(
+        &state,
+        "s-1",
+        external.path().join("不存在").to_str().unwrap(),
+    )
+    .unwrap_err();
+    assert_eq!(err.code, "E_INVALID_ARG");
+}
+
+/// 拒绝整体放行（§9.9）：文件系统根、家目录本身及其祖先、宿主托管目录
+/// （数据目录）本身/祖先/后代——全部 E_INVALID_ARG。
+#[test]
+fn protected_grant_targets_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = app(dir.path());
+    let home = tempfile::tempdir().unwrap();
+    let project = state
+        .projects
+        .save(None, "项目", home.path().to_string_lossy().as_ref())
+        .unwrap();
+    state
+        .store
+        .index()
+        .upsert(meta("s-1", Some(&project.id)))
+        .unwrap();
+    // 数据目录本身与后代（workspace 子目录虽在核心 roots 内，授权语义同样拒绝）
+    for target in [dir.path().to_path_buf(), dir.path().join("workspace")] {
+        let err = allow_external_dir_core(&state, "s-1", target.to_str().unwrap()).unwrap_err();
+        assert_eq!(err.code, "E_INVALID_ARG", "托管目录 {target:?}");
+    }
+    // 家目录本身与祖先（macOS HOME=/Users/x；/Users 是其祖先）
+    if let Ok(home_real) = std::fs::canonicalize(std::path::Path::new(
+        &std::env::var("HOME").unwrap_or_default(),
+    )) {
+        let err = allow_external_dir_core(&state, "s-1", home_real.to_str().unwrap()).unwrap_err();
+        assert_eq!(err.code, "E_INVALID_ARG", "家目录本身");
+        if let Some(parent) = home_real.parent() {
+            let err = allow_external_dir_core(&state, "s-1", parent.to_str().unwrap()).unwrap_err();
+            assert_eq!(err.code, "E_INVALID_ARG", "家目录祖先 {parent:?}");
+        }
+    }
+    // 文件系统根
+    let err = allow_external_dir_core(&state, "s-1", "/").unwrap_err();
+    assert_eq!(err.code, "E_INVALID_ARG", "文件系统根");
+    assert!(
+        state
+            .store
+            .index()
+            .get("s-1")
+            .unwrap()
+            .authorized_external_dirs
+            .is_empty(),
+        "禁区目标全部未落授权"
+    );
+}
+
+/// 授权后 PathGuard 放行（read_workspace_file 预览读取与 @ 补全同 roots
+/// 面）：授权目录内文件可读；撤销后重新拒绝；授权跨会话不延续。
+#[test]
+fn grant_then_read_then_revoke() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = app(dir.path());
+    let home = tempfile::tempdir().unwrap();
+    let project = state
+        .projects
+        .save(None, "项目", home.path().to_string_lossy().as_ref())
+        .unwrap();
+    state
+        .store
+        .index()
+        .upsert(meta("s-1", Some(&project.id)))
+        .unwrap();
+    state
+        .store
+        .index()
+        .upsert(meta("s-other", Some(&project.id)))
+        .unwrap();
+    let external = tempfile::tempdir().unwrap();
+    let ext_dir = external.path().join("docs");
+    fs::create_dir_all(&ext_dir).unwrap();
+    fs::write(ext_dir.join("note.md"), "外部资料").unwrap();
+    let abs = ext_dir.join("note.md").to_string_lossy().into_owned();
+
+    // 未授权：E_PATH_OUTSIDE_ROOTS
+    let err = read_workspace_file_core(&state, "s-1", &abs, None, None).unwrap_err();
+    assert_eq!(err.code, "E_PATH_OUTSIDE_ROOTS", "未授权越界");
+    // 授权：放行
+    allow_external_dir_core(&state, "s-1", ext_dir.to_str().unwrap()).unwrap();
+    let result = read_workspace_file_core(&state, "s-1", &abs, None, None).unwrap();
+    assert_eq!(result.content, "外部资料", "授权后放行");
+    // 授权不跨会话延续（s-other 同项目会话仍拒绝）
+    let err = read_workspace_file_core(&state, "s-other", &abs, None, None).unwrap_err();
+    assert_eq!(err.code, "E_PATH_OUTSIDE_ROOTS", "授权仅本会话有效");
+    // 撤销：s-1 也重新拒绝
+    let r = revoke_external_dir_core(&state, "s-1", ext_dir.to_str().unwrap()).unwrap();
+    assert_eq!(r.roots.len(), 2, "撤销后仅剩两核心根");
+    let err = read_workspace_file_core(&state, "s-1", &abs, None, None).unwrap_err();
+    assert_eq!(err.code, "E_PATH_OUTSIDE_ROOTS", "撤销后下次访问重新询问");
+    // 撤销不存在的授权幂等不报错
+    revoke_external_dir_core(&state, "s-1", ext_dir.to_str().unwrap()).unwrap();
+}
+
+/// Q41 恢复授权接线面：clear_all_external_grants 清空全部会话授权
+///（33 号票恢复流程调用；普通重启不调用——授权跨重启保留）。
+#[test]
+fn clear_all_grants_for_backup_restore() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = app(dir.path());
+    let external = tempfile::tempdir().unwrap();
+    let ext_dir = external.path().join("docs");
+    fs::create_dir_all(&ext_dir).unwrap();
+    for sid in ["s-a", "s-b"] {
+        state.store.index().upsert(meta(sid, None)).unwrap();
+        allow_external_dir_core(&state, sid, ext_dir.to_str().unwrap()).unwrap();
+    }
+    // 正常重启口径：同数据目录新 AppState 授权仍在
+    let restarted = app(dir.path());
+    assert_eq!(
+        restarted
+            .store
+            .index()
+            .get("s-a")
+            .unwrap()
+            .authorized_external_dirs
+            .len(),
+        1,
+        "普通重启保留有效授权"
+    );
+    // 恢复流程口径：清空全部
+    let cleared = clear_all_external_grants(&state).unwrap();
+    assert_eq!(cleared, 2, "清理两个会话");
+    assert!(
+        state
+            .store
+            .index()
+            .get("s-a")
+            .unwrap()
+            .authorized_external_dirs
+            .is_empty()
+            && state
+                .store
+                .index()
+                .get("s-b")
+                .unwrap()
+                .authorized_external_dirs
+                .is_empty(),
+        "恢复后授权失效（须重新确认）"
+    );
 }

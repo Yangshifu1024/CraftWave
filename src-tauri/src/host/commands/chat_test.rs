@@ -13,6 +13,7 @@ fn pending(name: &str, args_json: &str) -> PendingCall {
         name: name.to_owned(),
         args_json: args_json.to_owned(),
         fence_reason: None,
+        external_dir: None,
     }
 }
 
@@ -85,6 +86,7 @@ fn command_payload_with_fence_reason() {
         name: "command".to_owned(),
         args_json: r#"{"command":"echo hi > out.txt"}"#.to_owned(),
         fence_reason: Some("命令含写信号，需确认".to_owned()),
+        external_dir: None,
     };
     let AskPayload::Approval {
         title,

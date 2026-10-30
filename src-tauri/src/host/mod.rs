@@ -98,6 +98,11 @@ pub struct AppState {
     /// 即清、会话删除随清（`forget`）、备份恢复经 `clear_all` 失效（Q41，
     /// 恢复流程接线由 33 号票负责）。
     pub approval_memory: crate::backend::gate::ApprovalMemory,
+    /// 会话级资源信任集（24 号票，§9.8 allow_session「本次会话允许」内存
+    /// 面）：projectTrust 询问选「本次会话允许」后登记（技能与项目指令
+    /// 共用，键含会话/作用域/资源名/指纹）。不持久化——重启失效、新会话
+    /// 不延续、备份恢复天然不复活（Q41）。
+    pub session_trust: crate::knowledge::session_trust::SessionTrustSet,
 }
 
 impl AppState {
@@ -143,6 +148,7 @@ impl AppState {
             http,
             ledger: usage::UsageLedger::new(&data_dir),
             approval_memory: crate::backend::gate::ApprovalMemory::new(),
+            session_trust: crate::knowledge::session_trust::SessionTrustSet::new(),
         }
     }
 
@@ -194,6 +200,7 @@ impl AppState {
             http: self.http.clone(),
             ledger: self.ledger.clone(),
             approval_memory: self.approval_memory.clone(),
+            session_trust: self.session_trust.clone(),
         }
     }
 

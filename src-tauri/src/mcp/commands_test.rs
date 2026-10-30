@@ -156,7 +156,7 @@ async fn tofu_three_paths() {
             .trust
             .entries()
             .iter()
-            .any(|e| e.decision == LaunchDecision::Remember),
+            .any(|e| e.decision == "remember"),
         "deny 不产生信任记录"
     );
 
@@ -210,7 +210,7 @@ async fn tofu_three_paths() {
             .trust
             .entries()
             .iter()
-            .any(|e| e.decision == LaunchDecision::Remember),
+            .any(|e| e.decision == "remember"),
         "allow_once 不写信任记录（下次再问）"
     );
     mcp_disconnect_core(&app, McpScope::Global, "tofu-once").expect("断开");
@@ -254,7 +254,7 @@ async fn tofu_three_paths() {
             .trust
             .entries()
             .iter()
-            .any(|e| e.decision == LaunchDecision::Remember),
+            .any(|e| e.decision == "remember"),
         "remember 写 trust/mcp.json（§7.7 trust 域）"
     );
     // 第二次连接：无询问（信任命中），直接到 Ready

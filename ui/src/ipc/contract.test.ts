@@ -440,6 +440,55 @@ describe("§12.3 manifest 双向扫描", () => {
     }
   });
 
+  it("外部目录授权两命令（24 号票，§3.3 #33/#34）在两侧接线且契约类型名一致", () => {
+    const find = (name: string) => {
+      const command = manifest.commands.find((c) => c.name === name);
+      expect(command, `manifest 缺命令 ${name}`).toBeDefined();
+      return command!;
+    };
+    // #33 外部目录预检（FR-05-12）
+    expect(find("check_external_path")).toMatchObject({
+      args_type: "CheckExternalPathArgs",
+      ret_type: "CheckExternalPathResult",
+    });
+    // #34 「始终允许」授权并入会话 roots
+    expect(find("allow_external_dir")).toMatchObject({
+      args_type: "AllowExternalDirArgs",
+      ret_type: "ExternalRootsResult",
+    });
+    // 撤销补充面（Inspector 已授权列表的移除按钮）
+    expect(find("revoke_external_dir")).toMatchObject({
+      args_type: "RevokeExternalDirArgs",
+      ret_type: "ExternalRootsResult",
+    });
+    // 双向：client.ts 已接线（禁止只注册不使用）
+    for (const name of ["check_external_path", "allow_external_dir", "revoke_external_dir"]) {
+      expect(Object.values(COMMANDS), `${name} 应在 client.ts 接线`).toContain(name);
+    }
+  });
+
+  it("信任面契约（24 号票）：skill_revoke_trust 接线 + SessionMeta 授权字段 + AskPayload externalDir/projectTrust 形态", () => {
+    // 技能信任撤销命令（§9.8 撤销 UI 落盘面）
+    const revoke = manifest.commands.find((c) => c.name === "skill_revoke_trust");
+    expect(revoke, "manifest 缺命令 skill_revoke_trust").toBeDefined();
+    expect(revoke).toMatchObject({ args_type: "SkillRevokeTrustArgs", ret_type: "()" });
+    expect(Object.values(COMMANDS)).toContain("skill_revoke_trust");
+    // SessionMeta 生成物含授权字段（§9.9 会话 roots 快照持久化字段）
+    const sessionMeta = readFileSync(
+      resolve(import.meta.dirname, "generated/SessionMeta.ts"),
+      "utf8",
+    );
+    expect(sessionMeta).toContain("authorizedExternalDirs");
+    // AskPayload 生成物含 externalDir 形态（路径 + 选项）与 projectTrust 的
+    // allow_session 键面（§3.2 口径，24 号票统一：allow_once → allow_session）
+    const askPayload = readFileSync(
+      resolve(import.meta.dirname, "generated/AskPayload.ts"),
+      "utf8",
+    );
+    expect(askPayload).toContain('"kind": "externalDir"');
+    expect(askPayload).toContain("allow_session");
+  });
+
   it("子代理两命令（10 号票，§3.3 #58/#59）在两侧接线且契约类型名一致", () => {
     const find = (name: string) => {
       const command = manifest.commands.find((c) => c.name === name);

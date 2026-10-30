@@ -31,11 +31,7 @@ pub const TURN1_TEXT: &str = "我来读一下配置文件。";
 pub const TURN1_TOOL_ID: &str = "toolu_mock_1";
 pub const TURN1_TOOL_NAME: &str = "read";
 /// 工具入参（分段流式发出，第二段结尾是半截 JSON）。
-pub const TURN1_TOOL_ARG_PARTS: [&str; 3] = [
-    "{\"path\": \"/etc/app",
-    "/config.toml\", \"off",
-    "set\": 0}",
-];
+pub const TURN1_TOOL_ARG_PARTS: [&str; 3] = ["{\"path\": \"config", ".toml\", \"off", "set\": 0}"];
 /// 脚本第 2 轮的最终答复。
 pub const TURN2_TEXT: &str = "配置文件共 12 行，端口是 8087。";
 

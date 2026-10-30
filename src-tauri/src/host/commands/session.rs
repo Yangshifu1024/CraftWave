@@ -57,6 +57,7 @@ pub(crate) async fn create_session(
         revision: 0,
         message_count: 0,
         total_tokens: 0,
+        authorized_external_dirs: Vec::new(),
     };
     app.store
         .index()

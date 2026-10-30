@@ -45,10 +45,13 @@ use std::sync::{Arc, Mutex};
 use crate::safety::fence::ast::{self, FsCanonicalizer, TargetPath};
 use crate::safety::fence::{Fence, FenceVerdict};
 use crate::safety::internal_state::InternalStateGuard;
+use crate::safety::safe_join::canonicalize_best_effort;
 use crate::safety::tier::{Capability, GateDecision, PermissionTier, decide_gate};
 use crate::tools::plan::PlanState;
 use crate::tools::{ToolOrigin, ToolSpec, lookup_spec};
-use crate::util::errors::{E_FENCE_BLOCKED, E_INTERNAL_STATE, E_PLAN_STALE, E_TOOL_BLOCKED};
+use crate::util::errors::{
+    E_FENCE_BLOCKED, E_INTERNAL_STATE, E_INVALID_ARG, E_PLAN_STALE, E_TOOL_BLOCKED,
+};
 
 use super::run_loop::{GateVerdict, ToolGate};
 
@@ -262,6 +265,15 @@ pub struct ApprovalGate {
     /// 审批策略快照（23 号票四开关中由门消费的 ①④ + 白名单条目；
     /// 缺省 = 审批开、白名单关——最保守，M1 既有行为零漂移）。
     policy: ApprovalPolicy,
+    /// 外部目录授权扩展 roots（24 号票，§9.9）：run 装配时 = 会话已授权
+    /// 目录的 canonical 集（SessionMeta 快照）；恢复循环在用户授权后经
+    /// [`Self::grant_external_dir`] 热追加（重放调用由此放行）。空 = 未
+    /// 装配/无授权（外部目录判定仍生效——workspace 装配了就判）。
+    external_dirs: Mutex<Vec<PathBuf>>,
+    /// 宿主数据目录（24 号票禁授权目标判定的输入：「整体放行」禁区 =
+    /// 文件系统根/家目录/`~/.craftwave`；None = 未装配，外部挂起不查禁区，
+    /// 禁区校验由 allow_external_dir 命令面兜底）。
+    data_dir: Option<PathBuf>,
 }
 
 /// ApprovalGate 的登记与辅助判定。
@@ -279,6 +291,8 @@ impl ApprovalGate {
             internal: None,
             session_memory: None,
             policy: ApprovalPolicy::default(),
+            external_dirs: Mutex::new(Vec::new()),
+            data_dir: None,
         }
     }
 
@@ -315,6 +329,27 @@ impl ApprovalGate {
     pub fn with_policy(mut self, policy: ApprovalPolicy) -> Self {
         self.policy = policy;
         self
+    }
+
+    /// 装配外部目录授权的初始集合与宿主数据目录（24 号票，§9.9）：dirs
+    /// 传会话已授权目录的 canonical 集（run 装配时从 SessionMeta 读取）；
+    /// data_dir 传数据目录根（禁授权目标判定输入）。
+    pub fn with_external_dirs(mut self, dirs: Vec<PathBuf>, data_dir: PathBuf) -> Self {
+        self.external_dirs = Mutex::new(dirs);
+        self.data_dir = Some(data_dir);
+        self
+    }
+
+    /// 热追加一条外部目录授权（恢复循环在用户点「始终允许」后调用）——
+    /// 挂起恢复的重放调用经本集合放行。
+    pub fn grant_external_dir(&self, dir: PathBuf) {
+        let mut dirs = self
+            .external_dirs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !dirs.contains(&dir) {
+            dirs.push(dir);
+        }
     }
 
     /// 审批通过后登记签名（挂起恢复重放同一调用时按签名放行）。
@@ -454,6 +489,113 @@ impl ApprovalGate {
                 .any(|entry| allowlist_hit(command, entry))
     }
 
+    /// 外部目录授权命中判定（24 号票，FR-05-12/§9.9）：静态文件类工具的
+    /// 路径参数经 safe_join 同款归一后落在会话 roots（含已授权目录）之外
+    /// → 返回 Some(授权目标目录)。授权目标按参数语义取：文件类工具
+    /// （read/write/edit/batch_read）= 路径的父目录；目录类工具
+    /// （list_files/glob/grep）= 路径本身——即「该目录及子目录」的授权
+    /// 粒度。未装配 workspace（headless 测试缺省）/参数无路径/路径解析
+    /// 失败 → None（交执行层回喂错误）。
+    fn external_dir_hit(
+        &self,
+        name: &str,
+        args_json: &str,
+        spec: Option<&ToolSpec>,
+    ) -> Option<PathBuf> {
+        let ws = self.workspace.as_ref()?;
+        let is_static_file_tool = spec.is_some_and(|s| {
+            s.origin == ToolOrigin::Static
+                && matches!(s.capability, Capability::ReadOnly | Capability::FileWrite)
+                && matches!(
+                    name,
+                    "read" | "write" | "edit" | "list_files" | "grep" | "glob" | "batch_read"
+                )
+        });
+        if !is_static_file_tool {
+            return None;
+        }
+        let args: serde_json::Value = serde_json::from_str(args_json).ok()?;
+        // 路径语义分型：目录类工具授权目标 = 路径本身；文件类 = 父目录。
+        let dir_semantics = matches!(name, "list_files" | "glob" | "grep");
+        let raw_paths: Vec<String> = if name == "batch_read" {
+            args.get("paths")?
+                .as_array()?
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_owned))
+                .collect()
+        } else {
+            vec![args.get("path")?.as_str()?.to_owned()]
+        };
+        if raw_paths.is_empty() {
+            return None;
+        }
+        let external_roots = self
+            .external_dirs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        for raw in raw_paths {
+            let p = Path::new(&raw);
+            let absolute = if p.is_absolute() {
+                p.to_path_buf()
+            } else {
+                ws.base.join(p)
+            };
+            // 归一失败（路径畸形/悬挂过深）：交执行层回喂参数错误，不挂起。
+            let Ok(resolved) = canonicalize_best_effort(&absolute) else {
+                continue;
+            };
+            let inside = ws
+                .roots
+                .iter()
+                .chain(external_roots.iter())
+                .any(|r| resolved == *r || resolved.starts_with(r));
+            if inside {
+                continue;
+            }
+            // 授权目标：目录类工具（list_files/glob/grep）= 路径本身；
+            // 文件类工具 = 父目录（「该目录及子目录」粒度）。目标不存在时
+            // canonicalize_best_effort 已归到最长存在前缀，父目录回退安全。
+            let target = if dir_semantics {
+                resolved
+            } else {
+                resolved.parent().map(Path::to_path_buf).unwrap_or(resolved)
+            };
+            return Some(target);
+        }
+        None
+    }
+
+    /// 授权目标是否属「整体放行」禁区（§9.9：文件系统根/家目录本身/宿主
+    /// 托管目录及其上/下范围——与 host 侧 allow_external_dir 同口径，见
+    /// workspace.rs [`is_protected_grant_target`] 的注释）。未装配
+    /// data_dir（headless）不拦——命令面兜底校验。
+    fn protected_grant_target(&self, dir: &Path) -> Option<String> {
+        let data_dir = self.data_dir.as_ref()?;
+        let is_root = dir.components().all(|c| {
+            matches!(
+                c,
+                std::path::Component::RootDir | std::path::Component::Prefix(_)
+            )
+        });
+        let home = std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .ok()
+            .map(PathBuf::from);
+        let protected = is_root
+            || home.is_some_and(|h| dir == h || h.starts_with(dir))
+            || dir == data_dir.as_path()
+            || data_dir.starts_with(dir)
+            || dir.starts_with(data_dir.as_path());
+        protected.then(|| {
+            format!(
+                "拒绝整体放行：不允许授权文件系统根、家目录本身或宿主托管目录（{}）及其上/下范围：{}",
+                data_dir.display(),
+                dir.display()
+            )
+        })
+    }
+
     /// 白名单豁免与审批总开关豁免的公共前提：非 plan 档——plan 档的只读
     /// 围栏与过滤是档位语义（FR-05-01），白名单与总开关都不解锁计划档写入。
     fn exemptions_apply(&self) -> bool {
@@ -485,6 +627,26 @@ impl ToolGate for ApprovalGate {
             return GateVerdict::Blocked {
                 code: E_INTERNAL_STATE,
                 message: reason,
+            };
+        }
+        // (0.5) 外部目录授权（24 号票，FR-05-12/§9.9）：文件类工具访问会话
+        // roots（含已授权目录）外的路径 → 挂起弹「始终允许该目录」询问
+        // （粒度 = 该目录及子目录的读/写/列）；授权目标属「整体放行」禁区
+        // （根/家目录/宿主托管目录）→ E_INVALID_ARG 硬拦。置于签名放行之前：
+        // 恢复重放时授权已并入 roots/external_dirs，判定不再命中，签名放行
+        // 语义不变；批量调用（batch_read 跨多个外部目录）每次只授权一个，
+        // 其余在重放时继续逐个询问（签名放行不吞并未授权路径）。信任面
+        // 判定不受审批总开关/白名单/权限档豁免（同内部状态硬拒精神）。
+        if let Some(target) = self.external_dir_hit(name, args_json, spec.as_ref()) {
+            if let Some(reason) = self.protected_grant_target(&target) {
+                return GateVerdict::Blocked {
+                    code: E_INVALID_ARG,
+                    message: reason,
+                };
+            }
+            return GateVerdict::Suspend {
+                fence_reason: None,
+                external_dir: Some(target.to_string_lossy().into_owned()),
             };
         }
         let Some(spec) = spec else {
@@ -538,6 +700,7 @@ impl ToolGate for ApprovalGate {
                                     .reason
                                     .unwrap_or_else(|| "命令含写目标，需确认".to_owned()),
                             ),
+                            external_dir: None,
                         };
                     }
                 }
@@ -573,7 +736,10 @@ impl ToolGate for ApprovalGate {
             && !view.read_only
             && !mcp.license_hit(&view)
         {
-            return GateVerdict::Suspend { fence_reason: None };
+            return GateVerdict::Suspend {
+                fence_reason: None,
+                external_dir: None,
+            };
         }
         // (5) 权限矩阵（§8.5；plan 档 MCP 已被 filter_for_tier 全过滤，
         // 兜底 E_TOOL_BLOCKED）。NeedsApproval 在白名单命中（非 plan 档，
@@ -587,7 +753,10 @@ impl ToolGate for ApprovalGate {
                 if (whitelisted || !self.policy.enabled) && self.exemptions_apply() {
                     GateVerdict::Allow
                 } else {
-                    GateVerdict::Suspend { fence_reason: None }
+                    GateVerdict::Suspend {
+                        fence_reason: None,
+                        external_dir: None,
+                    }
                 }
             }
             _ => GateVerdict::Allow,

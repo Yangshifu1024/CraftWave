@@ -20,6 +20,7 @@ const meta = (id: string, projectId?: string, title = `会话${id}`): SessionMet
   revision: 0,
   messageCount: 1,
   totalTokens: 0,
+  authorizedExternalDirs: [],
 });
 
 /** 空会话样例（新建未发送形态：messageCount=0，左栏列表不显示）。 */

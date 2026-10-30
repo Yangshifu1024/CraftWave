@@ -229,6 +229,7 @@ impl SessionStore {
                         revision,
                         message_count,
                         total_tokens: 0,
+                        authorized_external_dirs: Vec::new(),
                     })
                     .map_err(|e| StorageError::Io(format!("{e:?}")))?;
             }

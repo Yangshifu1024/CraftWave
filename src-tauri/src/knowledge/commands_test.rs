@@ -1,6 +1,6 @@
 //! knowledge/commands.rs 的 headless 测试（09 号票）：#48–51 四命令链路
 //! （多来源合并 / 启停持久化 / 重扫感知新增 / 正文预览与错误码）+
-//! ensure_skills_snapshot 的信任三路径（deny / allow_once / remember）与
+//! ensure_skills_snapshot 的信任三路径（deny / allow_session / remember）与
 //! Q21 整体版本重核、内置豁免、拒绝后 E_PROJECT_UNTRUSTED 面。
 //!
 //! 进程级注册表单例的互斥面：技能测试共享 [`REGISTRY_TEST_LOCK`]
@@ -74,6 +74,7 @@ fn anchor_project_session(app: &AppState, dir: &tempfile::TempDir) -> std::path:
             revision: 1,
             message_count: 0,
             total_tokens: 0,
+            authorized_external_dirs: Vec::new(),
         })
         .unwrap();
     *app.active_session
@@ -238,7 +239,7 @@ async fn answer_project_trust(
 
 /// 信任三路径 + Q21 版本重核（验收第 5 条后端面）：
 /// - deny → 快照 rejected 含该技能、disclosure 零注入（拒绝 → 不注入清单）；
-/// - allow_once → 本会话内免问（第二次调用不弹询问）且 trust/project.json
+/// - allow_session → 本会话内免问（第二次调用不弹询问）且 trust/project.json
 ///   不产生记录；
 /// - remember → trust/project.json 落盘（跨 run 免问）；
 /// - Q21：SKILL.md 或随附资源变化（指纹变）→ 记住过的技能重新询问。
@@ -280,11 +281,11 @@ async fn trust_three_paths_and_version_recheck() {
     assert_eq!(opened["payload"]["scope"], "project");
     assert_eq!(opened["payload"]["options"][2]["id"], "deny");
 
-    // —— allow_once：本会话免问、不落盘 ——
+    // —— allow_session：本会话免问、不落盘 ——
     let answer_app = app.clone();
     let answer_events = events.clone();
     tokio::spawn(async move {
-        answer_project_trust(answer_app, answer_events, "allow_once").await;
+        answer_project_trust(answer_app, answer_events, "allow_session").await;
     });
     let run = ensure_skills_snapshot(&app, "sess-1").await;
     assert_eq!(run.snapshot.entries.len(), 1, "允许后进快照");
@@ -295,7 +296,7 @@ async fn trust_three_paths_and_version_recheck() {
             .contains("guard：需信任技能")
     );
     let trust = ProjectTrustStore::new(dir.path());
-    assert!(trust.entries().is_empty(), "allow_once 不落盘");
+    assert!(trust.entries().is_empty(), "allow_session 不落盘");
     // 同会话第二次：免问（无新询问）直接快照
     let opened_before = events.payloads_of(keys::ASK_OPENED).len();
     let run = ensure_skills_snapshot(&app, "sess-1").await;
@@ -303,7 +304,7 @@ async fn trust_three_paths_and_version_recheck() {
     assert_eq!(
         events.payloads_of(keys::ASK_OPENED).len(),
         opened_before,
-        "allow_once 同会话免问"
+        "allow_session 同会话免问"
     );
 
     // —— remember：落盘免问（新会话也免） ——

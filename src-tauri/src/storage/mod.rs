@@ -35,6 +35,13 @@ pub mod segment;
 pub mod session_tree;
 pub mod stats;
 pub mod toolres;
+// 统一信任存储（24 号票，§7.7 trust/project.json）：项目资源 + MCP 启动
+// 信任两类记录收敛为单一文件单一实现（TrustStore trait + FileTrustStore）。
+pub mod trust;
+
+#[cfg(test)]
+#[path = "trust_test.rs"]
+mod trust_test;
 
 #[cfg(test)]
 #[path = "index_store_test.rs"]

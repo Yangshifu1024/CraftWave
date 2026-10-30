@@ -1,22 +1,24 @@
 /**
  * 设置页技能管理组（§10.7 M2 清单，09 号票）：skill_list 列表（名称 /
- * 来源徽标：内置·全局·项目 / 启停开关 / 一句话描述）、「重新扫描」按钮
- * （skill_reload）、行点击 skill_inspect 弹 SKILL.md 正文预览（Markdown
- * 只读，Dialog 承载）。
+ * 来源徽标：内置·全局·项目 / 信任状态 / 启停开关 / 一句话描述）、「重新
+ * 扫描」按钮（skill_reload）、行点击 skill_inspect 弹 SKILL.md 正文预览
+ * （Markdown 只读，Dialog 承载）。24 号票增信任撤销：已「记住」的技能
+ * 行内「撤销信任」按钮（skill_revoke_trust 写 revoke 记录，下次运行
+ * 重新询问）。
  *
  * 数据面说明（票内定案，与 08 号票 McpPage 同精神）：技能清单不属 AppConfig
  * （无 config 段），生命周期独立于设置页 saveAll 草稿——数据放组件内
  * useState，启停经 skill_toggle 即时落盘（skills-state.json，后端权威）。
  */
 
-import { LoaderCircle, Zap } from "lucide-react";
+import { LoaderCircle, ShieldOff, Zap } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Markdown } from "@/chat/Markdown";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
-import { skillInspect, skillList, skillReload, skillToggle } from "@/ipc/client";
+import { skillInspect, skillList, skillReload, skillRevokeTrust, skillToggle } from "@/ipc/client";
 import type { SkillListEntry } from "@/ipc/types";
 
 /** 来源徽标（§7.7 覆盖优先级 内置 < 全局 < 项目；合并视图只显示胜出来源）。 */
@@ -70,6 +72,18 @@ export function SkillsPage() {
         (prev) => prev?.map((s) => (s.name === name ? { ...s, enabled: !enabled } : s)) ?? prev,
       );
     });
+  };
+
+  /** 信任撤销（24 号票，§9.8）：写 revoke 记录后刷新清单（信任状态列
+   *  以后端为权威）。失败提示（撤销不生效会让用户误以为已脱险）。 */
+  const revokeTrust = (name: string) => {
+    skillRevokeTrust({ name })
+      .then(refresh)
+      .catch((err: unknown) => {
+        setLoadError(
+          `技能 ${name} 信任撤销失败：${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
   };
 
   /** 重扫（skill_reload）：后端重建索引后重拉清单。 */
@@ -162,6 +176,19 @@ export function SkillsPage() {
                     {skill.description}
                   </p>
                 </div>
+                {skill.trustStatus === "trusted" && skill.source !== "builtin" && (
+                  <button
+                    type="button"
+                    data-testid={`skill-revoke-trust-${skill.name}`}
+                    title="撤销信任（下次运行重新询问）"
+                    aria-label={`撤销技能 ${skill.name} 的信任`}
+                    onClick={() => revokeTrust(skill.name)}
+                    className="flex shrink-0 items-center gap-1 rounded-full border border-[var(--border)] px-2 py-0.5 text-ui-sm text-[var(--muted-foreground)] hover:border-[var(--destructive)] hover:text-[var(--destructive)]"
+                  >
+                    <ShieldOff size={12} aria-hidden />
+                    撤销信任
+                  </button>
+                )}
                 <Switch
                   aria-label={`启用技能 ${skill.name}`}
                   data-testid={`skill-toggle-${skill.name}`}

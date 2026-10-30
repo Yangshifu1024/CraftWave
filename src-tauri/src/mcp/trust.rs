@@ -1,13 +1,18 @@
-//! MCP TOFU 启动信任与 Q44 工具级动态许可（§9.7 字段级；08 号票）。
+//! MCP TOFU 启动信任与 Q44 工具级动态许可（§9.7 字段级；08 号票建面，
+//! 24 号票存储收敛）。
 //!
 //! TOFU（Trust On First Use，首次使用信任）：首次连接一个 MCP 服务器前，
 //! 计算启动指纹并向用户弹确认（本次允许 / 记住此版本 / 拒绝）；"记住"持久
 //! 化后同指纹免问，指纹变更（配置被改动）重新询问。
 //!
-//! **存储定案（08 号票出入回写点）**：§9.7/§3.3#46 原文写"决策写 keyring"，
-//! 而 v2.5 已废除钥匙串（§9.4 用户决策）——按对齐 §7.7 trust 域的用户决策
-//! 落 `~/.craftwave/trust/mcp.json`（设计文档两处 keyring 字样已随本票
-//! 回写）。文件形状与 §7.7 `trust/project.json` 同款：条目数组 + decidedAt。
+//! **存储定案（24 号票收敛点落地）**：08 号票按 §7.7 trust 域落独立文件
+//! `~/.craftwave/trust/mcp.json`；24 号票把项目资源信任与 MCP 启动信任收敛
+//! 为**单一文件单一实现**（[`crate::storage::trust::FileTrustStore`] 落
+//! `trust/project.json`，记录增 `scope` 判别字段，§7.7 已回写）。本模块的
+//! [`TrustStore`] 保留 08 号票对外接口（is_trusted/decide/status_of，pool
+//! 的 McpHost 与命令面零改动），内部全部转调统一存储（scope=Mcp）；历史
+//! `trust/mcp.json` 由统一存储读取时迁入（见 storage/trust 模块注释）。
+//! **指纹算法不变**（§9.7 字面元组），已记住的服务器跨收敛不重问。
 //!
 //! Q44 动态许可：免审批许可**不得**只绑展示名（归一名会因碰撞后缀漂移），
 //! 绑定三元组 = 启动指纹（服务器身份）+ 原始工具名 + 已确认输入 schema 的
@@ -21,11 +26,12 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::config::McpScope;
-
-/// 信任与许可存储的目录/文件（§7.7 trust 域）。
-const TRUST_DIR: &str = "trust";
-const LAUNCH_TRUST_FILE: &str = "mcp.json";
-const TOOL_LICENSE_FILE: &str = "mcp-tools.json";
+use crate::storage::trust::{
+    FileTrustStore, TrustDecision, TrustRecord, TrustRecordStatus, TrustScope,
+};
+// 08 号票接口面依赖 trait 方法（entries/is_trusted/decide/status_of）；
+// 匿名导入避免与本域 `TrustStore` 结构体同名冲突。
+use crate::storage::trust::TrustStore as _;
 
 /// 服务器条目的输入（指纹计算，§9.7 逐字段）。
 #[derive(Debug, Clone)]
@@ -75,70 +81,46 @@ pub fn schema_fingerprint(schema: &serde_json::Value) -> String {
     hex(&digest[..8]).chars().take(16).collect()
 }
 
-/// 启动信任决策记录（`trust/mcp.json` 条目，§7.7 同款形状）。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct LaunchTrustEntry {
-    /// 启动指纹（完整 hex）。
-    pub fingerprint: String,
-    /// 决策时间（epoch ms）。
-    pub decided_at: i64,
-    /// 决策：remember（记住此版本）。deny 是"本次拒绝"，不产生记录——
-    /// 用户再点连接时仍会询问。
-    pub decision: LaunchDecision,
-}
+/// 启动信任决策值（§3.3 #46 mcp_set_launch_trust 的 decision 面；24 号票起
+/// 为统一存储 [`TrustDecision`] 的 MCP 域别名——serde 键面不变）。
+pub type LaunchDecision = TrustDecision;
 
-/// 启动信任决策值（§3.3 #46 mcp_set_launch_trust 的 decision 面）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(rename_all = "snake_case")]
-pub enum LaunchDecision {
-    /// 记住此版本（同指纹免问）。
-    Remember,
-    /// 撤销信任（管理页显式撤销；下次连接重新询问）。
-    Revoke,
-}
+/// 信任状态（管理页展示面；24 号票起为统一存储状态的 MCP 域别名）。
+pub type TrustStatus = TrustRecordStatus;
 
-/// TOFU 启动信任存储（`~/.craftwave/trust/mcp.json`）。
+/// TOFU 启动信任的 MCP 域门面（24 号票收敛后 = 统一存储 [`FileTrustStore`]
+/// 的薄包装，scope 恒 Mcp；文件 = `<data>/trust/project.json`）。
 #[derive(Debug, Clone)]
 pub struct TrustStore {
-    path: PathBuf,
+    unified: FileTrustStore,
 }
 
-// TrustStore 的读写方法。
+// TrustStore 的读写方法（08 号票接口面保持不变）。
 impl TrustStore {
-    /// 构造：数据目录根（文件 = `<data>/trust/mcp.json`）。
+    /// 构造：数据目录根（统一存储内部定位 `<data>/trust/project.json`）。
     pub fn new(data_dir: &Path) -> Self {
         Self {
-            path: data_dir.join(TRUST_DIR).join(LAUNCH_TRUST_FILE),
+            unified: FileTrustStore::new(data_dir),
         }
     }
 
-    /// 读取全部信任记录（文件缺失 = 空）。
-    pub fn entries(&self) -> Vec<LaunchTrustEntry> {
-        read_json_or_default(&self.path)
+    /// 全部 MCP 域信任记录（统一存储的 scope 过滤视图；诊断/快照面用）。
+    pub fn entries(&self) -> Vec<TrustRecord> {
+        self.unified
+            .entries()
+            .into_iter()
+            .filter(|e| e.scope == TrustScope::Mcp)
+            .collect()
     }
 
     /// 指纹是否已被"记住"（同指纹免问）。
     pub fn is_trusted(&self, fingerprint: &str) -> bool {
-        self.entries()
-            .iter()
-            .any(|e| e.fingerprint == fingerprint && e.decision == LaunchDecision::Remember)
+        self.unified.is_trusted(TrustScope::Mcp, "", fingerprint)
     }
 
     /// 指纹的信任状态（管理页信任状态列：已记住 / 待决策 / 已撤销）。
     pub fn status_of(&self, fingerprint: &str) -> TrustStatus {
-        match self
-            .entries()
-            .into_iter()
-            .find(|e| e.fingerprint == fingerprint)
-        {
-            Some(e) => match e.decision {
-                LaunchDecision::Remember => TrustStatus::Trusted,
-                LaunchDecision::Revoke => TrustStatus::Revoked,
-            },
-            None => TrustStatus::Pending,
-        }
+        self.unified.status_of(TrustScope::Mcp, fingerprint)
     }
 
     /// 写入/覆盖一条决策（remember 或 revoke；原子写）。
@@ -148,41 +130,15 @@ impl TrustStore {
         decision: LaunchDecision,
         now_ms: i64,
     ) -> Result<(), String> {
-        let mut entries: Vec<LaunchTrustEntry> = self.entries();
-        match entries.iter_mut().find(|e| e.fingerprint == fingerprint) {
-            Some(entry) => {
-                entry.decision = decision;
-                entry.decided_at = now_ms;
-            }
-            None => entries.push(LaunchTrustEntry {
-                fingerprint: fingerprint.to_owned(),
-                decided_at: now_ms,
-                decision,
-            }),
-        }
-        write_json_atomic(&self.path, &entries)
-    }
-}
-
-/// 信任状态（管理页展示面）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TrustStatus {
-    /// 已记住（同指纹免问）。
-    Trusted,
-    /// 待决策（从未见过该指纹）。
-    Pending,
-    /// 已撤销（用户显式撤销；重连须重新询问）。
-    Revoked,
-}
-
-impl TrustStatus {
-    /// 快照载荷的字符串面（§3.3 #47 补充面："trusted"|"pending"|"revoked"）。
-    pub fn as_str(self) -> &'static str {
-        match self {
-            TrustStatus::Trusted => "trusted",
-            TrustStatus::Pending => "pending",
-            TrustStatus::Revoked => "revoked",
-        }
+        self.unified.decide(TrustRecord {
+            scope: TrustScope::Mcp,
+            // MCP 记录不带资源名：服务器身份已完整包含在指纹元组内
+            // （§9.7 scope|projectId|name|canonicalPath|内容哈希）。
+            resource_name: String::new(),
+            fingerprint: fingerprint.to_owned(),
+            decided_at: now_ms,
+            decision: decision.as_str().to_owned(),
+        })
     }
 }
 
@@ -200,7 +156,9 @@ pub struct ToolLicenseEntry {
     pub decided_at: i64,
 }
 
-/// Q44 工具级许可存储（`~/.craftwave/trust/mcp-tools.json`）。
+/// Q44 工具级许可存储（`~/.craftwave/trust/mcp-tools.json`；24 号票注：
+/// 工具级许可与启动信任语义不同（调用审批记忆而非资源信任），维持独立
+/// 文件不并入统一存储——§9.7 Q44 字段级未变）。
 #[derive(Debug, Clone)]
 pub struct ToolLicenseStore {
     path: PathBuf,
@@ -211,7 +169,7 @@ impl ToolLicenseStore {
     /// 构造：数据目录根。
     pub fn new(data_dir: &Path) -> Self {
         Self {
-            path: data_dir.join(TRUST_DIR).join(TOOL_LICENSE_FILE),
+            path: data_dir.join("trust").join("mcp-tools.json"),
         }
     }
 
@@ -297,14 +255,6 @@ fn read_json_or_default<T: serde::de::DeserializeOwned + Default>(path: &Path) -
         .unwrap_or_default()
 }
 
-/// 当前毫秒时间戳（epoch ms；commands/pool 的 decidedAt 共用面）。
-pub fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
-}
-
 /// 原子写 JSON 数组/对象（util/atomic 的 serde_json::Value 面）。
 fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
     if let Some(dir) = path.parent() {
@@ -313,3 +263,7 @@ fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<(), String>
     let json = serde_json::to_value(value).map_err(|e| format!("序列化失败：{e}"))?;
     crate::util::atomic::write_json(path, &json).map_err(|e| format!("写信任文件失败：{e}"))
 }
+
+/// 当前毫秒时间戳（epoch ms；commands/pool 的 decidedAt 共用面；24 号票起
+/// 直接 re-export 统一存储的同名函数，单一实现）。
+pub use crate::storage::trust::now_ms;

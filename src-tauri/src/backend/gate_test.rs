@@ -104,7 +104,7 @@ fn matrix_verdicts_by_tier() {
         let verdict = gate.judge(name, &args);
         let actual = match &verdict {
             GateVerdict::Allow => "allow".to_owned(),
-            GateVerdict::Suspend { fence_reason } => {
+            GateVerdict::Suspend { fence_reason, .. } => {
                 if fence_reason.is_some() {
                     "suspend+fence".to_owned()
                 } else {
@@ -161,7 +161,7 @@ fn fence_workspace_quadrant_gate() {
 
     // roots 内写：fence Allow → 落矩阵合成（Network@auto_edit 审批，无围栏原因）。
     match gate.judge("command", &command_args("echo done > build.log")) {
-        GateVerdict::Suspend { fence_reason } => {
+        GateVerdict::Suspend { fence_reason, .. } => {
             assert!(
                 fence_reason.is_none(),
                 "roots 内写 fence Allow，原因应为 None（纯矩阵审批）"
@@ -172,7 +172,7 @@ fn fence_workspace_quadrant_gate() {
 
     // symlink 穿越界外：挂起并带具体原因。
     match gate.judge("command", &command_args("echo x > link/evil.txt")) {
-        GateVerdict::Suspend { fence_reason } => {
+        GateVerdict::Suspend { fence_reason, .. } => {
             let reason = fence_reason.expect("symlink 逃逸应带原因");
             assert!(reason.contains("symlink 逃逸"), "原因应指明逃逸：{reason}");
         }
@@ -181,7 +181,7 @@ fn fence_workspace_quadrant_gate() {
 
     // 变量拼接写路径：挂起并带「未解析变量」原因（字面量掩码）。
     match gate.judge("command", &command_args("echo x > $HOME/evil.txt")) {
-        GateVerdict::Suspend { fence_reason } => {
+        GateVerdict::Suspend { fence_reason, .. } => {
             let reason = fence_reason.expect("变量写路径应带原因");
             assert!(reason.contains("未解析变量"), "原因应指明变量：{reason}");
         }
@@ -206,7 +206,7 @@ fn fence_workspace_quadrant_gate() {
 
     // 解析失败 fail-closed：畸形命令挂起并带保守原因（不 fail-open）。
     match gate.judge("command", &command_args("echo \"unterminated")) {
-        GateVerdict::Suspend { fence_reason } => {
+        GateVerdict::Suspend { fence_reason, .. } => {
             let reason = fence_reason.expect("解析失败应带原因");
             assert!(reason.contains("解析失败"), "原因应指明解析失败：{reason}");
         }
@@ -219,7 +219,7 @@ fn fence_workspace_quadrant_gate() {
 fn fence_write_signal_suspend_with_reason() {
     let (gate, _) = gate_with_plan(PermissionTier::ConfirmEach);
     let verdict = gate.judge("command", &command_args("echo hi > out.txt"));
-    let GateVerdict::Suspend { fence_reason } = &verdict else {
+    let GateVerdict::Suspend { fence_reason, .. } = &verdict else {
         panic!("写信号应挂起：{verdict:?}")
     };
     assert!(
@@ -561,6 +561,9 @@ fn symlink_into_internal_state_hard_blocked() {
 
 /// 读不禁（C-8 已声明风险）：读命令即使目标是禁区文件，也不因内部状态
 /// 硬拒（落矩阵原有判定——confirm_each 挂起、full_access 放行）。
+/// 24 号票适配：config.json 在会话 roots 外，full_access 的 read 现在落
+/// 外部目录授权挂起（§9.9）——「读不禁内部状态」的语义保持为非 Blocked
+///（禁区硬拒不触及读路径），授权挂起是外部目录判定层的独立行为。
 #[test]
 fn read_paths_not_blocked_by_internal_state() {
     let (gate_confirm, data, _project, _keep) = guarded_gate(PermissionTier::ConfirmEach);
@@ -574,13 +577,25 @@ fn read_paths_not_blocked_by_internal_state() {
         "读不禁：{verdict:?}"
     );
     let (gate_full, data2, _project2, _keep2) = guarded_gate(PermissionTier::FullAccess);
-    assert!(matches!(
-        gate_full.judge(
-            "read",
-            &serde_json::json!({"path": data2.join("config.json").to_string_lossy()}).to_string()
+    let verdict = gate_full.judge(
+        "read",
+        &serde_json::json!({"path": data2.join("config.json").to_string_lossy()}).to_string(),
+    );
+    assert!(
+        !matches!(verdict, GateVerdict::Blocked { .. }),
+        "读不禁内部状态硬拒：{verdict:?}"
+    );
+    // roots 外路径挂外部目录授权（24 号票判定层接管，非权限矩阵 Allow）
+    assert!(
+        matches!(
+            &verdict,
+            GateVerdict::Suspend {
+                external_dir: Some(_),
+                ..
+            }
         ),
-        GateVerdict::Allow
-    ));
+        "外部路径挂授权询问：{verdict:?}"
+    );
 }
 
 /// 既有 workspace 写不受禁区判定影响：工作区内写走原有判定
@@ -623,7 +638,7 @@ fn opaque_target_falls_back_to_fence_confirm() {
         &command_args("echo x > $HOME/.craftwave/config.json"),
     );
     match &verdict {
-        GateVerdict::Suspend { fence_reason } => {
+        GateVerdict::Suspend { fence_reason, .. } => {
             let reason = fence_reason.as_ref().expect("Opaque 目标应有围栏原因");
             assert!(reason.contains("未解析变量"), "字面量掩码原因：{reason}");
         }
@@ -773,7 +788,7 @@ fn command_allowlist_consumption() {
     let gate_plan =
         ApprovalGate::new(PermissionTier::Plan, Arc::new(Mutex::new(None))).with_policy(policy_hit);
     let verdict = gate_plan.judge("command", &command_args("npm install"));
-    let GateVerdict::Suspend { fence_reason } = &verdict else {
+    let GateVerdict::Suspend { fence_reason, .. } = &verdict else {
         panic!("plan 档应保持围栏挂起（白名单不豁免）：{verdict:?}")
     };
     let reason = fence_reason.as_ref().expect("plan 档挂起带原因");
@@ -829,4 +844,189 @@ fn approval_switch_enabled_false_auto_allows() {
     })
     .to_string();
     assert_internal_blocked(&gate_zone.judge("command", &args), "禁区命中@总开关关");
+}
+
+// ---- 外部目录授权判定（24 号票，§9.9）----
+
+/// 文件类工具访问 roots 外路径 → Suspend 且 external_dir = 目标父目录
+///（read/write/edit）；授权后 grant_external_dir → 重放放行；目录型工具
+///（list_files/glob/grep）授权目标 = 路径本身；非文件工具不判。
+#[test]
+fn external_dir_hit_and_grant_flow() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let data_root = dir.path().join("data");
+    let project_root = dir.path().join("project");
+    std::fs::create_dir_all(data_root.join("workspace")).expect("建 workspace");
+    std::fs::create_dir_all(&project_root).expect("建项目根");
+    let external = dir.path().join("outside");
+    std::fs::create_dir_all(&external).expect("建外部目录");
+    let data = std::fs::canonicalize(&data_root).unwrap();
+    let project = std::fs::canonicalize(&project_root).unwrap();
+    let outside = std::fs::canonicalize(&external).unwrap();
+    let gate = ApprovalGate::new(PermissionTier::FullAccess, Arc::new(Mutex::new(None)))
+        .with_workspace(crate::backend::gate::GateWorkspace {
+            roots: vec![project.clone(), data.join("workspace")],
+            base: project.clone(),
+        })
+        .with_external_dirs(Vec::new(), data.clone());
+    let args_of =
+        |p: &std::path::Path| serde_json::json!({"path": p.to_string_lossy()}).to_string();
+
+    // roots 内：不命中（Allow，矩阵放行）
+    assert!(matches!(
+        gate.judge("read", &args_of(&project.join("a.txt"))),
+        GateVerdict::Allow
+    ));
+    // roots 外文件：Suspend 且 external_dir = 父目录（文件类工具粒度）
+    let GateVerdict::Suspend { external_dir, .. } =
+        gate.judge("read", &args_of(&outside.join("docs").join("a.md")))
+    else {
+        panic!("外部路径应挂授权");
+    };
+    let granted_dir = external_dir.expect("带授权目标");
+    assert_eq!(
+        std::path::Path::new(&granted_dir),
+        outside.join("docs"),
+        "文件类工具授权目标 = 父目录"
+    );
+    // 目录型工具：授权目标 = 路径本身（「该目录及子目录」的列目录粒度）
+    let GateVerdict::Suspend { external_dir, .. } =
+        gate.judge("list_files", &args_of(&outside.join("docs")))
+    else {
+        panic!("目录型工具外部路径应挂授权");
+    };
+    assert_eq!(
+        std::path::Path::new(&external_dir.expect("带授权目标")),
+        outside.join("docs"),
+    );
+    // 非 roots 外关注的工具（command）：外部判定不触及（围栏/矩阵原判定）
+    assert!(matches!(
+        gate.judge("command", &command_args("echo hi")),
+        GateVerdict::Suspend { .. } | GateVerdict::Allow
+    ));
+
+    // 授权（恢复循环热追加）→ 重放放行
+    gate.grant_external_dir(outside.join("docs"));
+    assert!(matches!(
+        gate.judge("read", &args_of(&outside.join("docs").join("a.md"))),
+        GateVerdict::Allow
+    ));
+    // 同目录子路径也放行（「目录及子目录」粒度）
+    assert!(matches!(
+        gate.judge(
+            "read",
+            &args_of(&outside.join("docs").join("sub").join("b.md"))
+        ),
+        GateVerdict::Allow
+    ));
+    // 其他外部目录仍挂起
+    let GateVerdict::Suspend { external_dir, .. } =
+        gate.judge("read", &args_of(&outside.join("other").join("c.md")))
+    else {
+        panic!("其他目录仍应挂授权");
+    };
+    assert_eq!(
+        std::path::Path::new(&external_dir.expect("带授权目标")),
+        outside.join("other"),
+    );
+}
+
+/// 禁授权目标（§9.9 整体放行禁区）：家目录本身 → E_INVALID_ARG 硬拦
+///（home 由环境变量注入，tempdir 数据目录做托管目录基准）。
+#[test]
+fn external_grant_protected_targets_blocked() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let data_root = dir.path().join("data");
+    let project_root = dir.path().join("project");
+    std::fs::create_dir_all(data_root.join("workspace")).expect("建 workspace");
+    std::fs::create_dir_all(&project_root).expect("建项目根");
+    let data = std::fs::canonicalize(&data_root).unwrap();
+    let project = std::fs::canonicalize(&project_root).unwrap();
+    let gate = ApprovalGate::new(PermissionTier::FullAccess, Arc::new(Mutex::new(None)))
+        .with_workspace(crate::backend::gate::GateWorkspace {
+            roots: vec![project.clone(), data.join("workspace")],
+            base: project_root.canonicalize().unwrap(),
+        })
+        .with_external_dirs(Vec::new(), data.clone());
+    // 数据目录本身（托管目录）及其后代（workspace 是核心根内不触发外部判定；
+    // 托管目录下非 workspace 的路径 = 禁区）
+    let verdict = gate.judge(
+        "read",
+        &serde_json::json!({"path": data.join("config.json").to_string_lossy()}).to_string(),
+    );
+    let GateVerdict::Blocked { code, .. } = verdict else {
+        panic!("托管目录路径应硬拦（授权禁区）");
+    };
+    assert_eq!(
+        code, "E_INVALID_ARG",
+        "读路径不触及内部状态硬拒（23 号票只拦写），但授权目标 = 数据目录本身（托管目录禁区）→ E_INVALID_ARG"
+    );
+    // 家目录（若环境有 HOME）：读 <home>/xxx → 授权目标 <home> = 禁区
+    if let Ok(home) = std::fs::canonicalize(std::path::Path::new(
+        &std::env::var("HOME").unwrap_or_default(),
+    )) && home != project
+        && !data.starts_with(&home)
+    {
+        let verdict = gate.judge(
+            "read",
+            &serde_json::json!({"path": home.join("外文件.txt").to_string_lossy()}).to_string(),
+        );
+        let GateVerdict::Blocked { code, .. } = verdict else {
+            panic!("家目录授权目标应硬拦");
+        };
+        assert_eq!(code, "E_INVALID_ARG");
+    }
+}
+
+/// batch_read 多路径：首个越界路径的父目录作为授权目标；授权后其余越界
+/// 目录在重放时继续逐个询问（签名放行不吞并未授权路径——外部判定在签名前）。
+#[test]
+fn batch_read_multiple_external_paths_ask_one_at_a_time() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let data_root = dir.path().join("data");
+    let project_root = dir.path().join("project");
+    std::fs::create_dir_all(data_root.join("workspace")).expect("建 workspace");
+    std::fs::create_dir_all(&project_root).expect("建项目根");
+    let external = dir.path().join("outside");
+    std::fs::create_dir_all(external.join("d1")).unwrap();
+    std::fs::create_dir_all(external.join("d2")).unwrap();
+    let data = std::fs::canonicalize(&data_root).unwrap();
+    let project = std::fs::canonicalize(&project_root).unwrap();
+    let outside = std::fs::canonicalize(&external).unwrap();
+    let gate = ApprovalGate::new(PermissionTier::FullAccess, Arc::new(Mutex::new(None)))
+        .with_workspace(crate::backend::gate::GateWorkspace {
+            roots: vec![project, data.join("workspace")],
+            base: project_root.canonicalize().unwrap(),
+        })
+        .with_external_dirs(Vec::new(), data);
+    let args = serde_json::json!({
+        "paths": [
+            outside.join("d1").join("a.md").to_string_lossy(),
+            outside.join("d2").join("b.md").to_string_lossy(),
+        ]
+    })
+    .to_string();
+    let GateVerdict::Suspend { external_dir, .. } = gate.judge("batch_read", &args) else {
+        panic!("batch_read 外部路径应挂授权");
+    };
+    assert_eq!(
+        std::path::Path::new(&external_dir.expect("带授权目标")),
+        outside.join("d1"),
+        "首个越界路径的父目录"
+    );
+    // 授权 d1 后重放：d2 仍未授权 → 再次挂起（签名放行不吞并未授权路径）
+    gate.grant_external_dir(outside.join("d1"));
+    let GateVerdict::Suspend { external_dir, .. } = gate.judge("batch_read", &args) else {
+        panic!("d2 未授权应继续挂起");
+    };
+    assert_eq!(
+        std::path::Path::new(&external_dir.expect("带授权目标")),
+        outside.join("d2"),
+    );
+    // d2 也授权 → 整批放行
+    gate.grant_external_dir(outside.join("d2"));
+    assert!(matches!(
+        gate.judge("batch_read", &args),
+        GateVerdict::Allow
+    ));
 }

@@ -147,6 +147,7 @@ describe("syncTreeBeforeSend（E_SESSION_REV 自愈）", () => {
           revision: 1,
           messageCount: 2,
           totalTokens: 0,
+          authorizedExternalDirs: [],
         },
       ],
     });

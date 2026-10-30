@@ -152,6 +152,7 @@ fn session_usage_three_level_fallback() {
             revision: 1,
             message_count: 3,
             total_tokens: 777,
+            authorized_external_dirs: Vec::new(),
         })
         .expect("建索引");
     let legacy = session_usage_core(&app, "s-legacy");

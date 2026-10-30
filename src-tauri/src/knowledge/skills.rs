@@ -352,14 +352,12 @@ pub struct SkillRegistry {
     inner: Mutex<RegistryInner>,
 }
 
-/// 注册表内部状态（合并清单 + 三来源根 + 会话级信任集）。
+/// 注册表内部状态（合并清单 + 三来源根；会话级信任集已随 24 号票收敛到
+/// [`crate::knowledge::session_trust::SessionTrustSet`]，本注册表不再持有）。
 #[derive(Default)]
 struct RegistryInner {
     roots: RegistryRoots,
     entries: Vec<SkillEntry>,
-    /// 会话级信任集（§9.8 allow_once「本次会话允许」：(sessionId, 指纹)；
-    /// 重启失效——持久信任落 trust/project.json，host 层持有）。
-    session_trusted: Vec<(String, String)>,
 }
 
 // SkillRegistry 的构造与查询方法。
@@ -384,7 +382,6 @@ impl SkillRegistry {
             RegistryInner {
                 roots: src.roots.clone(),
                 entries: src.entries.clone(),
-                session_trusted: src.session_trusted.clone(),
             }
         };
         *SkillRegistry::global().lock() = snapshot;
@@ -475,23 +472,6 @@ impl SkillRegistry {
             .into_iter()
             .filter(|e| !disabled.iter().any(|n| n == &e.name))
             .collect()
-    }
-
-    /// 会话级信任标记（allow_once，§9.8 内存面）。
-    pub fn mark_session_trusted(&self, session_id: &str, fingerprint: &str) {
-        let mut inner = self.lock();
-        let key = (session_id.to_owned(), fingerprint.to_owned());
-        if !inner.session_trusted.contains(&key) {
-            inner.session_trusted.push(key);
-        }
-    }
-
-    /// 会话级信任查询。
-    pub fn is_session_trusted(&self, session_id: &str, fingerprint: &str) -> bool {
-        self.lock()
-            .session_trusted
-            .iter()
-            .any(|(sid, fp)| sid == session_id && fp == fingerprint)
     }
 }
 

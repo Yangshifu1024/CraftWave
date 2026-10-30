@@ -61,8 +61,10 @@ use crate::backend::run_loop::{
     DriveState, PendingCall, RefreshFailure, RequestRefresher, RunExit, SteerSource, drive_run,
     resume_run,
 };
+// 外部目录授权核心（24 号票，§9.9）：恢复循环在用户允许后并入会话 roots。
 use crate::backend::turn::TurnDriver;
 use crate::host::AppState;
+use crate::host::commands::workspace::allow_external_dir_core;
 use crate::host::followup::{
     FollowUpEntry, FollowUpManager, QueuedImageAttachment, QueuedRunConfig,
 };
@@ -866,6 +868,27 @@ pub(crate) fn build_approval_payload(
     pending: &PendingCall,
     session_memory_enabled: bool,
 ) -> AskPayload {
+    // 外部目录授权卡（24 号票，§9.9）：路径 + 粒度说明 + 允许/拒绝。授权
+    // 仅本会话有效（会话 roots 快照），无 recommended——不参与 autoConfirm。
+    if let Some(dir) = &pending.external_dir {
+        return AskPayload::ExternalDir {
+            path: dir.clone(),
+            options: vec![
+                AskOption {
+                    id: "allow".to_owned(),
+                    label: "始终允许（本会话）".to_owned(),
+                    recommended: None,
+                    mode: None,
+                },
+                AskOption {
+                    id: "deny".to_owned(),
+                    label: "拒绝".to_owned(),
+                    recommended: None,
+                    mode: Some(AskMode::Deny),
+                },
+            ],
+        };
+    }
     let args: serde_json::Value = serde_json::from_str(&pending.args_json).unwrap_or_default();
     // MCP 动态工具分支（08 号票，FR-08-04）：title 带 server 名与工具名
     // （票面逐字）；选项含「始终允许」（Q44 持久许可的授予入口；恢复循环
@@ -1131,10 +1154,12 @@ pub(crate) async fn wait_approval_with(
     let (resolution, answered) = match wait {
         Wait::Answer(Some(AskAnswer::Approval { option_id, .. })) => {
             // allow_once / always_session（23 号票，本会话免批）/
-            // always_allow（MCP，08 号票）都放行本次；其余选项按拒绝收场
+            // always_allow（MCP，08 号票）/ allow（外部目录授权，24 号票）
+            // 都放行本次；其余选项按拒绝收场
             let allowed = option_id == "allow_once"
                 || option_id == "always_session"
-                || option_id == "always_allow";
+                || option_id == "always_allow"
+                || option_id == "allow";
             (
                 if allowed {
                     ApprovalResolution::Allowed { option_id }
@@ -2009,6 +2034,11 @@ pub async fn start_chat_core(
     // 技能快照与渐进披露（09 号票，Q20：run 开始固定版本——重扫/启停只
     // 影响下一 run；未信任技能询问在本步同步完成，拒绝者不进清单）。
     let run_skills = crate::knowledge::commands::ensure_skills_snapshot(app, &session_id).await;
+    // 项目指令信任核验与注入（24 号票，§9.8 挂接点①）：AGENTS.md 等
+    // 首次加载弹 projectTrust 询问，deny/未信任不注入（本步同步完成，
+    // 与技能信任同一装配时机）。
+    let instructions =
+        crate::knowledge::instructions::ensure_instruction_disclosure(app, &session_id).await;
     let disclosure = run_skills.disclosure.clone();
     let policy = compaction_policy(app, &model);
     // 摘要驱动（§6.2：专用小模型未配则当前 run 模型——无会话覆盖时即
@@ -2081,12 +2111,14 @@ pub async fn start_chat_core(
     let (history, prompt, compaction_summary) =
         crate::backend::wire::split_prompt_visioned(&messages, boundary.as_ref(), &vision_policy)
             .map_err(|e| IpcError::invalid_arg(e.to_string()))?;
-    // 技能渐进披露清单（09 号票，FR-09-02）在注入层末位（§6.2 次序：
-    // customPrompt → 压缩 summary → 技能清单；计划注入随计划票）。
+    // 系统前缀注入层（§6.2 次序：customPrompt → 项目指令 → 压缩 summary →
+    // 技能清单；计划注入随计划票）。项目指令随 24 号票插入第二位（与
+    // customPrompt 同类——用户/仓库侧给 AI 的常驻指引）。
     let history = crate::backend::wire::with_system_prefix_layers(
         history,
         [
             custom_prompt.as_deref(),
+            instructions.as_deref(),
             compaction_summary.as_deref(),
             disclosure.as_deref(),
         ],
@@ -2155,19 +2187,20 @@ pub async fn start_chat_core(
     let session_id_for_memory = session_id.clone();
     let executor: Arc<dyn crate::backend::run_loop::CancellableExecutor> = Arc::new(
         ToolsetExecutor::new(
-            // 会话 roots（§6.2/§9.1，16 号票；C-8 收窄 21 号票）：项目会话=
-            // 项目主目录 + 数据目录下 `workspace/` 子目录，临时会话两根同为
-            // workspace 子目录——数据目录本体（config/sessions 等存储内部
-            // 文件）退出模型文件工具可见面；收窄单一落点在
-            // resolve_session_roots，这里只负责两根首次使用即建（canonicalize
-            // 前置）。宿主侧边车（spill/logs）仍挂 AppState.store 根，不经
-            // 本 roots。
+            // 会话 roots（§6.2/§9.1，16 号票；C-8 收窄 21 号票；24 号票扩
+            // 授权目录）：项目会话= 项目主目录 + 数据目录下 `workspace/`
+            // 子目录 + 会话已授权外部目录，临时会话两根同为 workspace 子
+            // 目录——数据目录本体（config/sessions 等存储内部文件）退出
+            // 模型文件工具可见面；收窄单一落点在 resolve_session_roots，
+            // 这里只负责两根首次使用即建（canonicalize 前置）。宿主侧边车
+            //（spill/logs）仍挂 AppState.store 根，不经本 roots。
             {
-                let (project_root, data_root) =
+                let roots =
                     crate::host::commands::workspace::resolve_session_roots(app, &session_id);
-                let _ = std::fs::create_dir_all(&project_root);
-                let _ = std::fs::create_dir_all(&data_root);
-                crate::tools::ToolsContext::new(project_root, data_root)
+                let _ = std::fs::create_dir_all(&roots.project_root);
+                let _ = std::fs::create_dir_all(&roots.workspace_root);
+                crate::tools::ToolsContext::new(roots.project_root, roots.workspace_root)
+                    .with_extra_roots(roots.extra_dirs)
             },
             run_config.tier,
         )
@@ -2230,12 +2263,24 @@ pub async fn start_chat_core(
     // 目录两根）、会话级免批桶（always_session，主 run 与子代理同桶）、
     // 审批策略快照（四开关 ①④ + 白名单条目，按 run 读取生效）。
     let gate = {
-        let (gate_project_root, gate_data_root) =
-            crate::host::commands::workspace::resolve_session_roots(app, &session_id);
+        let roots = crate::host::commands::workspace::resolve_session_roots(app, &session_id);
         let canonical = |p: &std::path::Path| std::fs::canonicalize(p).ok();
-        let gate_ws = match (canonical(&gate_project_root), canonical(&gate_data_root)) {
+        let gate_ws = match (
+            canonical(&roots.project_root),
+            canonical(&roots.workspace_root),
+        ) {
             (Some(project), Some(data)) => Some(crate::backend::gate::GateWorkspace {
-                roots: vec![project.clone(), data],
+                roots: {
+                    // 全根 canonical（含授权目录——授权判定与围栏判定同域
+                    // 比较，24 号票）
+                    let mut all = vec![project.clone(), data];
+                    for extra in &roots.extra_dirs {
+                        if let Some(c) = canonical(extra) {
+                            all.push(c);
+                        }
+                    }
+                    all
+                },
                 base: project.clone(),
             }),
             _ => None,
@@ -2246,9 +2291,15 @@ pub async fn start_chat_core(
                 host: app.mcp.clone(),
             }))
             .with_internal_guard(crate::safety::internal_state::InternalStateGuard::new(
-                &gate_data_root,
-                &gate_project_root,
+                // 内部状态禁区判定（23 号票）：数据目录根 + 项目主目录两根
+                // ——注意 workspace 收窄后的第二根是 workspace 子目录，禁区
+                // 判定仍以数据目录根为界（config/sessions 等恒在禁区）。
+                app.store.root(),
+                &roots.project_root,
             ))
+            // 外部目录授权（24 号票，§9.9）：初始集合 = 会话已授权目录，
+            // 恢复循环在用户允许后热追加；数据目录根做禁授权目标判定。
+            .with_external_dirs(roots.extra_dirs.clone(), app.store.root().to_path_buf())
             .with_session_memory(app.approval_memory.bucket(&session_id))
             .with_policy(crate::backend::gate::ApprovalPolicy {
                 enabled: approval.enabled,
@@ -2390,6 +2441,28 @@ pub async fn start_chat_core(
                     .await
                     {
                         ApprovalResolution::Allowed { option_id } => {
+                            // 外部目录授权（24 号票，§9.9）：允许 → 并入会话
+                            // roots 快照（SessionMeta 持久化，#34 同源核心）
+                            // + 门热追加授权 roots——重放调用放行。授权落盘
+                            // 失败不阻断恢复（内存面 grant 已生效，本 run
+                            // 可继续；跨 run 持久化缺失时下次再询问）。
+                            if let Some(dir) = &pending.external_dir
+                                && option_id == "allow"
+                            {
+                                let _ =
+                                    allow_external_dir_core(&app_for_delivery, &session_id, dir);
+                                // 内存面授权用最长存在前缀归一（safe_join 同款
+                                // 实现）——目标目录不存在时持久面被 #34 拒绝
+                                // （canonicalize 失败），内存面仍生效让本 run
+                                // 继续；否则重放判定不命中会再次挂起成死循环。
+                                if let Ok(canonical) =
+                                    crate::safety::safe_join::canonicalize_best_effort(
+                                        std::path::Path::new(dir),
+                                    )
+                                {
+                                    gate.grant_external_dir(canonical);
+                                }
+                            }
                             gate.approve(&pending.name, &pending.args_json);
                             // 23 号票：always_session → 会话级免批桶登记
                             //（同签名命令本会话跨 run 免批；新会话不延续，

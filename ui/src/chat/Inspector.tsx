@@ -13,6 +13,7 @@
 
 import { useEffect, useState } from "react";
 import { CompactButton } from "@/chat/CompactionUI";
+import { ExternalGrantsPanel } from "@/chat/ExternalGrants";
 import { type PlanItem, usePlanStateStore } from "@/chat/plan-state";
 import { QuotaPanel } from "@/chat/QuotaPanel";
 import { useRunMetricsStore, useSessionMetrics } from "@/chat/run-metrics";
@@ -92,7 +93,7 @@ export function Inspector({
 }) {
   const sessionId = useSessionScope();
   // tab 态（内存态：重载回「用量」缺省页）
-  const [tab, setTab] = useState<"usage" | "quota" | "subagents">("usage");
+  const [tab, setTab] = useState<"usage" | "quota" | "subagents" | "grants">("usage");
   const subs = useSubagentsStore((s) => s.bySession[sessionId] ?? EMPTY_SUBS);
   // 运行中有子代理时自动切到子代理页（盯着它干活；用户可手动切回）
   const runningCount = subs.filter((s) => s.state === "running").length;
@@ -156,11 +157,25 @@ export function Inspector({
           >
             子代理{runningCount > 0 ? `（${runningCount} 运行中）` : ""}
           </button>
+          <button
+            type="button"
+            data-testid="inspector-tab-grants"
+            className={`rounded-md px-2 py-1 ${
+              tab === "grants"
+                ? "font-medium text-[var(--foreground)]"
+                : "text-[var(--muted-foreground)]"
+            }`}
+            onClick={() => setTab("grants")}
+          >
+            授权
+          </button>
         </div>
         {tab === "usage" ? (
           <UsagePanel sessionId={sessionId} />
         ) : tab === "quota" ? (
           <QuotaPanel sessionId={sessionId} onOpenSettings={onOpenSettings} />
+        ) : tab === "grants" ? (
+          <ExternalGrantsPanel />
         ) : (
           <SubagentsPanel sessionId={sessionId} />
         )}

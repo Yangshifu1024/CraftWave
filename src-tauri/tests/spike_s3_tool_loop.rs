@@ -49,8 +49,7 @@ async fn s3_manual_loop_external_exec_result_feedback() {
     let tool_text = tool_msgs[0]["content"].as_str().unwrap_or_default();
     assert!(tool_text.contains("port = 8087"), "工具输出原文进入回喂");
     // 执行器收到的是装配器解析后的参数（serde 紧凑串），与模型三段流式片段语义一致
-    let expected_args =
-        serde_json::json!({"path": "/etc/app/config.toml", "offset": 0}).to_string();
+    let expected_args = serde_json::json!({"path": "config.toml", "offset": 0}).to_string();
     assert!(
         tool_text.contains(&expected_args),
         "模型流式给出的完整参数（含半截片段拼合）经装配解析后传给执行器并回喂：{tool_text}"

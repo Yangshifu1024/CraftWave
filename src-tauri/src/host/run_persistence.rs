@@ -347,6 +347,7 @@ impl RunRecorder {
                 revision: self.last_revision.max(prior.revision),
                 message_count: self.last_message_count.max(prior.message_count),
                 total_tokens: prior.total_tokens + run_tokens,
+                authorized_external_dirs: Vec::new(),
             },
             None => SessionMeta {
                 id: self.session_id.clone(),
@@ -357,6 +358,7 @@ impl RunRecorder {
                 revision: self.last_revision,
                 message_count: self.last_message_count,
                 total_tokens: run_tokens,
+                authorized_external_dirs: Vec::new(),
             },
         };
         if let Err(e) = self.store.index().upsert(meta) {

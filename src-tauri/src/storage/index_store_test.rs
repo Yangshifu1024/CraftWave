@@ -24,6 +24,7 @@ fn meta(id: &str, updated_at: i64) -> SessionMeta {
         revision: 1,
         message_count: 2,
         total_tokens: 100,
+        authorized_external_dirs: Vec::new(),
     }
 }
 

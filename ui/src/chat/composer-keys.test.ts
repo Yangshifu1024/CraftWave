@@ -94,9 +94,27 @@ describe("insertSkillInvocation（技能选中插入，票面定案展开为明�
 
 describe("filterSkills（/ 菜单清单过滤）", () => {
   const skills: SkillListEntry[] = [
-    { name: "hello-craftwave", source: "builtin", enabled: true, description: "入门示例" },
-    { name: "pdf-toolkit", source: "global", enabled: true, description: "PDF 处理" },
-    { name: "demo-hello", source: "project", enabled: true, description: "演示" },
+    {
+      name: "hello-craftwave",
+      source: "builtin",
+      enabled: true,
+      description: "入门示例",
+      trustStatus: "pending",
+    },
+    {
+      name: "pdf-toolkit",
+      source: "global",
+      enabled: true,
+      description: "PDF 处理",
+      trustStatus: "pending",
+    },
+    {
+      name: "demo-hello",
+      source: "project",
+      enabled: true,
+      description: "演示",
+      trustStatus: "pending",
+    },
   ];
 
   it("空查询返回全部（保持清单序）", () => {
