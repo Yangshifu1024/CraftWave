@@ -471,8 +471,10 @@ impl SessionStore {
     }
 
     /// 会话删除（§3.3 #16 存储面）：index 条目 + histories/ + prefs +
-    /// toolres 边车一并清除。运行中拒绝在命令层判定（E_SESSION_RUNNING）。
-    /// 返回是否存在（幂等面：不存在 → Ok(false)，命令层转 E_NOT_FOUND）。
+    /// toolres 边车 + 图片 blob 目录（`<sid>.imgblob/`，17 号票 §7.7 v1
+    /// GC 口径：随会话整体删除）一并清除。运行中拒绝在命令层判定
+    /// （E_SESSION_RUNNING）。返回是否存在（幂等面：不存在 → Ok(false)，
+    /// 命令层转 E_NOT_FOUND）。
     pub fn delete_session(&self, session_id: &str) -> Result<bool, StorageError> {
         validate_session_id(session_id)?;
         let mutex = self.locks.get(session_id);
@@ -491,6 +493,9 @@ impl SessionStore {
         let sessions_dir = self.root.join("sessions");
         let _ = std::fs::remove_file(sessions_dir.join(format!("{session_id}.prefs.json")));
         let _ = std::fs::remove_dir_all(sessions_dir.join(format!("{session_id}.toolres")));
+        // 图片 blob 目录（17 号票：§7.7 v1 GC——会话删除即整体删除；
+        // 跨会话不共享 blob，无引用计数问题）
+        let _ = std::fs::remove_dir_all(super::imgblob::imgblob_dir(&self.root, session_id));
         Ok(true)
     }
 

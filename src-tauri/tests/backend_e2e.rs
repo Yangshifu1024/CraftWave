@@ -2118,6 +2118,7 @@ mod command_face {
             "排队第二条",
             Some(InjectMode::FollowUp),
             Some(&run_config()),
+            &[],
         )
         .expect("空闲入 followUp 应成功");
         assert!(injected.queued);
@@ -2272,7 +2273,7 @@ mod command_face {
             assert!(Instant::now() < deadline, "等待 turn1 工具开始超时");
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
-        let injected = inject_run_message_core(&app, "sess-steer", "顺便看下端口", None, None)
+        let injected = inject_run_message_core(&app, "sess-steer", "顺便看下端口", None, None, &[])
             .expect("运行中 steer 应成功");
         assert!(injected.queued);
         assert_eq!(
@@ -2353,6 +2354,7 @@ mod command_face {
             "取消也不该丢的草稿一",
             Some(InjectMode::FollowUp),
             Some(&run_config()),
+            &[],
         )
         .unwrap();
         inject_run_message_core(
@@ -2361,6 +2363,7 @@ mod command_face {
             "取消也不该丢的草稿二",
             Some(InjectMode::FollowUp),
             Some(&run_config()),
+            &[],
         )
         .unwrap();
 
@@ -2457,6 +2460,7 @@ mod command_face {
             "失败后应保留的待发",
             Some(InjectMode::FollowUp),
             Some(&run_config()),
+            &[],
         )
         .unwrap();
 
@@ -2533,6 +2537,7 @@ mod command_face {
             "留下的",
             Some(InjectMode::FollowUp),
             Some(&run_config()),
+            &[],
         )
         .unwrap();
         inject_run_message_core(
@@ -2541,6 +2546,7 @@ mod command_face {
             "要删的",
             Some(InjectMode::FollowUp),
             Some(&run_config()),
+            &[],
         )
         .unwrap();
         let entry_id = app
@@ -2964,5 +2970,325 @@ mod small_tools {
         let faces = tool_result_faces(&sink.frames());
         assert_eq!(faces.len(), 1);
         assert!(faces[0].1, "render_html 调用成功（{:?}）", faces[0].2);
+    }
+}
+
+// ---- 图片输入与模型读图（17 号票，§6.2 image part 双形态端到端） ----
+
+mod image_face {
+    use super::*;
+    use base64::Engine;
+
+    use craftwave_lib::host::commands::chat::{
+        RunConfig, inject_run_message_core, start_chat_core,
+    };
+    use craftwave_lib::host::followup::QueuedImageAttachment;
+    use craftwave_lib::providers::types::{ApiFormat, ProviderConfig, ProviderModel};
+    use craftwave_lib::safety::tier::PermissionTier;
+    use craftwave_lib::storage::{MessageEntry, MessageRole, WirePart, get_blob, put_blob};
+    use craftwave_lib::util::events::RecordingEventSink;
+
+    /// 1x1 透明 PNG（base64 内嵌，程序解码——测试样本不依赖外部文件）。
+    const PNG_1X1: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
+    fn png_bytes() -> Vec<u8> {
+        base64::engine::general_purpose::STANDARD
+            .decode(PNG_1X1)
+            .unwrap()
+    }
+
+    /// vision 标记可配的 provider（与 command_face::provider_fixture 同构）。
+    fn provider_fixture_vision(base_url: &str, vision: Option<bool>) -> ProviderConfig {
+        ProviderConfig {
+            id: "prov-1".to_owned(),
+            name: "Mock 供应商".to_owned(),
+            api_format: ApiFormat::OpenaiChat,
+            base_url: Some(base_url.to_owned()),
+            api_key: Some("mock-key".into()),
+            models: vec![ProviderModel {
+                id: "model-1".to_owned(),
+                model: "gpt-4o-mock".to_owned(),
+                max_tokens: 32768,
+                context_window: 128000,
+                reasoning_effort: None,
+                vision,
+            }],
+            headers: None,
+        }
+    }
+
+    fn app_fixture_vision(mock: &MockOpenAI, vision: Option<bool>) -> AppState {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let events = Arc::new(RecordingEventSink::new());
+        let app = AppState::new_in(dir.path().to_path_buf(), events);
+        let config = craftwave_lib::providers::types::AppConfig {
+            providers: vec![provider_fixture_vision(&mock.base_url, vision)],
+            active_model_id: Some("model-1".to_owned()),
+            ..craftwave_lib::providers::types::AppConfig::default()
+        };
+        app.config.save(config).expect("save config");
+        std::mem::forget(dir);
+        app
+    }
+
+    fn run_config() -> RunConfig {
+        RunConfig {
+            model_id: None,
+            tier: PermissionTier::FullAccess,
+            max_turns: 4,
+            steer: false,
+        }
+    }
+
+    /// 带图 user 消息（text + image 双 part）。
+    fn user_with_image(id: &str, text: &str, blob_hash: &str) -> MessageEntry {
+        MessageEntry {
+            id: id.to_owned(),
+            parent_id: None,
+            role: MessageRole::User,
+            parts: vec![
+                WirePart::Text {
+                    text: text.to_owned(),
+                },
+                WirePart::Image {
+                    blob_hash: blob_hash.to_owned(),
+                    mime_type: "image/png".to_owned(),
+                },
+            ],
+            created_at: 1,
+            run_id: None,
+            status: None,
+        }
+    }
+
+    /// 等待 runEnded 帧出现（命令面任务异步产帧）。
+    async fn wait_ended(sink: &SharedSink, timeout: Duration) -> ChatFrame {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let frames = sink.frames();
+            if let Some(last) = frames.last()
+                && matches!(last.frame.frame, ChatFrame::RunEnded { .. })
+            {
+                return last.frame.frame.clone();
+            }
+            assert!(Instant::now() < deadline, "等待 runEnded 超时");
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }
+
+    /// 收集全部请求体里 user 消息的 content 数组（跨请求平铺）。
+    async fn user_contents(mock: &MockOpenAI) -> Vec<serde_json::Value> {
+        let mut out = Vec::new();
+        for body in mock.request_bodies().await {
+            for message in body["messages"].as_array().unwrap_or(&Vec::new()) {
+                if message["role"] == "user" {
+                    out.push(message["content"].clone());
+                }
+            }
+        }
+        out
+    }
+
+    /// vision 模型全链：blob 落盘 → 带图 start_chat → mock 请求体收多模态块
+    ///（image_url，data URL 承载 base64 字节）；纯文本部分照常。
+    #[tokio::test]
+    async fn vision_model_consumes_image_as_multimodal_block() {
+        let mock = MockOpenAI::start().await;
+        let app = app_fixture_vision(&mock, Some(true));
+        let runs = RunManager::new();
+        let sink = SharedSink::default();
+
+        // blob 先落盘（前端 attach_image 的等价动作）
+        let blob_hash = put_blob(app.store.root(), "sess-v", &png_bytes()).unwrap();
+        let (stored, mime) = get_blob(app.store.root(), "sess-v", &blob_hash).unwrap();
+        assert_eq!(mime, "image/png");
+        assert_eq!(stored, png_bytes());
+
+        let result = start_chat_core(
+            &app,
+            &runs,
+            "sess-v".to_owned(),
+            vec![user_with_image("u1", "看这张图", &blob_hash)],
+            run_config(),
+            Box::new(sink.clone()),
+            false,
+        )
+        .await
+        .expect("vision 模型带图 start_chat 应成功");
+        assert!(!result.run_id.is_empty());
+        let ended = wait_ended(&sink, Duration::from_secs(10)).await;
+        let ChatFrame::RunEnded { reason, error, .. } = &ended else {
+            panic!("应为 runEnded");
+        };
+        assert_eq!(*reason, EndReason::Done, "error 面：{error:?}");
+
+        // mock 请求体：prompt 的 content 数组含 image_url 多模态块
+        //（rig openai wire 把 base64 图片编为 data URL）
+        let contents = user_contents(&mock).await;
+        let with_image = contents
+            .iter()
+            .find(|c| {
+                c.as_array()
+                    .is_some_and(|parts| parts.iter().any(|p| p["type"] == "image_url"))
+            })
+            .expect("vision 请求应携带 image_url 多模态块");
+        let image_part = with_image
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["type"] == "image_url")
+            .unwrap();
+        let url = image_part["image_url"]["url"].as_str().unwrap();
+        assert!(
+            url.starts_with("data:image/png;base64,"),
+            "图片应为 data URL 形态：{url}"
+        );
+        let expected_data_url = format!(
+            "data:image/png;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(png_bytes())
+        );
+        assert_eq!(url, expected_data_url, "base64 字节应与 blob 一致");
+        // 文本块同在（text + image 共存）
+        assert!(
+            with_image
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|p| p["type"] == "text"),
+            "文本块应与图片块共存"
+        );
+    }
+
+    /// 非 vision 模型：本次新附图（prompt 带图）命令面拒绝（E_INVALID_ARG，
+    /// 零 run）；纯文字继续不受历史图片影响——历史图在请求中转占位文本。
+    #[tokio::test]
+    async fn non_vision_rejects_new_image_and_degrades_history_to_placeholder() {
+        let mock = MockOpenAI::start().await;
+        let app = app_fixture_vision(&mock, Some(false));
+        let runs = RunManager::new();
+        let blob_hash = put_blob(app.store.root(), "sess-n", &png_bytes()).unwrap();
+
+        // ① 新附图拒绝（零副作用——mock 无请求到达）
+        let sink = SharedSink::default();
+        let err = start_chat_core(
+            &app,
+            &runs,
+            "sess-n".to_owned(),
+            vec![user_with_image("u1", "看这张图", &blob_hash)],
+            run_config(),
+            Box::new(sink.clone()),
+            false,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code, "E_INVALID_ARG");
+        assert!(err.message.contains("不支持图片输入"));
+        assert!(mock.request_bodies().await.is_empty(), "拒绝路径零模型请求");
+
+        // ② 历史带图 + 纯文字 prompt：照常运行（Q30），历史图在请求中是占位文本
+        let history_img = user_with_image("u1", "看这张图", &blob_hash);
+        let prompt = MessageEntry {
+            id: "u2".to_owned(),
+            parent_id: Some("u1".to_owned()),
+            role: MessageRole::User,
+            parts: vec![WirePart::Text {
+                text: "改用文字描述".to_owned(),
+            }],
+            created_at: 2,
+            run_id: None,
+            status: None,
+        };
+        let sink = SharedSink::default();
+        start_chat_core(
+            &app,
+            &runs,
+            "sess-n".to_owned(),
+            vec![history_img, prompt],
+            run_config(),
+            Box::new(sink.clone()),
+            false,
+        )
+        .await
+        .expect("历史带图不阻塞纯文字继续");
+        let ended = wait_ended(&sink, Duration::from_secs(10)).await;
+        let ChatFrame::RunEnded { reason, error, .. } = &ended else {
+            panic!("应为 runEnded");
+        };
+        assert_eq!(*reason, EndReason::Done, "error 面：{error:?}");
+        // 占位文本面（§6.2 逐字格式）出现在请求 history
+        let placeholder = craftwave_lib::backend::wire::image_placeholder(&blob_hash);
+        let contents = user_contents(&mock).await;
+        assert!(
+            contents
+                .iter()
+                .any(|c| c
+                    .as_array()
+                    .is_some_and(|parts| parts.iter().any(|p| p["type"] == "text"
+                        && p["text"]
+                            .as_str()
+                            .is_some_and(|t| t.contains("当前模型无法查看此图片"))))),
+            "历史图应降级为占位文本（{placeholder}）；实际：{contents:?}"
+        );
+        // 占位不携带图片字节
+        assert!(
+            !contents.iter().any(|c| c
+                .as_array()
+                .is_some_and(|parts| parts.iter().any(|p| p["type"] == "image_url"))),
+            "非 vision 请求不应出现多模态图片块"
+        );
+    }
+
+    /// 带图消息经 inject_run_message 转 followUp 队列（§5.5 带图不入 steer），
+    /// 自动投递新 run 时附件引用展开为 image part（vision 模型收多模态块）。
+    #[tokio::test]
+    async fn followup_with_image_delivers_image_part() {
+        let mock = MockOpenAI::start().await;
+        let app = app_fixture_vision(&mock, Some(true));
+        let blob_hash = put_blob(app.store.root(), "sess-f", &png_bytes()).unwrap();
+
+        // 带图 inject（mode 缺省按 steer 语义请求；无活跃 run + 带图 → followUp）
+        let result = inject_run_message_core(
+            &app,
+            "sess-f",
+            "排队看看这张图",
+            None,
+            Some(&run_config()),
+            &[QueuedImageAttachment {
+                blob_hash: blob_hash.clone(),
+                mime_type: "image/png".to_owned(),
+            }],
+        )
+        .expect("带图 inject 应成功");
+        assert_eq!(
+            result.mode,
+            Some(craftwave_lib::host::commands::chat::InjectMode::FollowUp)
+        );
+        assert!(result.entry_id.is_some());
+
+        // 手动投递（与 resume_followup_queue_core 同面）：新 run 携 image part
+        craftwave_lib::host::commands::chat::resume_followup_queue_core(&app, "sess-f")
+            .await
+            .expect("投递命令应成功");
+        // 等待 run 收尾（投递为 DetachedSink，无帧面——以 RunManager 摘除为准）
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while app.runs.get("sess-f").is_some() {
+            assert!(Instant::now() < deadline, "投递 run 应收尾");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let contents = user_contents(&mock).await;
+        assert!(
+            contents.iter().any(|c| {
+                c.as_array().is_some_and(|parts| {
+                    parts.iter().any(|p| p["type"] == "image_url")
+                        && parts.iter().any(|p| {
+                            p["type"] == "text"
+                                && p["text"]
+                                    .as_str()
+                                    .is_some_and(|t| t.contains("排队看看这张图"))
+                        })
+                })
+            }),
+            "followUp 投递的 user 消息应含文本 + image_url 多模态块；实际：{contents:?}"
+        );
     }
 }

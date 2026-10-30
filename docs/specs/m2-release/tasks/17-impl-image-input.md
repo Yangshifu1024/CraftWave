@@ -1,7 +1,7 @@
 # 实现：图片输入与模型读图（附件、blob 存储、vision 消费）
 
 Type: task
-Status: open
+Status: resolved
 
 ## 要做什么
 
@@ -43,11 +43,34 @@ Status: open
 
 ## 验收
 
-- [ ] 含历史图片的会话切非 vision 模型后可纯文字继续；模型收到明确占位，界面保留原图并提示模型看不到；新附图及主动读图拒绝。
+- [x] 含历史图片的会话切非 vision 模型后可纯文字继续；模型收到明确占位，界面保留原图并提示模型看不到；新附图及主动读图拒绝。
+  - e2e `non_vision_rejects_new_image_and_degrades_history_to_placeholder`：历史带图 + 纯文字 prompt 正常 run 到 Done，请求 history 中历史图为 `[image: <hash>; 当前模型无法查看历史图片]` 占位文本、无 image_url 多模态块；新附图（prompt 带图）命令面 E_INVALID_ARG 且零模型请求；read(kind=image) 由执行器分发面按 ProviderModel.vision 拒绝。前端气泡内提示行（image-vision-hint）按 visionOf 判定渲染。
 
-- [ ] 附件/拖拽/粘贴三入口附图（≤4 张、单张 5MiB）发送成功
-- [ ] vision 模型真实消费图片（wire 多模态块），非 vision 模型前置拦截且有后端兜底
-- [ ] blob 落 `sessions/<sid>.imgblob/`，JSONL 正文不含图片数据（体积不膨胀）
-- [ ] 重启后历史图片消息缩略图恢复可看，blob 缺失有灰显占位
-- [ ] read 工具读图（≤3MiB、png/jpeg/webp/gif）卡片缩略展示；拖拽目录提议添加项目
-- [ ] §3.3 新命令回写完成，检查链全绿
+- [x] 附件/拖拽/粘贴三入口附图（≤4 张、单张 5MiB）发送成功
+  - 附件按钮（file input accept 白名单四格式）与粘贴（clipboardData.files）走字节直传（FileReader base64 → attach_image）；拖拽走 Tauri onDragDropEvent（webview 原生接管，HTML5 drop 不可用——见决议记录 ④）经 filePath 形态由后端读字节。≤4 张/5MiB 双侧校验（前端 checkAttachment + 后端 put_blob/attach_image）。发送 = thread.append 携 cwimg 引用 image part（空闲）或 inject attachments 转 followUp（运行中/Alt+Enter）。
+
+- [x] vision 模型真实消费图片（wire 多模态块），非 vision 模型前置拦截且有后端兜底
+  - e2e `vision_model_consumes_image_as_multimodal_block`：mock provider 请求体断言 `image_url` 块、data URL 前缀与 base64 字节逐字节一致；wire 层单测钉住 vision/非 vision/缺 blob 三形态。前端 visionOf 置灰 + 后端 split_prompt_visioned（Q30 新输入与持久历史后端区分）双防线。
+
+- [x] blob 落 `sessions/<sid>.imgblob/`，JSONL 正文不含图片数据（体积不膨胀）
+  - `storage/imgblob.rs`（内容寻址 + 同哈希去重 + 5MiB/白名单校验）；fixture 行（u3 条目）逐字节钉住 image part 序列化形态 `{type:"image",blobHash,mimeType}`（跨语言往返测试双侧通过）；会话删除连带删 `<sid>.imgblob/`（imgblob_test::delete_session_removes_imgblob_dir）。
+
+- [x] 重启后历史图片消息缩略图恢复可看，blob 缺失有灰显占位
+  - 恢复链 = load_session_tree → entryToMessageLike（WirePart::Image → cwimg 引用 image part）→ MessageImagePart 组件按 blobHash 经 read_image_blob 拉 data URL 渲染；blob 缺失（E_NOT_FOUND）灰显占位（image-missing）；contract.test 往返等价断言（树还原 → messageToEntry 逐字段一致）保证恢复后再保存不漂移。
+
+- [x] read 工具读图（≤3MiB、png/jpeg/webp/gif）卡片缩略展示；拖拽目录提议添加项目
+  - read_image 改魔数嗅探（不信任扩展名，文本伪装拒）；ReadCard 增图片态（边车 base64 → 缩略图，恢复链照常）；拖拽目录（webkitGetAsEntry/后端 path_kind 判定）弹「添加为项目」确认 → save_project 既有命令（DropDirectoryDialog）。
+
+- [x] §3.3 新命令回写完成，检查链全绿
+  - §3.3 增 #59h `attach_image`（dataBase64/filePath 二选一形态注记）/ #59i `read_image_blob` / #59j `path_kind`，#21 行补 attachments 参数与带图不入 steer 注记；§5.5 补 17 号票实装注记；§7.7 imgblob 行补 v1 GC 口径。检查链七项全过（cargo fmt --check / build / clippy --all-targets 零告警 / test 587 通过（lib 540 + 集成 47）；前端 typecheck / vitest 289 全过 / biome lint 零诊断）。
+
+## 决议记录（2026-10-30 实施）
+
+1. **带图 steer 的实现形态（票面「返回 queued=false」与 §5.5「进 followUp」的取舍）**：按 §5.5 原文落地——`inject_run_message` 增 `attachments` 参数，非空时无论 mode 与活跃状态一律转 followUp 队列（返回 mode="followUp" + entryId），不采用 queued=false 防御态。理由：M2 后端队列已是既有形态，followUp 支持附件持久化（`FollowUpEntry.attachments` 从 `Vec<serde_json::Value>` 预留位改为类型化 `Vec<QueuedImageAttachment>`，预留位语义「恒空」故无兼容负担），前端无需处理罕见防御态；queued=false 语义保持不变（正常路径恒 true 的契约注记不动）。§3.3 #21 与 §5.5 已按此回写。
+2. **新增第三命令 `path_kind`（#59j）**：票面「承载命令缺口」只列了二命令，但拖拽路由（目录提议添加项目）需要前端判定拖入路径是目录还是文件——HTML 拖放被 webview 原生接管后前端只有绝对路径字符串，无法 stat。后端补纯探测命令（kind 三态 + 扩展名图片识别），§3.3 已回写。
+3. **attach_image 增 filePath 形态**：拖拽入口只有绝对路径（Tauri webview 原生接管文件拖拽，wry file-drop handler 生效时 HTML5 drop 事件拿不到 File 对象与字节），附件按钮/粘贴入口仍走 dataBase64 直传。命令签名改为 `dataBase64?` / `filePath?` 二选一（都有/都空 E_INVALID_ARG）。filePath 形态**不做 roots 校验**：用户显式拖入与文件选择器选图等价（同为把图交给会话的主动动作），魔数白名单与 5MiB 照检；模型侧文件可见性仍由 read 管线授权链把关（FR-13-16「不因拖入自动放开」）。§3.3 #59h 已注记。
+4. **前端拖拽通道统一 Tauri onDragDropEvent**：dragover 高亮经 enter/over 事件的坐标与 Composer 区 DOM 矩形命中判定（PhysicalPosition 按 devicePixelRatio 换算逻辑坐标）；drop 按 paths 逐个调 path_kind 分流（目录→项目确认、图片→附件、普通文件→@ 路径引用文本）。纯浏览器环境（vitest）无 `__TAURI_INTERNALS__` 注入，listenDragDrop 静默 no-op。
+5. **图片 token 估算常数**：estimator 对 image part 计 2048 token/张（宁高勿低，对应主流视觉模型中分辨率图消耗上沿）+ 哈希占位文本；视觉 token 随供应商/分辨率分化无法从字节估算，Q18 预算检查照常覆盖（附图计入估算面）。
+6. **日志纪律落点**：32 号票会话日志未实现，本票图片元数据（哈希/格式/字节数）仅在 debug 构建经 eprintln 落进程终端（blob 装配跳过提示），无既有会话日志通道可写；全链无图片字节入日志/事件面（spec「图片与日志」条），32 号票实现时按 spec 承接。
+7. **vision 前端判定的刷新节奏**：`visionOf(sessionId)` 读 zustand 缓存（get_config 拉取），ComposerBar 挂载/会话切换刷新一次 + ModelPicker 打开时拉取同节奏。设置页改 vision 标记后需重开会话生效（M1 简化，与既有 ModelPicker 拉取节奏一致）；后端判定永远以 start_chat 当次 resolve_model 为准，前后端口径不会矛盾（前端置灰多拦不影响正确性）。
+8. **fixture 行序**：带图条目（u3）挂在分支链（a2/a3/marker）之后——`ExportedMessageRepository.fromBranchableArray` 的树重排会改变跨分支消息的枚举序，行序保持「父先子后 + 分支链优先」与两侧往返断言一致（contract.test 钉死）。

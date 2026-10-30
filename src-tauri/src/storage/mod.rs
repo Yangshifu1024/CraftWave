@@ -25,6 +25,7 @@
 pub mod backup;
 pub mod config_store;
 pub mod entries;
+pub mod imgblob;
 pub mod index_store;
 pub mod locks;
 pub mod project_store;
@@ -40,6 +41,10 @@ pub use entries::{
     CompleteReason, IncompleteReason, MessageEntry, MessageRole, MessageStatus, MetaEntry,
     PlanItem, PlanItemStatus, RequiresActionReason, SessionEntry, StoredCompactionEntry,
     StoredEntry, WirePart,
+};
+pub use imgblob::{
+    BLOB_HASH_HEX_LEN, MAX_BLOB_BYTES, blob_hash, get_blob, imgblob_dir, is_valid_blob_hash,
+    put_blob, sniff_image_mime,
 };
 pub use index_store::{IndexError, SessionIndex, SessionMeta};
 pub use locks::LockMap;

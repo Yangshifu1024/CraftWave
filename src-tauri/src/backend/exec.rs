@@ -133,6 +133,10 @@ pub struct ToolsetExecutor {
     /// batch_read 的单批文件数上限（`tools.batchReadLimit`，§3.2/§8.3；
     /// 缺省 20，14 号票）。按 run 装配执行器时读取生效。
     batch_read_limit: u32,
+    /// 当前 run 模型是否支持图片输入（`ProviderModel.vision`，§3.2；17 号
+    /// 票：read(kind="image") 的前置校验面。缺省 false——保守拒绝，装配时
+    /// 经 [`Self::with_vision`] 按解析出的模型标记开启）。
+    vision: bool,
 }
 
 impl Clone for ToolsetExecutor {
@@ -143,6 +147,7 @@ impl Clone for ToolsetExecutor {
             env: self.env.clone(),
             max_parallel: self.max_parallel,
             batch_read_limit: self.batch_read_limit,
+            vision: self.vision,
         }
     }
 }
@@ -151,7 +156,9 @@ impl Clone for ToolsetExecutor {
 impl ToolsetExecutor {
     /// 构造：给定工具上下文与权限档，初始不带交互环境（生产装配需再调
     /// [`Self::with_env`]）。并发上限取缺省 4（可再调 [`Self::with_max_parallel`]）；
-    /// batch_read 单批上限取缺省 20（可再调 [`Self::with_batch_read_limit`]）。
+    /// batch_read 单批上限取缺省 20（可再调 [`Self::with_batch_read_limit`]）；
+    /// vision 取缺省 false（17 号票：read 图片读取的保守面，生产装配按
+    /// 模型标记开启）。
     pub fn new(ctx: ToolsContext, tier: PermissionTier) -> Self {
         Self {
             ctx,
@@ -159,12 +166,20 @@ impl ToolsetExecutor {
             env: None,
             max_parallel: crate::providers::types::DEFAULT_MAX_PARALLEL as usize,
             batch_read_limit: crate::providers::types::DEFAULT_BATCH_READ_LIMIT,
+            vision: false,
         }
     }
 
     /// 装配交互类工具的运行环境（ask/plan 的事件出口与共享状态）。
     pub fn with_env(mut self, env: ExecutorEnv) -> Self {
         self.env = Some(env);
+        self
+    }
+
+    /// 设置当前 run 模型的视觉能力标记（17 号票）：read(kind="image") 在
+    /// false 时前置拒绝并提示切换视觉模型（Q30：主动读图与新附图同一口径）。
+    pub fn with_vision(mut self, vision: bool) -> Self {
+        self.vision = vision;
         self
     }
 
@@ -212,7 +227,23 @@ impl ToolsetExecutor {
             }
         };
         match name {
-            "read" => run_typed(&self.ctx, &args, read::run),
+            // read（17 号票）：kind="image" 的 vision 前置校验在分发面——
+            // 非 vision 模型拒绝并提示切换视觉模型（Q30 与新附图同一口径）；
+            // read::run 本体保持 headless 纯逻辑（只做大小与格式校验）。
+            "read" => {
+                if let Ok(parsed) = serde_json::from_value::<read::ReadArgs>(args.clone())
+                    && parsed.kind == Some(read::ReadKind::Image)
+                    && !self.vision
+                {
+                    return ToolOutcome::failure(
+                        ToolError::invalid_arg(
+                            "当前模型不支持图片输入：read(kind=\"image\") 需要视觉模型，请切换模型后重试",
+                        ),
+                        "当前模型不支持图片读取",
+                    );
+                }
+                run_typed(&self.ctx, &args, read::run)
+            }
             "write" => run_typed(&self.ctx, &args, write::run),
             "edit" => run_typed(&self.ctx, &args, edit::run),
             "list_files" => run_typed(&self.ctx, &args, list_files::run),

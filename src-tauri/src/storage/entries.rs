@@ -17,7 +17,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-// ---- §3.2 WirePart（M1 子集；image 属 M2）----
+// ---- §3.2 WirePart（M1 子集 + M2 image 变体，17 号票）----
 //
 // 契约类型的 TS 声明由 ts-rs 生成（02 号票，C-2 定案）：测试构建下派生 TS 并
 // 由 ipc_manifest_test 的导出面统一写出 ui/src/ipc/generated/（cargo build 不
@@ -85,6 +85,15 @@ pub enum WirePart {
         #[serde(skip_serializing_if = "Option::is_none")]
         #[cfg_attr(test, ts(optional))]
         tool_count: Option<u32>,
+    },
+    /// 图片内容引用（§3.2【M2】image part，17 号票）：只存 blob 哈希与
+    /// MIME 类型，**不存图片本体**——字节数据在会话专属 blob 目录
+    /// `sessions/<sid>.imgblob/<hash>.bin`（§7.7，内容寻址），JSONL 正文
+    /// 不因附图膨胀。`blobHash` 是 SHA-256 前 32 hex 的内容寻址标识，
+    /// `mimeType` 限 png/jpeg/webp/gif 白名单（后端写入时按魔数嗅探校验）。
+    Image {
+        blob_hash: String,
+        mime_type: String,
     },
 }
 

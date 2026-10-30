@@ -299,3 +299,69 @@ pub(crate) async fn read_workspace_file(
         args.range.as_ref().map(|r| r.limit),
     )
 }
+
+// ---- 拖拽路径探测（§3.3 #59j，17 号票）----
+
+/// `path_kind` 参数契约（§3.3 #59j）。
+#[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct PathKindArgs {
+    pub path: String,
+}
+
+/// `path_kind` 返回契约（§3.3 #59j）：kind 三态——dir = 目录（拖拽路由弹
+/// 「添加为项目」确认）、file = 普通文件（转 @ 路径引用）、missing = 不存在
+/// （忽略）；imageMime = 按扩展名识别出的图片 MIME（png/jpeg/gif/webp，
+/// 拖拽路由据此走图片附件），非图片省略。
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct PathKindResult {
+    pub kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub image_mime: Option<&'static str>,
+}
+
+/// 按扩展名识别图片 MIME（拖拽入口无字节可嗅探，扩展名是唯一线索；
+/// 内容层面的白名单校验仍由 attach_image 落盘时的魔数嗅探兜底）。
+fn image_mime_by_extension(path: &str) -> Option<&'static str> {
+    let ext = Path::new(path).extension()?.to_str()?.to_ascii_lowercase();
+    match ext.as_str() {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "gif" => Some("image/gif"),
+        "webp" => Some("image/webp"),
+        _ => None,
+    }
+}
+
+/// 拖拽路径探测（§3.3 #59j，17 号票）：判定拖入路径是目录还是文件（symlink
+/// 追随语义），并按扩展名识别图片 MIME。纯探测语义——不做 roots 校验、
+/// 不泄露内容，前端拖拽路由（目录提议添加项目 / 图片转附件 / 普通文件转
+/// 路径引用）据此分流；普通文件的模型侧可见性仍由 read 管线的授权链把关
+/// （roots 外路径不因拖入自动放开，FR-13-16）。
+pub fn path_kind_core(path: &str) -> PathKindResult {
+    let mime = image_mime_by_extension(path);
+    let kind = match fs::metadata(path) {
+        Ok(meta) if meta.is_dir() => "dir",
+        Ok(_) => "file",
+        Err(_) => "missing",
+    };
+    PathKindResult {
+        kind,
+        image_mime: mime,
+    }
+}
+
+/// `path_kind` 命令（§3.3 #59j）。
+#[tauri::command]
+pub(crate) async fn path_kind(path: String) -> Result<PathKindResult, IpcError> {
+    // 契约命名单一事实源：平铺形参回组为文档契约结构
+    let args = PathKindArgs { path };
+    if args.path.trim().is_empty() {
+        return Err(IpcError::invalid_arg("path 不能为空"));
+    }
+    Ok(path_kind_core(&args.path))
+}

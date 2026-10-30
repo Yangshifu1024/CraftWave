@@ -1,6 +1,7 @@
 import type { ThreadMessage, ThreadMessageLike } from "@assistant-ui/react";
 import { ExportedMessageRepository } from "@assistant-ui/react";
 import type { StoredEntry, StoredMessageEntry, StoredMetaEntry, WirePart } from "../ipc/types";
+import { cwImageUrl, parseCwImageUrl } from "./image-ref";
 
 /** ThreadMessageLike 的 content 数组形态（core 未单独导出 part 类型，从此推导） */
 type MessageLikeContent = Exclude<ThreadMessageLike["content"], string>;
@@ -72,6 +73,18 @@ function partToWire(
         });
       }
       return wires;
+    }
+    case "image": {
+      // 图片 part（17 号票，§3.2 image part）：树内 image 字段是 cwimg 引用
+      //（blobHash+mimeType 的桥接 URL，见 image-ref.ts）——解析回存储形态。
+      // 非 cwimg 引用（外来图片 part）无法落存储，fail fast 防静默丢数据。
+      const ref = parseCwImageUrl(part.image);
+      if (ref === null) {
+        throw new Error(
+          `tree-persistence：role=${role} 的 image part 不是 cwimg 引用（${part.image.slice(0, 32)}…），无法落存储`,
+        );
+      }
+      return [{ type: "image", blobHash: ref.blobHash, mimeType: ref.mimeType }];
     }
     default:
       // source/file/image/data/generative-ui 等不在 M1 范围：fail fast 防静默丢失
@@ -234,6 +247,11 @@ function entryToMessageLike(entry: StoredMessageEntry): ThreadMessageLike {
       }
       case "toolResult":
         // 已在上面与 toolCall 合并，跳过
+        break;
+      case "image":
+        // 图片 part（17 号票）：还原为 assistant-ui image part，image 字段
+        // 携 cwimg 引用（渲染组件按 blobHash 拉 read_image_blob 显示）
+        rawParts.push({ type: "image", image: cwImageUrl(part.blobHash, part.mimeType) });
         break;
     }
   }

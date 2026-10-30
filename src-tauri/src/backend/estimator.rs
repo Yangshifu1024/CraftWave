@@ -75,6 +75,13 @@ fn estimate_parts_tokens(parts: &[WirePart]) -> u64 {
             WirePart::PlanSnapshot { .. } | WirePart::RunMarker { .. } => {
                 // wire 重建跳过（§6.2）：不占模型请求面
             }
+            WirePart::Image { blob_hash, .. } => {
+                // 图片（17 号票）：视觉 token 随供应商与分辨率分化，无法从
+                // 字节数估算；按宁高勿低给常数 2048 token/张（对应主流
+                // 视觉模型一张中分辨率图的实际消耗上沿），加占位文本面
+                //（非 vision 模型收到的占位与摘要块都含哈希文本）。
+                total += 2048 + estimate_text_tokens(blob_hash);
+            }
         }
     }
     total

@@ -71,7 +71,8 @@ use host::commands::system::{NotificationPermissionStatus, OpenDirArgs, ResolveE
 use host::commands::ui_state::{GetUiStateArgs, SetUiStateArgs};
 #[allow(unused_imports)]
 use host::commands::workspace::{
-    ReadWorkspaceFileArgs, ReadWorkspaceResult, SearchWorkspacePathsArgs, WorkspacePathHit,
+    PathKindArgs, PathKindResult, ReadWorkspaceFileArgs, ReadWorkspaceResult,
+    SearchWorkspacePathsArgs, WorkspacePathHit,
 };
 // MCP 八命令（08 号票，§3.3 #40–47）：契约类型与命令实现同源进宏清单
 #[allow(unused_imports)]
@@ -98,6 +99,12 @@ use host::commands::search::{SearchTestArgs, SearchTestResult, search_test};
 // HTML 沙箱预览注册命令（14 号票，§3.3 #59g）
 #[allow(unused_imports)]
 use host::commands::preview::{PreviewRegisterArgs, PreviewRegisterResult, preview_register};
+// 图片附件承载命令（17 号票，§3.3 #59h/#59i；宏展开仅 stringify 类型名，
+// 导入不被消耗——与 preview 行同款 allow）
+#[allow(unused_imports)]
+use host::commands::image::{
+    AttachImageArgs, AttachImageResult, ReadImageBlobArgs, ReadImageBlobResult,
+};
 #[allow(unused_imports)]
 use providers::types::{AppConfig, ProviderConfig};
 #[allow(unused_imports)]
@@ -245,6 +252,10 @@ ipc_commands! {
     host::commands::search::search_test => args: SearchTestArgs, ret: SearchTestResult;
     // HTML 沙箱预览注册（14 号票，§3.3 #59g）
     host::commands::preview::preview_register => args: PreviewRegisterArgs, ret: PreviewRegisterResult;
+    // 图片附件承载（17 号票，§3.3 #59h/#59i/#59j）
+    host::commands::image::attach_image => args: AttachImageArgs, ret: AttachImageResult;
+    host::commands::image::read_image_blob => args: ReadImageBlobArgs, ret: ReadImageBlobResult;
+    host::commands::workspace::path_kind => args: PathKindArgs, ret: PathKindResult;
     #[cfg(debug_assertions)]
     mock_chat::mock_chat_run => args: (), ret: ();
     select_dir => args: (), ret: Option<String>;

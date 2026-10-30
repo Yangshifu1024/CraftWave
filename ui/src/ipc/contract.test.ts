@@ -590,6 +590,24 @@ const EXPECTED_ENTRIES: StoredEntry[] = [
     ],
     createdAt: 1760000000006,
   },
+  // 带图 user 消息（17 号票，§3.2 image part）：行内只含 blobHash/mimeType
+  // 引用，不含图片本体（体积不膨胀验收的跨语言锚点）；行序在分支链
+  // （a2/a3/marker）之后——父先子后的存储纪律保持
+  {
+    kind: "message",
+    id: "u3",
+    parentId: "a2",
+    role: "user",
+    parts: [
+      { type: "text", text: "看这张截图" },
+      {
+        type: "image",
+        blobHash: "a".repeat(32),
+        mimeType: "image/png",
+      },
+    ],
+    createdAt: 1760000000008,
+  },
   {
     kind: "compaction",
     id: "manual:compact:1",
@@ -612,7 +630,7 @@ describe("§6.1 跨语言 fixture roundtrip（Rust serde 落盘 ↔ TS 镜像）
     const repo = entriesToExported(parseSessionJsonl(fixtureText));
 
     // 树结构（C-4：headId=activeLeaf，parentId null=根；导出序父先子后）。
-    // compaction 条目被跳过（§6.3 定稿：不投影为树节点）——6 条 message
+    // compaction 条目被跳过（§6.3 定稿：不投影为树节点）——7 条 message
     // 的 exact 断言即防线：混入 compaction 节点立即红。
     expect(repo.headId).toBe("run-2:marker");
     expect(repo.messages.map((m) => m.message.id)).toStrictEqual([
@@ -622,6 +640,7 @@ describe("§6.1 跨语言 fixture roundtrip（Rust serde 落盘 ↔ TS 镜像）
       "a2",
       "a3",
       "run-2:marker",
+      "u3",
     ]);
     const parentOf = (id: string): string | null =>
       repo.messages.find((m) => m.message.id === id)?.parentId ?? null;
@@ -629,6 +648,7 @@ describe("§6.1 跨语言 fixture roundtrip（Rust serde 落盘 ↔ TS 镜像）
     expect(parentOf("a1")).toBe("u1");
     expect(parentOf("u2")).toBe("a1");
     expect(parentOf("a2")).toBe("u2");
+    expect(parentOf("u3")).toBe("a2");
     expect(parentOf("a3")).toBe("u2");
     // runMarker 链尾：a3 → marker（canonical 收口行，前端 custom 载荷保真）
     expect(parentOf("run-2:marker")).toBe("a3");
@@ -687,7 +707,7 @@ describe("§6.1 跨语言 fixture roundtrip（Rust serde 落盘 ↔ TS 镜像）
       const { kind: _kind, ...rest } = entry;
       return rest;
     });
-    expect(payload).toHaveLength(6);
+    expect(payload).toHaveLength(7);
     expect(payload.every((m) => !("kind" in m))).toBe(true);
   });
 

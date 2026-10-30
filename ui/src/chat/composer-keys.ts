@@ -217,8 +217,15 @@ export function insertAtCompletion(text: string, at: number, cursor: number, pat
  * 方法（pickActive/pickSkill 选中、hoverIndex/hoverSkill 悬停）。
  * 同时内部承担三件记账：@ 菜单的触发检测与防抖搜索、/ 菜单的技能清单拉取、
  * 草稿实时写入会话 store。键位优先级（§10.6）：触发符菜单 > ghost hint。
+ *
+ * 17 号票增 interceptEnter：带图附件的 Enter 分流（先于既有路由询问）——
+ * 返回 true 表示按键已被附件发送路径消费（调用方内部完成发送/排队），
+ * onKeyDown 即 preventDefault 收口；无附件时传入 undefined 走原路由。
  */
-export function useComposerKeys(): {
+export function useComposerKeys(options?: {
+  /** 带图附件的 Enter 拦截（(altKey, isRunning) → 是否已消费）。 */
+  interceptEnter?: (altKey: boolean, isRunning: boolean) => boolean;
+}): {
   onKeyDown: (event: React.KeyboardEvent<HTMLTextAreaElement>) => void;
   onCursor: (cursor: number) => void;
   atMenu: AtMenuState | null;
@@ -249,6 +256,9 @@ export function useComposerKeys(): {
   const clearHint = useAskStore((s) => s.clearHint);
   const cycleTier = usePermissionTierStore((s) => s.cycle);
   const setDraft = useSessionsStore((s) => s.setDraft);
+  // 带图附件的 Enter 拦截（17 号票）：ref 承载避免 options 变化重建回调链
+  const interceptRef = useRef(options?.interceptEnter);
+  interceptRef.current = options?.interceptEnter;
 
   /** 报告当前光标位置（onKeyDown/onKeyUp/onSelect 都会回调；存 ref 快照，
    *  供 @ 触发检测与补全插入使用，不参与渲染）。 */
@@ -496,7 +506,13 @@ export function useComposerKeys(): {
     //    运行中 Enter=steer 插话；空闲 Enter（普通发送）与 Shift+Enter（换行）
     //    不拦截，交给 ComposerPrimitive.Input 原生。两种排队语义排队成功后
     //    清空输入框（steer 回执后时间线插节点，followUp 进队列条）。
+    //    5a) 带图附件拦截（17 号票）：先于既有路由——附件发送/入队由
+    //        ComposerBar 的回调统一处理（空闲 thread.append、运行中 inject）。
     if (event.key === "Enter" && !event.shiftKey) {
+      if (interceptRef.current?.(event.altKey, isRunning) === true) {
+        event.preventDefault();
+        return;
+      }
       const route = routeEnterKey({
         altKey: event.altKey,
         isRunning,

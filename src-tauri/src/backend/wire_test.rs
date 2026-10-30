@@ -337,3 +337,191 @@ fn layered_prefix_orders_custom_prompt_then_summary() {
     let untouched = with_system_prefix_layers(plain, [None, None]);
     assert!(!matches!(as_message(&untouched[0]), Message::System { .. }));
 }
+
+// ---- image part 双形态重建（§6.2，17 号票）----
+
+use crate::backend::wire::{
+    ImageBlobData, ImageBlobMap, VisionPolicy, image_placeholder, rebuild_message_stream_visioned,
+    split_prompt_visioned,
+};
+use std::collections::HashMap;
+
+/// 造一条 user 消息的通用辅助（parts 自定义）。
+fn user_parts(id: &str, parts: Vec<WirePart>) -> MessageEntry {
+    MessageEntry {
+        id: id.to_owned(),
+        parent_id: None,
+        role: MessageRole::User,
+        parts,
+        created_at: 1,
+        run_id: None,
+        status: None,
+    }
+}
+
+/// 装配一个含一张图的 blob 查找表（hash "a".repeat(32) → png/base64 占位）。
+fn blobs_one() -> ImageBlobMap {
+    let mut map = HashMap::new();
+    map.insert(
+        "a".repeat(32),
+        ImageBlobData {
+            mime: "image/png".to_owned(),
+            base64: "cG5nLWJ5dGVz".to_owned(),
+        },
+    );
+    map
+}
+
+/// image part 的固定样本（hash = "a".repeat(32)，png）。
+fn image_part() -> WirePart {
+    WirePart::Image {
+        blob_hash: "a".repeat(32),
+        mime_type: "image/png".to_owned(),
+    }
+}
+
+/// vision 模型：prompt 中的 image part 映射为多模态 content 块（base64 嵌入
+/// + MIME 类型），文本 part 顺序保留。
+#[test]
+fn vision_prompt_maps_image_to_multimodal_block() {
+    let entries = vec![user_parts(
+        "u1",
+        vec![
+            WirePart::Text {
+                text: "看这张图".to_owned(),
+            },
+            image_part(),
+        ],
+    )];
+    let blobs = blobs_one();
+    let policy = VisionPolicy {
+        vision: true,
+        blobs: &blobs,
+    };
+    let (_, prompt, _) = split_prompt_visioned(&entries, None, &policy).unwrap();
+    let Message::User { content } = &*prompt else {
+        panic!("应为 user 消息");
+    };
+    assert_eq!(content.len(), 2, "文本块 + 图片块");
+    assert!(matches!(content[0], UserContent::Text(_)));
+    let UserContent::Image(image) = &content[1] else {
+        panic!("第二块应为图片");
+    };
+    let rig::message::DocumentSourceKind::Base64(b64) = &image.data else {
+        panic!("图片数据应为 base64 载体");
+    };
+    assert_eq!(b64, "cG5nLWJ5dGVz");
+    assert_eq!(
+        image
+            .media_type
+            .as_ref()
+            .map(rig::message::MimeType::to_mime_type),
+        Some("image/png")
+    );
+}
+
+/// 非 vision 模型：**历史**中的 image part 降级为明确占位文本（§6.2 逐字
+/// 格式），纯文字继续（Q30）。
+#[test]
+fn non_vision_history_image_degrades_to_placeholder() {
+    let history_img = user_parts("u1", vec![image_part()]);
+    let prompt = user("u2", "改用文字描述一下");
+    let entries = vec![history_img, prompt];
+    let blobs = blobs_one();
+    let policy = VisionPolicy {
+        vision: false,
+        blobs: &blobs,
+    };
+    let (history, _, _) = split_prompt_visioned(&entries, None, &policy).unwrap();
+    assert_eq!(history.len(), 1);
+    assert_eq!(
+        user_text(as_message(&history[0])),
+        image_placeholder(&"a".repeat(32))
+    );
+}
+
+/// 非 vision 模型：**本次新附图**（prompt 中的 image part）按参数错误拒绝
+/// （Q30：新输入与持久历史后端区分，不能由前端把新图标成历史绕过检查）。
+#[test]
+fn non_vision_new_image_rejected() {
+    let entries = vec![user_parts(
+        "u1",
+        vec![
+            WirePart::Text {
+                text: "看这张图".to_owned(),
+            },
+            image_part(),
+        ],
+    )];
+    let blobs = blobs_one();
+    let policy = VisionPolicy {
+        vision: false,
+        blobs: &blobs,
+    };
+    let err = split_prompt_visioned(&entries, None, &policy).unwrap_err();
+    assert!(
+        err.0.contains("不支持图片输入"),
+        "错误应说明 vision 限制：{}",
+        err.0
+    );
+}
+
+/// vision 模型但 blob 缺失（会话 blob 目录被清等）：降级为占位文本，
+/// 不拒绝请求（诚实降级，不静默丢上下文线索）。
+#[test]
+fn vision_with_missing_blob_degrades_to_placeholder() {
+    let entries = vec![user_parts("u1", vec![image_part()])];
+    let empty: ImageBlobMap = HashMap::new();
+    let policy = VisionPolicy {
+        vision: true,
+        blobs: &empty,
+    };
+    let (_, prompt, _) = split_prompt_visioned(&entries, None, &policy).unwrap();
+    assert_eq!(user_text(&prompt), image_placeholder(&"a".repeat(32)));
+}
+
+/// 旧调用面（split_prompt / rebuild_message_stream）对 image part 仍按参数
+/// 错误拒绝——语义为"调用方未声明视觉能力"。
+#[test]
+fn legacy_split_prompt_rejects_image_part() {
+    let entries = vec![user_parts("u1", vec![image_part()])];
+    let err = split_prompt(&entries).unwrap_err();
+    assert!(matches!(err, WireError(_)));
+    let err = rebuild_message_stream(&entries).unwrap_err();
+    assert!(matches!(err, WireError(_)));
+}
+
+/// visioned 重建流（rebuild_message_stream_visioned）：assistant 侧 image
+/// part 照 runMarker 同类跳过（M2 无图片生成）。
+#[test]
+fn assistant_image_part_skipped_in_stream() {
+    let entry = MessageEntry {
+        id: "a1".to_owned(),
+        parent_id: None,
+        role: MessageRole::Assistant,
+        parts: vec![
+            image_part(),
+            WirePart::Text {
+                text: "回复正文".to_owned(),
+            },
+        ],
+        created_at: 1,
+        run_id: None,
+        status: None,
+    };
+    let blobs = blobs_one();
+    let policy = VisionPolicy {
+        vision: true,
+        blobs: &blobs,
+    };
+    let stream = rebuild_message_stream_visioned(&[entry], &policy).unwrap();
+    assert_eq!(stream.len(), 1, "image part 跳过后只剩文本 assistant 消息");
+    let Message::Assistant(turn) = &*stream[0] else {
+        panic!("应为 assistant 消息");
+    };
+    assert_eq!(turn.content.len(), 1);
+    assert!(matches!(
+        turn.content[0],
+        rig::message::AssistantContent::Text(_)
+    ));
+}

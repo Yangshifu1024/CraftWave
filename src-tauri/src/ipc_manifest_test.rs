@@ -460,6 +460,26 @@ fn fixture_entries() -> Vec<StoredEntry> {
             run_id: None,
             status: None,
         }),
+        // 带图 user 消息（17 号票，§3.2 image part）：JSONL 行只含 blobHash/
+        // mimeType 引用，不含图片本体（体积不膨胀的验收面）；行序在分支
+        // 链（a2/a3/marker）之后——父先子后的存储纪律保持
+        StoredEntry::Message(MessageEntry {
+            id: "u3".to_string(),
+            parent_id: Some("a2".to_string()),
+            role: MessageRole::User,
+            parts: vec![
+                WirePart::Text {
+                    text: "看这张截图".to_string(),
+                },
+                WirePart::Image {
+                    blob_hash: "a".repeat(32),
+                    mime_type: "image/png".to_string(),
+                },
+            ],
+            created_at: 1_760_000_000_008,
+            run_id: None,
+            status: None,
+        }),
         // compaction 条目（04 号票，§6.1）：前端树持久化层须跳过（不投影为
         // 树节点，§6.3），跨语言行格式在此钉住
         StoredEntry::Compaction(crate::storage::StoredCompactionEntry {

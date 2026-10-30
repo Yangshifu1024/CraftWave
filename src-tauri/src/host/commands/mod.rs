@@ -5,6 +5,8 @@
 
 pub mod chat;
 pub mod config;
+// 图片附件承载命令（17 号票，§3.3 #59h/#59i）
+pub mod image;
 pub mod project;
 // HTML 沙箱预览注册命令（14 号票，§3.3 #59g）
 pub mod preview;
@@ -26,6 +28,10 @@ pub mod traffic_lights;
 #[cfg(test)]
 #[path = "chat_test.rs"]
 mod chat_test;
+
+#[cfg(test)]
+#[path = "image_test.rs"]
+mod image_test;
 
 #[cfg(test)]
 #[path = "system_test.rs"]

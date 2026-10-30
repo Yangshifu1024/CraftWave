@@ -130,6 +130,14 @@ pub fn entry_to_block(entry: &MessageEntry) -> String {
             // 计划快照与 run 边界标记不进摘要输入（wire 重建同样跳过，§6.2）
             crate::storage::WirePart::PlanSnapshot { .. }
             | crate::storage::WirePart::RunMarker { .. } => {}
+            // 图片只进元数据标记（17 号票；spec 日志纪律：摘要输入不携带
+            // 图片本体，只记哈希与格式，摘要模型知道此处曾有一张图即可）
+            crate::storage::WirePart::Image {
+                blob_hash,
+                mime_type,
+            } => {
+                lines.push(format!("[image blobHash={blob_hash} mime={mime_type}]"));
+            }
         }
     }
     lines.join("\n")

@@ -64,7 +64,7 @@ describe("queueFollowUp（Alt+Enter 排队编排）", () => {
       mode: "followUp",
       entryId: "fu-abc",
     });
-    const entry = await queueFollowUp("s1", "排队消息", DEFAULT_RUN_CONFIG, deps);
+    const entry = await queueFollowUp("s1", "排队消息", DEFAULT_RUN_CONFIG, [], deps);
     expect(entry).toEqual({ id: "fu-abc", text: "排队消息" });
     expect(injectRunMessage).toHaveBeenCalledWith({
       sessionId: "s1",
@@ -77,14 +77,14 @@ describe("queueFollowUp（Alt+Enter 排队编排）", () => {
 
   it("未接纳（queued=false）：本地不入队，返回 null", async () => {
     injectRunMessage.mockResolvedValue({ queued: false, mode: undefined, entryId: undefined });
-    const entry = await queueFollowUp("s1", "x", DEFAULT_RUN_CONFIG, deps);
+    const entry = await queueFollowUp("s1", "x", DEFAULT_RUN_CONFIG, [], deps);
     expect(entry).toBeNull();
     expect(useSessionsStore.getState().queues.s1).toBeUndefined();
   });
 
   it("IPC 失败：返回 null 保留现场（调用方保留输入框文本）", async () => {
     injectRunMessage.mockRejectedValue({ code: "E_INTERNAL", message: "x" });
-    const entry = await queueFollowUp("s1", "x", DEFAULT_RUN_CONFIG, deps);
+    const entry = await queueFollowUp("s1", "x", DEFAULT_RUN_CONFIG, [], deps);
     expect(entry).toBeNull();
     expect(useSessionsStore.getState().queues.s1).toBeUndefined();
   });

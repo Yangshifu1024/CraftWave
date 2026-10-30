@@ -61,7 +61,9 @@ use crate::backend::run_loop::{
 };
 use crate::backend::turn::TurnDriver;
 use crate::host::AppState;
-use crate::host::followup::{FollowUpEntry, FollowUpManager, QueuedRunConfig};
+use crate::host::followup::{
+    FollowUpEntry, FollowUpManager, QueuedImageAttachment, QueuedRunConfig,
+};
 use crate::host::run_persistence::{PersistingSink, RunRecorder};
 use crate::providers::types::{ApiFormat, ProviderConfig, ProviderModel};
 use crate::safety::tier::PermissionTier;
@@ -74,6 +76,47 @@ use crate::backend::run_loop::E_CANCELLED;
 
 /// autoConfirm 自动放行等待（§5.4：300s 超时自动选 recommended 项）。
 pub const AUTO_CONFIRM_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// 收集消息里的图片 blob 并装配查找表（17 号票，§6.2 wire 重建的 IO 面）：
+/// hash 去重后逐个从会话 imgblob 目录读取（字节 → base64 + 魔数嗅探 mime）。
+/// 单个 blob 读取失败跳过（vision 模型下该图在 wire 重建时降级为占位文本，
+/// 不拒绝请求——blob 可能已被会话删除等流程清走）；日志纪律：只记哈希。
+pub(crate) fn load_image_blobs(
+    root: &std::path::Path,
+    session_id: &str,
+    messages: &[MessageEntry],
+) -> crate::backend::wire::ImageBlobMap {
+    let mut hashes: Vec<&str> = Vec::new();
+    for entry in messages {
+        for part in &entry.parts {
+            if let crate::storage::WirePart::Image { blob_hash, .. } = part
+                && !hashes.contains(&blob_hash.as_str())
+            {
+                hashes.push(blob_hash);
+            }
+        }
+    }
+    let mut map = crate::backend::wire::ImageBlobMap::new();
+    for hash in hashes {
+        match crate::storage::get_blob(root, session_id, hash) {
+            Ok((bytes, mime)) => {
+                use base64::Engine;
+                map.insert(
+                    hash.to_owned(),
+                    crate::backend::wire::ImageBlobData {
+                        mime: mime.to_owned(),
+                        base64: base64::engine::general_purpose::STANDARD.encode(&bytes),
+                    },
+                );
+            }
+            Err(_) => {
+                #[cfg(debug_assertions)]
+                eprintln!("[craftwave] 图片 blob 装配跳过（缺失，会话 {session_id}）：{hash}");
+            }
+        }
+    }
+    map
+}
 
 /// run 失败终态信息（37 号票起带 code）：`code` 随 `run:error` 事件带出——
 /// 看门狗终止 = E_RUN_STALLED（§5.7），其余失败 E_INTERNAL 兜底（§11.3
@@ -154,7 +197,8 @@ pub enum InjectMode {
     FollowUp,
 }
 
-/// `inject_run_message` 参数契约（§3.3 #21，06 号票改写）。
+/// `inject_run_message` 参数契约（§3.3 #21，06 号票改写；17 号票增
+/// `attachments`）。
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -170,6 +214,11 @@ pub struct InjectRunMessageArgs {
     #[serde(default)]
     #[cfg_attr(test, ts(optional))]
     pub run_config: Option<RunConfig>,
+    /// 图片附件引用（17 号票，§3.3 #21 增补）：非空时**不入 steer**——按
+    /// §5.5「带图消息进 followUp」转会话级队列（引用已在 attach_image 落盘）。
+    #[serde(default)]
+    #[cfg_attr(test, ts(optional))]
+    pub attachments: Option<Vec<QueuedImageAttachment>>,
 }
 
 /// `inject_run_message` 返回契约（§3.3 #21，06 号票改写）：实际入队的通道。
@@ -271,6 +320,9 @@ pub(crate) struct ResolvedModel {
     /// 单次回复 token 上限（`ProviderModel.maxTokens`，§3.2 缺省 32768；
     /// 每请求预算的回复预留面，§6.2 Q18）。
     pub max_tokens: u64,
+    /// 是否支持图片输入（`ProviderModel.vision`，§3.2；17 号票：wire 重建
+    /// 双形态与 read(kind=image) 前置校验的判定面）。
+    pub vision: bool,
 }
 
 /// §11.1 模型解析：RunConfig.modelId > AppConfig.activeModelId →
@@ -323,6 +375,8 @@ pub(crate) fn resolve_model(
         driver,
         context_window: u64::from(model.context_window),
         max_tokens: u64::from(model.max_tokens),
+        // vision 缺省 false（保守：未标记的模型按不支持图片处理，§3.2「可空 = 未知」）
+        vision: model.vision.unwrap_or(false),
     })
 }
 
@@ -1611,9 +1665,19 @@ pub async fn start_chat_core(
     }
     // ① 模型解析（§11.1）
     let model = resolve_model(app, run_config.model_id.as_deref())?;
-    // ①b wire 参数校验（§6.2：末条 user 为 prompt）——压缩编排前先验，
-    //    让参数错误优先于任何有副作用的流程
-    crate::backend::wire::split_prompt(&messages)
+    // ①a 图片 blob 装配（17 号票，§6.2）：收集消息里全部 image part 的哈希，
+    //    从会话 imgblob 目录读出（mime 按魔数嗅探恢复）。读取失败跳过该表项
+    //    （vision 模型下对应图片降级为占位文本，不拒绝请求——历史图片的
+    //    blob 可能已被会话删除流程清走）；日志纪律：只记哈希，不记字节。
+    let image_blobs = load_image_blobs(app.store.root(), &session_id, &messages);
+    // ①b wire 参数校验（§6.2：末条 user 为 prompt；image part 按 vision 双
+    //    形态校验——非 vision 模型的本次新附图在此拒绝，Q30）——压缩编排前
+    //    先验，让参数错误优先于任何有副作用的流程
+    let vision_policy = crate::backend::wire::VisionPolicy {
+        vision: model.vision,
+        blobs: &image_blobs,
+    };
+    crate::backend::wire::split_prompt_visioned(&messages, None, &vision_policy)
         .map_err(|e| IpcError::invalid_arg(e.to_string()))?;
     // ② 系统级前缀与压缩策略（§6.2 注入次序：customPrompt → 压缩 summary →
     //    当前计划 → 技能清单）。save_config 即时生效于下次 run（config.load
@@ -1675,9 +1739,11 @@ pub async fn start_chat_core(
     if crate::backend::estimator::is_over_wire_budget(estimated_after, policy.context_window) {
         return Err(context_overflow(estimated_after, &policy));
     }
-    // ⑤ wire 切分（§6.2 压缩边界）：cutEntryId 前跳过/后展开，摘要交前缀层
+    // ⑤ wire 切分（§6.2 压缩边界 + image 双形态，17 号票）：cutEntryId 前跳过/
+    //    后展开，摘要交前缀层；image part 按视觉策略映射（vision 多模态块 /
+    //    非 vision 占位）
     let (history, prompt, compaction_summary) =
-        crate::backend::wire::split_prompt_with_boundary(&messages, boundary.as_ref())
+        crate::backend::wire::split_prompt_visioned(&messages, boundary.as_ref(), &vision_policy)
             .map_err(|e| IpcError::invalid_arg(e.to_string()))?;
     // 技能渐进披露清单（09 号票，FR-09-02）在注入层末位（§6.2 次序：
     // customPrompt → 压缩 summary → 技能清单；计划注入随计划票）。
@@ -1731,6 +1797,9 @@ pub async fn start_chat_core(
         // 读取配置生效（save_config 后下一次 start_chat 应用）。
         .with_max_parallel(app.config.load()?.tools.max_parallel as usize)
         .with_batch_read_limit(app.config.load()?.tools.batch_read_limit)
+        // read(kind="image") 的 vision 前置校验面（17 号票，Q30）：按本次
+        // run 解析出的模型标记开启——主动读图与新附图同一拒绝口径
+        .with_vision(model.vision)
         .with_env(ExecutorEnv {
             events: app.events.clone(),
             ask: handle.ask.clone(),
@@ -2084,7 +2153,8 @@ pub(crate) async fn cancel_run(
 const DELIVERY_RETRY_LIMIT: u32 = 50;
 const DELIVERY_RETRY_INTERVAL: Duration = Duration::from_millis(100);
 
-/// 从纯文本构造 followUp 待发条目（runConfig 快照随行——投递时按它开新 run）。
+/// 从纯文本构造 followUp 待发条目（runConfig 快照随行——投递时按它开新 run；
+/// 附件引用缺省为空，带图入队由 inject_run_message_core 补挂）。
 fn followup_entry_from_text(text: &str, run_config: &RunConfig) -> FollowUpEntry {
     FollowUpEntry {
         id: format!("fu-{}", uuid::Uuid::new_v4()),
@@ -2137,14 +2207,23 @@ async fn deliver_followup_head(
             "paused": app.followups.snapshot(session_id).paused,
         }),
     );
-    // ③ 构造 user 消息与 RunConfig（附着快照原样生效）
+    // ③ 构造 user 消息与 RunConfig（附着快照原样生效）。带图待发（17 号
+    //    票）：附件引用展开为 image part（blob 已在 attach_image 落盘；
+    //    wire 重建按投递时的模型视觉能力决定多模态块/占位文本）。
+    let mut parts = vec![crate::storage::WirePart::Text {
+        text: entry.text.clone(),
+    }];
+    for attachment in &entry.attachments {
+        parts.push(crate::storage::WirePart::Image {
+            blob_hash: attachment.blob_hash.clone(),
+            mime_type: attachment.mime_type.clone(),
+        });
+    }
     let user_entry = MessageEntry {
         id: format!("auto-{}", entry.id),
         parent_id: None,
         role: MessageRole::User,
-        parts: vec![crate::storage::WirePart::Text {
-            text: entry.text.clone(),
-        }],
+        parts,
         created_at: now_ms(),
         run_id: None,
         status: None,
@@ -2204,16 +2283,19 @@ fn spawn_followup_delivery(app: AppState, session_id: String) {
     });
 }
 
-/// `inject_run_message` 主体（§3.3 #21，06 号票）：按 mode 与活跃状态分流——
-/// mode=steer（缺省）且会话有活跃 run → 入该 run 的插话队列（turn 边界消费，
-/// §5.5）；否则入会话级 followUp 队列（`mode=followUp` 显式排队时无论活跃
-/// 与否都入队）。公开给集成测试。
+/// `inject_run_message` 主体（§3.3 #21，06 号票；17 号票增 attachments）：
+/// 按 mode 与活跃状态分流——mode=steer（缺省）且会话有活跃 run → 入该 run
+/// 的插话队列（turn 边界消费，§5.5）；否则入会话级 followUp 队列
+/// （`mode=followUp` 显式排队时无论活跃与否都入队）。**带图例外（§5.5）**：
+/// attachments 非空时不入 steer（插话队列只承载文本），一律转 followUp
+/// 队列（持久化 + 自动投递，投递时展开为 image part）。公开给集成测试。
 pub fn inject_run_message_core(
     app: &AppState,
     session_id: &str,
     text: &str,
     mode: Option<InjectMode>,
     run_config: Option<&RunConfig>,
+    attachments: &[QueuedImageAttachment],
 ) -> Result<InjectRunMessageResult, IpcError> {
     if session_id.trim().is_empty() {
         return Err(IpcError::invalid_arg("sessionId 不能为空"));
@@ -2222,10 +2304,13 @@ pub fn inject_run_message_core(
         return Err(IpcError::invalid_arg("text 不能为空"));
     }
     let handle = app.runs.get(session_id);
-    if mode != Some(InjectMode::FollowUp)
+    // steer：运行中插话（RunHandle 插话队列，RunLoop turn 边界消费）。
+    // §5.5 带图例外：插话队列只承载文本，attachments 非空时跳过 steer
+    // 落入下方 followUp 路径（运行中也会进队列——run 正常完成后自动投递）。
+    if attachments.is_empty()
+        && mode != Some(InjectMode::FollowUp)
         && let Some(handle) = handle
     {
-        // steer：运行中插话（RunHandle 插话队列，RunLoop turn 边界消费）
         handle
             .steer
             .lock()
@@ -2246,7 +2331,8 @@ pub fn inject_run_message_core(
         max_turns: default_max_turns(),
         steer: false,
     });
-    let entry = followup_entry_from_text(text, &effective);
+    let mut entry = followup_entry_from_text(text, &effective);
+    entry.attachments = attachments.to_vec();
     let entry_id = entry.id.clone();
     app.followups.push(session_id, entry);
     emit_queue_state(&app.events, session_id, &app.followups, Vec::new());
@@ -2266,6 +2352,7 @@ pub(crate) async fn inject_run_message(
     text: String,
     mode: Option<InjectMode>,
     run_config: Option<RunConfig>,
+    attachments: Option<Vec<QueuedImageAttachment>>,
 ) -> Result<InjectRunMessageResult, IpcError> {
     // 契约命名单一事实源：平铺形参回组为文档契约结构
     let args = InjectRunMessageArgs {
@@ -2273,6 +2360,7 @@ pub(crate) async fn inject_run_message(
         text,
         mode,
         run_config,
+        attachments,
     };
     inject_run_message_core(
         &app,
@@ -2280,6 +2368,7 @@ pub(crate) async fn inject_run_message(
         &args.text,
         args.mode,
         args.run_config.as_ref(),
+        args.attachments.as_deref().unwrap_or(&[]),
     )
 }
 

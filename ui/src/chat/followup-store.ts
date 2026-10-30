@@ -83,14 +83,17 @@ export const defaultFollowUpDeps: FollowUpDeps = {
 };
 
 /**
- * followUp 排队（Alt+Enter）：调后端入队（queue.json 即刻持久化），本地
- * 队列条同步追加（run:queue 事件到达时以 size 校正）。返回是否排队成功
- * （失败保留输入框文本由调用方处理）。
+ * followUp 排队（Alt+Enter / 运行中带图入队）：调后端入队（queue.json 即刻
+ * 持久化），本地队列条同步追加（run:queue 事件到达时以 size 校正）。返回
+ * 队列条目（失败返回 null，输入由调用方保留处理）。attachments 为图片附件
+ * 引用（17 号票，§5.5 带图不入 steer、经此通路进 followUp；投递时展开为
+ * image part）。
  */
 export async function queueFollowUp(
   sessionId: string,
   text: string,
   runConfig: RunConfig,
+  attachments: { blobHash: string; mimeType: string }[] = [],
   deps: FollowUpDeps = defaultFollowUpDeps,
 ): Promise<QueuedFollowUp | null> {
   try {
@@ -99,6 +102,7 @@ export async function queueFollowUp(
       text,
       mode: "followUp",
       runConfig,
+      ...(attachments.length > 0 ? { attachments } : {}),
     });
     if (!result.queued) return null;
     // entryId 由后端返回（队列条删除/编辑取出的回传键，§3.3 #21）

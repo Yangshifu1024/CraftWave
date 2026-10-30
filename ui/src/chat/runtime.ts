@@ -22,6 +22,7 @@ import { syncTreeBeforeSend, useSessionPersistStore } from "@/stores/session";
 import { applySubagentFrame } from "@/stores/subagents";
 import { bindCancelToRun } from "./cancel-bridge";
 import { type ChatPart, FrameBuffer, type FrameSnapshot, toParts } from "./frames";
+import { parseCwImageUrl } from "./image-ref";
 import { tierOf } from "./permission-tier";
 import { useRunMetricsStore } from "./run-metrics";
 import { modelOf } from "./session-model";
@@ -139,8 +140,17 @@ export function toWire(messages: readonly ThreadMessage[]): MessageEntry[] {
           }
           break;
         }
+        case "image": {
+          // 图片 part（17 号票，§3.2 image part）：树内 image 字段为 cwimg
+          // 引用——解析回 { blobHash, mimeType } 存储形态（不含图片本体）。
+          const ref = parseCwImageUrl(part.image);
+          if (ref !== null) {
+            parts.push({ type: "image", blobHash: ref.blobHash, mimeType: ref.mimeType });
+          }
+          break;
+        }
         default:
-          // image 等 M2 part 不在 M1 链路面
+          // 其余 M2 未建模 part 不在链路面
           break;
       }
     }

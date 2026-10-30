@@ -17,6 +17,8 @@ import { listen } from "@tauri-apps/api/event";
 import type {
   AppConfig,
   AskAnswer,
+  AttachImageArgs,
+  AttachImageResult,
   AttachRunResult,
   CompactSessionArgs,
   CompactSessionResult,
@@ -37,9 +39,13 @@ import type {
   MessageEntry,
   NotificationPermissionStatus,
   OpenDirArgs,
+  PathKindArgs,
+  PathKindResult,
   PreviewRegisterResult,
   ProjectMeta,
   ProviderConfig,
+  ReadImageBlobArgs,
+  ReadImageBlobResult,
   ReadWorkspaceResult,
   RemoveFollowupResult,
   ResumeFollowupQueueResult,
@@ -127,6 +133,10 @@ export const COMMANDS = {
   searchTest: "search_test",
   // HTML 沙箱预览注册（14 号票，§3.3 #59g）
   previewRegister: "preview_register",
+  // 图片附件承载（17 号票，§3.3 #59h/#59i/#59j）
+  attachImage: "attach_image",
+  readImageBlob: "read_image_blob",
+  pathKind: "path_kind",
 } as const;
 
 /**
@@ -270,22 +280,51 @@ export async function cancelRun(sessionId: string): Promise<boolean> {
   return invoke<boolean>(COMMANDS.cancelRun, { sessionId } satisfies { sessionId: string });
 }
 
-/** §3.3 #21：注入消息（06 号票）。mode=steer（缺省）为运行中插话（turn 边界
- *  消费，run:inject 回执）；mode=followUp 为排队（Alt+Enter，run 正常完成后
- *  自动投递；空闲时缺省 mode 也落 followUp）。runConfig 为附着快照（投递
- *  新 run 的运行配置来源）。 */
+/** §3.3 #21：注入消息（06 号票；17 号票增 attachments）。mode=steer（缺省）
+ *  为运行中插话（turn 边界消费，run:inject 回执）；mode=followUp 为排队
+ *  （Alt+Enter，run 正常完成后自动投递；空闲时缺省 mode 也落 followUp）。
+ *  runConfig 为附着快照（投递新 run 的运行配置来源）。attachments 为图片
+ *  附件引用（17 号票，§5.5）：非空时不入 steer，转 followUp 队列
+ *  （投递时展开为 image part）。 */
 export function injectRunMessage(args: {
   sessionId: string;
   text: string;
   mode?: "steer" | "followUp";
   runConfig?: StartChatArgs["runConfig"];
+  attachments?: { blobHash: string; mimeType: string }[];
 }): Promise<InjectRunMessageResult> {
   return invoke<InjectRunMessageResult>(COMMANDS.injectRunMessage, {
     sessionId: args.sessionId,
     text: args.text,
     mode: args.mode,
     runConfig: args.runConfig,
+    attachments: args.attachments,
   } satisfies InjectRunMessageArgs);
+}
+
+/** §3.3 #59h：上传图片附件（17 号票）——base64 解码后按魔数校验白名单与
+ *  5MiB 上限，内容寻址落会话 imgblob（同哈希幂等去重），返回 blobHash。 */
+export function attachImage(args: AttachImageArgs): Promise<AttachImageResult> {
+  return invoke<AttachImageResult>(COMMANDS.attachImage, {
+    sessionId: args.sessionId,
+    dataBase64: args.dataBase64,
+    mimeType: args.mimeType,
+  } satisfies AttachImageArgs);
+}
+
+/** §3.3 #59i：读取图片 blob（17 号票）——消息内 <img> 渲染与历史恢复的
+ *  取数通道；仅本会话 imgblob 可读，缺失 reject E_NOT_FOUND。 */
+export function readImageBlob(sessionId: string, blobHash: string): Promise<ReadImageBlobResult> {
+  return invoke<ReadImageBlobResult>(COMMANDS.readImageBlob, {
+    sessionId,
+    blobHash,
+  } satisfies ReadImageBlobArgs);
+}
+
+/** §3.3 #59j：拖拽路径探测（17 号票）——目录/文件三态 + 扩展名图片识别
+ *  （拖拽路由分流：目录提议添加项目、图片转附件、普通文件转路径引用）。 */
+export function pathKind(path: string): Promise<PathKindResult> {
+  return invoke<PathKindResult>(COMMANDS.pathKind, { path } satisfies PathKindArgs);
 }
 
 /** §3.3 #59d：继续 followUp 队列（06 号票失败暂停的明确继续）。解除暂停后

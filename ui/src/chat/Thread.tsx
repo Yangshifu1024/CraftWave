@@ -29,29 +29,46 @@ import {
   File,
   Folder,
   Hand,
+  ImagePlus,
   Lightbulb,
   LoaderCircle,
   Pencil,
-  Plus,
   Shield,
   ShieldAlert,
   ShieldCheck,
   Square,
   Zap,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ChatErrorBanner } from "@/chat/ChatErrorBanner";
 import { CompactionDivider, CompactionIndicator } from "@/chat/CompactionUI";
+import {
+  AttachmentBar,
+  AttachmentHintLine,
+  type DropDirectory,
+  DropDirectoryDialog,
+  isPointInElement,
+  listenDragDrop,
+  useComposerAttachments,
+} from "@/chat/composer-attachments";
 import { useComposerKeys } from "@/chat/composer-keys";
-import { removeQueuedFollowUp, resumeFollowUpQueue, useFollowUpStore } from "@/chat/followup-store";
+import {
+  queueFollowUp,
+  removeQueuedFollowUp,
+  resumeFollowUpQueue,
+  useFollowUpStore,
+} from "@/chat/followup-store";
+import { cwImageUrl, parseCwImageUrl } from "@/chat/image-ref";
 import { Markdown } from "@/chat/Markdown";
-import { TIER_LABELS, usePermissionTierStore } from "@/chat/permission-tier";
+import { TIER_LABELS, tierOf, usePermissionTierStore } from "@/chat/permission-tier";
 import { ReasoningPart } from "@/chat/ReasoningPart";
 import { useSessionMetrics } from "@/chat/run-metrics";
-import { useSessionModelStore } from "@/chat/session-model";
+import { DEFAULT_RUN_CONFIG } from "@/chat/runtime";
+import { modelOf, useSessionModelStore } from "@/chat/session-model";
 import { useRunSummaries, useSessionScope } from "@/chat/session-scope";
 import { McpFallbackCard } from "@/chat/ToolCards";
-import { getConfig } from "@/ipc/client";
+import { useVisionStore, visionOf } from "@/chat/vision-state";
+import { getConfig, pathKind, readImageBlob } from "@/ipc/client";
 import type { PermissionTier } from "@/ipc/types";
 import { matchGhost, useAskStore } from "@/stores/ask";
 import { useSessionsStore } from "@/stores/sessions";
@@ -298,11 +315,95 @@ function SteerNodes() {
   );
 }
 
-/** Composer 区（§10.6 / FR-13-02，17 号票）：输入框 + 权限档指示 + @ 菜单
- *  浮层 + / 技能菜单浮层（09 号票）。
+/** Composer 区（§10.6 / FR-13-02，17 号票）：输入框 + 附件（按钮/拖拽/粘贴，
+ *  FR-12-02）+ 权限档指示 + @ 菜单浮层 + / 技能菜单浮层（09 号票）。
  *  Enter 三态路由（06 号票）/Shift+Enter 换行/IME 组合期防误发由
- *  useComposerKeys + ComposerPrimitive.Input 共同承担。 */
+ *  useComposerKeys + ComposerPrimitive.Input 共同承担；带图附件的 Enter
+ *  分流经 interceptEnter 先行（空闲 thread.append 携 image part、运行中/
+ *  Alt+Enter 转 followUp 队列——§5.5 带图不入 steer）。 */
 function ComposerBar() {
+  const sessionId = useSessionScope();
+  const aui = useAui();
+  const isRunning = useAuiState((s) => s.thread.isRunning);
+  const composerText = useAuiState((s) => s.composer.text);
+  // 附件状态（17 号票，FR-12-02）：组件态，SessionTab keep-mounted 每会话一份
+  const { attachments, hint, showHint, addFiles, addFromPath, remove, clear } =
+    useComposerAttachments(sessionId);
+  const hasAttachments = attachments.length > 0;
+  // vision 判定（17 号票）：订阅模型清单触发重渲染后取判定值（挂载/会话
+  // 切换刷新一次清单；ModelPicker 切换会话覆盖模型即时反映）
+  useVisionStore((s) => s.byModel);
+  useVisionStore((s) => s.activeModelId);
+  useSessionModelStore((s) => s.bySession[sessionId]);
+  const vision = visionOf(sessionId);
+  useEffect(() => {
+    void useVisionStore.getState().refresh();
+    // 挂载时刷新一次：ComposerBar 为每会话独立实例（SessionTab keep-mounted），
+    // 挂载即会话切换；后续刷新随 ModelPicker 打开时拉取（session-model 同节奏）
+    // eslint 未启用——biome 的 exhaustive-deps 对 getState() 无告警面
+  }, []);
+
+  // 带图发送/入队（17 号票）：空闲 → thread.append 携 cwimg 引用的 image
+  // part（保存链路 partToWire 解析回 blobHash，JSONL 不含图片本体）；运行中
+  // / Alt+Enter → inject 的 attachments 通路转 followUp 队列（§5.5 带图不入
+  // steer）。非 vision 模型拦截并提示（Q30 前置面；后端另有兜底拒绝）。
+  const submitWithAttachments = useCallback(
+    (mode: "auto" | "queue") => {
+      if (!hasAttachments) return;
+      if (!vision) {
+        showHint("当前模型不支持图片输入：请切换视觉模型或移除图片后发送", "info");
+        return;
+      }
+      const text = composerText.trim();
+      const images = attachments.map((a) => ({
+        type: "image" as const,
+        image: cwImageUrl(a.blobHash, a.mimeType),
+      }));
+      const clearInput = () => {
+        aui.composer.setText("", { origin: "user" });
+        clear();
+      };
+      if (mode === "queue" || isRunning) {
+        const runConfig = {
+          ...DEFAULT_RUN_CONFIG,
+          tier: tierOf(sessionId),
+          ...(modelOf(sessionId) !== undefined ? { modelId: modelOf(sessionId) } : {}),
+        };
+        void queueFollowUp(
+          sessionId,
+          text,
+          runConfig,
+          attachments.map((a) => ({ blobHash: a.blobHash, mimeType: a.mimeType })),
+        ).then((queued) => {
+          if (queued !== null) clearInput();
+        });
+        return;
+      }
+      if (text.length === 0 && images.length === 0) return;
+      clearInput();
+      aui.thread.append({
+        role: "user",
+        content: [...(text.length > 0 ? [{ type: "text" as const, text }] : []), ...images],
+        parentId: null,
+        sourceId: null,
+        runConfig: {},
+        startRun: true,
+      });
+    },
+    [hasAttachments, vision, composerText, attachments, aui, isRunning, sessionId, showHint, clear],
+  );
+
+  // Enter 拦截（composer-keys 5a）：带附件时消费 Enter——Alt=排队、其余按
+  // 运行态自动路由（空闲发送/运行中排队）
+  const interceptEnter = useCallback(
+    (altKey: boolean) => {
+      if (!hasAttachments) return false;
+      submitWithAttachments(altKey ? "queue" : "auto");
+      return true;
+    },
+    [hasAttachments, submitWithAttachments],
+  );
+
   const {
     onKeyDown,
     onCursor,
@@ -315,9 +416,92 @@ function ComposerBar() {
     hoverIndex,
     hoverSkill,
     hoverDollar,
-  } = useComposerKeys();
+  } = useComposerKeys({ interceptEnter });
+
+  // 附件按钮的文件选择（accept 限定白名单四格式；multiple 支持 ≤4 张）
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // 粘贴图片提取（FR-12-02 三入口之一）：clipboardData 的图片 File 走附件
+  // 通道；无图片文件的粘贴（文本等）不受影响
+  const onPaste = useCallback(
+    (e: React.ClipboardEvent) => {
+      const files = Array.from(e.clipboardData.files).filter((f) => f.type.startsWith("image/"));
+      if (files.length === 0) return;
+      e.preventDefault();
+      if (!vision) {
+        showHint("当前模型不支持图片输入：请切换视觉模型后再粘贴图片", "info");
+        return;
+      }
+      void addFiles(files);
+    },
+    [vision, showHint, addFiles],
+  );
+
+  // 拖拽路由（FR-13-16，17 号票）：Tauri webview 原生接管文件拖拽（HTML5
+  // drop 不可用），走 onDragDropEvent + Composer 区命中判定——图片转附件
+  //（非 vision 拦截提示）、目录弹「添加为项目」、普通文件转 @ 路径引用
+  //（roots 外路径不因拖入放开授权，模型 read 照走校验）。
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [dragActive, setDragActive] = useState(false);
+  const [dropDir, setDropDir] = useState<DropDirectory | null>(null);
+  const handleDropPaths = useCallback(
+    async (paths: string[]) => {
+      for (const p of paths) {
+        let kind: Awaited<ReturnType<typeof pathKind>>;
+        try {
+          kind = await pathKind(p);
+        } catch {
+          continue;
+        }
+        if (kind.kind === "dir") {
+          setDropDir({ path: p, name: p.split("/").filter(Boolean).at(-1) ?? p });
+        } else if (kind.kind === "file" && kind.imageMime !== undefined) {
+          if (!vision) {
+            showHint("当前模型不支持图片输入：请切换视觉模型后再拖入图片", "info");
+            continue;
+          }
+          await addFromPath(p, kind.imageMime);
+        } else if (kind.kind === "file") {
+          const current = aui.composer.getState().text;
+          const sep = current.length > 0 && !/\s$/.test(current) ? " " : "";
+          aui.composer.setText(`${current}${sep}@${p} `, { origin: "user" });
+        }
+      }
+    },
+    [vision, showHint, addFromPath, aui],
+  );
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | null = null;
+    void listenDragDrop((event) => {
+      if (event.type === "drop") {
+        const inside = isPointInElement(rootRef.current, event.x, event.y);
+        setDragActive(false);
+        if (inside && event.paths.length > 0) void handleDropPaths(event.paths);
+      } else if (event.type === "leave") {
+        setDragActive(false);
+      } else {
+        setDragActive(isPointInElement(rootRef.current, event.x, event.y));
+      }
+    }).then((un) => {
+      if (cancelled) un();
+      else unlisten = un;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [handleDropPaths]);
+
   return (
-    <div className="relative">
+    <div className="relative" ref={rootRef}>
+      {/* 拖拽高亮（dragover 语义经 Tauri enter/over 事件驱动，FR-13-16） */}
+      {dragActive && (
+        <div
+          data-testid="composer-drag-highlight"
+          className="pointer-events-none absolute inset-0 z-10 rounded-2xl border-2 border-dashed border-[var(--cw-focus)] bg-[var(--accent)]/30"
+        />
+      )}
       {/* @ 路径补全浮层（search_workspace_paths 驱动；Tab/Enter 选中，Esc 关闭） */}
       {atMenu !== null && atMenu.items.length > 0 && (
         <ul
@@ -415,6 +599,10 @@ function ComposerBar() {
           hover 边框提亮一档（--input），focus-within 蓝边呼应聚焦令牌；
           底色用 --composer-bg（暗色 #272728 亮于中部卡，亮色同卡白） */}
       <ComposerPrimitive.Root className="flex flex-col gap-2 rounded-2xl border border-[var(--border)] bg-[var(--composer-bg)] p-3 transition-colors hover:border-[var(--input)] focus-within:border-[var(--cw-focus)]">
+        {/* 附件条（17 号票，FR-12-02）：缩略图 + 尺寸 + 移除 */}
+        <AttachmentBar attachments={attachments} onRemove={remove} />
+        {/* 附件提示行（超限/失败/vision 拦截；自动消退） */}
+        <AttachmentHintLine hint={hint} />
         <ComposerPrimitive.Input
           minRows={2}
           placeholder="发一条消息，Alt+Enter 排队待发…"
@@ -422,24 +610,55 @@ function ComposerBar() {
           onKeyDown={onKeyDown}
           onKeyUp={(e) => onCursor(e.currentTarget.selectionStart ?? 0)}
           onClick={(e) => onCursor(e.currentTarget.selectionStart ?? 0)}
+          onPaste={onPaste}
+        />
+        {/* 附件按钮的隐藏文件选择器（accept 限定白名单四格式） */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/gif,image/webp"
+          multiple
+          className="hidden"
+          data-testid="attachment-input"
+          onChange={(e) => {
+            const files = Array.from(e.target.files ?? []);
+            e.target.value = "";
+            if (files.length === 0) return;
+            void addFiles(files);
+          }}
         />
         {/* 工具栏：左簇（附件 + 权限档）右簇（模型 + 发送/停止），簇间纯空隙 */}
         <div className="flex items-center gap-2">
-          <button
-            type="button"
-            aria-label="附件（M2 提供）"
-            disabled
-            title="附件功能随 M2 提供"
-            className="flex size-7 shrink-0 items-center justify-center rounded-lg text-[var(--muted-foreground)] hover:bg-[var(--accent)] disabled:opacity-40"
-          >
-            <Plus size={16} aria-hidden className="shrink-0" />
-          </button>
+          {vision ? (
+            <button
+              type="button"
+              data-testid="attachment-button"
+              aria-label="添加图片"
+              title="添加图片（≤4 张，单张 ≤5MiB；也可拖拽或粘贴）"
+              onClick={() => fileInputRef.current?.click()}
+              className="flex size-7 shrink-0 items-center justify-center rounded-lg text-[var(--muted-foreground)] hover:bg-[var(--accent)]"
+            >
+              <ImagePlus size={16} aria-hidden className="shrink-0" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              data-testid="attachment-button-disabled"
+              aria-label="当前模型不支持图片"
+              disabled
+              title="当前模型不支持图片输入（切换视觉模型后可用）"
+              className="flex size-7 shrink-0 items-center justify-center rounded-lg text-[var(--muted-foreground)] hover:bg-[var(--accent)] disabled:opacity-40"
+            >
+              <ImagePlus size={16} aria-hidden className="shrink-0" />
+            </button>
+          )}
           <TierMenu />
           <div className="ml-auto flex items-center gap-1.5">
             <ModelPicker />
             {/* 键位同位替换（ZCode 单键形态）：空闲=发送；运行中=停止（点击中断本轮）。
                 运行中排队不再占按钮：queue capability 打开时 Input 的 Enter 仍入队
-                （队列条照常展示）——按钮只承担「立即动作」（发送/停止），排队是键盘语义。 */}
+                （队列条照常展示）——按钮只承担「立即动作」（发送/停止），排队是键盘语义。
+                17 号票：带附件时发送钮走附件路径（空闲 thread.append / 运行中入队）。 */}
             <AuiIf condition={(s) => s.thread.isRunning}>
               <ComposerPrimitive.Cancel
                 aria-label="停止"
@@ -449,7 +668,7 @@ function ComposerBar() {
                 <Square size={14} aria-hidden fill="currentColor" className="shrink-0" />
               </ComposerPrimitive.Cancel>
             </AuiIf>
-            <AuiIf condition={(s) => !s.thread.isRunning}>
+            <AuiIf condition={(s) => !s.thread.isRunning && !hasAttachments}>
               <ComposerPrimitive.Send
                 aria-label="发送"
                 className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90"
@@ -457,11 +676,36 @@ function ComposerBar() {
                 <ArrowUp size={16} aria-hidden className="shrink-0" />
               </ComposerPrimitive.Send>
             </AuiIf>
+            {hasAttachments && !isRunning && (
+              <button
+                type="button"
+                data-testid="send-with-attachments"
+                aria-label="发送图片消息"
+                onClick={() => submitWithAttachments("auto")}
+                className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90"
+              >
+                <ArrowUp size={16} aria-hidden className="shrink-0" />
+              </button>
+            )}
+            {hasAttachments && isRunning && (
+              <button
+                type="button"
+                data-testid="queue-with-attachments"
+                aria-label="排队待发（带图消息不入插话，随队列自动投递）"
+                title="带图消息运行中不入插话，转入待发队列（run 完成后自动投递）"
+                onClick={() => submitWithAttachments("queue")}
+                className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90"
+              >
+                <ArrowUp size={16} aria-hidden className="shrink-0" />
+              </button>
+            )}
           </div>
         </div>
         {/* 状态栏（A5）——思考计时 + 速率/本轮/会话三数 + 工具次数（ZCode 无此层，保留） */}
         <ComposerStatusBar />
       </ComposerPrimitive.Root>
+      {/* 拖拽目录「添加为项目」确认（FR-13-16；save_project 既有命令） */}
+      <DropDirectoryDialog drop={dropDir} onClose={() => setDropDir(null)} />
     </div>
   );
 }
@@ -666,22 +910,100 @@ function ModelPicker() {
  *  悬停才显（opacity-0 → group-hover 显），常显操作栏会把每条消息下方
  *  都钉一行按钮。 */
 function UserMessage() {
+  const sessionId = useSessionScope();
+  const parts = useAuiState((s) => s.message.parts);
+  // 带历史图 + 当前模型非 vision：气泡尾部提示「模型看不到」（Q30 定稿：
+  // 界面原图保留并提示，历史图在模型请求中转占位）
+  const hasImage = parts.some((p) => p.type === "image");
+  useVisionStore((s) => s.byModel);
+  useVisionStore((s) => s.activeModelId);
+  useSessionModelStore((s) => s.bySession[sessionId]);
+  const vision = visionOf(sessionId);
   return (
     <MessagePrimitive.Root className="group/user-row flex flex-col items-end py-2">
       {/* 气泡右上 2px 折角 + 1px 边框（ZCode 同款），与平铺的助手消息区分 */}
       <div className="min-w-0 max-w-full rounded-xl rounded-tr-xs border border-[var(--border)] bg-[var(--muted)] px-4 py-3 text-ui-base leading-6 text-[var(--foreground)] sm:max-w-xl">
         <MessagePrimitive.Parts>
-          {({ part }) =>
-            part.type === "text" && part.text.length > 0 ? (
-              <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">{part.text}</p>
-            ) : null
-          }
+          {({ part }) => {
+            if (part.type === "text" && part.text.length > 0) {
+              return <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">{part.text}</p>;
+            }
+            if (part.type === "image") {
+              return <MessageImagePart sessionId={sessionId} image={part.image} />;
+            }
+            return null;
+          }}
         </MessagePrimitive.Parts>
+        {hasImage && !vision && (
+          <p
+            data-testid="image-vision-hint"
+            className="mt-2 border-t border-[var(--border)]/50 pt-2 text-ui-sm text-[var(--muted-foreground)]"
+          >
+            当前模型无法查看此图片（历史图片仅以文字占位发送；切换视觉模型后可查看）
+          </p>
+        )}
       </div>
       <div className="mt-1 flex items-center gap-1 opacity-0 transition-opacity group-focus-within/user-row:opacity-100 group-hover/user-row:opacity-100">
         <BranchBar editOnly noTopGap />
       </div>
     </MessagePrimitive.Root>
+  );
+}
+
+/**
+ * 消息内图片（17 号票）：image part 的 image 字段为 cwimg 引用（blobHash
+ * 桥接，见 image-ref.ts）——渲染时经 read_image_blob 拉 base64 data URL
+ * 显示（CSP img-src 已放行 data:，§9.5）；blob 缺失（会话删除等）灰显占位。
+ * 外来形态（非 cwimg 引用）按文本占位降级，不渲染未知来源。
+ */
+function MessageImagePart({ sessionId, image }: { sessionId: string; image: string }) {
+  const blobHash = parseCwImageUrl(image)?.blobHash ?? null;
+  const [url, setUrl] = useState<string | null>(null);
+  const [missing, setMissing] = useState(false);
+  useEffect(() => {
+    if (blobHash === null) {
+      setMissing(true);
+      return;
+    }
+    let cancelled = false;
+    setUrl(null);
+    setMissing(false);
+    readImageBlob(sessionId, blobHash)
+      .then((r) => {
+        if (!cancelled) setUrl(`data:${r.mimeType};base64,${r.dataBase64}`);
+      })
+      .catch(() => {
+        if (!cancelled) setMissing(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [blobHash, sessionId]);
+  if (missing) {
+    return (
+      <span
+        data-testid="image-missing"
+        className="my-1 flex max-w-xs items-center justify-center rounded-lg border border-dashed border-[var(--border)] px-3 py-4 text-ui-sm text-[var(--muted-foreground)]"
+      >
+        图片不可用（数据已清理）
+      </span>
+    );
+  }
+  if (url === null) {
+    return (
+      <span
+        data-testid="image-loading"
+        className="my-1 block h-24 w-40 animate-pulse rounded-lg bg-[var(--muted)]"
+      />
+    );
+  }
+  return (
+    <img
+      data-testid="message-image"
+      src={url}
+      alt="消息图片"
+      className="my-1 max-h-72 max-w-full rounded-lg border border-[var(--border)] object-contain"
+    />
   );
 }
 

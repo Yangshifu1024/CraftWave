@@ -42,6 +42,20 @@ pub struct QueuedRunConfig {
     pub max_turns: u32,
 }
 
+/// 带图待发条目的附件引用（17 号票，§5.5「带图消息不入 steer，进 followUp」）：
+/// 图片字节已由前端经 `attach_image` 落入会话 imgblob（§7.7），入队只携带
+/// 引用——`blobHash`（内容寻址）与 `mimeType`（png/jpeg/gif/webp 白名单）；
+/// 投递时由 [`deliver 侧`](crate::host::commands::chat) 展开为 WirePart::Image。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct QueuedImageAttachment {
+    /// 图片 blob 哈希（SHA-256 前 32 hex，内容寻址）。
+    pub blob_hash: String,
+    /// MIME 类型（png/jpeg/gif/webp）。
+    pub mime_type: String,
+}
+
 /// 一条待发消息（§5.5 Entry 字段级）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -49,16 +63,16 @@ pub struct QueuedRunConfig {
 pub struct FollowUpEntry {
     /// 条目唯一标识（`fu-{uuid}`；删除命令与前端队列条按键）。
     pub id: String,
-    /// 消息正文（纯文本；带图随 17 号票经 attachments 承接）。
+    /// 消息正文（纯文本；带图经 [`QueuedImageAttachment`] 承接，17 号票）。
     pub text: String,
     /// 入队时刻（Unix 纪元毫秒）。
     pub created_at: i64,
     /// 附着运行配置快照（投递新 run 的 RunConfig 来源）。
     pub run_config: QueuedRunConfig,
-    /// 附件预留位（17 号票 image part 落地前恒空；带图消息不入 steer、
-    /// 经此通路进 followUp，§5.5）。空数组省略序列化。
+    /// 图片附件引用（17 号票实装；§5.5 带图不入 steer、经此通路进
+    /// followUp）。空数组省略序列化。
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    pub attachments: Vec<serde_json::Value>,
+    pub attachments: Vec<QueuedImageAttachment>,
 }
 
 /// queue.json 落盘信封（§7.7 06 号票增行的字段级格式）。

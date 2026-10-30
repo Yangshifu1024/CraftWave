@@ -314,12 +314,67 @@ function FileChip({ path }: { path: string }) {
   );
 }
 
+/** read 图片态边车 data 的形状（17 号票：kind=image 结果，含 base64）。 */
+interface ImageReadOutcome {
+  kind?: unknown;
+  path?: unknown;
+  mediaType?: unknown;
+  base64?: unknown;
+}
+
 /** read：路径 + 行区间（详情含区间说明）。16 号票：.docx/.xlsx/.pdf 等文档
- *  扩展名进入文档态（徽标 + 页数/sheet 摘要 + 内容折叠预览 + warnings 黄条）。 */
+ *  扩展名进入文档态（徽标 + 页数/sheet 摘要 + 内容折叠预览 + warnings 黄条）。
+ *  17 号票：kind="image" 结果进入图片态（缩略图展示，detail 边车取 base64）。 */
 export function ReadCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
   const args = (props.args ?? {}) as CardArgs;
   const ext = docExtension(str(args, "path"));
   if (ext) return <DocReadCard {...props} ext={ext} />;
+  // 图片态判定走边车 data（结果终态后拉取；kind="image" 的帧面 result 是
+  // 模型通道压缩文本，base64 本体只在 detail 边车——恢复链照常可用）
+  const { result, isError } = props;
+  const settled = result !== undefined && !isError;
+  return <ReadImageOrTextCard {...props} settled={settled} />;
+}
+
+/** read 的图片/文本双态内层（hook 拉边车后分流；条件渲染不违反 hooks 规则
+ *  ——拉取发生在组件顶层）。 */
+function ReadImageOrTextCard({
+  settled,
+  ...props
+}: ToolCallMessagePartProps<CardArgs, unknown> & { settled: boolean }) {
+  const outcome = useToolOutcomeDetail(props.toolCallId, settled);
+  const args = (props.args ?? {}) as CardArgs;
+  const data = (outcome?.data ?? null) as ImageReadOutcome | null;
+  if (data?.kind === "image") {
+    const mediaType = typeof data.mediaType === "string" ? data.mediaType : "image/png";
+    const base64 = typeof data.base64 === "string" ? data.base64 : null;
+    return (
+      <ToolCardShell
+        {...props}
+        icon={<Search size={16} />}
+        label="读取"
+        runningLabel="正在读取"
+        summary={str(args, "path")}
+        summaryNode={<FileChip path={str(args, "path")} />}
+      >
+        {base64 !== null ? (
+          <img
+            data-testid="read-image-thumb"
+            src={`data:${mediaType};base64,${base64}`}
+            alt={outcome?.uiSummary ?? "读取的图片"}
+            className="max-h-64 max-w-full rounded-lg border border-[var(--border)] object-contain"
+          />
+        ) : (
+          <p className="text-ui-sm text-[var(--muted-foreground)]">
+            图片已读取（缩略图数据不在本机边车）
+          </p>
+        )}
+        {outcome?.uiSummary && (
+          <p className="text-ui-sm text-[var(--muted-foreground)]">{outcome.uiSummary}</p>
+        )}
+      </ToolCardShell>
+    );
+  }
   const offset = num(args, "offset");
   const limit = num(args, "limit");
   const range =

@@ -49,8 +49,9 @@ pub enum ReadKind {
     Image,
 }
 
-/// 执行 read。headless 纯逻辑：vision 模型前置校验由调用方（run loop）
-/// 在选择 kind:"image" 前完成，本函数只做大小与格式校验（票 Answer 已记录）。
+/// 执行 read。headless 纯逻辑：vision 模型前置校验在执行器分发面完成
+/// （backend/exec.rs 按 ProviderModel.vision 拒绝非视觉模型的 kind:"image"，
+/// 17 号票），本函数只做大小与格式校验。
 pub fn run(ctx: &ToolsContext, args: &ReadArgs) -> ToolOutcome {
     // 文档分派（16 号票，§8.3/§8.9）：.docx/.xlsx/.pdf 等扩展名走文档管线
     // （tools/doc.rs），与文本/图片路径并列；kind:"image" 对文档是误用。
@@ -213,24 +214,29 @@ fn read_text(ctx: &ToolsContext, args: &ReadArgs) -> ToolOutcome {
     )
 }
 
-/// 图片读取：格式与大小校验后 base64 编码返回（供视觉模型消费）。
+/// 图片读取：魔数嗅探校验格式（png/jpeg/gif/webp 四种白名单，其余按参数
+/// 错误拒绝）与大小校验（≤3MiB）后 base64 编码返回（供视觉模型消费）。
+/// vision 前置校验由执行器分发面完成（backend/exec.rs，17 号票）——本函数
+/// 保持 headless 纯逻辑。
 fn read_image(ctx: &ToolsContext, args: &ReadArgs) -> ToolOutcome {
     let resolved = match ctx.guard().and_then(|g| g.resolve(&args.path)) {
         Ok(p) => p,
         Err(e) => return ToolOutcome::from(e),
     };
-    let Some(mime) = image_mime(&args.path) else {
+    let bytes = match std::fs::read(&resolved) {
+        Ok(b) => b,
+        Err(e) => return ToolOutcome::from(ToolError::from(e)),
+    };
+    // 17 号票：mime 由文件头魔数嗅探（不信任扩展名——改扩展名伪装的文本
+    // 文件在写入 blob/读取两条通道都被同一白名单拦下）。
+    let Some(mime) = crate::storage::sniff_image_mime(&bytes) else {
         return ToolOutcome::failure(
             ToolError::invalid_arg(format!(
-                "不支持的图片格式：{}（支持 png/jpeg/gif/webp）",
+                "不支持的图片格式：{}（仅 png/jpeg/gif/webp，按文件头识别）",
                 args.path
             )),
             format!("不支持的图片格式：{}", args.path),
         );
-    };
-    let bytes = match std::fs::read(&resolved) {
-        Ok(b) => b,
-        Err(e) => return ToolOutcome::from(ToolError::from(e)),
     };
     if bytes.len() > MAX_IMAGE_BYTES {
         return ToolOutcome::failure(
@@ -257,21 +263,6 @@ fn read_image(ctx: &ToolsContext, args: &ReadArgs) -> ToolOutcome {
             bytes.len() / 1024
         ),
     )
-}
-
-/// 按扩展名推断图片 MIME 类型（仅支持 png/jpeg/gif/webp，其余 None）。
-fn image_mime(path: &str) -> Option<&'static str> {
-    let ext = std::path::Path::new(path)
-        .extension()?
-        .to_str()?
-        .to_ascii_lowercase();
-    match ext.as_str() {
-        "png" => Some("image/png"),
-        "jpg" | "jpeg" => Some("image/jpeg"),
-        "gif" => Some("image/gif"),
-        "webp" => Some("image/webp"),
-        _ => None,
-    }
 }
 
 /// read 工具规格（能力 ReadOnly，全档放行）。16 号票：params_schema 增
