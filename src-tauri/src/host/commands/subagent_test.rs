@@ -191,6 +191,7 @@ fn app_with_mock(
                 vision: None,
             }],
             headers: None,
+            local: false,
         }],
         active_model_id: Some("model-1".to_owned()),
         ..crate::providers::types::AppConfig::default()

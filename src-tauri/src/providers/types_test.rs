@@ -22,6 +22,7 @@ fn sample_provider() -> ProviderConfig {
             vision: Some(false),
         }],
         headers: None,
+        local: false,
     }
 }
 

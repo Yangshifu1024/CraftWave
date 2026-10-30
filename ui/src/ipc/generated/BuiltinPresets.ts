@@ -22,7 +22,8 @@ export const BUILTIN_PRESETS: ProviderPreset[] = [
         "maxTokens": 16384,
         "vision": true
       }
-    ]
+    ],
+    "local": false
   },
   {
     "slug": "anthropic",
@@ -42,7 +43,8 @@ export const BUILTIN_PRESETS: ProviderPreset[] = [
         "maxTokens": 64000,
         "vision": true
       }
-    ]
+    ],
+    "local": false
   },
   {
     "slug": "deepseek",
@@ -62,7 +64,8 @@ export const BUILTIN_PRESETS: ProviderPreset[] = [
         "maxTokens": 8192,
         "vision": false
       }
-    ]
+    ],
+    "local": false
   },
   {
     "slug": "moonshot",
@@ -76,7 +79,8 @@ export const BUILTIN_PRESETS: ProviderPreset[] = [
         "maxTokens": 8192,
         "vision": false
       }
-    ]
+    ],
+    "local": false
   },
   {
     "slug": "zhipu",
@@ -102,7 +106,8 @@ export const BUILTIN_PRESETS: ProviderPreset[] = [
         "maxTokens": 128000,
         "vision": true
       }
-    ]
+    ],
+    "local": false
   },
   {
     "slug": "openrouter",
@@ -116,6 +121,58 @@ export const BUILTIN_PRESETS: ProviderPreset[] = [
         "maxTokens": 32768,
         "vision": false
       }
-    ]
+    ],
+    "local": false
+  },
+  {
+    "slug": "ollama",
+    "name": "Ollama（本地）",
+    "apiFormat": "openai_chat",
+    "baseUrl": "http://127.0.0.1:11434/v1",
+    "models": [
+      {
+        "model": "qwen3:8b",
+        "contextWindow": 128000,
+        "maxTokens": 32768,
+        "vision": false
+      },
+      {
+        "model": "llama3.1:8b",
+        "contextWindow": 128000,
+        "maxTokens": 32768,
+        "vision": false
+      }
+    ],
+    "local": true
+  },
+  {
+    "slug": "llamacpp",
+    "name": "llama.cpp server（本地）",
+    "apiFormat": "openai_chat",
+    "baseUrl": "http://127.0.0.1:8080/v1",
+    "models": [
+      {
+        "model": "local-model",
+        "contextWindow": 32000,
+        "maxTokens": 8192,
+        "vision": false
+      }
+    ],
+    "local": true
+  },
+  {
+    "slug": "lmstudio",
+    "name": "LM Studio（本地）",
+    "apiFormat": "openai_chat",
+    "baseUrl": "http://127.0.0.1:1234/v1",
+    "models": [
+      {
+        "model": "local-model",
+        "contextWindow": 32000,
+        "maxTokens": 8192,
+        "vision": false
+      }
+    ],
+    "local": true
   }
 ];

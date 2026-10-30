@@ -74,7 +74,19 @@ rmcp = { version = "3.5", features = [
 # "reqwest?/rustls"）——使用方须自带 reqwest；锁 rustls TLS（对齐本仓
 # 无 OpenSSL 依赖纪律）。12 号票：gzip 自动解压（现代网站按 Accept-Encoding
 # 压缩响应，抓取正文须解压后才可交给 Readability）。
-reqwest = { version = "0.13", default-features = false, features = ["rustls", "gzip"] }
+# 【19 号票】socks：FR-02-10 代理 manual 模式支持 socks5:// 与 socks5h://
+# （socks5h = 域名由代理远端解析）；system-proxy：system 模式的 macOS
+# SystemConfiguration / Windows 系统设置内建探测（12 号票收敛点——此前
+# system 模式只有环境变量探测；reqwest 0.13 的系统代理探测走该 feature）。
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "gzip", "socks", "system-proxy"] }
+# 【19 号票】代理 HTTP 客户端缓存的原子替换载体（ArcSwap：读侧无锁快照、
+# 写侧整体换新——save_config 热生效重建 client 时进行中请求持旧值跑完）。
+# 版本对齐依赖树既有锁面（1.9.x），不新增下载。
+arc-swap = "1"
+# 【19 号票】rig 传输注入（附录 B"代理经 rig-reqwest builder"）：
+# ReqwestClient::from(配置好的 reqwest::Client) 包一层的即是本 crate；
+# 版本对齐锁定的 rig 0.45.0（同版本族，不新增下载）。
+rig-reqwest = { version = "0.45.0", default-features = false, features = ["rustls"] }
 process-wrap = { version = "10.0", features = [
     "tokio1",
     "process-group",

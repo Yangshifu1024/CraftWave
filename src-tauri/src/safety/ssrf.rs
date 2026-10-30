@@ -437,52 +437,25 @@ impl Resolve for SsrfResolver {
 // ---- HTTP 客户端构建（代理接线收敛点，§9.2 注记）----
 
 /// 按代理配置构建 SSRF 客户端：resolver 钉址 + 关自动重定向（fetch 手动
-/// 循环）+ 超时兜底 + UA。`proxy` 为 `AppConfig.proxy`（None = 未配置）；
-/// 19 号票 client 重建路径落地前按配置直建（§9.2 收敛点注记）。
+/// 循环）+ 超时兜底 + UA。`proxy` 为 `AppConfig.proxy`（None = 未配置）。
+/// 代理段统一经 `providers::http::apply_proxy`（19 号票收敛点：三模式
+/// 装配单一事实源——本函数此前对 system 模式只有"reqwest 默认行为"的
+/// 字面表达，与模型请求侧语义对齐由共享装配函数保证）。
 pub fn build_client(
     policy: SsrfPolicy,
     proxy: Option<&ProxyConfig>,
 ) -> Result<reqwest::Client, ToolError> {
-    let mut builder = reqwest::Client::builder()
+    let builder = reqwest::Client::builder()
         .dns_resolver(SsrfResolver::new(policy))
         // 重定向由 fetch 手动循环逐跳校验（§9.2 第 4 步），关闭自动重定向
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(CONNECT_TIMEOUT)
         .timeout(REQUEST_TIMEOUT)
         .user_agent(concat!("CraftWave/", env!("CARGO_PKG_VERSION")));
-    builder = match proxy {
-        // none / 未配置：显式禁用代理（不探测系统环境变量）
-        None
-        | Some(ProxyConfig {
-            mode: crate::providers::types::ProxyMode::None,
-            ..
-        }) => builder.no_proxy(),
-        // system：跟随系统代理设置（reqwest 默认行为；system 探测按 19 号票
-        // 收敛点完善，当前缺省直连不误伤）
-        Some(ProxyConfig {
-            mode: crate::providers::types::ProxyMode::System,
-            ..
-        }) => builder,
-        // manual：使用配置的代理地址
-        Some(ProxyConfig {
-            mode: crate::providers::types::ProxyMode::Manual,
-            url: Some(url),
-            ..
-        }) => {
-            let proxy = reqwest::Proxy::all(url)
-                .map_err(|e| ToolError::invalid_arg(format!("代理地址非法（{url}）：{e}")))?;
-            builder.proxy(proxy)
-        }
-        Some(ProxyConfig {
-            mode: crate::providers::types::ProxyMode::Manual,
-            url: None,
-            ..
-        }) => {
-            return Err(ToolError::invalid_arg(
-                "代理模式为 manual 但未配置代理地址（proxy.url）",
-            ));
-        }
-    };
+    // 代理三模式（none/no 配置 → no_proxy；system → 内建系统探测；
+    // manual → Proxy::all）：装配失败 = 配置错误 → E_INVALID_ARG
+    let builder =
+        crate::providers::http::apply_proxy(builder, proxy).map_err(ToolError::invalid_arg)?;
     builder
         .build()
         .map_err(|e| ToolError::new("E_INTERNAL", format!("HTTP 客户端构建失败：{e}")))

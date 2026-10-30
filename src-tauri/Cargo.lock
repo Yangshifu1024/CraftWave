@@ -1612,6 +1612,7 @@ name = "craftwave"
 version = "0.1.0"
 dependencies = [
  "anstream",
+ "arc-swap",
  "axum",
  "base64 0.23.1",
  "block2",
@@ -1642,6 +1643,7 @@ dependencies = [
  "reqwest 0.13.5",
  "rfd",
  "rig",
+ "rig-reqwest",
  "rig-rmcp",
  "rmcp",
  "serde",

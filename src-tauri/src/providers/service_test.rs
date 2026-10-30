@@ -23,6 +23,7 @@ fn demo_provider(id: &str, model: &str) -> ProviderConfig {
             vision: None,
         }],
         headers: None,
+        local: false,
     }
 }
 

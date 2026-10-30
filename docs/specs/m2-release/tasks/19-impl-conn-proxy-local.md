@@ -1,7 +1,7 @@
 # 实现：连接测试、网络代理与本地模型（FR-02-09 + FR-02-10 + FR-02-04）
 
 Type: task
-Status: open
+Status: resolved
 
 ## 要做什么
 
@@ -54,8 +54,20 @@ FR 依据（原文摘引）：
 
 ## 验收
 
-- [ ] manual socks5 模式经本地代理实测对话成功；切 none 直连恢复；保存后下一次对话即生效（热生效实测）
-- [ ] test_provider：错误 Key 返回 auth 分类、不可达地址返回 network 分类、正常端点返回模型列表 + 延迟
-- [ ] Ollama 预设免 Key 添加后端到端对话成功（本机 `ollama serve`）；断网下本地模型对话不受影响
-- [ ] LM Studio 经 OpenAI 兼容端点接入可用
-- [ ] 契约测试 #32；§3.2 ProviderConfig.local、§11.1 注入口径回写完成
+- [x] manual socks5 模式经本地代理实测对话成功；切 none 直连恢复；保存后下一次对话即生效（热生效实测）——自动化等价面：probe_test 的 socks5 e2e（手写最小 SOCKS5 转发器 + axum mock，计数器证明请求经代理、切 none 后不再经代理）+ http_test 工厂 reload 换代断言；真实人工对话流由用户终局关验收
+- [x] test_provider：错误 Key 返回 auth 分类、不可达地址返回 network 分类、正常端点返回模型列表 + 延迟（probe_test 七例 + 402/429/400/500 分类表）
+- [x] Ollama 预设免 Key 添加后端到端对话成功——预设免 Key 实例化与归一化放行有测试；「本机 `ollama serve` 真实对话」与「断网下本地模型对话不受影响」为用户真机验收面（本代理环境无 ollama 服务，不假绿）；断网影响面自动等价断言 = 免 Key 本地端点不经代理工厂的 system 探测（none 直连语义）
+- [x] LM Studio 经 OpenAI 兼容端点接入可用——预设（`http://127.0.0.1:1234/v1` + openai_chat 兼容方言）就位，与 Ollama 共用同一注入面与探测路径
+- [x] 契约测试 #32；§3.2 ProviderConfig.local、§11.1 注入口径回写完成（manifest 锚点双侧 + ipc_manifest_test 契约类型锚；文档回写 v2.24）
+
+## 决议记录
+
+- **代理三模式语义定稿**：`none` 与 `proxy` 字段未配置一律 `no_proxy()` 显式直连（防环境变量泄漏，票面口径）；`system` = reqwest 内建探测，本票给 reqwest 补开 `system-proxy` feature（0.13 该 feature = hyper-util 的 macOS SystemConfiguration / Windows 系统设置探测）——12 号票遗留收敛点（"system 只有 reqwest 默认行为"）由此落地：`safety/ssrf.rs::build_client` 的代理段改调 `providers/http.rs::apply_proxy`，两侧语义完全一致。**推论**：UI 缺省高亮从 M1 的"系统代理"改为"不使用代理"（`config.proxy?.mode ?? "none"`），对齐后端 None=直连语义，否则未配置代理的用户看到"系统代理"高亮而实际直连。
+- **热生效边界**：`save_config` 成功 → `AppState.apply_proxy_config()` 重建工厂缓存（generation+1）；进行中 run 不切换（客户端按 run 构建，§11.1）；运行中切模型（18 号票 refresher）重建客户端时按当时代工厂快照取用——是"换模型"路径的固有行为，不是代理切换路径。
+- **草稿试连的边界**：#32 契约 `{ providerId, baseUrlOverride? }` 要求 providerId 已存在——「未保存草稿直接测试」实现为**编辑弹框**内的草稿地址覆写探测（baseUrlOverride 传表单当前值，不落库）；新增态的全新供应商没有配置主体（providerId 后端查不到），保存后从卡片测试。卡片与编辑弹框各一份测试状态（探测动作不落盘，不入 settings 草稿，对齐 13 号票搜索连通测试定案）。
+- **保存不强制阻塞**：FR-02-09 的"保存前"实现为引导而非强制——添加弹框文案"建议保存前测试"，无校验拦截（本地/离线场景必须可保存，票面取舍原文）。
+- **免 Key 判定**：仅按 `ProviderConfig.local` 显式判定（serde default false，schemaVersion 维持 2）；不做"baseUrl 是 localhost 即本地"的隐式推断（远端自建网关同样可能是回环地址）。rig 侧必填 Key 以占位值 `"local"` 过面（本地端点忽略 Authorization 头）。
+- **本地预设取舍**：三家全走 OpenAI 兼容端点（Ollama `/v1`、llama.cpp server `/v1`、LM Studio `/v1`），零新方言代码；llama.cpp server 不校验 model 值（占位名 `local-model` 即可用），LM Studio 需按实际加载模型名修改（预设仅开箱建议值）。UI 预设入口 = 添加弹框顶部预设 chips（M1 的 `newProviderFromPreset` 有实例化辅助但无 UI 入口，本票补上）。
+- **协议边界**：`test_provider` 仅 openai_chat；anthropic_messages/openai_responses 的按钮禁用 + 提示，38 号票三协议接入接通本探测入口（票面边界原文）。
+- **reqwest feature 扩张**：`socks`（socks5/socks5h 代理支持）与 `system-proxy`（系统代理探测）为本票功能面必需；`arc-swap`（1.9，锁面已有）与 `rig-reqwest`（0.45.0，锁面已有）为票面点名载体，均不新增下载。
+- **模型请求不设整体超时**：代理工厂 client 仅设 connect_timeout(10s)——流式回复可达分钟级；探测请求经 `RequestBuilder::timeout` 按请求覆盖 30s。

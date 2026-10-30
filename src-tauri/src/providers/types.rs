@@ -91,6 +91,14 @@ pub struct ProviderConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub headers: Option<BTreeMap<String, String>>,
+    /// 本地服务标记（FR-02-04，19 号票）：Ollama / llama.cpp / LM Studio 等
+    /// 本机推理端点——免 API Key（`resolve_model` 允许 apiKey 缺省，rig 侧
+    /// 以占位值发请求，本地服务不校验凭据），设置页隐藏 Key 输入并标注
+    /// "本地 / 离线可用"。仅按本字段显式判定，不做"baseUrl 是 localhost 即
+    /// 本地"的隐式推断（远端自建网关同样可能是回环地址）。旧配置无该字段
+    /// serde default 回填 false（schemaVersion 维持 2，§3.2）。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub local: bool,
 }
 
 /// 供应商下的单个模型条目（含窗口参数与能力开关）。
@@ -741,6 +749,21 @@ impl AppConfig {
             .take()
             .map(|k| k.trim().to_owned())
             .filter(|k| !k.is_empty());
+        // proxy（FR-02-10，19 号票）：manual 模式必须有地址且 scheme 在
+        // 白名单（http/https/socks5/socks5h——socks5h = 域名由代理远端解析）；
+        // 校验口径与 providers::http::validate_proxy_url 同源（保存前拦截，
+        // 防 http.rs 运行时装配路径才报错）。none/system 模式的 url 字段
+        // 无意义，不校验（宽容：切换模式时残留旧值不阻塞保存）。
+        if let Some(proxy) = &self.proxy
+            && proxy.mode == ProxyMode::Manual
+        {
+            // 缺 url 传空串进校验（报"缺少协议前缀"），与有 url 但非法同一出口
+            if let Err(message) =
+                crate::providers::http::validate_proxy_url(proxy.url.as_deref().unwrap_or(""))
+            {
+                return Err(IpcError::invalid_arg(format!("proxy.url（{message}）")));
+            }
+        }
         if self.schema_version != SCHEMA_VERSION {
             return Err(IpcError::invalid_arg(format!(
                 "不支持的 schemaVersion：{}（当前仅支持 {SCHEMA_VERSION}）",

@@ -109,6 +109,7 @@ export * from "./generated/PresetModel";
 // HTML 沙箱预览注册（14 号票，§3.3 #59g）
 export * from "./generated/PreviewRegisterArgs";
 export * from "./generated/PreviewRegisterResult";
+export * from "./generated/ProbeError";
 export * from "./generated/ProjectMeta";
 export * from "./generated/ProviderConfig";
 export * from "./generated/ProviderModel";
@@ -169,6 +170,8 @@ export * from "./generated/SubMeta";
 export * from "./generated/SubOutcome";
 export * from "./generated/SubSpawnArgs";
 export * from "./generated/serde_json/JsonValue";
+export * from "./generated/TestProviderArgs";
+export * from "./generated/TestProviderResult";
 export * from "./generated/Theme";
 export * from "./generated/ThinkingLevel";
 export * from "./generated/ToolError";

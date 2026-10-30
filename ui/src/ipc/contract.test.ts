@@ -126,6 +126,8 @@ describe("§12.3 manifest 双向扫描", () => {
       "resolve_exit_request",
       "notification_permission_status",
       "open_notification_settings",
+      // 供应商连接测试（19 号票，§3.3 #32）
+      "test_provider",
     ]) {
       expect(wired, `manifest 命令 ${name} 未在 client.ts 接线（禁止只注册不使用）`).toContain(
         name,
@@ -218,6 +220,11 @@ describe("§12.3 manifest 双向扫描", () => {
     expect(find("open_notification_settings")).toMatchObject({
       args_type: "()",
       ret_type: "()",
+    });
+    // 供应商连接测试（19 号票，§3.3 #32）
+    expect(find("test_provider")).toMatchObject({
+      args_type: "TestProviderArgs",
+      ret_type: "TestProviderResult",
     });
   });
 

@@ -25,4 +25,10 @@ baseUrl: string,
 /**
  * 开箱即用的建议模型清单（仅是建议值，用户可增删改）。
  */
-models: Array<PresetModel>, };
+models: Array<PresetModel>, 
+/**
+ * 本地服务标记（FR-02-04，19 号票）：true = 本机推理端点——免 API
+ * Key（resolve_model 允许无 Key，本地服务不校验凭据）、离线可用；
+ * 设置页标注"本地 / 离线可用"并隐藏 Key 输入。
+ */
+local: boolean, };

@@ -102,6 +102,9 @@ use host::commands::subagent::{
 // 搜索连通测试命令（13 号票，§3.3 #59f）
 #[allow(unused_imports)]
 use host::commands::search::{SearchTestArgs, SearchTestResult, search_test};
+// 供应商连接测试命令（19 号票，§3.3 #32）
+#[allow(unused_imports)]
+use host::commands::provider::{TestProviderArgs, TestProviderResult, test_provider};
 // HTML 沙箱预览注册命令（14 号票，§3.3 #59g）
 #[allow(unused_imports)]
 use host::commands::preview::{PreviewRegisterArgs, PreviewRegisterResult, preview_register};
@@ -259,6 +262,8 @@ ipc_commands! {
     host::commands::subagent::load_subagent_history => args: LoadSubagentHistoryArgs, ret: Vec<MessageEntry>;
     // 网络搜索连通测试（13 号票，§3.3 #59f）
     host::commands::search::search_test => args: SearchTestArgs, ret: SearchTestResult;
+    // 供应商连接测试（19 号票，§3.3 #32）
+    host::commands::provider::test_provider => args: TestProviderArgs, ret: TestProviderResult;
     // HTML 沙箱预览注册（14 号票，§3.3 #59g）
     host::commands::preview::preview_register => args: PreviewRegisterArgs, ret: PreviewRegisterResult;
     // 图片附件承载（17 号票，§3.3 #59h/#59i/#59j）

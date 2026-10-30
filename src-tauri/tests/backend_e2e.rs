@@ -983,6 +983,7 @@ mod command_face {
                 vision: None,
             }],
             headers: None,
+            local: false,
         }
     }
 
@@ -3167,6 +3168,7 @@ mod image_face {
                 vision,
             }],
             headers: None,
+            local: false,
         }
     }
 

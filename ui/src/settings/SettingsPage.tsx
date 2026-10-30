@@ -752,8 +752,34 @@ function AppearancePage() {
 }
 
 /**
+ * 代理地址即时校验（19 号票 FR-02-10）：scheme 白名单与后端
+ * providers::http::validate_proxy_url 同口径（http/https/socks5/socks5h，
+ * socks5h = 域名由代理远端解析）；返回错误文案或 undefined。
+ * 草稿层允许非法值写入（输入不被打断），错误就地展示、保存时后端归一化
+ * 兜底拒绝。
+ */
+function proxyUrlIssue(url: string): string | undefined {
+  const trimmed = url.trim();
+  const schemeHint = "http:// / https:// / socks5:// / socks5h://";
+  const sep = trimmed.indexOf("://");
+  if (sep < 0) return `缺少协议前缀（支持 ${schemeHint}）`;
+  const scheme = trimmed.slice(0, sep).toLowerCase();
+  if (!["http", "https", "socks5", "socks5h"].includes(scheme)) {
+    return `协议不支持：${scheme}://（支持 ${schemeHint}）`;
+  }
+  if (trimmed.slice(sep + 3).trim() === "") {
+    return "缺少主机部分（如 127.0.0.1:7890）";
+  }
+  return undefined;
+}
+
+/**
  * 网络页：代理模式三选 + 自定义地址（M1 保存到 config.proxy）+ 网络搜索
  * （13 号票，C-12 本地优先三通道的配置面）：
+ * - 代理三模式热生效语义（19 号票 FR-02-10）：none = 显式直连（不读环境
+ *   变量代理）；system = 环境变量 + 系统代理设置（内建探测）；manual =
+ *   指定地址（scheme 即时校验、错误就地展示）。保存后下一次对话生效
+ *   （进行中的对话不被切换——客户端按对话构建）；
  * - SearXNG 独立配置组：启用开关 / 服务地址（默认 http://127.0.0.1:8888）/
  *   连通测试按钮（草稿试连，不经保存——对齐 MCP 管理页的测试连接模式；
  *   本地回环请求不经应用代理，后端已内置该例外）；
@@ -765,8 +791,11 @@ function NetworkPage() {
   const config = useSettingsStore((s) => s.config);
   const patchConfig = useSettingsStore((s) => s.patchConfig);
   if (!config) return null;
-  const mode = config.proxy?.mode ?? "system";
+  // 缺省高亮对齐后端语义：proxy 字段未配置 = no_proxy 直连（19 号票口径，
+  // 防环境变量泄漏）；M1 时代 UI 缺省显示"系统代理"与后端行为不一致，本票对齐。
+  const mode = config.proxy?.mode ?? "none";
   const manualUrl = config.proxy?.url ?? "";
+  const manualIssue = mode === "manual" ? proxyUrlIssue(manualUrl) : undefined;
   // search 组草稿（生成物 SearchConfig：searxng 必填、tavilyApiKey 可空；
   // 后端 serde default 保证旧配置载入后组结构完整）
   const search = config.search;
@@ -785,13 +814,13 @@ function NetworkPage() {
             <ChoiceCard
               active={mode === "none"}
               title="不使用代理"
-              description="所有请求直连目标服务器。"
+              description="所有请求直连目标服务器（忽略环境变量代理）。"
               onClick={() => patchConfig({ proxy: { mode: "none" } })}
             />
             <ChoiceCard
               active={mode === "system"}
               title="系统代理"
-              description="读取操作系统代理设置（默认）。"
+              description="读取环境变量与操作系统代理设置。"
               onClick={() => patchConfig({ proxy: { mode: "system" } })}
             />
             <ChoiceCard
@@ -801,16 +830,28 @@ function NetworkPage() {
               onClick={() => patchConfig({ proxy: { mode: "manual", url: manualUrl } })}
             />
           </div>
+          <p className="mt-2 text-ui-sm text-[var(--muted-foreground)]">
+            保存后下一次对话生效；进行中的对话不受影响。
+          </p>
         </div>
         {mode === "manual" && (
           <div className="border-t border-[var(--border)] py-4">
-            <SettingsRow title="代理地址" description="支持 http://、https://、socks5:// 前缀。">
-              <Input
-                className="w-[360px] max-w-full font-mono text-ui-sm"
-                placeholder="http://127.0.0.1:7890 或 socks5://127.0.0.1:1080"
-                value={manualUrl}
-                onChange={(e) => patchConfig({ proxy: { mode: "manual", url: e.target.value } })}
-              />
+            <SettingsRow
+              title="代理地址"
+              description="支持 http://、https://、socks5://、socks5h:// 前缀。"
+            >
+              <div className="flex w-full flex-col items-end gap-1">
+                <Input
+                  className={cn(
+                    "w-[360px] max-w-full font-mono text-ui-sm",
+                    manualIssue && "settings-field-error-input",
+                  )}
+                  placeholder="http://127.0.0.1:7890 或 socks5://127.0.0.1:1080"
+                  value={manualUrl}
+                  onChange={(e) => patchConfig({ proxy: { mode: "manual", url: e.target.value } })}
+                />
+                {manualIssue ? <span className="settings-field-error">{manualIssue}</span> : null}
+              </div>
             </SettingsRow>
           </div>
         )}

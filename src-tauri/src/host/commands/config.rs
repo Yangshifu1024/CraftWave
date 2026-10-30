@@ -36,5 +36,8 @@ pub async fn save_config(
     // 子代理全局并发上限热应用（10 号票 Q13：保存边界即生效——已启动任务
     // 继续不取消，降低暂停补入，提高立即放行排队任务）
     state.apply_subagent_limit();
+    // 代理热生效（19 号票 FR-02-10）：重建 HTTP 客户端工厂缓存——进行中
+    // run 不切换（客户端按 run 构建，§11.1），下一次 start_chat 用新代理
+    state.apply_proxy_config()?;
     Ok(normalized)
 }

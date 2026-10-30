@@ -37,7 +37,8 @@ export function newDraftId(): string {
   return newUuid();
 }
 
-/** 从预设实例化 ProviderConfig（草稿用；凭据经 save_provider 提交）。 */
+/** 从预设实例化 ProviderConfig（草稿用；凭据经 save_provider 提交）。
+ *  本地预设（FR-02-04，19 号票）随预设带出 local=true——免 Key、离线可用。 */
 export function newProviderFromPreset(slug: string): ProviderConfig | null {
   const preset = findPreset(slug);
   if (!preset) return null;
@@ -46,6 +47,7 @@ export function newProviderFromPreset(slug: string): ProviderConfig | null {
     name: preset.name,
     apiFormat: preset.apiFormat,
     baseUrl: preset.baseUrl,
+    local: preset.local,
     models: preset.models.map((m) => ({
       id: newUuid(),
       model: m.model,

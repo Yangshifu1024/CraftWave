@@ -72,6 +72,8 @@ import type {
   StartChatArgs,
   StartChatResult,
   StopSubagentArgs,
+  TestProviderArgs,
+  TestProviderResult,
   ToolOutcome,
   WorkspacePathHit,
 } from "./types";
@@ -138,6 +140,8 @@ export const COMMANDS = {
   loadSubagentHistory: "load_subagent_history",
   // 网络搜索连通测试（13 号票，§3.3 #59f）
   searchTest: "search_test",
+  // 供应商连接测试（19 号票，§3.3 #32）
+  testProvider: "test_provider",
   // HTML 沙箱预览注册（14 号票，§3.3 #59g）
   previewRegister: "preview_register",
   // 图片附件承载（17 号票，§3.3 #59h/#59i/#59j）
@@ -639,4 +643,17 @@ export function registerPreview(html: string): Promise<PreviewRegisterResult> {
   return invoke<PreviewRegisterResult>(COMMANDS.previewRegister, {
     args: { html },
   } satisfies { args: { html: string } });
+}
+
+// ---- 供应商连接测试（§3.3 #32，19 号票）----
+
+/** §3.3 #32：保存供应商前的连通性测试（FR-02-09）。baseUrlOverride 传表单
+ *  草稿地址（不落库）；结果不 reject——探测失败以 ok=false + error 分类
+ *  返回，仅参数面错误（供应商不存在 E_NOT_FOUND / 方言暂不支持
+ *  E_INVALID_ARG）走 reject。 */
+export function testProvider(args: TestProviderArgs): Promise<TestProviderResult> {
+  return invoke<TestProviderResult>(COMMANDS.testProvider, {
+    providerId: args.providerId,
+    baseUrlOverride: args.baseUrlOverride,
+  } satisfies TestProviderArgs);
 }

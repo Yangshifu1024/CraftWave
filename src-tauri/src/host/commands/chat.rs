@@ -370,11 +370,18 @@ pub(crate) fn resolve_model(
             provider.api_format
         )));
     }
-    let Some(key) = provider.api_key.as_deref() else {
-        return Err(IpcError::invalid_arg(format!(
-            "供应商 {} 未配置 API Key（设置页填写后保存）",
-            provider.id
-        )));
+    // Key 装配（FR-02-04 免 Key，19 号票）：本地服务（local=true）不校验
+    // 凭据，缺 Key 时以占位值过 rig 的必填面（本地端点忽略 Authorization
+    // 头）；远端仍强制要求。
+    let key = match provider.api_key.as_deref() {
+        Some(key) => key.to_owned(),
+        None if provider.local => "local".to_owned(),
+        None => {
+            return Err(IpcError::invalid_arg(format!(
+                "供应商 {} 未配置 API Key（设置页填写后保存）",
+                provider.id
+            )));
+        }
     };
     let wire_config = OpenAIConfig::new(key).with_base_url(
         provider
@@ -382,7 +389,13 @@ pub(crate) fn resolve_model(
             .clone()
             .unwrap_or_else(|| provider.api_format.official_base_url().to_owned()),
     );
-    let driver = wire_config.client().chat(model.model.clone());
+    // 代理注入（19 号票，附录 B"代理经 rig-reqwest builder"）：不再用 rig
+    // 的共享 reqwest client（`client()`），改取代理工厂当前快照包一层
+    // ReqwestClient 经 `connect` 挂上——模型请求与探测/网络工具共用
+    // none/system/manual 三模式语义（rig-http 0.45 注入口径，§11.1 回写）。
+    // client 按 run 取用且 run 内复用；代理热生效后下一次 start_chat 换新。
+    let http = rig_reqwest::ReqwestClient::from(app.http.client().as_ref().clone());
+    let driver = wire_config.connect(http).chat(model.model.clone());
     Ok(ResolvedModel {
         name: model.model.clone(),
         driver,

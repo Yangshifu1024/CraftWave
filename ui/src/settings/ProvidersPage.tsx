@@ -29,8 +29,10 @@ import { Input } from "@/components/ui/input";
 import { NumberInput } from "@/components/ui/number-input";
 import { Select } from "@/components/ui/select";
 import { CheckableTag, Tag } from "@/components/ui/tag";
-import type { ApiFormat, ProviderConfig, ProviderModel } from "@/ipc/types";
+import { testProvider } from "@/ipc/client";
+import type { ApiFormat, ProbeError, ProviderConfig, ProviderModel } from "@/ipc/types";
 import { EyeIcon, LockIcon, PencilIcon, PlusIcon, TrashIcon } from "@/settings/icons";
+import { BUILTIN_PRESETS, newProviderFromPreset } from "@/settings/presets";
 import { useSettingsStore } from "@/stores/settings";
 
 /** API 格式下拉的选项表（label 展示 / value 存入配置）。 */
@@ -54,6 +56,28 @@ function apiFormatLabel(v: ApiFormat): string {
 
 /** 请求头行（表单内表示；提交时转回 Record） */
 type HeaderRow = { name: string; value: string };
+
+/** 连接测试状态机（FR-02-09，19 号票）：idle 未测 / testing 进行中 /
+ *  ok 已连通（延迟 + 模型数）/ error 失败（七类分类文案）。 */
+export type ConnectionTestState =
+  | { state: "idle" }
+  | { state: "testing" }
+  | { state: "ok"; latencyMs: number; modelCount: number }
+  | { state: "error"; error: ProbeError };
+
+/** 探测错误分类（§3.6 E_PROVIDER_* 七类）→ 人话文案映射表。 */
+export function probeErrorLabel(code: string): string {
+  const labels: Record<string, string> = {
+    E_PROVIDER_AUTH: "认证失败：API Key 无效或无权限",
+    E_PROVIDER_BILLING: "余额或配额不足",
+    E_PROVIDER_RATE_LIMITED: "请求过于频繁（限流），稍后重试",
+    E_PROVIDER_BAD_REQUEST: "请求被拒绝：地址可能不完整（确认含 /v1 前缀）",
+    E_PROVIDER_SERVER: "服务端错误（5xx），稍后重试",
+    E_PROVIDER_PROTOCOL: "响应不符合协议：地址可能不是 OpenAI 兼容端点",
+    E_PROVIDER_NETWORK: "无法连接：地址不可达（本地服务未启动？）或网络不通",
+  };
+  return labels[code] ?? `连接失败（${code}）`;
+}
 
 /** 表单内的供应商表示（baseUrl 必填语义、headers 行式） */
 type ProviderForm = Omit<ProviderConfig, "baseUrl" | "headers" | "apiKey"> & {
@@ -88,6 +112,7 @@ function blankProvider(): ProviderForm {
     baseUrl: DEFAULT_BASE_URLS.openai_chat,
     models: [],
     headerRows: [],
+    local: false,
   };
 }
 
@@ -157,6 +182,8 @@ function fieldIssue(
     if (!/^https?:\/\/[^\s/]+/i.test(url)) return "必须是合法 http(s) 地址";
   }
   if (key === "keys") {
+    // 本地供应商（FR-02-04，19 号票）：免 API Key（本地服务不校验凭据）
+    if (form.local) return undefined;
     const hasKey = credential.isNew
       ? credential.newKey.trim() !== ""
       : credential.mode === "replace"
@@ -207,6 +234,11 @@ export function ProvidersPage() {
   const [touched, setTouched] = useState<Partial<Record<FieldKey, boolean>>>({});
   const [submitTried, setSubmitTried] = useState(false);
   const [modelEditor, setModelEditor] = useState<ModelEditorState | null>(null);
+  // 连接测试（19 号票 FR-02-09）：卡片按 providerId 一份、弹框草稿一份。
+  // 测试是探测动作不落盘——状态不入 settings 草稿（对齐 13 号票搜索连通
+  // 测试的草稿试连定案）。
+  const [cardTests, setCardTests] = useState<Record<string, ConnectionTestState>>({});
+  const [draftTest, setDraftTest] = useState<ConnectionTestState>({ state: "idle" });
   // 删除确认（供应商 / 模型两形态）
   const [confirmState, setConfirmState] = useState<
     | { kind: "provider"; provider: ProviderConfig }
@@ -236,6 +268,74 @@ export function ProvidersPage() {
   /** 编辑表单字段错误（实时显示：进入时值本就有效，只有破坏后才见红字） */
   function editFieldError(key: FieldKey): string | undefined {
     return editing ? fieldIssue(editing, key, credential) : undefined;
+  }
+
+  /**
+   * 连接测试（FR-02-09）：对已保存供应商发探测（草稿态编辑时以表单当前
+   * baseUrl 做 baseUrlOverride 覆写——"未保存草稿直接测试"，不落库）。
+   * 结果按 { state, latency, modelCount / error } 写入对应状态槽。
+   */
+  async function runConnectionTest(
+    providerId: string,
+    baseUrlOverride: string | undefined,
+    slot: (next: ConnectionTestState) => void,
+  ) {
+    slot({ state: "testing" });
+    try {
+      const result = await testProvider({
+        providerId,
+        baseUrlOverride: baseUrlOverride || undefined,
+      });
+      if (result.ok) {
+        slot({
+          state: "ok",
+          latencyMs: result.latencyMs ?? 0,
+          modelCount: result.models?.length ?? 0,
+        });
+      } else if (result.error) {
+        slot({ state: "error", error: result.error });
+      } else {
+        slot({
+          state: "error",
+          error: { code: "E_PROVIDER_PROTOCOL", message: "探测结果缺少错误详情" },
+        });
+      }
+    } catch (err) {
+      // 参数面错误（供应商不存在/方言暂不支持）：兜底展示为 protocol 分类
+      const message = err instanceof Error ? err.message : String(err);
+      slot({ state: "error", error: { code: "E_PROVIDER_PROTOCOL", message } });
+    }
+  }
+
+  /** 卡片上的测试（列表态：用已保存配置，无覆写）。 */
+  function testSavedProvider(provider: ProviderConfig) {
+    void runConnectionTest(provider.id, undefined, (next) =>
+      setCardTests((prev) => ({ ...prev, [provider.id]: next })),
+    );
+  }
+
+  /** 弹框内的草稿测试（编辑态：baseUrlOverride 传表单当前值）。 */
+  function testDraftProvider() {
+    if (!editing) return;
+    void runConnectionTest(editing.id, editing.baseUrl, setDraftTest);
+  }
+
+  /** 预设快捷填充（新增态）：名称/端点/模型/本地标记一次填入，凭据留待
+   *  用户填写（本地预设免 Key，local=true 即免）。 */
+  function applyPreset(slug: string) {
+    const provider = newProviderFromPreset(slug);
+    if (!provider) return;
+    setAddForm((prev) => ({
+      ...prev,
+      id: provider.id,
+      name: provider.name,
+      apiFormat: provider.apiFormat,
+      baseUrl: provider.baseUrl ?? "",
+      models: provider.models,
+      local: provider.local ?? false,
+    }));
+    // 预设填充视为对名称/端点/凭据三字段的操作（校验红字随填充消隐）
+    setTouched((tp) => ({ ...tp, name: true, baseUrl: true, keys: true }));
   }
 
   /** 从草稿移除供应商；若它持有当前默认模型，则回退到剩余列表的第一个模型。 */
@@ -400,6 +500,22 @@ export function ProvidersPage() {
                   }
                   actions={[
                     <Button
+                      key="test"
+                      variant="ghost"
+                      size="sm"
+                      // FR-02-09 探测当前仅覆盖 openai_chat 方言（anthropic/
+                      // responses 由 38 号票三协议接入接通本探测入口）
+                      disabled={p.apiFormat !== "openai_chat"}
+                      title={
+                        p.apiFormat !== "openai_chat"
+                          ? "该协议的连接测试即将支持（三协议接入）"
+                          : undefined
+                      }
+                      onClick={() => testSavedProvider(p)}
+                    >
+                      测试连接
+                    </Button>,
+                    <Button
                       key="edit"
                       variant="ghost"
                       size="sm"
@@ -429,7 +545,9 @@ export function ProvidersPage() {
                       >
                         {p.baseUrl || "-"}
                       </span>
+                      {p.local && <Tag>本地 / 离线可用</Tag>}
                     </div>
+                    <ConnectionTestResult test={cardTests[p.id] ?? { state: "idle" }} />
                     <div className="border-t border-[var(--border)] pt-3">
                       <span className="settings-provider-block-label">模型列表</span>
                       <div className="mt-1.5">
@@ -507,9 +625,28 @@ export function ProvidersPage() {
             modelTarget && (
               <>
                 {view.kind === "add" && (
-                  <p className="mb-4 text-ui-sm text-[var(--muted-foreground)]">
-                    填写端点与凭据后添加；模型定义完全以你的输入为准（无内置目录）。
-                  </p>
+                  <>
+                    <p className="mb-2 text-ui-sm text-[var(--muted-foreground)]">
+                      填写端点与凭据后添加；模型定义完全以你的输入为准（无内置目录）。建议保存前点供应商卡片上的「测试连接」验证连通。
+                    </p>
+                    {/* 预设快捷填充（19 号票）：本地三家标注「本地 / 离线可用」，
+                        免 API Key（选中后 Key 行替换为说明文案） */}
+                    <div className="mb-4 flex flex-wrap items-center gap-1.5">
+                      <span className="text-ui-sm text-[var(--cw-text-2)]">从预设填充：</span>
+                      {BUILTIN_PRESETS.map((preset) => (
+                        <CheckableTag
+                          key={preset.slug}
+                          checked={
+                            modalForm.name === preset.name && modalForm.baseUrl === preset.baseUrl
+                          }
+                          onChange={() => applyPreset(preset.slug)}
+                        >
+                          {preset.name}
+                          {preset.local ? " · 本地" : ""}
+                        </CheckableTag>
+                      ))}
+                    </div>
+                  </>
                 )}
                 <ProviderFields
                   form={modalForm}
@@ -548,6 +685,8 @@ export function ProvidersPage() {
                     setNewKey(value);
                     setTouched((tp) => ({ ...tp, keys: true }));
                   }}
+                  onTestDraft={view.kind === "edit" ? testDraftProvider : undefined}
+                  draftTest={draftTest}
                 >
                   <ModelListSection
                     models={modalForm.models}
@@ -657,6 +796,8 @@ function ProviderFields({
   onPatch,
   onCredentialMode,
   onNewKey,
+  onTestDraft,
+  draftTest,
   children,
 }: {
   form: ProviderForm;
@@ -665,6 +806,10 @@ function ProviderFields({
   onPatch: (patch: Partial<ProviderForm>) => void;
   onCredentialMode: (mode: "keep" | "replace") => void;
   onNewKey: (value: string) => void;
+  /** 草稿试连回调（编辑态注入；缺省 = 新增态不显示测试按钮） */
+  onTestDraft?: () => void;
+  /** 草稿试连结果（与 onTestDraft 配对） */
+  draftTest?: ConnectionTestState;
   children: React.ReactNode;
 }) {
   function patchHeader(index: number, patch: Partial<HeaderRow>) {
@@ -730,18 +875,42 @@ function ProviderFields({
             <span className="settings-row-title">
               Base URL <span className="text-[var(--cw-err)]">*</span>
             </span>
+            <span className="settings-row-description">
+              编辑态可先测草稿地址再保存（不落库）；新增供应商保存后从卡片测试。
+            </span>
           </div>
           <div className="settings-row-control">
             <FieldControl error={errors.baseUrl} wide>
-              <Input
-                className={cn(
-                  "font-mono text-ui-sm",
-                  errors.baseUrl && "settings-field-error-input",
+              <div className="flex w-full items-start gap-2">
+                <Input
+                  className={cn(
+                    "font-mono text-ui-sm",
+                    errors.baseUrl && "settings-field-error-input",
+                  )}
+                  value={form.baseUrl}
+                  placeholder="https://api.example.com/v1"
+                  onChange={(e) => onPatch({ baseUrl: e.target.value })}
+                />
+                {/* 草稿试连（19 号票 FR-02-09）：仅编辑态可用——已保存供应商
+                    的 baseUrl 覆写探测；新增态还没有可探测的配置主体 */}
+                {onTestDraft && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={
+                      (draftTest?.state ?? "idle") === "testing" || form.baseUrl.trim() === ""
+                    }
+                    onClick={onTestDraft}
+                  >
+                    {draftTest?.state === "testing" ? "测试中…" : "测试连接"}
+                  </Button>
                 )}
-                value={form.baseUrl}
-                placeholder="https://api.example.com/v1"
-                onChange={(e) => onPatch({ baseUrl: e.target.value })}
-              />
+              </div>
+              {onTestDraft && (
+                <div className="w-full">
+                  <ConnectionTestResult test={draftTest ?? { state: "idle" }} />
+                </div>
+              )}
             </FieldControl>
           </div>
         </div>
@@ -749,17 +918,31 @@ function ProviderFields({
         <div className="settings-row">
           <div className="settings-row-copy">
             <span className="settings-row-title">
-              API Key <span className="text-[var(--cw-err)]">*</span>
+              {form.local ? (
+                <>API Key</>
+              ) : (
+                <>
+                  API Key <span className="text-[var(--cw-err)]">*</span>
+                </>
+              )}
             </span>
             <span className="settings-row-description">
-              {credential.isNew || credential.mode === "replace"
-                ? "明文存于 config.json（文件权限 0600）。"
-                : "现有 Key 保持在 config.json，不在界面回显。"}
+              {form.local
+                ? "本地服务不校验凭据，免 API Key；离线可用。"
+                : credential.isNew || credential.mode === "replace"
+                  ? "明文存于 config.json（文件权限 0600）。"
+                  : "现有 Key 保持在 config.json，不在界面回显。"}
             </span>
           </div>
           <div className="settings-row-control">
-            <FieldControl error={errors.keys} wide>
-              {credential.isNew ? (
+            <FieldControl error={form.local ? undefined : errors.keys} wide>
+              {form.local ? (
+                // 本地预设（FR-02-04，19 号票）：免 Key——Key 输入隐藏
+                <div className="flex w-full items-center gap-2 text-ui-sm text-[var(--cw-text-2)]">
+                  <Tag>本地 / 离线可用</Tag>
+                  <span>无需 API Key</span>
+                </div>
+              ) : credential.isNew ? (
                 <Input
                   className={cn(
                     "font-mono text-ui-sm",
@@ -1065,6 +1248,35 @@ function ModelEditor({
           </Select>
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * 连接测试结果行（FR-02-09，19 号票）：idle 不渲染；testing 进行中提示；
+ * ok 带延迟与模型数；error 带七类分类的人话文案（原始 message 兜底展示
+ * 在 title 里，方便排查精简网关的非标准响应）。
+ */
+function ConnectionTestResult({ test }: { test: ConnectionTestState }) {
+  if (test.state === "idle") return null;
+  if (test.state === "testing") {
+    return <div className="py-1 text-ui-sm text-[var(--cw-text-2)]">测试中…</div>;
+  }
+  if (test.state === "ok") {
+    return (
+      <div className="py-1 text-ui-sm" data-testid="connection-test-ok">
+        已连通 · {test.latencyMs}ms
+        {test.modelCount > 0 ? ` · ${test.modelCount} 个模型` : ""}
+      </div>
+    );
+  }
+  return (
+    <div
+      className="py-1 text-ui-sm text-[var(--cw-err)]"
+      data-testid="connection-test-error"
+      title={test.error.message}
+    >
+      {probeErrorLabel(test.error.code)}
     </div>
   );
 }

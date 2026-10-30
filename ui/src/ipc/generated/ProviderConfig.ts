@@ -34,4 +34,13 @@ models: Array<ProviderModel>,
 /**
  * 追加请求头（M2 per-provider headers 正式启用；字段 M1 就位）。
  */
-headers?: { [key in string]: string }, };
+headers?: { [key in string]: string }, 
+/**
+ * 本地服务标记（FR-02-04，19 号票）：Ollama / llama.cpp / LM Studio 等
+ * 本机推理端点——免 API Key（`resolve_model` 允许 apiKey 缺省，rig 侧
+ * 以占位值发请求，本地服务不校验凭据），设置页隐藏 Key 输入并标注
+ * "本地 / 离线可用"。仅按本字段显式判定，不做"baseUrl 是 localhost 即
+ * 本地"的隐式推断（远端自建网关同样可能是回环地址）。旧配置无该字段
+ * serde default 回填 false（schemaVersion 维持 2，§3.2）。
+ */
+local?: boolean, };

@@ -145,12 +145,25 @@ describe("settings store", () => {
     expect(useSettingsStore.getState().config?.providers).toHaveLength(0);
   });
 
-  it("预设实例化稳定：slug 齐全且全部 https", () => {
+  it("预设实例化稳定：slug 齐全、远端 https、本地 http 回环", () => {
     for (const slug of ["openai", "anthropic", "deepseek", "moonshot", "zhipu", "openrouter"]) {
       const provider = newProviderFromPreset(slug);
       expect(provider, `预设 ${slug} 存在`).not.toBeNull();
       expect(provider?.baseUrl).toMatch(/^https:\/\//);
+      expect(provider?.local ?? false).toBe(false);
       expect(provider?.models.length).toBeGreaterThan(0);
+    }
+    // 本地模型三家（19 号票 FR-02-04）：http 回环 + local=true + 免 Key
+    for (const [slug, base] of [
+      ["ollama", "http://127.0.0.1:11434/v1"],
+      ["llamacpp", "http://127.0.0.1:8080/v1"],
+      ["lmstudio", "http://127.0.0.1:1234/v1"],
+    ] as const) {
+      const provider = newProviderFromPreset(slug);
+      expect(provider, `本地预设 ${slug} 存在`).not.toBeNull();
+      expect(provider?.baseUrl).toBe(base);
+      expect(provider?.local).toBe(true);
+      expect(provider?.apiKey).toBeUndefined();
     }
     expect(newProviderFromPreset("nope")).toBeNull();
   });
@@ -158,7 +171,8 @@ describe("settings store", () => {
   it("预设清单来自生成物：BUILTIN_PRESETS 与 Rust 权威清单同源（03 号票单源）", () => {
     // 单源定稿后清单不再手写副本：消费面直接来自 ui/src/ipc/generated/
     // BuiltinPresets.ts（cargo test 从 providers/presets.rs 序列化导出）。
-    // 这里钉住消费链路：6 家 slug 齐全、字段形态与 ProviderConfig 实例化兼容。
+    // 这里钉住消费链路：9 家 slug 齐全（19 号票 +3 本地）、字段形态与
+    // ProviderConfig 实例化兼容。
     expect(BUILTIN_PRESETS.map((p) => p.slug)).toEqual([
       "openai",
       "anthropic",
@@ -166,9 +180,16 @@ describe("settings store", () => {
       "moonshot",
       "zhipu",
       "openrouter",
+      "ollama",
+      "llamacpp",
+      "lmstudio",
     ]);
     for (const preset of BUILTIN_PRESETS) {
-      expect(preset.baseUrl).toMatch(/^https:\/\//);
+      if (preset.local) {
+        expect(preset.baseUrl).toMatch(/^http:\/\/127\.0\.0\.1:/);
+      } else {
+        expect(preset.baseUrl).toMatch(/^https:\/\//);
+      }
       expect(preset.models.length).toBeGreaterThan(0);
       for (const model of preset.models) {
         expect(model.model).not.toBe("");

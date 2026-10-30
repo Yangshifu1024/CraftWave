@@ -83,6 +83,12 @@ pub struct AppState {
     /// （所有会话共用上限，`agent.maxConcurrentSubagents`，缺省 4；
     /// save_config 时经 [`Self::apply_subagent_limit`] 热调整）。
     pub subs: Arc<crate::agent::SubRegistry>,
+    /// 代理 HTTP 客户端工厂（19 号票，FR-02-10）：进程级 reqwest::Client
+    /// 缓存（none/system/manual 三模式，`AppConfig.proxy` 装配）。
+    /// `resolve_model` 经它注入 rig（run 内复用同一 client，§11.1）；
+    /// save_config 时经 [`Self::apply_proxy_config`] 热重建（进行中 run
+    /// 不切换——客户端按 run 构建，下一次 start_chat 用新代理）。
+    pub http: Arc<crate::providers::http::HttpClientFactory>,
 }
 
 impl AppState {
@@ -91,8 +97,20 @@ impl AppState {
         let store = Arc::new(SessionStore::with_root(data_dir.clone()));
         // MCP 宿主与 AppState 共享同一事件汇（克隆在字段 move 之前完成）
         let events_rcvd = events.clone();
+        // 代理工厂初代 client 按已存配置装配（19 号票 FR-02-10）；
+        // 首次启动无配置 / 载入失败 → None = no_proxy 直连（防环境变量泄漏）
+        let config_store: ConfigStore<AppConfig> = ConfigStore::new(data_dir.join("config.json"));
+        let proxy = config_store.load().ok().and_then(|c| c.proxy.clone());
+        let http = Arc::new(
+            crate::providers::http::HttpClientFactory::from_config(proxy.as_ref()).unwrap_or_else(
+                |_| {
+                    crate::providers::http::HttpClientFactory::from_config(None)
+                        .expect("无代理配置的客户端构建不会失败")
+                },
+            ),
+        );
         Self {
-            config: Arc::new(ConfigStore::new(data_dir.join("config.json"))),
+            config: Arc::new(config_store),
             runs: RunManager::new(),
             events,
             session_usage: Arc::new(Mutex::new(HashMap::new())),
@@ -113,6 +131,7 @@ impl AppState {
             subs: Arc::new(crate::agent::SubRegistry::new(
                 crate::providers::types::DEFAULT_MAX_CONCURRENT_SUBAGENTS as usize,
             )),
+            http,
         }
     }
 
@@ -130,6 +149,16 @@ impl AppState {
             })
             .unwrap_or(crate::providers::types::DEFAULT_MAX_CONCURRENT_SUBAGENTS);
         self.subs.gate().set_limit(limit.max(1) as usize);
+    }
+
+    /// 把配置里的代理设置热应用到 HTTP 客户端工厂（19 号票 FR-02-10：
+    /// save_config 边界调用——保存成功即重建缓存 client，下一次
+    /// start_chat 的模型请求用新代理；进行中 run 不切换，客户端按 run
+    /// 构建）。归一化已校验 proxy.url，重建失败属异常：保留旧 client 并
+    /// 上抛（前端可见"保存成功但代理切换失败"）。
+    pub fn apply_proxy_config(&self) -> Result<(), IpcError> {
+        let proxy = self.config.load()?.proxy.clone();
+        self.http.reload(proxy.as_ref())
     }
 
     /// 产出一份全部字段同源的轻量副本（Arc/内部 Arc 克隆，零深拷贝）——
@@ -151,6 +180,7 @@ impl AppState {
             app_asks: self.app_asks.clone(),
             resource_skills_dir: self.resource_skills_dir.clone(),
             subs: self.subs.clone(),
+            http: self.http.clone(),
         }
     }
 

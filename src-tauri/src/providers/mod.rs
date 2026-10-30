@@ -12,7 +12,9 @@
 //! 钥匙串；§9.4 改写）：API Key 明文存 config.json（0600 权限收紧在
 //! ConfigStore，即仅文件属主可读写）。
 
+pub mod http;
 pub mod presets;
+pub mod probe;
 pub mod reasoning;
 pub mod service;
 pub mod types;
