@@ -877,6 +877,13 @@ async fn run_subagent(
             skills: None,
             subagents: None,
             allowed_tools: Some(allowed),
+            // 网络工具环境（12 号票）：子代理白名单一般不含网络工具，
+            // 但环境照常装配（执行入口白名单先拦；策略与主代理同源）。
+            // 配置读取失败按缺省配置装配（fail-closed：缺省拒绝私网）。
+            network: Some(std::sync::Arc::new(match app.config.load() {
+                Ok(config) => crate::tools::NetworkEnv::from_config(&config),
+                Err(_) => crate::tools::NetworkEnv::from_config(&Default::default()),
+            })),
         }),
     );
     let gate = Arc::new(ApprovalGate::new(ctx.tier, sub_plan));

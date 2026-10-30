@@ -629,6 +629,7 @@ async fn child_env_rejects_delegation_and_outside_tools() {
                 // 子代理边界：无委派面（Q13 执行入口拒绝）
                 subagents: None,
                 allowed_tools: allowed,
+                network: None,
             },
         )
     };

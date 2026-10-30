@@ -622,6 +622,9 @@ pub(crate) fn build_approval_payload(pending: &PendingCall) -> AskPayload {
             args.get("path").and_then(|v| v.as_str()).unwrap_or("?")
         ),
         "command" => "执行命令".to_owned(),
+        // web 工具审批（12 号票，§8.5 Network 行）：标题承载方法 + URL 摘要行
+        "web_fetch" => "抓取网页".to_owned(),
+        "http_request" => "发送 HTTP 请求".to_owned(),
         other => format!("执行工具 {other}"),
     };
     let mut diff = None;
@@ -678,6 +681,21 @@ pub(crate) fn build_approval_payload(pending: &PendingCall) -> AskPayload {
                 .get("command")
                 .and_then(|v| v.as_str())
                 .map(str::to_owned);
+        }
+        // web 工具（12 号票）：command 字段承载 `GET https://…` 摘要行
+        // （审批弹窗复用命令行展示位，AskPanel 零改动）
+        "web_fetch" => {
+            let url = args.get("url").and_then(|v| v.as_str()).unwrap_or("");
+            command = Some(format!("GET {url}"));
+        }
+        "http_request" => {
+            let method = args
+                .get("method")
+                .and_then(|v| v.as_str())
+                .unwrap_or("GET")
+                .to_ascii_uppercase();
+            let url = args.get("url").and_then(|v| v.as_str()).unwrap_or("");
+            command = Some(format!("{method} {url}"));
         }
         _ => {}
     }
@@ -1715,6 +1733,12 @@ pub async fn start_chat_core(
                 },
             )),
             allowed_tools: None,
+            // 网络工具执行环境（12 号票，web_fetch/http_request）：SSRF 策略
+            // （network.allowPrivateNetwork）+ 代理 + 进程级节流器，按当前
+            // AppConfig 装配（save_config 后下一次 start_chat 生效）。
+            network: Some(Arc::new(crate::tools::NetworkEnv::from_config(
+                app.config.load()?.as_ref(),
+            ))),
         }),
     );
     // 审批门装配 MCP 判定视图（08 号票：Q44 动态许可核验 + 未声明

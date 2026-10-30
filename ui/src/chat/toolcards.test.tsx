@@ -13,11 +13,13 @@ import {
   cardPhase,
   EditCard,
   GrepCard,
+  HttpRequestCard,
   ListFilesCard,
   McpFallbackCard,
   PlanCard,
   ReadCard,
   toolCardExpandedMemory,
+  WebFetchCard,
   WriteCard,
 } from "./ToolCards";
 
@@ -31,11 +33,20 @@ vi.mock("@assistant-ui/react", async (importOriginal) => {
   };
 });
 
+/** 边车数据面（12 号票两卡终态按 callId 拉边车）：用例内改写返回值。 */
+const loadToolOutcomes = vi.hoisted(() =>
+  vi.fn(async () => ({}) as Record<string, unknown>),
+);
+vi.mock("@/ipc/client", () => ({
+  loadToolOutcomes: loadToolOutcomes,
+}));
+
 afterEach(() => {
   cleanup();
   // 展开记忆是模块级 Map（跨用例持久），不清会污染后续用例的初值
   toolCardExpandedMemory.clear();
   toolStatus.status = "running";
+  loadToolOutcomes.mockClear();
 });
 
 /** 卡片 props 的类型来源（以 ReadCard 的首参推导）。 */
@@ -228,6 +239,96 @@ describe("复刻回归", () => {
     fireEvent.click(toggle);
     rerender(<CommandCard {...props({ command: "ls" }, resultOf("失败", true))} />);
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  });
+});
+
+describe("web 工具卡（12 号票）", () => {
+  it("web_fetch：URL 摘要 + 终态拉边车渲染标题/正文预览（默认收起，前 50 行）", async () => {
+    const content = Array.from({ length: 60 }, (_, i) => `第 ${i + 1} 行`).join("\n");
+    loadToolOutcomes.mockResolvedValue({
+      c1: {
+        ok: true,
+        uiSummary: "已抓取",
+        data: { url: "https://example.com", title: "示例标题", content, length: 600 },
+      },
+    });
+    render(<WebFetchCard {...props({ url: "https://example.com" }, resultOf("已抓取"))} />);
+    const card = screen.getByTestId("tool-card-c1");
+    expect(card.textContent).toContain("https://example.com");
+    // 边车异步到达：标题渲染 + 正文折叠预览存在
+    await vi.waitFor(() => expect(card.textContent).toContain("示例标题"));
+    expect(card.textContent).toContain("正文 600 字符");
+    const preview = card.querySelector("details div");
+    expect(preview?.textContent).toContain("第 1 行");
+    // 前 50 行截断提示（60 行正文 → 预览含省略提示、不含第 60 行）
+    expect(preview?.textContent).toContain("预览前 50 行");
+    expect(preview?.textContent).not.toContain("第 60 行");
+  });
+
+  it("web_fetch：失败态（SSRF 拒绝）默认展开显示错误类别", () => {
+    render(
+      <WebFetchCard
+        {...props(
+          { url: "http://127.0.0.1:6379/" },
+          resultOf("E_SSRF_BLOCKED：SSRF 防护拦截（回环地址）", true),
+        )}
+      />,
+    );
+    const card = screen.getByTestId("tool-card-c1");
+    expect(card.getAttribute("data-phase")).toBe("error");
+    expect(card.textContent).toContain("E_SSRF_BLOCKED");
+    expect(card.textContent).toContain("回环地址");
+  });
+
+  it("http_request：method 徽标 + 状态码徽标 + 展开响应头/body 折叠与 spill 路径", async () => {
+    loadToolOutcomes.mockResolvedValue({
+      c1: {
+        ok: true,
+        uiSummary: "HTTP 200",
+        data: {
+          status: 200,
+          headers: { "content-type": "text/html", "x-probe": "1" },
+          body: "响应体文本",
+          bodyTruncated: true,
+          spillPath: "/data/logs/spill/call-test.txt",
+        },
+      },
+    });
+    render(
+      <HttpRequestCard
+        {...props(
+          { method: "post", url: "https://api.example.com/v1/submit" },
+          resultOf("HTTP 200"),
+        )}
+      />,
+    );
+    const card = screen.getByTestId("tool-card-c1");
+    // method 徽标大写归一 + 状态码徽标（2xx 绿）
+    expect(card.textContent).toContain("POST");
+    await vi.waitFor(() => {
+      expect(card.textContent).toContain("200");
+    });
+    // 展开详情：响应头 JSON 折叠 + body 折叠 + spill 路径
+    fireEvent.click(card.querySelector("button")!);
+    expect(card.textContent).toContain("content-type");
+    expect(card.textContent).toContain("响应体文本");
+    expect(card.textContent).toContain("尾部，全量已落盘");
+    expect(card.textContent).toContain("/data/logs/spill/call-test.txt");
+  });
+
+  it("http_request：5xx 状态码徽标着红色（错误分级配色）", async () => {
+    loadToolOutcomes.mockResolvedValue({
+      c1: { ok: true, uiSummary: "HTTP 503", data: { status: 503, headers: {}, body: "" } },
+    });
+    render(
+      <HttpRequestCard
+        {...props({ method: "GET", url: "https://api.example.com/x" }, resultOf("HTTP 503"))}
+      />,
+    );
+    const card = screen.getByTestId("tool-card-c1");
+    await vi.waitFor(() => {
+      expect(card.textContent).toContain("503");
+    });
   });
 });
 

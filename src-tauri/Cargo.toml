@@ -25,7 +25,8 @@ rig = "0.45.0"
 futures = "0.3"
 # 【S1 spike 原型】mock_chat 的 sleep（time feature）；后续后端模块本就会用到
 # 【S5 spike】process/macros/sync/rt：命令子进程、select!、Notify、任务驱动
-tokio = { version = "1", default-features = false, features = ["time", "process", "macros", "sync", "rt"] }
+# 【12 号票】net：SSRF 共享层的 tokio::net::lookup_host（§9.2 DNS 解析）
+tokio = { version = "1", default-features = false, features = ["time", "process", "macros", "sync", "rt", "net"] }
 # 【S5 spike】CancellationToken（§5.3 cancel_run 置位载体）
 tokio-util = { version = "0.7", features = ["rt"] }
 # providers（§9.4）：keyring 4.2 默认 v1 feature = apple keychain / windows native / zbus-secret-service
@@ -66,8 +67,9 @@ rmcp = { version = "3.5", features = [
 ] }
 # rmcp 的 streamable HTTP 客户端以 `reqwest?` 软依赖启用（feature 语法：
 # "reqwest?/rustls"）——使用方须自带 reqwest；锁 rustls TLS（对齐本仓
-# 无 OpenSSL 依赖纪律）
-reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+# 无 OpenSSL 依赖纪律）。12 号票：gzip 自动解压（现代网站按 Accept-Encoding
+# 压缩响应，抓取正文须解压后才可交给 Readability）。
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "gzip"] }
 process-wrap = { version = "10.0", features = [
     "tokio1",
     "process-group",
@@ -83,6 +85,16 @@ glob = "0.3.3"
 # YAML 语法，手写行解析易错，按「非必要不手写」走库。
 serde_yaml_ng = "0.10"
 git2 = { version = "0.21.0", default-features = false }
+
+# 【M2 12 号票】web_fetch 正文抽取（§8.3 web_fetch 行）：dom_smoothie 为
+# Mozilla Readability 算法的纯 Rust 移植（MIT，活跃维护，0.19.0 于 2026-10
+# 发布），基于 dom_query（HTML5 解析）+ 内置 Markdown 输出（TextMode::Markdown，
+# 经 dom_query 的 markdown 特性），备选 readability crate 久未维护不取。
+# 定案标准（票面）：纯 Rust、MIT、中文正文实测可用（快照测试覆盖）。
+dom_smoothie = "0.19.0"
+# 【M2 12 号票】URL 解析（§9.2 URL 预校验）：与 reqwest 内部同款解析器
+#（url 2.x），Host::Ipv4/Ipv6/Domain 判别是 IP 字面量拦截的依据。
+url = "2.5"
 
 # 【S5 spike，cfg(unix)】进程组收割：kill(-pgid, SIGTERM/SIGKILL)
 [target.'cfg(unix)'.dependencies]

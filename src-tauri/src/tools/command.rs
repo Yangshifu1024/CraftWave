@@ -319,8 +319,9 @@ fn strip_ansi(s: &str) -> String {
     anstream::adapter::strip_str(s).to_string()
 }
 
-/// 尾部 `tail` 字节（UTF-8 字符边界安全）。
-fn tail_of(s: &str, tail: usize) -> &str {
+/// 尾部 `tail` 字节（UTF-8 字符边界安全）。`pub(crate)`：http_request 的
+/// §8.8 响应治理复用（12 号票）。
+pub(crate) fn tail_of(s: &str, tail: usize) -> &str {
     if s.len() <= tail {
         return s;
     }
@@ -336,7 +337,14 @@ fn spill_dir(ctx: &ToolsContext) -> PathBuf {
     ctx.data_root.join("logs").join("spill")
 }
 
-/// 全量输出落盘；返回落盘路径字符串。
+/// 全量输出落盘；返回落盘路径字符串。`pub(crate)`：http_request 的 §8.8
+/// 响应治理复用同一原语与目录（12 号票）。
+pub(crate) fn spill_full(ctx: &ToolsContext, call_id: &str, full: &str) -> Result<String, std::io::Error> {
+    cleanup_spill(ctx, Instant::now());
+    spill(ctx, call_id, full)
+}
+
+/// 全量输出落盘（不含清理；调用方经 [`spill_full`] 走清理+落盘组合）。
 fn spill(ctx: &ToolsContext, call_id: &str, full: &str) -> Result<String, std::io::Error> {
     let dir = spill_dir(ctx);
     std::fs::create_dir_all(&dir)?;

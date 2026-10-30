@@ -1,7 +1,7 @@
 # 实现：web_fetch / http_request 与 SSRF 防护
 
 Type: task
-Status: open
+Status: claimed
 
 ## 要做什么
 

@@ -74,7 +74,13 @@ impl ToolError {
 
     /// E_COMMAND_TIMEOUT：命令执行超时（§8.3/§8.8，14 号票补录）。
     pub fn command_timeout(message: impl Into<String>) -> Self {
-        Self::new("E_COMMAND_TIMEOUT", message.into())
+        Self::new("E_COMMAND_TIMEOUT", message)
+    }
+
+    /// E_SSRF_BLOCKED：SSRF 防护拦截（§9.2，12 号票实装）——message 带命中
+    /// 类别（私网/回环/链路本地/CGNAT/ULA/保留段/重定向降级等）供模型纠正。
+    pub fn ssrf_blocked(message: impl Into<String>) -> Self {
+        Self::new("E_SSRF_BLOCKED", message)
     }
 }
 
@@ -139,6 +145,9 @@ pub const E_PROJECT_UNTRUSTED: &str = "E_PROJECT_UNTRUSTED";
 /// 子代理步数/预算耗尽（§5.9，10 号票）：以工具级失败回喂父 run，
 /// 子代理终态归 outcome=partial。
 pub const E_SUB_BUDGET: &str = "E_SUB_BUDGET";
+/// SSRF 防护拦截：目标 URL/解析地址命中私网/回环/链路本地/CGNAT/ULA 等保留段，
+/// 或重定向 HTTPS 降级/超跳——message 带命中类别（§9.2，12 号票）。
+pub const E_SSRF_BLOCKED: &str = "E_SSRF_BLOCKED";
 
 /// IPC 命令统一错误负载（§3.1/§3.6，D14）：`{ code, message, detail? }`，camelCase。
 ///

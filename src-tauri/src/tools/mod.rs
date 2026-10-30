@@ -15,17 +15,22 @@ pub mod ask;
 pub mod command;
 pub mod edit;
 pub mod grep;
+pub mod http_request;
 pub mod list_files;
 pub mod plan;
 pub mod process;
 pub mod read;
+pub mod web_fetch;
 pub mod write;
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use serde::Serialize;
 
+use crate::providers::types::ProxyConfig;
 use crate::safety::safe_join::PathGuard;
+use crate::safety::ssrf::{HostThrottle, SsrfPolicy};
 use crate::safety::tier::{Capability, GateDecision, PermissionTier, decide_gate};
 use crate::util::errors::ToolError;
 
@@ -37,6 +42,36 @@ pub struct ToolsContext {
     pub project_root: PathBuf,
     /// 数据目录（canonical）。
     pub data_root: PathBuf,
+}
+
+/// 网络工具执行环境（12 号票，web_fetch/http_request 共用）：SSRF 策略、
+/// 代理配置与进程级节流器。由宿主按 `AppConfig` 装配注入执行器
+/// （save_config 后下一次 start_chat 生效——与 watchdog/tools 组同语义）；
+/// `throttle` 为进程级共享句柄（Arc）：跨会话/跨 run 对同一 host 的访问
+/// 共同参与 1s 节流（§9.2）。
+#[derive(Clone)]
+pub struct NetworkEnv {
+    /// SSRF 策略（`network.allowPrivateNetwork` 的运行面，缺省拒绝私网）。
+    pub policy: SsrfPolicy,
+    /// 代理配置（`AppConfig.proxy`；None = 未配置。19 号票 client 重建
+    /// 路径落地前按本配置直建，§9.2 收敛点注记）。
+    pub proxy: Option<ProxyConfig>,
+    /// 进程级每 host 节流器（跨会话共享）。
+    pub throttle: Arc<HostThrottle>,
+}
+
+// NetworkEnv 的构造。
+impl NetworkEnv {
+    /// 按应用配置装配（policy 取 network 组，proxy 取代理组）。
+    pub fn from_config(config: &crate::providers::types::AppConfig) -> Self {
+        Self {
+            policy: SsrfPolicy {
+                allow_private_network: config.network.allow_private_network,
+            },
+            proxy: config.proxy.clone(),
+            throttle: Arc::new(HostThrottle::production()),
+        }
+    }
 }
 
 // ToolsContext 的构造与路径守卫方法。
@@ -217,8 +252,13 @@ pub fn compact_text(outcome: &ToolOutcome) -> String {
         .as_ref()
         .map(|d| serde_json::to_string(d).unwrap_or_else(|_| "{}".to_string()))
         .unwrap_or_default();
-    truncate_middle(&body, 4 * 1024, 8 * 1024)
+    truncate_middle(&body, COMPACT_HEAD_BYTES, COMPACT_TAIL_BYTES)
 }
+
+/// 模型通道截断的头/尾保留字节（§8.2：头 4KB + 尾 8KB）。
+/// 12 号票抽常量：web_fetch raw 模式的 HTML 截断复用同一口径。
+pub const COMPACT_HEAD_BYTES: usize = 4 * 1024;
+pub const COMPACT_TAIL_BYTES: usize = 8 * 1024;
 
 /// 头 `head` + 尾 `tail` 字节截断，中间以省略标记连接。按 UTF-8 字符边界切。
 /// `pub(crate)`：backend 执行器（exec.rs）的 skill 工具分支复用同一 §8.2
@@ -255,8 +295,9 @@ fn floor_char_boundary(s: &str, mut index: usize) -> usize {
 /// ipc_manifest_test）。09 号票增 skill（§8.3 M2 表 Meta 行；description
 /// 动态列出启用技能名清单——build_registry 每次现读技能注册表，
 /// toggle/reload 后下一 run 生效）；10 号票增 subagent（§8.3 M2 表 Meta 行，
-/// 子代理委派入口）：静态 10 个。
-pub const STATIC_TOOL_NAMES: [&str; 10] = [
+/// 子代理委派入口）：静态 10 个。12 号票增 web_fetch/http_request
+/// （§8.3 M2 表 Network 两行，网页抓取与通用 HTTP）：静态 12 个。
+pub const STATIC_TOOL_NAMES: [&str; 12] = [
     "read",
     "write",
     "edit",
@@ -267,6 +308,8 @@ pub const STATIC_TOOL_NAMES: [&str; 10] = [
     "ask",
     "skill",
     "subagent",
+    "web_fetch",
+    "http_request",
 ];
 
 /// 静态注册表（§8.1：启动时构建）。顺序与 [`STATIC_TOOL_NAMES`] 一致。
@@ -282,6 +325,8 @@ pub fn build_registry() -> Vec<ToolSpec> {
         ask::spec(),
         crate::knowledge::skills::skill_spec(),
         crate::agent::roles::subagent_spec(),
+        web_fetch::spec(),
+        http_request::spec(),
     ]
 }
 
@@ -328,5 +373,13 @@ mod command_test;
 mod compact_test;
 
 #[cfg(test)]
+#[path = "http_request_test.rs"]
+mod http_request_test;
+
+#[cfg(test)]
 #[path = "plan_test.rs"]
 mod plan_test;
+
+#[cfg(test)]
+#[path = "web_fetch_test.rs"]
+mod web_fetch_test;

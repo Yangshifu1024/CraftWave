@@ -22,6 +22,7 @@ import {
   FilePenLine,
   FileText,
   FolderTree,
+  Globe,
   MessageCircleQuestion,
   Plug,
   Search,
@@ -613,5 +614,154 @@ export function McpFallbackCard(props: ToolCallMessagePartProps<CardArgs, unknow
       runningLabel="正在调用 MCP 工具"
       summary={props.toolName}
     />
+  );
+}
+
+/** web_fetch 边车 data 的形状（12 号票：{ url, title, content, length }）。 */
+interface WebFetchOutcome {
+  title?: unknown;
+  content?: unknown;
+  length?: unknown;
+  truncated?: unknown;
+}
+
+/**
+ * web_fetch 工具卡（12 号票，§8.3 M2 表 Network 行）：URL 摘要 + 终态拉
+ * 边车 data——标题 + 正文 Markdown 折叠预览（默认收起，展开渲染前 50 行）。
+ * 失败态（SSRF 拒绝/超限）沿 Shell 的错误展开展示 uiSummary。
+ */
+export function WebFetchCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
+  const args = (props.args ?? {}) as CardArgs;
+  const { toolCallId, result, isError } = props;
+  // 正文来源：边车 data（帧面 result 是模型通道压缩文本，不含结构化 data）。
+  // 失败路径不写边车（执行器约定），不拉取。
+  const settled = result !== undefined && !isError;
+  const outcome = useToolOutcomeDetail(toolCallId, settled);
+  const data = (outcome?.data ?? null) as WebFetchOutcome | null;
+  const title = typeof data?.title === "string" ? data.title : null;
+  const content = typeof data?.content === "string" ? data.content : null;
+  const length = typeof data?.length === "number" ? data.length : undefined;
+  const truncated = data?.truncated === true;
+  // 正文预览前 50 行（票面：默认收起，展开前 50 行）
+  const preview =
+    content !== null
+      ? content.split("\n").slice(0, 50).join("\n") +
+        (content.split("\n").length > 50 ? "\n…（预览前 50 行，全量见详细数据）" : "")
+      : null;
+  return (
+    <ToolCardShell
+      {...props}
+      icon={<Globe size={16} />}
+      label="抓取网页"
+      runningLabel="正在抓取网页"
+      summary={str(args, "url")}
+    >
+      {title !== null && (
+        <p className="text-ui-sm font-medium text-[var(--foreground)]">{title}</p>
+      )}
+      {length !== undefined && (
+        <p className="text-ui-sm text-[var(--muted-foreground)]">
+          正文 {length} 字符{truncated ? "（超长已截断）" : ""}
+        </p>
+      )}
+      {preview !== null && (
+        <details>
+          <summary className="cursor-pointer text-[var(--muted-foreground)]">
+            正文预览
+          </summary>
+          <div className="mt-1 max-h-60 overflow-auto rounded border border-[var(--border)] p-2">
+            <Markdown>{preview}</Markdown>
+          </div>
+        </details>
+      )}
+    </ToolCardShell>
+  );
+}
+
+/** http_request 边车 data 的形状（12 号票：{ status, headers, body, spillPath? }）。 */
+interface HttpRequestOutcome {
+  status?: unknown;
+  headers?: unknown;
+  body?: unknown;
+  spillPath?: unknown;
+  bodyTruncated?: unknown;
+}
+
+/**
+ * http_request 工具卡（12 号票，§8.3 M2 表 Network 行）：method 徽标 + URL
+ * 摘要 + 状态码徽标；详情含响应头折叠、body 折叠与 spill 文件路径
+ * （对齐 CommandCard 形态：单行摘要 + 点击展开详情）。
+ */
+export function HttpRequestCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
+  const args = (props.args ?? {}) as CardArgs;
+  const { toolCallId, result, isError } = props;
+  const method = str(args, "method").toUpperCase() || "GET";
+  const settled = result !== undefined && !isError;
+  const outcome = useToolOutcomeDetail(toolCallId, settled);
+  const data = (outcome?.data ?? null) as HttpRequestOutcome | null;
+  const status = typeof data?.status === "number" ? data.status : undefined;
+  const headersJson =
+    data?.headers !== undefined && data.headers !== null
+      ? JSON.stringify(data.headers, null, 2)
+      : null;
+  const body = typeof data?.body === "string" ? data.body : null;
+  const bodyTruncated = data?.bodyTruncated === true;
+  const spillPath = typeof data?.spillPath === "string" ? data.spillPath : null;
+  // 2xx 绿 / 4xx 橙 / 5xx 红（状态码徽标配色）
+  const statusColor =
+    status === undefined
+      ? ""
+      : status < 300
+        ? "text-emerald-600 dark:text-emerald-400"
+        : status < 500
+          ? "text-amber-600 dark:text-amber-400"
+          : "text-red-600 dark:text-red-400";
+  return (
+    <ToolCardShell
+      {...props}
+      icon={<SquareTerminal size={16} />}
+      label="HTTP 请求"
+      runningLabel="正在发送请求"
+      summary={str(args, "url")}
+      badges={
+        status !== undefined ? (
+          <span className={`shrink-0 font-mono text-ui-sm tabular-nums ${statusColor}`}>
+            {status}
+          </span>
+        ) : undefined
+      }
+    >
+      <p className="flex items-center gap-2 text-ui-sm">
+        <span className="rounded bg-[var(--muted)] px-1.5 py-0.5 font-mono text-[var(--foreground)]">
+          {method}
+        </span>
+        <span className="min-w-0 truncate text-[var(--muted-foreground)]" title={str(args, "url")}>
+          {str(args, "url")}
+        </span>
+      </p>
+      {headersJson !== null && (
+        <details>
+          <summary className="cursor-pointer text-[var(--muted-foreground)]">响应头</summary>
+          <pre className="mt-1 max-h-60 overflow-auto whitespace-pre-wrap rounded border border-[var(--border)] p-2 font-mono text-ui-sm text-[var(--muted-foreground)]">
+            {headersJson}
+          </pre>
+        </details>
+      )}
+      {body !== null && (
+        <details>
+          <summary className="cursor-pointer text-[var(--muted-foreground)]">
+            响应体{bodyTruncated ? "（尾部，全量已落盘）" : ""}
+          </summary>
+          <pre className="mt-1 max-h-60 overflow-auto whitespace-pre-wrap rounded border border-[var(--border)] p-2 font-mono text-ui-sm text-[var(--muted-foreground)]">
+            {body}
+          </pre>
+        </details>
+      )}
+      {spillPath !== null && (
+        <p className="text-ui-sm text-[var(--muted-foreground)]">
+          全量响应体：{spillPath}
+        </p>
+      )}
+    </ToolCardShell>
   );
 }

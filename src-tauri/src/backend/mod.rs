@@ -61,3 +61,7 @@ mod exec_test;
 #[cfg(test)]
 #[path = "wire_test.rs"]
 mod wire_test;
+
+#[cfg(test)]
+#[path = "web_gate_e2e_test.rs"]
+mod web_gate_e2e_test;

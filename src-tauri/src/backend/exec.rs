@@ -107,6 +107,10 @@ pub struct ExecutorEnv {
     /// Some(名单) 时执行入口只放行名单内工具（工具可见面 = 执行许可）；
     /// None = 不限（主代理环境）。
     pub allowed_tools: Option<Vec<String>>,
+    /// 网络工具执行环境（12 号票，web_fetch/http_request）：SSRF 策略 +
+    /// 代理 + 进程级节流器，宿主按 AppConfig 装配；None = 未装配
+    /// （无网络环境的纯文件工具测试）。
+    pub network: Option<Arc<crate::tools::NetworkEnv>>,
 }
 
 /// 工具注册表全集的执行器：模型可见的 8 个工具（§8.3）都经它执行。
@@ -678,8 +682,7 @@ impl CancellableExecutor for ToolsetExecutor {
                         self.persist_outcome(call_id, &outcome);
                         return completed_of(outcome);
                     };
-                    let execution = spawner.spawn(args_json, token).await;
-                    // 委派结果边车（卡片恢复面：成功带汇报摘要，失败带错误面）
+                    let execution = spawner.spawn(args_json, token).await;                    // 委派结果边车（卡片恢复面：成功带汇报摘要，失败带错误面）
                     if let ToolExecution::Completed {
                         ok,
                         ui_summary,
@@ -721,6 +724,85 @@ impl CancellableExecutor for ToolsetExecutor {
                         self.persist_outcome(call_id, &outcome);
                     }
                     execution
+                }
+                "web_fetch" | "http_request" => {
+                    // 网络工具（12 号票，§8.3 M2 表 Network 两行）：执行面 =
+                    // safety/ssrf 的抓取循环（§9.2 五步防线），环境由 host
+                    // 按 AppConfig 装配注入；None = 未装配（缺网络环境的
+                    // 测试场景）按工具级失败回喂。
+                    let Some(net) = self.env.as_ref().and_then(|e| e.network.clone()) else {
+                        let outcome = ToolOutcome::failure(
+                            ToolError::new("E_INTERNAL", "网络工具未装配执行环境"),
+                            "网络工具不可用",
+                        );
+                        self.persist_outcome(call_id, &outcome);
+                        return completed_of(outcome);
+                    };
+                    if name == "web_fetch" {
+                        let outcome = match serde_json::from_str::<
+                            crate::tools::web_fetch::WebFetchArgs,
+                        >(args_json)
+                        {
+                            Ok(args) => {
+                                match crate::tools::web_fetch::execute(
+                                    net.policy,
+                                    net.proxy.as_ref(),
+                                    &net.throttle,
+                                    call_id,
+                                    &args,
+                                    token,
+                                )
+                                .await
+                                {
+                                    crate::tools::web_fetch::FetchExit::Done(outcome) => *outcome,
+                                    crate::tools::web_fetch::FetchExit::Cancelled { executed } => {
+                                        return ToolExecution::Cancelled {
+                                            executed,
+                                            message: "网页抓取已取消".to_owned(),
+                                        };
+                                    }
+                                }
+                            }
+                            Err(e) => ToolOutcome::failure(
+                                ToolError::invalid_arg(format!("web_fetch 参数解析失败：{e}")),
+                                "web_fetch 参数解析失败",
+                            ),
+                        };
+                        self.persist_outcome(call_id, &outcome);
+                        return completed_of(outcome);
+                    }
+                    let outcome = match serde_json::from_str::<
+                        crate::tools::http_request::HttpRequestArgs,
+                    >(args_json)
+                    {
+                        Ok(args) => {
+                            match crate::tools::http_request::execute(
+                                &self.ctx,
+                                net.policy,
+                                net.proxy.as_ref(),
+                                &net.throttle,
+                                call_id,
+                                &args,
+                                token,
+                            )
+                            .await
+                            {
+                                crate::tools::http_request::RequestExit::Done(outcome) => *outcome,
+                                crate::tools::http_request::RequestExit::Cancelled { executed } => {
+                                    return ToolExecution::Cancelled {
+                                        executed,
+                                        message: "HTTP 请求已取消".to_owned(),
+                                    };
+                                }
+                            }
+                        }
+                        Err(e) => ToolOutcome::failure(
+                            ToolError::invalid_arg(format!("http_request 参数解析失败：{e}")),
+                            "http_request 参数解析失败",
+                        ),
+                    };
+                    self.persist_outcome(call_id, &outcome);
+                    completed_of(outcome)
                 }
                 other => {
                     // MCP 动态工具分支（08 号票）：归一名反查命中 → 经

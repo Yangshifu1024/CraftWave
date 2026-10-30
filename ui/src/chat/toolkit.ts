@@ -19,11 +19,13 @@ import {
   CommandCard,
   EditCard,
   GrepCard,
+  HttpRequestCard,
   ListFilesCard,
   PlanCard,
   ReadCard,
   SkillCard,
   SubagentCard,
+  WebFetchCard,
   WriteCard,
 } from "./ToolCards";
 
@@ -190,6 +192,44 @@ export const CW_TOOL_PARAMETERS: Record<string, JSONSchema7> = {
     required: ["role", "task"],
     additionalProperties: false,
   },
+  // web_fetch 工具（§8.3 M2 表 Network 行，12 号票；与 tools/web_fetch.rs
+  // 的 params_schema 逐字镜像，contract.test 双向锁定）
+  web_fetch: {
+    type: "object",
+    properties: {
+      url: { type: "string", description: "目标网页地址（http/https）" },
+      format: {
+        type: "string",
+        enum: ["readability", "raw"],
+        description:
+          "输出模式：readability=正文 Markdown（默认）；raw=清洗后的原始 HTML",
+      },
+    },
+    required: ["url"],
+    additionalProperties: false,
+  },
+  // http_request 工具（§8.3 M2 表 Network 行，12 号票；与 tools/http_request.rs
+  // 的 params_schema 逐字镜像，contract.test 双向锁定）
+  http_request: {
+    type: "object",
+    properties: {
+      method: {
+        type: "string",
+        enum: ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"],
+        description: "HTTP 方法",
+      },
+      url: { type: "string", description: "目标地址（http/https）" },
+      headers: {
+        type: "object",
+        additionalProperties: { type: "string" },
+        description:
+          "自定义请求头（跨源重定向时 Authorization/Cookie 等敏感头自动剥除）",
+      },
+      body: { type: "string", description: "请求体文本（GET/HEAD 忽略）" },
+    },
+    required: ["method", "url"],
+    additionalProperties: false,
+  },
 };
 
 /**
@@ -257,5 +297,17 @@ export const cwToolkit = defineToolkit({
     description: "委派子代理执行独立任务（过程实时可见，汇报回父上下文）",
     parameters: CW_TOOL_PARAMETERS.subagent,
     render: SubagentCard,
+  },
+  web_fetch: {
+    type: "frontend",
+    description: "抓取网页并提取正文（Readability，Markdown）",
+    parameters: CW_TOOL_PARAMETERS.web_fetch,
+    render: WebFetchCard,
+  },
+  http_request: {
+    type: "frontend",
+    description: "发送通用 HTTP 请求并返回响应",
+    parameters: CW_TOOL_PARAMETERS.http_request,
+    render: HttpRequestCard,
   },
 });

@@ -327,14 +327,14 @@ fn export_ipc_manifest_and_cross_lang_fixture() {
     // + 06 号票三键（run:start / run:inject / run:queue）+ 08 号票 mcp:status
     // + 10 号票子代理六键（sub:spawn/step/report/usage/done/error）
     assert_eq!(manifest["events"].as_array().unwrap().len(), 23);
-    // 08 号票：注册表分「静态段 + 动态段」两断言——静态段钉死（10 号票起
-    // 10 个：+subagent，§8.3 M2 表 Meta 行）；动态段（MCP）运行时可变，
-    // manifest 落盘时为当前快照（恒 ≥ 静态段）。
-    assert_eq!(manifest["tools"].as_array().unwrap().len(), 10);
-    assert_eq!(manifest["toolSpecs"].as_array().unwrap().len(), 10);
+    // 08 号票：注册表分「静态段 + 动态段」两断言——静态段钉死（12 号票起
+    // 12 个：+web_fetch/+http_request，§8.3 M2 表 Network 两行）；动态段
+    // （MCP）运行时可变，manifest 落盘时为当前快照（恒 ≥ 静态段）。
+    assert_eq!(manifest["tools"].as_array().unwrap().len(), 12);
+    assert_eq!(manifest["toolSpecs"].as_array().unwrap().len(), 12);
     assert_eq!(
         crate::tools::STATIC_TOOL_NAMES.len(),
-        10,
+        12,
         "静态段工具数漂移"
     );
     fs::create_dir_all(target_dir()).unwrap();

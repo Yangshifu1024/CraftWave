@@ -418,6 +418,7 @@ async fn skill_call_rejected_when_untrusted() {
             skills: Some(snapshot),
             subagents: None,
             allowed_tools: None,
+            network: None,
         });
     let token = tokio_util::sync::CancellationToken::new();
     let exec = executor
@@ -487,6 +488,7 @@ async fn skill_call_returns_body_from_snapshot() {
             skills: Some(snapshot),
             subagents: None,
             allowed_tools: None,
+            network: None,
         });
     let token = tokio_util::sync::CancellationToken::new();
     let exec = executor
