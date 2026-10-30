@@ -108,6 +108,20 @@ fn assemble(
             },
             proxy: None,
             throttle: Arc::new(HostThrottle::new(Duration::ZERO)),
+            // 13 号票 web_search 三通道环境：本 e2e 只验 web_fetch 审批门，
+            // 搜索通道保持零装配（未启用 + 未配 Key = 不可用面）
+            search: crate::tools::web_search::SearchEnv {
+                searxng: None,
+                tavily_api_key: None,
+                max_results_default: 10,
+                policy: SsrfPolicy {
+                    allow_private_network: true,
+                },
+                proxy: None,
+                throttle: Arc::new(HostThrottle::new(Duration::ZERO)),
+                ddg_endpoint: None,
+                tavily_endpoint: None,
+            },
         })),
     });
     let gate = ApprovalGate::new(tier, plan);

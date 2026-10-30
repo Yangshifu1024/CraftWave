@@ -57,6 +57,9 @@ function configFixture(providers: ProviderConfig[]): AppConfig {
     tools: { maxParallel: 4 },
     watchdog: { stallTimeoutSecs: 300 },
     network: { allowPrivateNetwork: false },
+    search: {
+      searxng: { enabled: false, baseUrl: "http://127.0.0.1:8888", maxResults: 10 },
+    },
     notifications: { enabled: true, interventionOnly: false },
   };
 }

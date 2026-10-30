@@ -18,7 +18,8 @@ const saveConfigMock = vi.fn<(config: AppConfig) => Promise<AppConfig>>();
 const permissionStatusMock = vi.fn<() => Promise<NotificationPermissionStatus>>();
 const openSettingsMock = vi.fn<() => Promise<void>>();
 const openDirMock = vi.fn<(path: string) => Promise<void>>();
-// 只替换读/存配置、通知引导与 open_dir，其余保留 client.ts 真实现
+const searchTestMock = vi.fn<(args: { target: string }) => Promise<unknown>>();
+// 只替换读/存配置、通知引导、open_dir 与搜索连通测试，其余保留 client.ts 真实现
 vi.mock("@/ipc/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/ipc/client")>();
   return {
@@ -28,6 +29,7 @@ vi.mock("@/ipc/client", async (importOriginal) => {
     notificationPermissionStatus: () => permissionStatusMock(),
     openNotificationSettings: () => openSettingsMock(),
     openDir: (path: string) => openDirMock(path),
+    searchTest: (args: { target: string }) => searchTestMock(args),
   };
 });
 
@@ -43,10 +45,14 @@ const BASE_CONFIG: AppConfig = {
   tools: { maxParallel: 4 },
   watchdog: { stallTimeoutSecs: 300 },
   network: { allowPrivateNetwork: false },
+  search: {
+    searxng: { enabled: false, baseUrl: "http://127.0.0.1:8888", maxResults: 10 },
+  },
 };
 
 // 每个用例前：重置 mock、把 store 置为"草稿=基线"的干净状态（不脏）
 beforeEach(() => {
+  searchTestMock.mockReset();
   getConfigMock.mockReset();
   saveConfigMock.mockReset();
   permissionStatusMock.mockReset();
@@ -354,5 +360,62 @@ describe("模型流停滞超时（37 号票 watchdog.stallTimeoutSecs）", () =>
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(() => expect(saveConfigMock).toHaveBeenCalled());
     expect(saveConfigMock.mock.calls[0]?.[0].watchdog).toEqual({ stallTimeoutSecs: 600 });
+  });
+});
+
+describe("网络搜索（13 号票，C-12 三通道配置面）", () => {
+  it("SearXNG 开关/地址编辑进草稿并随保存提交；连通测试按钮走草稿值且不经保存", async () => {
+    const { unmount } = render(<SettingsPage initialPage="network" onClose={() => {}} />);
+    const enabled = await screen.findByTestId("searxng-enabled-switch");
+    const baseUrl = screen.getByTestId("searxng-base-url-input");
+    expect((baseUrl as HTMLInputElement).value).toBe("http://127.0.0.1:8888");
+    // 开启开关 + 改地址：进草稿
+    fireEvent.click(enabled);
+    fireEvent.change(baseUrl, { target: { value: "http://127.0.0.1:9999" } });
+    expect(useSettingsStore.getState().config?.search.searxng.enabled).toBe(true);
+    expect(useSettingsStore.getState().config?.search.searxng.baseUrl).toBe(
+      "http://127.0.0.1:9999",
+    );
+    // 连通测试：按草稿值调 searchTest（不经保存），成功结果显示时延
+    searchTestMock.mockResolvedValue({ ok: true, latencyMs: 42 });
+    fireEvent.click(screen.getByTestId("searxng-test-button"));
+    await waitFor(() => {
+      expect(screen.getByTestId("searxng-test-result").textContent).toContain("连接成功");
+    });
+    expect(searchTestMock).toHaveBeenCalledWith({
+      target: "searxng",
+      searxngBaseUrl: "http://127.0.0.1:9999",
+    });
+    // 保存载荷携带 search 组（开关 + 地址）
+    saveConfigMock.mockImplementation(async (config) => structuredClone(config));
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(saveConfigMock).toHaveBeenCalled());
+    expect(saveConfigMock.mock.calls.at(-1)?.[0].search.searxng).toMatchObject({
+      enabled: true,
+      baseUrl: "http://127.0.0.1:9999",
+    });
+    unmount();
+  });
+
+  it("启用后显示 settings.yml format=json 引导；Tavily Key 编辑进草稿，连通测试失败显示引导文案", async () => {
+    const { unmount } = render(<SettingsPage initialPage="network" onClose={() => {}} />);
+    await screen.findByTestId("searxng-enabled-switch");
+    // 开关开启后引导出现
+    fireEvent.click(screen.getByTestId("searxng-enabled-switch"));
+    expect(screen.getByTestId("searxng-format-hint").textContent).toContain("settings.yml");
+    // Tavily Key 输入进草稿
+    const keyInput = screen.getByTestId("tavily-api-key-input");
+    fireEvent.change(keyInput, { target: { value: "tvly-test-key" } });
+    expect(useSettingsStore.getState().config?.search.tavilyApiKey).toBe("tvly-test-key");
+    // 连通测试失败：ok=false + 引导文案展示
+    searchTestMock.mockResolvedValue({
+      ok: false,
+      error: "Tavily（Key 无效（401））：Invalid API key",
+    });
+    fireEvent.click(screen.getByTestId("tavily-test-button"));
+    await waitFor(() => {
+      expect(screen.getByTestId("tavily-test-result").textContent).toContain("401");
+    });
+    unmount();
   });
 });

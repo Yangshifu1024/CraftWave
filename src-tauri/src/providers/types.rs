@@ -416,6 +416,75 @@ pub struct NetworkConfig {
     pub allow_private_network: bool,
 }
 
+/// web_search 每次搜索的结果条数缺省值（§3.2 search.searxng 组/§8.3
+/// web_search 行，13 号票）：工具未显式给 limit 参数时各通道用它截断。
+pub const DEFAULT_SEARCH_MAX_RESULTS: u32 = 10;
+/// 搜索结果条数的合法区间上限（§3.2 search 组注记：结果列表直接回喂模型
+/// 上下文，条数过大挤占窗口且对上游引擎压力大；下限 1 由「正整数」承担）。
+pub const MAX_SEARCH_RESULTS_LIMIT: u32 = 30;
+
+/// SearXNG 自托管元搜索配置（§3.2 search.searxng 组，FR-05-05/C-12，
+/// 13 号票实装）。用户显式启用才参与 web_search 通道 1（本地优先）。
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearxngConfig {
+    /// 是否启用 SearXNG 通道（C-12 优先级①的开关）：缺省 false——未启用时
+    /// web_search 直接从通道 2（内置抓取）开始，不自动探测本地服务。
+    #[serde(default)]
+    pub enabled: bool,
+    /// SearXNG 服务基地址（缺省 `http://127.0.0.1:8888`；归一化剥尾部 `/`）。
+    /// 请求走本地回环、不经应用代理（C-12 定案：自托管服务无代理必要，
+    /// 走代理反而可能被代理规则拦掉回环地址）；也**不经 SSRF 校验**——
+    /// 用户显式启用即信任该地址，而回环地址天然被 §9.2 防线拒绝（§9.2
+    /// SearXNG 例外注记）。
+    #[serde(default = "default_searxng_base_url")]
+    pub base_url: String,
+    /// 每次搜索返回的结果条数上限（各通道共用缺省：工具未带 limit 参数时
+    /// 按本值截断；合法区间 1–30，越界拒绝整份提交）。
+    #[serde(default = "default_search_max_results")]
+    pub max_results: u32,
+}
+
+/// serde 缺省值函数：SearXNG 服务基地址缺省本机 8888 端口（§3.2/C-12）。
+fn default_searxng_base_url() -> String {
+    "http://127.0.0.1:8888".to_string()
+}
+/// serde 缺省值函数：搜索结果条数缺省 10（§8.3 web_search 行口径）。
+fn default_search_max_results() -> u32 {
+    DEFAULT_SEARCH_MAX_RESULTS
+}
+
+// SearxngConfig 的缺省值：不启用 + 本机 8888 + 结果条数 10。
+impl Default for SearxngConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            base_url: default_searxng_base_url(),
+            max_results: DEFAULT_SEARCH_MAX_RESULTS,
+        }
+    }
+}
+
+/// 网络搜索配置（§3.2 search 组，FR-05-05/C-12 本地优先三通道，13 号票
+/// 实装）：web_search 工具按「SearXNG（启用且探活成功）→ 内置直接抓取
+/// （默认兜底）→ Tavily（Key 已配才参与）」的钉死优先级自动选通道。
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchConfig {
+    /// SearXNG 自托管元搜索（通道 1，用户显式启用）。
+    #[serde(default)]
+    pub searxng: SearxngConfig,
+    /// Tavily API Key（通道 3，BYOK 高级区）：空白归一为 None（"没填"与
+    /// "填了又删掉"等价，未配 Key 该通道不参与优先级链）；明文随 config.json
+    /// 0600 落盘（v2.5 存储协议，§9.4——票面"钥匙串协议"按现行协议落
+    /// config.json，票内决议记录说明）。旧配置无该组时 serde default 回填。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub tavily_api_key: Option<String>,
+}
+
 /// 应用总配置，即 `~/.craftwave/config.json` 的载入/落盘结构：
 /// 一个 JSON 文件承载全部设置（供应商、激活模型、代理、审批、界面、日志、通知）。
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -466,6 +535,11 @@ pub struct AppConfig {
     /// 拒绝私网访问。旧配置无该组时 serde default 回填）。
     #[serde(default)]
     pub network: NetworkConfig,
+    /// 网络搜索（FR-05-05/C-12 本地优先三通道，13 号票；缺省值经 Default：
+    /// SearXNG 不启用 + Key 未配 = 零配置默认走内置抓取。旧配置无该组时
+    /// serde default 回填）。
+    #[serde(default)]
+    pub search: SearchConfig,
 }
 
 /// serde 缺省值函数：schemaVersion 字段缺省时取当前版本号 2。
@@ -531,6 +605,7 @@ impl Default for AppConfig {
             tools: ToolsConfig::default(),
             watchdog: WatchdogConfig::default(),
             network: NetworkConfig::default(),
+            search: SearchConfig::default(),
         }
     }
 }
@@ -610,6 +685,34 @@ impl AppConfig {
                 .map(|p| p.trim().to_owned())
                 .filter(|p| !p.is_empty());
         }
+        // search.searxng.baseUrl：必须带主机名的 http(s) 地址（防 file:// 等
+        // 非预期协议进入配置）；剥尾部 `/`（Url::join 拼路径时不产生双斜杠）；
+        // search.searxng.maxResults：正整数且不超过 30（§3.2 search 组注记——
+        // 结果列表直接回喂模型上下文，条数过大挤占窗口；越界拒绝整份提交）；
+        // search.tavilyApiKey：空白归一为 None（未配 Key 通道 3 不参与优先级链）。
+        self.search.searxng.base_url = self
+            .search
+            .searxng
+            .base_url
+            .trim()
+            .trim_end_matches('/')
+            .to_string();
+        ensure_http_url(&self.search.searxng.base_url)
+            .map_err(|e| IpcError::invalid_arg(format!("search.searxng.{}（{e}）", "baseUrl")))?;
+        if self.search.searxng.max_results == 0
+            || self.search.searxng.max_results > MAX_SEARCH_RESULTS_LIMIT
+        {
+            return Err(IpcError::invalid_arg(format!(
+                "search.searxng.maxResults 必须在 1–{MAX_SEARCH_RESULTS_LIMIT} 内（实际 {}）",
+                self.search.searxng.max_results
+            )));
+        }
+        self.search.tavily_api_key = self
+            .search
+            .tavily_api_key
+            .take()
+            .map(|k| k.trim().to_owned())
+            .filter(|k| !k.is_empty());
         if self.schema_version != SCHEMA_VERSION {
             return Err(IpcError::invalid_arg(format!(
                 "不支持的 schemaVersion：{}（当前仅支持 {SCHEMA_VERSION}）",

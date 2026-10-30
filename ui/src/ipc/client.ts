@@ -48,6 +48,8 @@ import type {
   SaveProviderArgs,
   SaveSessionTreeArgs,
   SaveSessionTreeResult,
+  SearchTestArgs,
+  SearchTestResult,
   SequencedFrame,
   SessionMeta,
   SessionPendingAsk,
@@ -120,6 +122,8 @@ export const COMMANDS = {
   // 子代理两命令（10 号票，§3.3 #58/#59）
   stopSubagent: "stop_subagent",
   loadSubagentHistory: "load_subagent_history",
+  // 网络搜索连通测试（13 号票，§3.3 #59f）
+  searchTest: "search_test",
 } as const;
 
 /**
@@ -542,4 +546,18 @@ export function loadSubagentHistory(args: LoadSubagentHistoryArgs): Promise<Mess
     sessionId: args.sessionId,
     subId: args.subId,
   } satisfies LoadSubagentHistoryArgs);
+}
+
+// ---- 网络搜索连通测试（§3.3 #59f，13 号票）----
+
+/** §3.3 #59f：通道连通测试（草稿试连，不经保存直接用表单当前值探测）。
+ *  target="searxng" 走本地回环直连（不经代理）；target="tavily" 走 Bearer
+ *  Key 试连（消耗 1 credit）。失败不 reject（ok=false + error 带引导文案），
+ *  仅参数错误（未知 target）reject E_INVALID_ARG。 */
+export function searchTest(args: SearchTestArgs): Promise<SearchTestResult> {
+  return invoke<SearchTestResult>(COMMANDS.searchTest, {
+    target: args.target,
+    searxngBaseUrl: args.searxngBaseUrl,
+    tavilyApiKey: args.tavilyApiKey,
+  } satisfies SearchTestArgs);
 }

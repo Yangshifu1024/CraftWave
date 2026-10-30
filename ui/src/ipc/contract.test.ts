@@ -260,7 +260,7 @@ describe("§12.3 manifest 双向扫描", () => {
     }
   });
 
-  it("manifest.tools 覆盖工具注册表 12 工具（§8.3 M1 模型可见子集 + 09 skill + 10 subagent + 12 web 两工具）", () => {
+  it("manifest.tools 覆盖工具注册表 13 工具（§8.3 M1 模型可见子集 + 09 skill + 10 subagent + 12 web 两工具 + 13 web_search）", () => {
     expect(manifest.tools).toEqual([
       "read",
       "write",
@@ -274,12 +274,13 @@ describe("§12.3 manifest 双向扫描", () => {
       "subagent",
       "web_fetch",
       "http_request",
+      "web_search",
     ]);
   });
 
   it("toolkit 参数表与 manifest.toolSpecs 逐字同源（§10.3 镜像声明）", () => {
     // Rust 工具参数 schema 与前端 toolkit 声明必须逐字一致（模型卡渲染依赖它）
-    expect(manifest.toolSpecs).toHaveLength(12);
+    expect(manifest.toolSpecs).toHaveLength(13);
     for (const spec of manifest.toolSpecs) {
       const local = (CW_TOOL_PARAMETERS as Record<string, unknown>)[spec.name];
       expect(local, `toolkit 缺工具 ${spec.name} 的参数声明`).toBeDefined();

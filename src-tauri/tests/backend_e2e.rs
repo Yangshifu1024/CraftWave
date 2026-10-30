@@ -1754,12 +1754,16 @@ mod command_face {
     // 手动命令 / 超预算暂停 ----
 
     /// 压缩 e2e 的配置面：把激活模型窗口改小让第二条消息必然跨 0.6 阈值
-    ///（估算面含 32768 回复预留 > 0.6 × 40000）。
+    ///（估算面含 32768 回复预留 > 0.6 × 44000）。窗口取 44000（13 号票从
+    /// 40000 上调）：工具注册表每增一工具都会抬高请求固定估算面，40000 的
+    /// 硬预算线（×0.9=36000）已被 web_search 挤破（固定面 36058），40000
+    /// 失去「第一次发送达阈值但硬预算内可容纳」的设计前提；44000 的硬预算
+    /// 39600 恢复该区间，且 32768 预留 > 0.6×44000 的跨阈值前提不变。
     fn small_window_config(base_url: &str) -> craftwave_lib::providers::types::AppConfig {
         craftwave_lib::providers::types::AppConfig {
             providers: vec![craftwave_lib::providers::types::ProviderConfig {
                 models: vec![craftwave_lib::providers::types::ProviderModel {
-                    context_window: 40000,
+                    context_window: 44000,
                     ..provider_fixture(base_url).models.remove(0)
                 }],
                 ..provider_fixture(base_url)

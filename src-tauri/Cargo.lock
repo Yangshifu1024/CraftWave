@@ -1483,6 +1483,7 @@ dependencies = [
  "base64 0.23.1",
  "block2",
  "chardetng",
+ "dom_query 0.29.0",
  "dom_smoothie",
  "encoding_rs",
  "futures",

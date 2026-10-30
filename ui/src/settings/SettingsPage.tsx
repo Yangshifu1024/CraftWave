@@ -25,8 +25,13 @@ import { Dialog } from "@/components/ui/dialog";
 import { Input, Textarea } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { notificationPermissionStatus, openDir, openNotificationSettings } from "@/ipc/client";
-import type { AppConfig, NotificationPermissionStatus } from "@/ipc/types";
+import {
+  notificationPermissionStatus,
+  openDir,
+  openNotificationSettings,
+  searchTest,
+} from "@/ipc/client";
+import type { AppConfig, NotificationPermissionStatus, SearchTestResult } from "@/ipc/types";
 import {
   ArrowLeftIcon,
   BlocksIcon,
@@ -79,7 +84,8 @@ function pageSlice(config: AppConfig, page: PageKey): unknown {
     case "providers":
       return { providers: config.providers, activeModelId: config.activeModelId ?? null };
     case "network":
-      return config.proxy ?? null;
+      // 网络页承载 proxy + search（13 号票：SearXNG 配置组 + Tavily Key）
+      return { proxy: config.proxy ?? null, search: config.search };
     case "security":
       return config.approval;
     case "agent":
@@ -745,13 +751,31 @@ function AppearancePage() {
   );
 }
 
-/** 网络页：代理模式三选 + 自定义地址（M1 保存到 config.proxy；代理生效链路随后续票） */
+/**
+ * 网络页：代理模式三选 + 自定义地址（M1 保存到 config.proxy）+ 网络搜索
+ * （13 号票，C-12 本地优先三通道的配置面）：
+ * - SearXNG 独立配置组：启用开关 / 服务地址（默认 http://127.0.0.1:8888）/
+ *   连通测试按钮（草稿试连，不经保存——对齐 MCP 管理页的测试连接模式；
+ *   本地回环请求不经应用代理，后端已内置该例外）；
+ * - Tavily 高级区：API Key 输入（BYOK，明文随 config.json 0600 落盘）+
+ *   注册指引文案（tavily.com 邮箱注册、免绑卡、免费 1000 credits/月）+
+ *   连通测试（测试会消耗 1 credit，指引文案注明）。
+ */
 function NetworkPage() {
   const config = useSettingsStore((s) => s.config);
   const patchConfig = useSettingsStore((s) => s.patchConfig);
   if (!config) return null;
   const mode = config.proxy?.mode ?? "system";
   const manualUrl = config.proxy?.url ?? "";
+  // search 组草稿（生成物 SearchConfig：searxng 必填、tavilyApiKey 可空；
+  // 后端 serde default 保证旧配置载入后组结构完整）
+  const search = config.search;
+  const patchSearch = (patch: Partial<NonNullable<AppConfig["search"]>>) =>
+    patchConfig({
+      search: { ...search, ...patch },
+    });
+  const patchSearxng = (patch: Partial<AppConfig["search"]["searxng"]>) =>
+    patchSearch({ searxng: { ...search.searxng, ...patch } });
 
   return (
     <div>
@@ -790,6 +814,181 @@ function NetworkPage() {
             </SettingsRow>
           </div>
         )}
+      </SettingsSection>
+      <NetworkSearchPage search={search} patchSearch={patchSearch} patchSearxng={patchSearxng} />
+    </div>
+  );
+}
+
+/**
+ * 网络搜索区块（13 号票，网络页的下半部分独立成组件）：连通测试状态
+ * （SearXNG / Tavily 各一份）在组件内 useState 管理——测试是探测动作
+ * 不落盘，不入 settings 草稿（对齐 MCP 管理页测试连接的草稿态定案）。
+ */
+function NetworkSearchPage({
+  search,
+  patchSearch,
+  patchSearxng,
+}: {
+  search: NonNullable<AppConfig["search"]>;
+  patchSearch: (patch: Partial<NonNullable<AppConfig["search"]>>) => void;
+  patchSearxng: (patch: Partial<AppConfig["search"]["searxng"]>) => void;
+}) {
+  // 连通测试态：{ testing: 进行中, result: 结果 | null }；两通道独立
+  const [searxngTest, setSearxngTest] = useState<{
+    testing: boolean;
+    result: SearchTestResult | null;
+  }>({ testing: false, result: null });
+  const [tavilyTest, setTavilyTest] = useState<{
+    testing: boolean;
+    result: SearchTestResult | null;
+  }>({ testing: false, result: null });
+
+  /** SearXNG 连通测试：当前草稿地址 → search_test（不经保存直接探测）。 */
+  async function runSearxngTest() {
+    setSearxngTest({ testing: true, result: null });
+    try {
+      const result = await searchTest({
+        target: "searxng",
+        searxngBaseUrl: search.searxng.baseUrl,
+      });
+      setSearxngTest({ testing: false, result });
+    } catch (err) {
+      setSearxngTest({
+        testing: false,
+        result: { ok: false, error: err instanceof Error ? err.message : String(err) },
+      });
+    }
+  }
+
+  /** Tavily 连通测试：当前草稿 Key → search_test（消耗 1 credit）。 */
+  async function runTavilyTest() {
+    setTavilyTest({ testing: true, result: null });
+    try {
+      const result = await searchTest({
+        target: "tavily",
+        tavilyApiKey: search.tavilyApiKey ?? "",
+      });
+      setTavilyTest({ testing: false, result });
+    } catch (err) {
+      setTavilyTest({
+        testing: false,
+        result: { ok: false, error: err instanceof Error ? err.message : String(err) },
+      });
+    }
+  }
+
+  return (
+    <div>
+      <SettingsSection title="本地搜索（SearXNG）">
+        <SettingsRow
+          title="启用 SearXNG"
+          description="自托管元搜索，启用且连通时 AI 搜索优先走本地（不经代理、不出内网）。默认关闭。"
+        >
+          <Switch
+            aria-label="启用 SearXNG"
+            data-testid="searxng-enabled-switch"
+            checked={search.searxng.enabled}
+            onCheckedChange={(v) => patchSearxng({ enabled: v })}
+          />
+        </SettingsRow>
+        <SettingsRow
+          title="服务地址"
+          description="SearXNG 实例的基地址，默认 http://127.0.0.1:8888。"
+        >
+          <Input
+            aria-label="SearXNG 服务地址"
+            data-testid="searxng-base-url-input"
+            className="w-[360px] max-w-full font-mono text-ui-sm"
+            placeholder="http://127.0.0.1:8888"
+            value={search.searxng.baseUrl}
+            onChange={(e) => patchSearxng({ baseUrl: e.target.value })}
+          />
+        </SettingsRow>
+        <SettingsRow
+          title="连通测试"
+          description="按当前填写地址发一次真实搜索探测（不经保存）；失败会给出原因与配置引导。"
+        >
+          <div className="flex min-w-0 flex-col items-end gap-1">
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid="searxng-test-button"
+              disabled={searxngTest.testing || search.searxng.baseUrl.trim() === ""}
+              onClick={() => void runSearxngTest()}
+            >
+              {searxngTest.testing ? "测试中…" : "测试连接"}
+            </Button>
+            {searxngTest.result && (
+              <span
+                data-testid="searxng-test-result"
+                className={`max-w-full text-right text-ui-sm break-all ${
+                  searxngTest.result.ok ? "text-[var(--success)]" : "text-[var(--danger)]"
+                }`}
+              >
+                {searxngTest.result.ok
+                  ? `连接成功（${searxngTest.result.latencyMs ?? "?"} ms）`
+                  : `连接失败：${searxngTest.result.error ?? "未知错误"}`}
+              </span>
+            )}
+          </div>
+        </SettingsRow>
+        {search.searxng.enabled && (
+          <p
+            className="border-t border-[var(--border)] px-4 py-3 text-ui-sm text-[var(--muted-foreground)]"
+            data-testid="searxng-format-hint"
+          >
+            提示：SearXNG 需在其 settings.yml 的 search.formats 中加入
+            <code className="mx-1 rounded bg-[var(--muted)] px-1 font-mono">json</code>
+            并重启服务，否则本应用会收到 403。
+          </p>
+        )}
+      </SettingsSection>
+      <SettingsSection title="云搜索（Tavily，高级）">
+        <SettingsRow
+          title="API Key"
+          description="到 tavily.com 用邮箱免费注册（免绑卡，每月 1000 次免费额度，每月 1 日重置）后粘贴 Key。未填时该通道不参与；明文随配置文件保存。"
+        >
+          <Input
+            aria-label="Tavily API Key"
+            data-testid="tavily-api-key-input"
+            type="password"
+            className="w-[360px] max-w-full font-mono text-ui-sm"
+            placeholder="tvly-…"
+            value={search.tavilyApiKey ?? ""}
+            onChange={(e) =>
+              patchSearch({ tavilyApiKey: e.target.value === "" ? undefined : e.target.value })
+            }
+          />
+        </SettingsRow>
+        <SettingsRow
+          title="连通测试"
+          description="按当前填写的 Key 发一次真实搜索探测；注意会消耗 1 次免费额度。"
+        >
+          <div className="flex min-w-0 flex-col items-end gap-1">
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid="tavily-test-button"
+              disabled={tavilyTest.testing || (search.tavilyApiKey ?? "").trim() === ""}
+              onClick={() => void runTavilyTest()}
+            >
+              {tavilyTest.testing ? "测试中…" : "测试连接"}
+            </Button>
+            {tavilyTest.result && (
+              <span
+                data-testid="tavily-test-result"
+                className={`max-w-full text-right text-ui-sm break-all ${
+                  tavilyTest.result.ok ? "text-[var(--success)]" : "text-[var(--danger)]"
+                }`}
+              >
+                {tavilyTest.result.ok
+                  ? `连接成功（${tavilyTest.result.latencyMs ?? "?"} ms）`
+                  : `连接失败：${tavilyTest.result.error ?? "未知错误"}`}
+              </span>
+            )}
+          </div>
+        </SettingsRow>
       </SettingsSection>
     </div>
   );

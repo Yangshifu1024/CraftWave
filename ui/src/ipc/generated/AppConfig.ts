@@ -7,6 +7,7 @@ import type { NetworkConfig } from "./NetworkConfig";
 import type { NotificationConfig } from "./NotificationConfig";
 import type { ProviderConfig } from "./ProviderConfig";
 import type { ProxyConfig } from "./ProxyConfig";
+import type { SearchConfig } from "./SearchConfig";
 import type { ToolsConfig } from "./ToolsConfig";
 import type { UiConfig } from "./UiConfig";
 import type { WatchdogConfig } from "./WatchdogConfig";
@@ -69,4 +70,10 @@ watchdog: WatchdogConfig,
  * 网络工具 SSRF 防护（FR-05-07/§9.2，12 号票；缺省值经 Default：
  * 拒绝私网访问。旧配置无该组时 serde default 回填）。
  */
-network: NetworkConfig, };
+network: NetworkConfig, 
+/**
+ * 网络搜索（FR-05-05/C-12 本地优先三通道，13 号票；缺省值经 Default：
+ * SearXNG 不启用 + Key 未配 = 零配置默认走内置抓取。旧配置无该组时
+ * serde default 回填）。
+ */
+search: SearchConfig, };

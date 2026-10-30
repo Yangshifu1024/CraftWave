@@ -7,6 +7,8 @@ pub mod chat;
 pub mod config;
 pub mod project;
 pub mod provider;
+// 网络搜索连通测试命令（13 号票，§3.3 #59f）
+pub mod search;
 pub mod session;
 pub mod session_tree;
 // 子代理命令与委派装配（10 号票，§3.3 #58/#59 + §5.9）

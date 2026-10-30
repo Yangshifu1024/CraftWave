@@ -92,6 +92,9 @@ use knowledge::commands::{
 use host::commands::subagent::{
     LoadSubagentHistoryArgs, StopSubagentArgs, load_subagent_history, stop_subagent,
 };
+// 搜索连通测试命令（13 号票，§3.3 #59f）
+#[allow(unused_imports)]
+use host::commands::search::{SearchTestArgs, SearchTestResult, search_test};
 #[allow(unused_imports)]
 use providers::types::{AppConfig, ProviderConfig};
 #[allow(unused_imports)]
@@ -235,6 +238,8 @@ ipc_commands! {
     // 子代理两命令（10 号票，§3.3 #58/#59 逐字）
     host::commands::subagent::stop_subagent => args: StopSubagentArgs, ret: ();
     host::commands::subagent::load_subagent_history => args: LoadSubagentHistoryArgs, ret: Vec<MessageEntry>;
+    // 网络搜索连通测试（13 号票，§3.3 #59f）
+    host::commands::search::search_test => args: SearchTestArgs, ret: SearchTestResult;
     #[cfg(debug_assertions)]
     mock_chat::mock_chat_run => args: (), ret: ();
     select_dir => args: (), ret: Option<String>;

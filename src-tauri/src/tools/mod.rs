@@ -21,6 +21,7 @@ pub mod plan;
 pub mod process;
 pub mod read;
 pub mod web_fetch;
+pub mod web_search;
 pub mod write;
 
 use std::path::PathBuf;
@@ -44,11 +45,12 @@ pub struct ToolsContext {
     pub data_root: PathBuf,
 }
 
-/// 网络工具执行环境（12 号票，web_fetch/http_request 共用）：SSRF 策略、
-/// 代理配置与进程级节流器。由宿主按 `AppConfig` 装配注入执行器
-/// （save_config 后下一次 start_chat 生效——与 watchdog/tools 组同语义）；
-/// `throttle` 为进程级共享句柄（Arc）：跨会话/跨 run 对同一 host 的访问
-/// 共同参与 1s 节流（§9.2）。
+/// 网络工具执行环境（12 号票，web_fetch/http_request 共用；13 号票扩
+/// web_search）：SSRF 策略、代理配置与进程级节流器，外加搜索三通道的
+/// 配置装配面（[`web_search::SearchEnv`]）。由宿主按 `AppConfig` 装配注入
+/// 执行器（save_config 后下一次 start_chat 生效——与 watchdog/tools 组同
+/// 语义）；`throttle` 为进程级共享句柄（Arc）：跨会话/跨 run 对同一 host
+/// 的访问共同参与 1s 节流（§9.2）。
 #[derive(Clone)]
 pub struct NetworkEnv {
     /// SSRF 策略（`network.allowPrivateNetwork` 的运行面，缺省拒绝私网）。
@@ -58,18 +60,25 @@ pub struct NetworkEnv {
     pub proxy: Option<ProxyConfig>,
     /// 进程级每 host 节流器（跨会话共享）。
     pub throttle: Arc<HostThrottle>,
+    /// web_search 三通道装配（13 号票，§8.3/C-12）：SearXNG 启用配置 +
+    /// Tavily Key + 测试注入端点；随本环境按 AppConfig 装配。
+    pub search: web_search::SearchEnv,
 }
 
 // NetworkEnv 的构造。
 impl NetworkEnv {
-    /// 按应用配置装配（policy 取 network 组，proxy 取代理组）。
+    /// 按应用配置装配（policy 取 network 组，proxy 取代理组，search 取
+    /// search 组——三通道的启用面一次配齐；节流器与环境共用同一句柄）。
     pub fn from_config(config: &crate::providers::types::AppConfig) -> Self {
+        let search = web_search::SearchEnv::from_config(config);
+        let throttle = search.throttle.clone();
         Self {
             policy: SsrfPolicy {
                 allow_private_network: config.network.allow_private_network,
             },
             proxy: config.proxy.clone(),
-            throttle: Arc::new(HostThrottle::production()),
+            throttle,
+            search,
         }
     }
 }
@@ -297,7 +306,9 @@ fn floor_char_boundary(s: &str, mut index: usize) -> usize {
 /// toggle/reload 后下一 run 生效）；10 号票增 subagent（§8.3 M2 表 Meta 行，
 /// 子代理委派入口）：静态 10 个。12 号票增 web_fetch/http_request
 /// （§8.3 M2 表 Network 两行，网页抓取与通用 HTTP）：静态 12 个。
-pub const STATIC_TOOL_NAMES: [&str; 12] = [
+/// 13 号票增 web_search（§8.3 M2 表 Network 行，本地优先三通道搜索）：
+/// 静态 13 个。
+pub const STATIC_TOOL_NAMES: [&str; 13] = [
     "read",
     "write",
     "edit",
@@ -310,6 +321,7 @@ pub const STATIC_TOOL_NAMES: [&str; 12] = [
     "subagent",
     "web_fetch",
     "http_request",
+    "web_search",
 ];
 
 /// 静态注册表（§8.1：启动时构建）。顺序与 [`STATIC_TOOL_NAMES`] 一致。
@@ -327,6 +339,7 @@ pub fn build_registry() -> Vec<ToolSpec> {
         crate::agent::roles::subagent_spec(),
         web_fetch::spec(),
         http_request::spec(),
+        web_search::spec(),
     ]
 }
 
@@ -383,3 +396,7 @@ mod plan_test;
 #[cfg(test)]
 #[path = "web_fetch_test.rs"]
 mod web_fetch_test;
+
+#[cfg(test)]
+#[path = "web_search_test.rs"]
+mod web_search_test;

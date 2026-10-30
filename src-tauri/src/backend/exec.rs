@@ -725,11 +725,12 @@ impl CancellableExecutor for ToolsetExecutor {
                     }
                     execution
                 }
-                "web_fetch" | "http_request" => {
-                    // 网络工具（12 号票，§8.3 M2 表 Network 两行）：执行面 =
-                    // safety/ssrf 的抓取循环（§9.2 五步防线），环境由 host
-                    // 按 AppConfig 装配注入；None = 未装配（缺网络环境的
-                    // 测试场景）按工具级失败回喂。
+                "web_fetch" | "http_request" | "web_search" => {
+                    // 网络工具（12 号票，§8.3 M2 表 Network 两行 + 13 号票
+                    // web_search）：执行面 = safety/ssrf 的抓取循环（§9.2
+                    // 五步防线，web_search 三通道内复用），环境由 host 按
+                    // AppConfig 装配注入；None = 未装配（缺网络环境的测试
+                    // 场景）按工具级失败回喂。
                     let Some(net) = self.env.as_ref().and_then(|e| e.network.clone()) else {
                         let outcome = ToolOutcome::failure(
                             ToolError::new("E_INTERNAL", "网络工具未装配执行环境"),
@@ -738,6 +739,43 @@ impl CancellableExecutor for ToolsetExecutor {
                         self.persist_outcome(call_id, &outcome);
                         return completed_of(outcome);
                     };
+                    if name == "web_search" {
+                        // web_search（13 号票，§8.3 M2 表 Network 行）：三通道
+                        // 优先级链在 tools/web_search::execute 内编排（SearXNG
+                        // → 内置抓取 → Tavily），本分支只做参数解析与装配。
+                        // 结果条数缺省取 search.searxng.maxResults 配置（§3.2
+                        // search 组口径）——装配面已在 NetworkEnv.search，配置
+                        // 缺省值经该处透出（此处经 env 快照带出）。
+                        let outcome = match serde_json::from_str::<
+                            crate::tools::web_search::WebSearchArgs,
+                        >(args_json)
+                        {
+                            Ok(args) => {
+                                match crate::tools::web_search::execute(
+                                    &net.search,
+                                    net.search.max_results_default,
+                                    &args,
+                                    token,
+                                )
+                                .await
+                                {
+                                    crate::tools::web_search::SearchExit::Done(outcome) => *outcome,
+                                    crate::tools::web_search::SearchExit::Cancelled => {
+                                        return ToolExecution::Cancelled {
+                                            executed: false,
+                                            message: "网络搜索已取消".to_owned(),
+                                        };
+                                    }
+                                }
+                            }
+                            Err(e) => ToolOutcome::failure(
+                                ToolError::invalid_arg(format!("web_search 参数解析失败：{e}")),
+                                "web_search 参数解析失败",
+                            ),
+                        };
+                        self.persist_outcome(call_id, &outcome);
+                        return completed_of(outcome);
+                    }
                     if name == "web_fetch" {
                         let outcome = match serde_json::from_str::<
                             crate::tools::web_fetch::WebFetchArgs,

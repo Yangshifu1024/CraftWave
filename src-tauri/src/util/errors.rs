@@ -148,6 +148,10 @@ pub const E_SUB_BUDGET: &str = "E_SUB_BUDGET";
 /// SSRF 防护拦截：目标 URL/解析地址命中私网/回环/链路本地/CGNAT/ULA 等保留段，
 /// 或重定向 HTTPS 降级/超跳——message 带命中类别（§9.2，12 号票）。
 pub const E_SSRF_BLOCKED: &str = "E_SSRF_BLOCKED";
+/// 网络搜索全部通道失败：web_search 按钉死优先级（SearXNG → 内置抓取 →
+/// Tavily）逐层回落仍无可用通道——message 带逐层失败原因与配置引导，
+/// detail.attempts 带结构化逐层记录（§8.3/§3.6，13 号票）。
+pub const E_SEARCH_UNAVAILABLE: &str = "E_SEARCH_UNAVAILABLE";
 
 /// IPC 命令统一错误负载（§3.1/§3.6，D14）：`{ code, message, detail? }`，camelCase。
 ///

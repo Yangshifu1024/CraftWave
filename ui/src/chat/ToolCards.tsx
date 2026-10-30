@@ -759,3 +759,155 @@ export function HttpRequestCard(props: ToolCallMessagePartProps<CardArgs, unknow
     </ToolCardShell>
   );
 }
+
+/** web_search 边车 data 的形状（13 号票：{ query, channel, results, count }）。 */
+interface WebSearchOutcome {
+  query?: unknown;
+  channel?: unknown;
+  results?: unknown;
+  count?: unknown;
+}
+
+/** 边车 detail 的逐层尝试记录（SearchEnv 全败结构化错误 / 成功回落记录）。 */
+interface SearchAttempt {
+  label?: unknown;
+  channel?: unknown;
+  tried?: unknown;
+  error?: unknown;
+}
+
+/** 来源通道徽标文案与配色（票面：标注来源通道——本地/抓取/云）。 */
+const CHANNEL_BADGE: Record<string, { label: string; className: string }> = {
+  searxng: {
+    label: "本地",
+    className: "bg-emerald-600/10 text-emerald-600 dark:text-emerald-400",
+  },
+  ddg: {
+    label: "抓取",
+    className: "bg-sky-600/10 text-sky-600 dark:text-sky-400",
+  },
+  tavily: {
+    label: "云",
+    className: "bg-violet-600/10 text-violet-600 dark:text-violet-400",
+  },
+};
+
+/**
+ * web_search 工具卡（13 号票，§8.3 M2 表 Network 行）：查询词摘要 + 来源
+ * 通道徽标（本地/抓取/云）+ 结果列表（标题链接 + 摘要）；失败态在
+ * Shell 错误展开之上附逐层通道尝试记录（detail.attempts）。
+ */
+export function WebSearchCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
+  const args = (props.args ?? {}) as CardArgs;
+  const { toolCallId, result } = props;
+  const query = str(args, "query");
+  // 结果来源：边车 data（帧面 result 是模型通道压缩文本，不含结构化 data）。
+  // 成功与失败终态都拉边车——web_search 的全败结构化错误（detail.attempts
+  // 逐层通道原因）由执行器无条件持久化，失败态卡片要展示它（与 web_fetch
+  // 失败不写边车的约定不同，13 号票的结构化错误面走 detail）。
+  const settled = result !== undefined;
+  const outcome = useToolOutcomeDetail(toolCallId, settled);
+  const data = (outcome?.data ?? null) as WebSearchOutcome | null;
+  const channel = typeof data?.channel === "string" ? data.channel : null;
+  const badge = channel !== null ? CHANNEL_BADGE[channel] : undefined;
+  const count = typeof data?.count === "number" ? data.count : undefined;
+  // 结果列表（宽松取字段：title/url/snippet 任一类型不符按空串处理）
+  const results = Array.isArray(data?.results)
+    ? (data?.results as { title?: unknown; url?: unknown; snippet?: unknown }[])
+    : [];
+  // 失败态的逐层通道尝试（detail.attempts；成功时为回落记录一般仅一层）。
+  // detail 是 JsonValue 联合类型：先窄化到对象再取数组
+  const searchDetail = outcome?.detail;
+  const detailAttempts =
+    searchDetail !== null && typeof searchDetail === "object" && !Array.isArray(searchDetail)
+      ? (searchDetail as { attempts?: unknown }).attempts
+      : undefined;
+  const attempts = Array.isArray(detailAttempts) ? (detailAttempts as SearchAttempt[]) : [];
+  return (
+    <ToolCardShell
+      {...props}
+      icon={<Search size={16} />}
+      label="联网搜索"
+      runningLabel="正在联网搜索"
+      summary={query}
+      badges={
+        badge !== undefined ? (
+          <span
+            data-testid="web-search-channel"
+            className={`shrink-0 rounded px-1.5 py-0.5 text-ui-sm font-medium ${badge.className}`}
+          >
+            {badge.label}
+          </span>
+        ) : undefined
+      }
+    >
+      {count !== undefined && (
+        <p className="text-ui-sm text-[var(--muted-foreground)]">
+          {count === 0 ? "无结果" : `${count} 条结果`}
+          {channel !== null && `（来源：${badge?.label ?? channel}通道）`}
+        </p>
+      )}
+      {results.length > 0 && (
+        <ul className="mt-1 space-y-2" data-testid="web-search-results">
+          {results.map((hit, index) => {
+            const title = typeof hit.title === "string" ? hit.title : "(无标题)";
+            const url = typeof hit.url === "string" ? hit.url : "";
+            const snippet = typeof hit.snippet === "string" ? hit.snippet : "";
+            return (
+              <li key={url !== "" ? url : index} className="min-w-0">
+                {url !== "" ? (
+                  <a
+                    href={url}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    className="block truncate text-ui-sm font-medium text-[var(--foreground)] hover:underline"
+                    title={url}
+                  >
+                    {title}
+                  </a>
+                ) : (
+                  <span className="block truncate text-ui-sm font-medium text-[var(--foreground)]">
+                    {title}
+                  </span>
+                )}
+                {url !== "" && (
+                  <span className="block truncate font-mono text-ui-sm text-[var(--muted-foreground)]">
+                    {url}
+                  </span>
+                )}
+                {snippet !== "" && (
+                  <p className="text-ui-sm text-[var(--muted-foreground)]">{snippet}</p>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {/* 逐层通道尝试（全败结构化错误的可读化；成功回落时同理展示过程） */}
+      {attempts.length > 0 && (
+        <details>
+          <summary className="cursor-pointer text-[var(--muted-foreground)]">通道尝试记录</summary>
+          <ul className="mt-1 space-y-1">
+            {attempts.map((attempt, index) => {
+              // key 用通道标识（每通道在尝试记录中至多一次）；缺标识时退化序号
+              const key =
+                typeof attempt.channel === "string" ? `${attempt.channel}:${index}` : String(index);
+              return (
+                <li key={key} className="text-ui-sm text-[var(--muted-foreground)]">
+                  <span className="text-[var(--foreground)]">
+                    {typeof attempt.label === "string" ? attempt.label : String(attempt.channel)}
+                  </span>
+                  {attempt.tried === true
+                    ? typeof attempt.error === "string"
+                      ? `：${attempt.error}`
+                      : "：成功"
+                    : "：未启用/未配置"}
+                </li>
+              );
+            })}
+          </ul>
+        </details>
+      )}
+    </ToolCardShell>
+  );
+}

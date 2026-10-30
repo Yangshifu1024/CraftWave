@@ -14,7 +14,8 @@ fn registry_names_and_order_are_pinned() {
     // 静态段尾部，description 动态列出启用技能名；subagent 随 10 号票
     // §8.3 M2 表 Meta 行进静态段尾部，description 内嵌 7 角色清单；
     // web_fetch/http_request 随 12 号票 §8.3 M2 表 Network 两行进静态段
-    // 尾部，抓取面经 SSRF 五步防线，§9.2）。
+    // 尾部，抓取面经 SSRF 五步防线，§9.2；web_search 随 13 号票 §8.3 M2
+    // 表 Network 行进静态段尾部，本地优先三通道 C-12）。
     assert_eq!(
         names,
         [
@@ -29,7 +30,8 @@ fn registry_names_and_order_are_pinned() {
             "skill",
             "subagent",
             "web_fetch",
-            "http_request"
+            "http_request",
+            "web_search"
         ]
     );
 }
@@ -101,6 +103,9 @@ fn capabilities_match_design() {
     // plan 档过滤、confirm_each/auto_edit 档审批、full_access 放行（§8.5）。
     assert_eq!(cap_of("web_fetch"), Capability::Network);
     assert_eq!(cap_of("http_request"), Capability::Network);
+    // web_search（13 号票，§8.3 M2 表）：Network 能力——同上；通道选择
+    // 与 SSRF/代理在执行面（§9.2 复用 + SearXNG 本地回环例外）。
+    assert_eq!(cap_of("web_search"), Capability::Network);
 }
 
 #[test]
@@ -131,7 +136,7 @@ fn filter_for_tier_matches_matrix() {
     ] {
         assert_eq!(
             filter_for_tier(build_registry(), tier).len(),
-            12,
+            13,
             "{tier:?} 应全保留"
         );
     }

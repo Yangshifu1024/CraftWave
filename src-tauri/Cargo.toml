@@ -95,6 +95,11 @@ dom_smoothie = "0.19.0"
 # 【M2 12 号票】URL 解析（§9.2 URL 预校验）：与 reqwest 内部同款解析器
 #（url 2.x），Host::Ipv4/Ipv6/Domain 判别是 IP 字面量拦截的依据。
 url = "2.5"
+# 【M2 13 号票】DuckDuckGo HTML 结果列表解析（§8.3 web_search 行）：
+# dom_query 是 dom_smoothie 0.19 的底层 HTML5 解析器（已在依赖树内，锁面
+# 同版本不新增下载），提供 CSS 选择器查询——SERP 列表提取按 class 定位
+# 结果锚点与摘要块（属性顺序/引号形式无关），比正则宽松且对改版容错。
+dom_query = "0.29"
 
 # 【S5 spike，cfg(unix)】进程组收割：kill(-pgid, SIGTERM/SIGKILL)
 [target.'cfg(unix)'.dependencies]

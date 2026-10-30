@@ -26,6 +26,7 @@ import {
   SkillCard,
   SubagentCard,
   WebFetchCard,
+  WebSearchCard,
   WriteCard,
 } from "./ToolCards";
 
@@ -228,6 +229,22 @@ export const CW_TOOL_PARAMETERS: Record<string, JSONSchema7> = {
     required: ["method", "url"],
     additionalProperties: false,
   },
+  // web_search 工具（§8.3 M2 表 Network 行，13 号票；与 tools/web_search.rs
+  // 的 params_schema 逐字镜像，contract.test 双向锁定）
+  web_search: {
+    type: "object",
+    properties: {
+      query: { type: "string", description: "搜索关键词" },
+      limit: {
+        type: "integer",
+        minimum: 1,
+        maximum: 30,
+        description: "返回条数上限（默认 10）",
+      },
+    },
+    required: ["query"],
+    additionalProperties: false,
+  },
 };
 
 /**
@@ -307,5 +324,11 @@ export const cwToolkit = defineToolkit({
     description: "发送通用 HTTP 请求并返回响应",
     parameters: CW_TOOL_PARAMETERS.http_request,
     render: HttpRequestCard,
+  },
+  web_search: {
+    type: "frontend",
+    description: "联网搜索（本地 SearXNG / 内置抓取 / Tavily 三通道自动选）",
+    parameters: CW_TOOL_PARAMETERS.web_search,
+    render: WebSearchCard,
   },
 });

@@ -1,7 +1,7 @@
 # 实现：web_search 工具（本地优先混合，三通道）
 
 Type: task
-Status: open
+Status: resolved
 
 Blocked by: 11（已解决：C-12 定案见票 Answer 与 Comments）
 
@@ -40,9 +40,24 @@ Blocked by: 11（已解决：C-12 定案见票 Answer 与 Comments）
 
 ## 验收
 
-- [ ] 启用 SearXNG 后搜索走本地（请求不经应用代理），停用即时回落抓取
-- [ ] 未启用 SearXNG 时默认走直接抓取（走代理），解析结果含标题/链接/摘要
-- [ ] 抓取失败且 Tavily Key 已配时自动落 Tavily，工具卡标注来源通道
-- [ ] 三层全失败返回结构化错误（逐层原因 + 配置引导），不崩不挂
-- [ ] SearXNG 开关/地址、Tavily Key 增删即时生效；连通测试按钮可用
-- [ ] §8.3 web_search 行按定稿回写设计文档；fixture/回放测试 + 检查链全绿
+- [x] 启用 SearXNG 后搜索走本地（请求不经应用代理），停用即时回落抓取
+- [x] 未启用 SearXNG 时默认走直接抓取（走代理），解析结果含标题/链接/摘要
+- [x] 抓取失败且 Tavily Key 已配时自动落 Tavily，工具卡标注来源通道
+- [x] 三层全失败返回结构化错误（逐层原因 + 配置引导），不崩不挂
+- [x] SearXNG 开关/地址、Tavily Key 增删即时生效；连通测试按钮可用
+- [x] §8.3 web_search 行按定稿回写设计文档；fixture/回放测试 + 检查链全绿
+
+## 决议记录
+
+- **实现落点（2026-10-30）**：`src-tauri/src/tools/web_search.rs` 单文件承载 `SearchProvider` trait（§8.3 抽象面，Brave 留位）+ SearXNG/Ddg/Tavily 三实现 + 优先级编排（`run_chain` 线性回落，成功即返、逐层失败记入 attempts）；执行环境 `SearchEnv` 挂在 12 号票 `NetworkEnv.search` 下（`NetworkEnv::from_config` 一次配齐，save_config 后下一次 start_chat 生效）。注册表静态段 12→13（web_search 尾部追加，Network 能力：plan 档过滤）。
+- **Tavily Key 存储协议按现行协议落 config.json（票面"钥匙串协议"的口径修正）**：§9.4 v2.5 用户决策已废除钥匙串，API Key 统一明文存 `~/.craftwave/config.json`（文件 0600）——Tavily Key 沿用同协议（`search.tavilyApiKey`），spec.md「凭据沿用现有存储协议」即此意；不回退到已废除的钥匙串方案。
+- **SearXNG 不经 SSRF 管线（§9.2 例外，已回写设计文档）**：用户显式启用即信任该地址，而其默认地址 `127.0.0.1:8888` 天然命中 §9.2 回环拒绝判定，走管线必然被拦；SearXNG 通道用独立 client（`no_proxy` + 3s 连接/15s 总短超时——本地服务挂掉快速落通道 2）。通道 2/3（DDG 抓取、Tavily）仍完整走 `safety/ssrf.rs` 管线（钉址/逐跳重校验/50MiB/每 host 1s 节流，复用 12 号票原语）。
+- **DDG 结果解析用 dom_query（dom_smoothie 0.19 的底层 HTML5 解析器，锁面同版本不新增下载）**：CSS 选择器定位 `.result__a` 锚点与 `.result__snippet` 摘要块（属性顺序/引号形式无关），比正则宽松；链接解 `uddg` 跳转包装（url crate `query_pairs`）。**空结果自检三态**：解析出结果 / 页面含无结果标志（"did not match any documents" 等）→ 真空结果（成功空列表，不落 Tavily）/ 0 条且无标志 → 疑似改版或反爬页（通道失败告警，让优先级链继续）——绝不把异常页当真空结果。文本清洗只压空白：dom_query 的 `.text()` 已解码实体且不含标签，再做标签吞除会误吞字面尖括号文本（快照测试钉住）。
+- **Tavily 错误分类**：`tavily_classify`（401 Key 无效 / 403 无权限 / 429 限流（单次退避重试一次，Retry-After 优先、缺省 5s 封顶 30s）/ 432 或 429+quota 字样配额尽（当月停用不重试）/ 其余请求失败）；各分类带中文标签进逐层失败原因。
+- **新增错误码 `E_SEARCH_UNAVAILABLE`（§3.6 已回写）**：三通道全败的结构化错误——error.message 带逐层失败原因与配置引导（模型通道可读），`detail.attempts` 带结构化 `{ channel, label, tried, error? }[]`（UI 通道，工具卡逐层展示）；执行器对失败结果照常 persist 边车（与 web_fetch 失败不写边车的 12 号票约定不同，本票结构化错误面走 detail）。
+- **连通测试命令 `search_test`（§3.3 #59f，已回写设计文档）**：草稿试连不经保存（对齐 08 号票 mcp_test 模式），SearXNG/Tavily 复用工具通道的同一请求路径（测通即用通）；失败不 reject（ok=false + error 带引导），仅未知 target 拒 E_INVALID_ARG；总预算 30s。Tavily 测试消耗 1 credit（设置页指引文案注明）。
+- **`limit` 缺省语义（票面 max_results 字段位置的口径澄清）**：工具参数 `limit` 缺省取 `search.searxng.maxResults`（1–30，缺省 10）——该配置作为各通道共用的结果条数缺省（生成为 `SearchEnv.max_results_default` 透出），显式参数覆盖并 clamp 1..=30。票面把 max_results 放在 searxng 域保持不动（字段级设计文档为准）。
+- **reqwest `.query()` 未用**：reqwest 0.13 的 query 构造需要未启用的 feature（本仓 features 仅 rustls/gzip），改用 url crate 的 `query_pairs_mut` 拼查询串（`q` 正确 percent 编码）。
+- **前端**：设置页网络页增「本地搜索（SearXNG）」独立配置组（启用开关/地址/连通测试）与「云搜索（Tavily，高级）」区（Key 密文输入/注册指引/连通测试）；连通测试走 `search_test` 草稿值不经保存（对齐 MCP 管理页测试连接的草稿态定案），不入 settings 草稿。`WebSearchCard`：查询词摘要 + 来源通道徽标（本地=绿/抓取=蓝/云=紫）+ 结果列表（标题外链/URL/摘要）+ 全败时「通道尝试记录」折叠块。SearXNG 启用后设置页显示 settings.yml `format=json` 引导。
+- **测试资产**：`fixtures/duckduckgo_{results,empty,redesign}.html` 三份仿真快照（真实站点结构手工构造，改版不挂 CI）；SearXNG/Tavily 用本地 axum 假服务回放（SearXNG 三态：正常/403/超时（provider 超时可注入毫秒级）+不可达；Tavily 五态：正常/429+Retry-After 退避重试/401/432 配额尽/500）；优先级 e2e 四例（启用 SearXNG 走本地且后续通道不被调/停用回落抓取/抓取疑似改版自动落 Tavily/三层全败结构化错误 + Tavily 未配 Key 跳过 + 真空结果不落 Tavily）。Rust 23 例 + 前端 8 例（工具卡 4 + 设置页 2 + 契约 2 处更新）。
+- **既有测试维护（压缩 e2e 窗口上调）**：`tests/backend_e2e.rs` 的 `small_window_config` 窗口 40000→44000——工具注册表每增一工具都抬高请求固定估算面（估算器把工具表计入 §6.2 预算），40000 的硬预算线（×0.9=36000）已被 web_search 挤破（固定面 36058），40000 失去「第一次发送达阈值但硬预算内可容纳」的设计前提；44000（硬预算 39600）恢复该区间且 32768 回复预留 > 0.6×44000 的跨阈值前提不变（三用例在 main 基线复跑通过，为本票回归非既有抖动）。

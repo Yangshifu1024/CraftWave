@@ -20,6 +20,7 @@ import {
   ReadCard,
   toolCardExpandedMemory,
   WebFetchCard,
+  WebSearchCard,
   WriteCard,
 } from "./ToolCards";
 
@@ -332,6 +333,135 @@ describe("web 工具卡（12 号票）", () => {
     await vi.waitFor(() => {
       expect(card.textContent).toContain("503");
     });
+  });
+});
+
+describe("web_search 工具卡（13 号票）", () => {
+  it("来源通道徽标（本地/抓取/云）+ 结果列表（标题链接 + 摘要）", async () => {
+    loadToolOutcomes.mockResolvedValue({
+      c1: {
+        ok: true,
+        uiSummary: "已搜索「rust async」（本地通道，2 条结果）",
+        data: {
+          query: "rust async",
+          channel: "searxng",
+          count: 2,
+          results: [
+            {
+              title: "Tokio 教程",
+              url: "https://tokio.rs/tokio/tutorial",
+              snippet: "异步 Rust 入门",
+            },
+            {
+              title: "async book",
+              url: "https://rust-lang.github.io/async-book/",
+              snippet: "官方异步书",
+            },
+          ],
+        },
+      },
+    });
+    render(<WebSearchCard {...props({ query: "rust async" }, resultOf("已搜索"))} />);
+    const card = screen.getByTestId("tool-card-c1");
+    // 摘要行带查询词 + 来源通道徽标（本地）——徽标在摘要行，展开前可见
+    expect(card.textContent).toContain("rust async");
+    await vi.waitFor(() =>
+      expect(screen.getByTestId("web-search-channel").textContent).toBe("本地"),
+    );
+    // 详情区默认收起：展开后结果列表出现（标题链接 + URL + 摘要）
+    fireEvent.click(card.querySelector("button")!);
+    await vi.waitFor(() => expect(card.textContent).toContain("2 条结果"));
+    const list = screen.getByTestId("web-search-results");
+    expect(list.querySelectorAll("li")).toHaveLength(2);
+    expect(list.textContent).toContain("Tokio 教程");
+    const link = list.querySelector("a")!;
+    expect(link.getAttribute("href")).toBe("https://tokio.rs/tokio/tutorial");
+    expect(list.textContent).toContain("异步 Rust 入门");
+  });
+
+  it("抓取通道徽标 + 空结果显示「无结果」", async () => {
+    loadToolOutcomes.mockResolvedValue({
+      c1: {
+        ok: true,
+        uiSummary: "已搜索（抓取通道，0 条结果）",
+        data: { query: "xyzzy", channel: "ddg", count: 0, results: [] },
+      },
+    });
+    render(<WebSearchCard {...props({ query: "xyzzy" }, resultOf("已搜索"))} />);
+    const card = screen.getByTestId("tool-card-c1");
+    await vi.waitFor(() =>
+      expect(screen.getByTestId("web-search-channel").textContent).toBe("抓取"),
+    );
+    fireEvent.click(card.querySelector("button")!);
+    await vi.waitFor(() => expect(card.textContent).toContain("无结果"));
+  });
+
+  it("云通道徽标（tavily → 云）", async () => {
+    loadToolOutcomes.mockResolvedValue({
+      c1: {
+        ok: true,
+        uiSummary: "已搜索（云通道，1 条结果）",
+        data: {
+          query: "q",
+          channel: "tavily",
+          count: 1,
+          results: [{ title: "T", url: "https://t.dev", snippet: "s" }],
+        },
+      },
+    });
+    render(<WebSearchCard {...props({ query: "q" }, resultOf("已搜索"))} />);
+    await vi.waitFor(() => expect(screen.getByTestId("web-search-channel").textContent).toBe("云"));
+  });
+
+  it("全败错误态默认展开：逐层通道尝试记录可见", async () => {
+    loadToolOutcomes.mockResolvedValue({
+      c1: {
+        ok: false,
+        uiSummary: "网络搜索失败（全部通道不可用）",
+        detail: {
+          attempts: [
+            { channel: "searxng", label: "本地 SearXNG", tried: false },
+            {
+              channel: "ddg",
+              label: "内置抓取（DuckDuckGo）",
+              tried: true,
+              error: "疑似改版",
+            },
+            {
+              channel: "tavily",
+              label: "云搜索（Tavily）",
+              tried: true,
+              error: "Tavily（Key 无效（401））：Invalid API key",
+            },
+          ],
+        },
+      },
+    });
+    render(
+      <WebSearchCard
+        {...props({ query: "rust" }, resultOf("E_SEARCH_UNAVAILABLE：全部通道失败", true))}
+      />,
+    );
+    const card = screen.getByTestId("tool-card-c1");
+    expect(card.getAttribute("data-phase")).toBe("error");
+    expect(card.textContent).toContain("E_SEARCH_UNAVAILABLE");
+    // 逐层尝试：等边车 detail 异步到达后展开「通道尝试记录」折叠块
+    //（详情区第一个 details 是「调用参数」，按 summary 文本定位目标块）
+    await vi.waitFor(() => {
+      expect(
+        [...card.querySelectorAll("details")].some((d) =>
+          d.querySelector("summary")?.textContent?.includes("通道尝试记录"),
+        ),
+      ).toBe(true);
+    });
+    const details = [...card.querySelectorAll("details")].find((d) =>
+      d.querySelector("summary")?.textContent?.includes("通道尝试记录"),
+    )!;
+    fireEvent.click(details.querySelector("summary")!);
+    expect(details.textContent).toContain("本地 SearXNG");
+    expect(details.textContent).toContain("未启用/未配置");
+    expect(details.textContent).toContain("内置抓取（DuckDuckGo）：疑似改版");
+    expect(details.textContent).toContain("Key 无效");
   });
 });
 

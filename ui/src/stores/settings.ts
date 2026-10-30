@@ -30,6 +30,12 @@ export const DEFAULT_CONFIG: AppConfig = {
   agent: { maxConcurrentSubagents: 4 },
   // 网络工具 SSRF 防护（12 号票，§3.2 network 组）：缺省拒绝私网访问
   network: { allowPrivateNetwork: false },
+  // 网络搜索（13 号票，§3.2 search 组）：SearXNG 不启用 + Key 未配 =
+  // 零配置默认走内置抓取（C-12 优先级②兜底）
+  search: {
+    searxng: { enabled: false, baseUrl: "http://127.0.0.1:8888", maxResults: 10 },
+    tavilyApiKey: undefined,
+  },
 };
 
 /** 设置状态仓库的形状：草稿/基线双份 + 读写动作（说明见各字段行内注释）。 */
