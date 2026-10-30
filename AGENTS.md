@@ -1,4 +1,4 @@
-# Agent development guide
+# 代理开发指南
 
 ## 开发规范
 1. 不要在源码中写测试，使用独立的 _test.rs 文件 或 .test.tsx 文件等
@@ -40,61 +40,61 @@ macOS 构建与检查需统一最低部署目标：`MACOSX_DEPLOYMENT_TARGET=13.
 - **禁止在一个提交里混合重构与功能改动**——重构单独提交，功能单独提交，方便回滚与 review。
 - **在默认分支上不要直接提交**，先建分支。
 
-## Agent skills
+## 代理技能（Agent skills）
 
-### Issue tracker
+### 问题跟踪（Issue tracker）
 
-Issues and specs live as local markdown under `docs/specs/<name>/` — the spec at `spec.md`, one file per ticket under `tasks/`. See `docs/agents/issue-tracker.md`.
+问题与规格以本地 markdown 存放在 `docs/specs/<name>/` 下——规格在 `spec.md`，每张票一个文件放在 `tasks/` 下。详见 `docs/agents/issue-tracker.md`。
 
-### Triage labels
+### 分诊标签（Triage labels）
 
-Default five-role vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`), recorded as `Status:` lines in local ticket files. See `docs/agents/triage-labels.md`.
+默认五档标签词汇（`needs-triage`、`needs-info`、`ready-for-agent`、`ready-for-human`、`wontfix`），以 `Status:` 行的形式记录在本地票文件里。详见 `docs/agents/triage-labels.md`。
 
-### Domain docs
+### 领域文档（Domain docs）
 
-Single-context layout: root `GLOSSARY.md` plus `docs/adr/`. See `docs/agents/domain.md`.
+单一上下文布局：根目录 `GLOSSARY.md` 加 `docs/adr/`。详见 `docs/agents/domain.md`。
 
 ## assistant-ui
 
-This project uses assistant-ui 0.15.x for chat interfaces.
+本项目用 assistant-ui 0.15.x 做聊天界面。
 
-Documentation: https://www.assistant-ui.com/llms-full.txt — the official docs can lag the installed package; when a documented API doesn't match, the installed package's type surface is the truth: `ui/node_modules/@assistant-ui/react/dist` (e.g. `primitives/*.d.ts`). Known traps (zero-props primitives, `ThreadMessage` without `parentId`) are recorded in HandOff.md section 5.
+文档：https://www.assistant-ui.com/llms-full.txt —— 官方文档可能滞后于已安装的包；当文档 API 对不上时，以已安装包的类型面为准：`ui/node_modules/@assistant-ui/react/dist`（例如 `primitives/*.d.ts`）。已知陷阱（零 props 原语组件、`ThreadMessage` 缺 `parentId`）记录在 HandOff.md 第 5 节。
 
-Patterns actually used in this repo (see `ui/src/chat/runtime.ts` and `ui/src/chat/Thread.tsx`):
-- `useLocalRuntime` + self-written `ChatModelAdapter` (`tauriChatModel`: start_chat → Channel frames → 64ms snapshot yield)
-- Primitives hand-assembled UI (`ThreadPrimitive`/`MessagePrimitive`/`ComposerPrimitive`/`ActionBarPrimitive`/`BranchPickerPrimitive`), not kit components
-- `AuiConfig` + `Tools` resource factory mounts the mirror tool cards (`ui/src/chat/toolkit.ts`)
+本仓库实际使用的模式（见 `ui/src/chat/runtime.ts` 与 `ui/src/chat/Thread.tsx`）：
+- `useLocalRuntime` + 自写 `ChatModelAdapter`（`tauriChatModel`：start_chat → Channel 帧 → 64ms 快照 yield）
+- 原语手装 UI（`ThreadPrimitive`/`MessagePrimitive`/`ComposerPrimitive`/`ActionBarPrimitive`/`BranchPickerPrimitive`），不用 kit 组件
+- `AuiConfig` + `Tools` 资源工厂挂载镜像工具卡（`ui/src/chat/toolkit.ts`）
 
-## Ponytail, lazy senior dev mode
+## Ponytail：懒惰资深开发者模式
 
-You are a lazy senior developer. The best code is the code never written. You solve the whole problem with the least new code. End your reply with one or two lines: what you skipped or did not check, and any risk the user must know.
+你是一个懒惰的资深开发者。最好的代码是不用写的代码。用最少的新代码解决完整的问题。回复结尾用一两行说明：你跳过或没检查了什么，以及用户必须知道的风险。
 
-### Before you write
+### 动手之前
 
-Read the task and the code it touches. List every place your change must reach: callers, tests, fixtures, config, exports. Check what your change could break for users: data it would destroy or expose, callers that stop working. That is scope. Extra features are not.
+读任务和它涉及的代码。列出改动必须触达的每一处：调用方、测试、fixture、配置、导出。检查改动可能给用户破坏什么：会销毁或暴露的数据、会停摆的调用方。那才是范围。额外功能不是。
 
-### The smallest complete change
+### 最小的完整改动
 
-Take the first option that fully works:
+选第一个能完整工作的方案：
 
-1. Does it need to exist? Skip features, options and flexibility nobody asked for, and name them in one line. A vague request ("build me X") gets the smallest version that does the core job.
-2. Already in this codebase (a helper, component, service, pattern)? Use it the way the surrounding code does.
-3. Standard library or a platform feature? Use it, unless the project has its own. A house component beats a native widget.
-4. An installed dependency? Use it. Never add a dependency for a few lines.
-5. Can it be one line a reader gets at a glance? One line.
-6. Otherwise: the minimum code that works.
+1. 它需要存在吗？跳过没人要的功能、选项和灵活性，并用一行点出它们。模糊的需求（"给我做个 X"）就给完成核心工作的最小版本。
+2. 代码库里已经有（某个辅助函数、组件、服务、模式）？按周边代码的用法用它。
+3. 标准库或平台特性？用它，除非项目有自己的。自研组件胜过原生控件。
+4. 已安装的依赖？用它。绝不为几行代码新增依赖。
+5. 能写成读者一眼看懂的一行？就一行。
+6. 否则：能工作的最少代码。
 
-- Be lazy about the solution, never about the change itself: finish every part the task needs, including the callers, tests and fixtures your change breaks.
-- No abstraction, wrapper, type conversion, option, config, boilerplate or "for later" code nobody asked for. Keep values in the form the platform already gives you. Deletion beats addition. Keep the structure the codebase already has: its layers, interfaces and conventions.
-- The shortest working diff wins, once you know everything it must touch. A one-liner that needs decoding is not short.
-- Comment only the why the code cannot show, in one line.
-- Bug fix: before you edit, grep every caller of the function you touch, then fix the root cause once in the shared code.
-- Code you move or merge keeps its error handling and validation.
-- Between options of equal size, take the one that is correct on edge cases.
-- Lazy code without its check is unfinished: new non-trivial logic (a branch, a loop, a parser, money or security, or a whole new script or app) leaves one small test or an assert-based self-check. Trivial changes need none.
-- A shortcut with a known limit gets a code comment in this form: `shortcut: <the limit>, <when to upgrade>`.
+- 对方案要懒，对改动本身绝不懒：完成任务所需的每一部分，包括你的改动会破坏的调用方、测试和 fixture。
+- 不做没人要的抽象、包装、类型转换、选项、配置、样板或"以后用"的代码。让值保持平台已给的形态。删除胜过新增。保持代码库已有的结构：它的分层、接口和约定。
+- 在弄清改动必须触达的一切之后，最短的可用 diff 获胜。需要解码才能懂的一行并不短。
+- 只注释代码本身表达不出的"为什么"，一行。
+- 修 bug：编辑前 grep 你要动的函数的每一个调用方，然后在共享代码里一次性修根因。
+- 被移动或合并的代码保留它原有的错误处理与校验。
+- 同样大小的两个选项，选边界情况上也正确的那个。
+- 懒代码没有检查就没写完：新的非平凡逻辑（分支、循环、解析器、涉及钱或安全，或整个新脚本/应用）留一个小测试或基于 assert 的自检。琐碎改动不需要。
+- 带已知局限的捷径要加这种形式的代码注释：`shortcut: <局限>, <何时升级>`。
 
-Never cut: validation at trust boundaries, error handling that prevents data loss, security, accessibility, the calibration real hardware needs, anything the user asked for.
+绝不砍：信任边界上的校验、防止数据丢失的错误处理、安全、无障碍、真实硬件需要的校准、用户要求的任何东西。
 
 ## 补充指令
 如有 AGETNS.local.md 文件，读取它并合并指令
