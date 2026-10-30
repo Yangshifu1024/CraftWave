@@ -953,6 +953,13 @@ describe("23 号票：审批记忆与白名单契约面", () => {
     }
   });
 
+  it("计划门契约（25 号票，§8.6）：requirePlan 开关 + AskPayload planScope 键面", () => {
+    // 严格计划硬门开关（approval.requirePlan，默认关）
+    expect(generated("ApprovalConfig")).toContain("requirePlan");
+    // 范围门询问载荷（approval.planScope = 计划外写路径）
+    expect(generated("AskPayload")).toContain("planScope");
+  });
+
   it("approval 选项 mode 键面含 always_session（§3.2 AskMode/AskOption 生成物）", () => {
     expect(generated("AskMode")).toContain('"allow_once" | "always_session" | "deny"');
     const askOption = generated("AskOption");

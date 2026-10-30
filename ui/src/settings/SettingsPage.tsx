@@ -1088,6 +1088,17 @@ function SecurityPage() {
             onCheckedChange={(v) => patchApproval({ allowlistEnabled: v })}
           />
         </SettingsRow>
+        <SettingsRow
+          title="严格计划模式"
+          description="开启后，没有已批准计划时写入与联网类工具直接被拒绝（E_PLAN_REQUIRED），模型须先建计划并经你批准。默认关闭：有计划才守门，无计划不阻写。"
+        >
+          <Switch
+            aria-label="严格计划模式"
+            data-testid="require-plan-switch"
+            checked={approval.requirePlan}
+            onCheckedChange={(v) => patchApproval({ requirePlan: v })}
+          />
+        </SettingsRow>
       </SettingsSection>
       <AllowlistSection
         allowlist={allowlist}

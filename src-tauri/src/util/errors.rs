@@ -77,6 +77,12 @@ impl ToolError {
         Self::new("E_PLAN_STALE", message.into())
     }
 
+    /// E_PLAN_REQUIRED：严格硬门开启且无已批准计划时写（FR-06-02，§8.6，
+    /// 25 号票实装——approval.requirePlan 默认关，§3.2）。
+    pub fn plan_required(message: impl Into<String>) -> Self {
+        Self::new("E_PLAN_REQUIRED", message.into())
+    }
+
     /// E_COMMAND_TIMEOUT：命令执行超时（§8.3/§8.8，14 号票补录）。
     pub fn command_timeout(message: impl Into<String>) -> Self {
         Self::new("E_COMMAND_TIMEOUT", message)
@@ -131,6 +137,9 @@ pub const E_INTERNAL: &str = "E_INTERNAL";
 pub const E_COMMAND_TIMEOUT: &str = "E_COMMAND_TIMEOUT";
 /// 已批准的计划已过期仍尝试写入。
 pub const E_PLAN_STALE: &str = "E_PLAN_STALE";
+/// 严格计划硬门：开关开启且无已批准计划时的写入（FR-06-02，§8.6；25 号票
+/// 实装——approval.requirePlan 默认关，§3.2）。
+pub const E_PLAN_REQUIRED: &str = "E_PLAN_REQUIRED";
 /// 命令围栏拦截（Block 档）。
 pub const E_FENCE_BLOCKED: &str = "E_FENCE_BLOCKED";
 /// 试图写宿主内部状态（FR-05-08，§9.3；23 号票实装禁区硬拒——write/edit

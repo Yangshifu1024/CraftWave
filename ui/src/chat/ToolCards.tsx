@@ -36,6 +36,7 @@ import {
 import { useEffect, useState } from "react";
 import { HtmlPreview } from "@/chat/HtmlPreview";
 import { Markdown } from "@/chat/Markdown";
+import { EMPTY_PLAN_STATE, usePlanStateStore } from "@/chat/plan-state";
 import { useSessionScope } from "@/chat/session-scope";
 import { Button } from "@/components/ui/button";
 import * as client from "@/ipc/client";
@@ -626,11 +627,19 @@ interface PlanItemArg {
   status: string;
 }
 
-/** plan：计划卡（FR-06-01 消息内呈现；摘要 = 完成数统计）。 */
+/**
+ * plan：计划卡（FR-06-01 消息内呈现；摘要 = 完成数统计）。25 号票（§8.6）：
+ * 展示模型声明的写范围（args.paths，批准时冻结为基线）；基线态标记
+ * （已批准 + 基线条目数）从 plan-state store 按所属会话读取（plan:update
+ * 驱动，内存态——卡片渲染与 Inspector 计划区块同源）。
+ */
 export function PlanCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
   const args = (props.args ?? {}) as CardArgs;
   const items = Array.isArray(args.items) ? (args.items as PlanItemArg[]) : [];
   const done = items.filter((i) => i.status === "completed").length;
+  const paths = Array.isArray(args.paths) ? (args.paths as string[]) : [];
+  const sessionId = useSessionScope();
+  const planState = usePlanStateStore((s) => s.bySession[sessionId] ?? EMPTY_PLAN_STATE);
   const statusLabel: Record<string, string> = {
     pending: "待办",
     in_progress: "进行中",
@@ -643,6 +652,19 @@ export function PlanCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
       label="计划"
       summary={`任务计划（${done}/${items.length}）`}
     >
+      {planState.approved && (
+        <p data-testid="plan-card-baseline" className="mb-1 text-ui-sm text-[var(--primary)]">
+          已批准
+          {planState.baselinePaths.length > 0
+            ? ` · 基线 ${planState.baselinePaths.length} 条`
+            : "（未声明范围，首次写入会请求确认）"}
+        </p>
+      )}
+      {paths.length > 0 && (
+        <p className="mb-1 break-all font-mono text-ui-sm text-[var(--muted-foreground)]">
+          范围：{paths.join("、")}
+        </p>
+      )}
       <ul className="space-y-0.5">
         {items.map((item) => (
           <li key={item.id} className="flex items-start gap-1.5">

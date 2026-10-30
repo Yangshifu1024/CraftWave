@@ -57,6 +57,7 @@ function baseConfig(): AppConfig {
       sessionMemoryEnabled: true,
       allowlistEnabled: true,
       commandAllowlist: [],
+      requirePlan: false,
     },
     ui: { language: "zh-CN", theme: "system" },
     log: { level: "info" },

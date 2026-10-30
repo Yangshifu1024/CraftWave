@@ -229,10 +229,17 @@ export type AskClosedEvent = {
   answered: boolean;
 };
 
-/** plan:update 事件载荷：计划条目状态变化（计划卡实时刷新）。 */
+/**
+ * plan:update 事件载荷：全量计划态（25 号票扩展——计划卡实时刷新 + 基线
+ * 标记与待批准范围展示）。paths = 模型声明的写范围；approved/baselinePaths
+ * = 批准态与冻结基线（approve_plan 冻结后同键补发一次）。
+ */
 export type PlanUpdateEvent = {
   sessionId: string;
   items: PlanItem[];
+  paths: string[];
+  approved: boolean;
+  baselinePaths: string[];
 };
 
 /** run:suggestions 事件载荷：run 结束后给出的建议提示词（输入框 ghost 预填）。 */

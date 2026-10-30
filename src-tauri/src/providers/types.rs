@@ -181,6 +181,13 @@ pub struct ApprovalConfig {
     /// plan 档不豁免）。
     #[serde(default)]
     pub command_allowlist: Vec<String>,
+    /// 严格计划硬门（FR-06-02，§8.6，25 号票实装）：true 且无已批准计划
+    /// 时 FileWrite/Network 工具直接 E_PLAN_REQUIRED 硬拦（不挂起）。默认
+    /// 关（默认"有计划即守门"：无计划时不阻写，PRD 定稿策略）；设置页
+    /// 安全页「严格计划模式」开关承载。旧配置无该字段时 serde default
+    /// 回填 false（零迁移）。
+    #[serde(default)]
+    pub require_plan: bool,
 }
 
 /// 界面主题。
@@ -599,7 +606,8 @@ fn default_log_level() -> LogLevel {
 }
 
 // ApprovalConfig 的缺省值：审批开、不自动确认、会话记忆与白名单启用、
-// 白名单为空（最保守；23 号票四开关缺省口径）。
+// 白名单为空、严格计划硬门关（最保守；23 号票四开关 + 25 号票 requirePlan
+// 缺省口径）。
 impl Default for ApprovalConfig {
     fn default() -> Self {
         Self {
@@ -608,6 +616,7 @@ impl Default for ApprovalConfig {
             session_memory_enabled: true,
             allowlist_enabled: true,
             command_allowlist: Vec::new(),
+            require_plan: false,
         }
     }
 }

@@ -103,6 +103,12 @@ pub struct AppState {
     /// 共用，键含会话/作用域/资源名/指纹）。不持久化——重启失效、新会话
     /// 不延续、备份恢复天然不复活（Q41）。
     pub session_trust: crate::knowledge::session_trust::SessionTrustSet,
+    /// 会话级计划基线扩展桶（25 号票，§8.6 范围门「本会话始终允许」）：
+    /// 用户授权的计划外写入目录（canonical；目录含子路径），同会话主 run
+    /// 与子代理共用。进程内单例、不持久化——应用退出即清、会话删除随清
+    /// （`forget`）、备份恢复经 `clear_all` 失效（Q41 精神：明确授权不跨
+    /// 生命周期；恢复流程接线由 33 号票负责）。
+    pub plan_scopes: crate::backend::gate::PlanScopeMemory,
 }
 
 impl AppState {
@@ -149,6 +155,7 @@ impl AppState {
             ledger: usage::UsageLedger::new(&data_dir),
             approval_memory: crate::backend::gate::ApprovalMemory::new(),
             session_trust: crate::knowledge::session_trust::SessionTrustSet::new(),
+            plan_scopes: crate::backend::gate::PlanScopeMemory::new(),
         }
     }
 
@@ -201,6 +208,7 @@ impl AppState {
             ledger: self.ledger.clone(),
             approval_memory: self.approval_memory.clone(),
             session_trust: self.session_trust.clone(),
+            plan_scopes: self.plan_scopes.clone(),
         }
     }
 

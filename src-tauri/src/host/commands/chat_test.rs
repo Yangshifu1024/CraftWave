@@ -14,6 +14,7 @@ fn pending(name: &str, args_json: &str) -> PendingCall {
         args_json: args_json.to_owned(),
         fence_reason: None,
         external_dir: None,
+        plan_scope: None,
     }
 }
 
@@ -28,6 +29,7 @@ fn write_payload_new_file_all_add() {
             r#"{"path":"src/new.rs","content":"fn main() {}\n"}"#,
         ),
         true,
+        None,
     );
     let AskPayload::Approval {
         title,
@@ -64,6 +66,7 @@ fn edit_payload_replacement_hunk_del_add() {
             r#"{"path":"a.txt","oldText":"旧一\n旧二","newText":"新一"}"#,
         ),
         true,
+        None,
     );
     let AskPayload::Approval { diff, .. } = payload else {
         panic!("应为 Approval")
@@ -87,6 +90,7 @@ fn command_payload_with_fence_reason() {
         args_json: r#"{"command":"echo hi > out.txt"}"#.to_owned(),
         fence_reason: Some("命令含写信号，需确认".to_owned()),
         external_dir: None,
+        plan_scope: None,
     };
     let AskPayload::Approval {
         title,
@@ -95,7 +99,7 @@ fn command_payload_with_fence_reason() {
         fence_reason,
         options,
         ..
-    } = build_approval_payload(&p, true)
+    } = build_approval_payload(&p, true, None)
     else {
         panic!("应为 Approval")
     };
@@ -109,7 +113,7 @@ fn command_payload_with_fence_reason() {
     assert_eq!(options[1].mode, Some(AskMode::AlwaysSession));
     assert_eq!(options[1].recommended, None, "非推荐项不参与自动确认");
     // ③ 关：不出该选项（M1 两项口径不变）
-    let AskPayload::Approval { options, .. } = build_approval_payload(&p, false) else {
+    let AskPayload::Approval { options, .. } = build_approval_payload(&p, false, None) else {
         panic!("应为 Approval")
     };
     assert_eq!(options.len(), 2, "③ 关闭时保持允许/拒绝两项");
@@ -145,4 +149,73 @@ fn suggest_context_prefers_last_assistant_text() {
 
     // 全空：空串（suggest 静默不发）
     assert_eq!(context_tail(&[]), "");
+}
+
+// ---- 计划范围卡载荷（25 号票，FR-06-03/§8.6）----
+
+/// 范围门挂起的载荷：title 固定「计划范围确认」、planScope 带计划外路径、
+/// fenceReason 带基线对照、选项固定三枚（允许一次 / 本会话始终允许 / 拒绝）
+/// 且无推荐项（不参与 autoConfirm 自动批准——计划范围须用户明确同意）。
+#[test]
+fn plan_scope_payload_three_options_without_recommended() {
+    let mut p = pending("write", r#"{"path":"src/b.rs","content":"x"}"#);
+    p.plan_scope = Some("src/b.rs".to_owned());
+    let AskPayload::Approval {
+        title,
+        plan_scope,
+        fence_reason,
+        options,
+        ..
+    } = build_approval_payload(&p, true, Some("src/a.rs、tests/"))
+    else {
+        panic!("范围门应为 Approval 形态")
+    };
+    assert_eq!(title, "计划范围确认");
+    assert_eq!(plan_scope.as_deref(), Some("src/b.rs"));
+    let reason = fence_reason.expect("带基线对照说明");
+    assert!(reason.contains("src/b.rs"), "含计划外路径：{reason}");
+    assert!(
+        reason.contains("src/a.rs、tests/"),
+        "含批准基线对照：{reason}"
+    );
+    assert_eq!(options.len(), 3, "三选项");
+    assert_eq!(options[0].id, "allow_once");
+    assert_eq!(options[1].id, "always_session");
+    assert_eq!(options[1].mode, Some(AskMode::AlwaysSession));
+    assert_eq!(options[2].id, "deny");
+    assert!(
+        options.iter().all(|o| o.recommended != Some(true)),
+        "无推荐项（不参与 autoConfirm）"
+    );
+    // 无对照基线（空范围批准后的首写询问）时 fenceReason 说明首写须确认
+    let AskPayload::Approval { fence_reason, .. } = build_approval_payload(&p, false, None) else {
+        panic!("应为 Approval 形态")
+    };
+    let reason = fence_reason.expect("仍带说明");
+    assert!(reason.contains("不在已批准计划的范围内"), "{reason}");
+}
+
+/// 范围门挂起的 command 调用：范围卡附命令行原文（用户需知道执行什么）。
+#[test]
+fn plan_scope_payload_carries_command_line() {
+    let mut p = pending("command", r#"{"command":"echo x > src/b.rs"}"#);
+    p.plan_scope = Some("src/b.rs".to_owned());
+    p.fence_reason = Some("命令含写目标，需确认".to_owned());
+    let AskPayload::Approval {
+        command,
+        fence_reason,
+        plan_scope,
+        ..
+    } = build_approval_payload(&p, true, None)
+    else {
+        panic!("应为 Approval 形态")
+    };
+    assert_eq!(plan_scope.as_deref(), Some("src/b.rs"));
+    assert_eq!(
+        command.as_deref(),
+        Some("echo x > src/b.rs"),
+        "附命令行原文"
+    );
+    let reason = fence_reason.expect("围栏原因一并附上");
+    assert!(reason.contains("写目标"), "吸收围栏原因：{reason}");
 }

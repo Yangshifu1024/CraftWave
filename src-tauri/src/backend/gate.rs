@@ -14,17 +14,26 @@
 //!    状态）→ E_INTERNAL_STATE 硬拦——置于全部放行路径之前，任何权限档、
 //!    白名单、自动确认、审批总开关与已批准签名都不豁免（禁区调用不可能
 //!    曾获放行，签名放行前再查一道是防御纵深）；
+//! 0.5. **外部目录授权（24 号票，FR-05-12/§9.9）**：文件类工具访问会话
+//!    roots（含已授权目录）外路径 → 挂起「始终允许该目录」询问（授权目标
+//!    属整体放行禁区 → E_INVALID_ARG 硬拦）；置于签名放行之前——恢复重放
+//!    时授权已并入判定集，签名放行语义不变；
 //! 1. 已批准签名：本 run 内同"工具名 + 参数 JSON"的调用此前已批准，或该
 //!    签名在本会话「始终允许」桶内（23 号票 always_session 升域，跨 run
 //!    生效）→ 放行（挂起恢复后主循环会原样重放挂起批，按签名放行避免
 //!    再次挂起死循环）；
 //! 2. 围栏（command 专属）：Block → E_FENCE_BLOCKED 硬拦（任何档位不豁
-//!    免，白名单也不豁免黑名单）；Confirm → 挂起（围栏原因随载荷展示给
-//!    用户）——例外两条：命令命中 commandAllowlist 且非 plan 档时免除
-//!    （23 号票白名单消费）；审批总开关关闭且非 plan 档时不弹审批直接
-//!    放行（① 开关，plan 档的只读围栏是档位语义不属审批弹窗，保留）；
-//! 3. 计划门（写文件/联网类）：已批准计划存在且条目全部完成仍要写 →
-//!    E_PLAN_STALE 硬拦回喂（提示模型先更新计划）；
+//!    免，白名单也不豁免黑名单）先于一切挂起；Confirm → 记为待决——例外
+//!    两条：命令命中 commandAllowlist 且非 plan 档时免除（23 号票白名单
+//!    消费）；审批总开关关闭且非 plan 档时免除（① 开关，plan 档的只读
+//!    围栏是档位语义不属审批弹窗，保留）；
+//! 3. **计划三门（25 号票，§8.6，内部顺序固定）**：硬门（approval.
+//!    requirePlan 开启且无已批准计划 → E_PLAN_REQUIRED 硬拦，默认关）→
+//!    过期门（已批准计划全部 completed 仍写 → E_PLAN_STALE，M1 既有）→
+//!    **范围门**（FileWrite 路径与 command AST 写目标在批准基线外 → 挂起
+//!    范围询问：允许/本会话始终允许（父目录入基线）/拒绝）——范围门命中
+//!    时待决的围栏 Confirm 一并附上（一次交互覆盖本次调用全部审批，恢复
+//!    重放按签名放行）；范围门未命中才挂围栏卡（步骤 2 待决落点）；
 //! 4. 权限矩阵（§8.5 的单一实现 `decide_gate`）：Filtered → E_TOOL_BLOCKED
 //!    硬拦；NeedsApproval → 挂起（白名单命中或审批总开关关闭且非 plan 档
 //!    时放行，豁免口径同上）；
@@ -50,7 +59,7 @@ use crate::safety::tier::{Capability, GateDecision, PermissionTier, decide_gate}
 use crate::tools::plan::PlanState;
 use crate::tools::{ToolOrigin, ToolSpec, lookup_spec};
 use crate::util::errors::{
-    E_FENCE_BLOCKED, E_INTERNAL_STATE, E_INVALID_ARG, E_PLAN_STALE, E_TOOL_BLOCKED,
+    E_FENCE_BLOCKED, E_INTERNAL_STATE, E_INVALID_ARG, E_PLAN_REQUIRED, E_PLAN_STALE, E_TOOL_BLOCKED,
 };
 
 use super::run_loop::{GateVerdict, ToolGate};
@@ -74,6 +83,10 @@ pub struct ApprovalPolicy {
     pub allowlist_enabled: bool,
     /// 命令白名单条目快照（匹配语义见 [`allowlist_hit`]）。
     pub command_allowlist: Vec<String>,
+    /// 严格计划硬门（25 号票 FR-06-02，§8.6；§3.2 approval.requirePlan，
+    /// 缺省 false）：true 且无已批准计划时 FileWrite/Network 直接
+    /// E_PLAN_REQUIRED 硬拦（不挂起）。缺省关保证既有装配零行为漂移。
+    pub require_plan: bool,
 }
 
 impl Default for ApprovalPolicy {
@@ -82,6 +95,7 @@ impl Default for ApprovalPolicy {
             enabled: true,
             allowlist_enabled: false,
             command_allowlist: Vec::new(),
+            require_plan: false,
         }
     }
 }
@@ -180,6 +194,88 @@ impl SessionApprovalBucket {
     }
 }
 
+/// 会话级计划基线扩展桶（25 号票，§8.6 范围门"本会话始终允许"）：全部
+/// 活跃会话的用户授权目录范围表（canonical 绝对路径；目录范围含其子路径）。
+/// 进程内单例（AppState 持有，Arc 共享），**不持久化**——应用退出即清、
+/// 恢复旧备份不复活（Q41 精神：明确授权不跨生命周期）、会话删除随清
+/// （`forget`）。同一会话的主 run 与子代理共享（范围门判定与 23 号票
+/// 审批记忆同桶语义）。
+///
+/// 批准冻结基线（PlanState.baselinePaths）挂在 run 的共享计划状态上；本桶
+/// 承载 always_session 的**跨 run 会话级扩展**——判定时两者取并集。
+#[derive(Debug, Default, Clone)]
+pub struct PlanScopeMemory {
+    sessions: Arc<Mutex<HashMap<String, ScopeList>>>,
+}
+
+/// 单会话授权目录列表的共享句柄（桶表条目；Arc 同源——`push` 事后登记
+/// 对已取出的句柄即时可见）。
+type ScopeList = Arc<Mutex<Vec<PathBuf>>>;
+
+impl PlanScopeMemory {
+    /// 空表构造。
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 取某会话的授权范围桶（无则建空桶）。句柄与表内条目共享同一集合。
+    pub fn bucket(&self, session_id: &str) -> SessionPlanScope {
+        let entry = self
+            .sessions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .entry(session_id.to_owned())
+            .or_default()
+            .clone();
+        SessionPlanScope { dirs: entry }
+    }
+
+    /// 会话删除/关闭即清（Q41：授权不跨会话生命周期）。
+    pub fn forget(&self, session_id: &str) {
+        self.sessions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(session_id);
+    }
+
+    /// 全部清空（33 号票备份恢复流程的接线面：恢复后一律重新确认，Q41）。
+    pub fn clear_all(&self) {
+        self.sessions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+    }
+}
+
+/// 单会话计划授权范围桶（会话级扩展的判定面：`paths` 出快照、`push`
+/// 授权登记）。克隆共享同一集合。
+#[derive(Debug, Clone, Default)]
+pub struct SessionPlanScope {
+    dirs: ScopeList,
+}
+
+impl SessionPlanScope {
+    /// 当前授权目录快照（判定用；锁被污染时恢复使用——纯内存集合）。
+    pub fn paths(&self) -> Vec<PathBuf> {
+        self.dirs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// 登记一条授权目录（幂等不重复；恢复循环在范围门 always_session
+    /// 应答后经 gate 热追加入口间接调用）。
+    fn push(&self, dir: PathBuf) {
+        let mut dirs = self
+            .dirs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !dirs.contains(&dir) {
+            dirs.push(dir);
+        }
+    }
+}
+
 /// 命令白名单的词序列前缀匹配（23 号票字段级定义，回写 §3.2 approval
 /// 注记）：条目与命令都按空白切词，条目词序列是命令词序列的前缀（逐词
 /// 相等）即命中。`git status` 匹配 `git status --short`，不匹配
@@ -274,6 +370,12 @@ pub struct ApprovalGate {
     /// 文件系统根/家目录/`~/.craftwave`；None = 未装配，外部挂起不查禁区，
     /// 禁区校验由 allow_external_dir 命令面兜底）。
     data_dir: Option<PathBuf>,
+    /// 会话级计划基线扩展（25 号票，§8.6 范围门 always_session）：本 run
+    /// 内热追加面（恢复循环授权后经 [`Self::grant_plan_scope`] 并入，重放
+    /// 调用放行）+ 跨 run 会话桶（SessionPlanScope，None = 未装配）。
+    /// 判定时与批准冻结基线（PlanState.baselinePaths）取并集。
+    plan_scope_granted: Mutex<Vec<PathBuf>>,
+    plan_scope_memory: Option<SessionPlanScope>,
 }
 
 /// ApprovalGate 的登记与辅助判定。
@@ -293,6 +395,8 @@ impl ApprovalGate {
             policy: ApprovalPolicy::default(),
             external_dirs: Mutex::new(Vec::new()),
             data_dir: None,
+            plan_scope_granted: Mutex::new(Vec::new()),
+            plan_scope_memory: None,
         }
     }
 
@@ -349,6 +453,32 @@ impl ApprovalGate {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if !dirs.contains(&dir) {
             dirs.push(dir);
+        }
+    }
+
+    /// 装配会话级计划基线扩展桶（25 号票，§8.6 范围门）：同会话主 run 与
+    /// 子代理传同一桶（[`PlanScopeMemory::bucket`]）。None = 未装配（仅
+    /// 批准冻结基线参与判定——headless 测试缺省面）。
+    pub fn with_plan_scope_memory(mut self, memory: SessionPlanScope) -> Self {
+        self.plan_scope_memory = Some(memory);
+        self
+    }
+
+    /// 热追加一条会话内计划范围授权（恢复循环在范围门询问 always_session
+    /// 应答后调用）：同时写本 run 热追加集（重放调用放行）与会话桶（跨
+    /// run 生效，未装配则只落本 run）。
+    pub fn grant_plan_scope(&self, dir: PathBuf) {
+        {
+            let mut dirs = self
+                .plan_scope_granted
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if !dirs.contains(&dir) {
+                dirs.push(dir.clone());
+            }
+        }
+        if let Some(memory) = &self.plan_scope_memory {
+            memory.push(dir);
         }
     }
 
@@ -601,6 +731,113 @@ impl ApprovalGate {
     fn exemptions_apply(&self) -> bool {
         self.tier != PermissionTier::Plan
     }
+
+    /// 计划是否已批准（§8.6 范围门/严格硬门的共同前提：无批准计划不守门
+    /// ——FR-06-02 默认"有计划即守门"，硬门关闭时未批准计划不阻写）。
+    fn plan_approved(&self) -> bool {
+        self.plan
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .is_some_and(PlanState::is_approved)
+    }
+
+    /// 范围门基线的全量归一集合（§8.6，25 号票）：批准冻结基线
+    /// （PlanState.baselinePaths 原始声明按项目主目录展开）∪ 本 run 热追加
+    /// 授权（grant_plan_scope）∪ 会话级授权桶（跨 run）。条目归一失败
+    /// （畸形路径）跳过——该条目不提供保护，不影响其余条目判定。
+    fn plan_scope_baseline(&self, base: &Path) -> Vec<PathBuf> {
+        let declared: Vec<String> = self
+            .plan
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .map(|s| s.baseline_paths.clone())
+            .unwrap_or_default();
+        let mut entries: Vec<PathBuf> = declared
+            .iter()
+            .filter_map(|raw| resolve_scope_path(raw, base))
+            .collect();
+        entries.extend(
+            self.plan_scope_granted
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .iter()
+                .cloned(),
+        );
+        if let Some(memory) = &self.plan_scope_memory {
+            entries.extend(memory.paths());
+        }
+        entries
+    }
+
+    /// 范围门命中判定（25 号票，FR-06-03/§8.6）：已批准计划存在时，
+    /// FileWrite 工具（write/edit 的 `path`）与 command 的 AST 写目标
+    /// （22 号票 WriteTarget 同判；`TargetPath::Opaque` 值未知不猜——交
+    /// 围栏字面量掩码保守 Confirm，不在范围门判定）的目标若不在基线内
+    /// → 返回 Some(计划外路径展示文本)。基线为空 = 首写询问（§8.6：空
+    /// 范围不豁免）。未装配 workspace（headless 缺省）/未批准计划/参数无
+    /// 路径/归一失败（交执行层回喂参数错误）→ None。
+    fn plan_scope_hit(
+        &self,
+        name: &str,
+        args_json: &str,
+        spec: Option<&ToolSpec>,
+    ) -> Option<String> {
+        if !self.plan_approved() {
+            return None;
+        }
+        let ws = self.workspace.as_ref()?;
+        let base = &ws.base;
+        // 目标收集：(展示文本, 词法绝对路径)。write/edit 取 path 参数；
+        // command 取 AST 字面量写目标（Opaque 不判）。
+        let targets: Vec<(String, PathBuf)> = if name == "command" {
+            let command = Self::command_of(args_json)?;
+            let ast::ParsedCommand::Ok { targets, .. } =
+                ast::parse_command(ast::Shell::host_default(), &command)
+            else {
+                // 解析失败 → 无目标可判（fail-closed 面由围栏 Confirm 承接）。
+                return None;
+            };
+            let cwd_base = self.judge_base(args_json);
+            targets
+                .iter()
+                .filter_map(|t| {
+                    let ast::TargetPath::Literal(literal) = &t.path else {
+                        return None;
+                    };
+                    Some((t.raw.clone(), lexical_abs(literal, &cwd_base)))
+                })
+                .collect()
+        } else {
+            let is_file_write = spec.is_some_and(|s| {
+                s.origin == ToolOrigin::Static && s.capability == Capability::FileWrite
+            });
+            if !is_file_write {
+                return None;
+            }
+            let path = serde_json::from_str::<serde_json::Value>(args_json)
+                .ok()?
+                .get("path")?
+                .as_str()?
+                .to_owned();
+            vec![(path.clone(), lexical_abs(&path, base))]
+        };
+        let baseline = self.plan_scope_baseline(base);
+        for (display, lexical) in targets {
+            // 归一失败（路径畸形/悬挂过深）：交执行层回喂参数错误，不挂起。
+            let Ok(resolved) = canonicalize_best_effort(&lexical) else {
+                continue;
+            };
+            let inside = baseline
+                .iter()
+                .any(|b| resolved == *b || resolved.starts_with(b));
+            if !inside {
+                return Some(display);
+            }
+        }
+        None
+    }
 }
 
 /// 词法绝对化：绝对路径原样；相对路径基于给定基准展开（command 的 cwd
@@ -612,6 +849,13 @@ fn lexical_abs(literal: &str, base: &Path) -> PathBuf {
     } else {
         base.join(p)
     }
+}
+
+/// 范围门路径归一（§8.6，25 号票）：词法绝对化后经 canonicalize_best_effort
+/// 解析（symlink 落点 / 不存在路径归到最长存在前缀）——与 safe_join 同款
+/// 归一，保证基线条目与写目标在同一比较域。归一失败（畸形）返回 None。
+fn resolve_scope_path(raw: &str, base: &Path) -> Option<PathBuf> {
+    canonicalize_best_effort(&lexical_abs(raw, base)).ok()
 }
 
 /// 审批门策略实现：按文件头列出的顺序判定（首个命中即出结论）。
@@ -647,6 +891,7 @@ impl ToolGate for ApprovalGate {
             return GateVerdict::Suspend {
                 fence_reason: None,
                 external_dir: Some(target.to_string_lossy().into_owned()),
+                plan_scope: None,
             };
         }
         let Some(spec) = spec else {
@@ -670,10 +915,13 @@ impl ToolGate for ApprovalGate {
         // 白名单判定一次（围栏 Confirm 与矩阵 NeedsApproval 两处消费）
         let whitelisted = name == "command"
             && Self::command_of(args_json).is_some_and(|c| self.command_whitelisted(&c));
-        // (2) 围栏（command 专属，§5.4 ③；22 号票起 AST 写目标分析：
-        // Block 硬拦 / Confirm 挂起并带具体原因 / Allow 落矩阵合成）。
-        // 黑名单 Block 永不豁免（§8.5 灾难级铁律，白名单也不例外）；
-        // Confirm 在白名单命中（非 plan 档）时免除（23 号票）。
+        // (2) 围栏（command 专属，§5.4 ③；22 号票起 AST 写目标分析）：
+        // Block 硬拦（灾难级铁律，先于一切挂起）；Confirm → 记为待决——
+        // 25 号票范围门命中时优先弹范围卡（一次交互覆盖本次调用的全部
+        // 审批，恢复重放按签名放行），范围卡同时附带围栏原因；范围门未
+        // 命中才挂围栏卡（原行为零漂移）。Confirm 在白名单命中（非 plan
+        // 档）或审批总开关关闭（非 plan 档）时免除。
+        let mut fence_confirm: Option<String> = None;
         if name == "command"
             && let Some(command) = Self::command_of(args_json)
         {
@@ -688,26 +936,37 @@ impl ToolGate for ApprovalGate {
                     };
                 }
                 FenceVerdict::Confirm => {
-                    // 免除围栏 Confirm 挂起的两个条件（均限非 plan 档）：
-                    // 白名单命中（④ commandAllowlist）/ 审批总开关关闭（①）。
-                    // 免除后继续走计划门、MCP 分支与矩阵合成，不直接放行。
-                    if self.exemptions_apply() && (whitelisted || !self.policy.enabled) {
-                        // 落入 (3)(4)(5)
-                    } else {
-                        return GateVerdict::Suspend {
-                            fence_reason: Some(
-                                outcome
-                                    .reason
-                                    .unwrap_or_else(|| "命令含写目标，需确认".to_owned()),
-                            ),
-                            external_dir: None,
-                        };
+                    if !(self.exemptions_apply() && (whitelisted || !self.policy.enabled)) {
+                        fence_confirm = Some(
+                            outcome
+                                .reason
+                                .unwrap_or_else(|| "命令含写目标，需确认".to_owned()),
+                        );
                     }
                 }
                 FenceVerdict::Allow => {}
             }
         }
-        // (3) 计划门（§8.6：FileWrite/Network 执行前校验）
+        // (3) 计划硬门（25 号票，FR-06-02 严格模式，§8.6）：开关开启且无
+        // 已批准计划 → FileWrite/Network 直接硬拦回喂（提示先建计划并等
+        // 用户批准）。计划三门内部顺序固定：硬门 → E_PLAN_STALE → 范围门
+        // （票面口径），先于围栏 Confirm 挂起之外的矩阵/MCP 判定。
+        if self.policy.require_plan
+            && !self.plan_approved()
+            && matches!(
+                spec.capability,
+                crate::safety::tier::Capability::FileWrite
+                    | crate::safety::tier::Capability::Network
+            )
+        {
+            return GateVerdict::Blocked {
+                code: E_PLAN_REQUIRED,
+                message: "严格计划模式已开启：当前没有已批准的计划，写入被拒绝。\
+                          请先用 plan 工具建立计划（paths 声明写范围），等待用户批准后再执行"
+                    .to_owned(),
+            };
+        }
+        // (3.5) 计划过期门（§8.6：FileWrite/Network 执行前校验，M1 既有）
         if matches!(
             spec.capability,
             crate::safety::tier::Capability::FileWrite | crate::safety::tier::Capability::Network
@@ -716,6 +975,25 @@ impl ToolGate for ApprovalGate {
             return GateVerdict::Blocked {
                 code: E_PLAN_STALE,
                 message: "已批准的计划条目全部完成，继续写入前请先用 plan 工具更新计划".to_owned(),
+            };
+        }
+        // (3.6) 计划范围门（25 号票，FR-06-03/§8.6）：已批准计划基线外的
+        // 写目标 → 挂起询问（允许 / 本会话始终允许（父目录入基线）/ 拒绝）。
+        // 判定顺序在过期门之后（先判过期再判范围，票面口径）；命中时把
+        // 待决的围栏 Confirm 原因一并附上（fenceReason 字段）。
+        if let Some(outside) = self.plan_scope_hit(name, args_json, Some(&spec)) {
+            return GateVerdict::Suspend {
+                fence_reason: fence_confirm,
+                external_dir: None,
+                plan_scope: Some(outside),
+            };
+        }
+        // (3.7) 围栏 Confirm 待决（范围门未命中）：挂围栏卡（原行为）。
+        if let Some(reason) = fence_confirm {
+            return GateVerdict::Suspend {
+                fence_reason: Some(reason),
+                external_dir: None,
+                plan_scope: None,
             };
         }
         // (4) MCP 动态工具分支（08 号票，§9.7 Q44）：未声明 read_only 且
@@ -739,6 +1017,7 @@ impl ToolGate for ApprovalGate {
             return GateVerdict::Suspend {
                 fence_reason: None,
                 external_dir: None,
+                plan_scope: None,
             };
         }
         // (5) 权限矩阵（§8.5；plan 档 MCP 已被 filter_for_tier 全过滤，
@@ -756,6 +1035,7 @@ impl ToolGate for ApprovalGate {
                     GateVerdict::Suspend {
                         fence_reason: None,
                         external_dir: None,
+                        plan_scope: None,
                     }
                 }
             }

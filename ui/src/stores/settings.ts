@@ -27,6 +27,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     sessionMemoryEnabled: true,
     allowlistEnabled: true,
     commandAllowlist: [],
+    requirePlan: false,
   },
   ui: { language: "zh-CN", theme: "system" },
   log: { level: "info" },

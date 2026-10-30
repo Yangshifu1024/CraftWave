@@ -293,9 +293,18 @@ impl ToolsetExecutor {
         let plan_state = plan_state.get_or_insert_with(PlanState::default);
         match crate::tools::plan::apply(plan_state, &args) {
             Ok(items) => {
+                // plan:update 事件（§3.5，25 号票起全量计划态）：条目 + 写
+                // 范围声明 + 批准态与冻结基线——前端计划卡/Inspector 展示
+                // 基线标记与待批准范围的数据面。
                 env.events.emit(
                     keys::PLAN_UPDATE,
-                    serde_json::json!({ "sessionId": env.session_id, "items": items }),
+                    serde_json::json!({
+                        "sessionId": env.session_id,
+                        "items": items,
+                        "paths": plan_state.paths,
+                        "approved": plan_state.is_approved(),
+                        "baselinePaths": plan_state.baseline_paths,
+                    }),
                 );
                 let summary = format!(
                     "计划已更新（{} 项，{} 进行中）",

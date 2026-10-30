@@ -65,3 +65,7 @@ mod wire_test;
 #[cfg(test)]
 #[path = "web_gate_e2e_test.rs"]
 mod web_gate_e2e_test;
+
+#[cfg(test)]
+#[path = "plan_reminder_test.rs"]
+mod plan_reminder_test;

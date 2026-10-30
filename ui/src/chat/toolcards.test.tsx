@@ -7,6 +7,8 @@
 
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { EMPTY_PLAN_STATE, usePlanStateStore } from "@/chat/plan-state";
+import { SessionScopeContext } from "@/chat/session-scope";
 import {
   AskCard,
   CommandCard,
@@ -162,6 +164,63 @@ describe("工具卡渲染", () => {
     expect(screen.getByTestId("tool-card-c1").textContent).toContain("读配置");
     expect(screen.getByTestId("tool-card-c1").textContent).toContain("进行中");
     expect(screen.getByTestId("tool-card-c1").textContent).toContain("写总结");
+  });
+
+  it("plan：25 号票——范围声明展示与已批准基线标记（plan-state 同源）", () => {
+    // 预置所属会话的批准态：基线 2 条
+    usePlanStateStore.getState().applyUpdate("sess-p", {
+      items: [],
+      paths: ["src/a.rs"],
+      approved: true,
+      baselinePaths: ["src/a.rs", "tests/"],
+    });
+    render(
+      <SessionScopeContext.Provider value="sess-p">
+        <PlanCard
+          {...props({
+            action: "set",
+            items: [{ id: "p1", text: "写 a", status: "in_progress" }],
+            paths: ["src/a.rs", "tests/"],
+          })}
+        />
+        ,
+      </SessionScopeContext.Provider>,
+    );
+    expandCard();
+    const card = screen.getByTestId("tool-card-c1");
+    expect(card.textContent).toContain("已批准 · 基线 2 条");
+    expect(card.textContent).toContain("范围：src/a.rs、tests/");
+    // 缺桶（会话无计划态）：不展示基线标记
+    cleanup();
+    render(
+      <SessionScopeContext.Provider value="sess-none">
+        <PlanCard
+          {...props({
+            action: "set",
+            items: [{ id: "p1", text: "写 a", status: "in_progress" }],
+          })}
+        />
+      </SessionScopeContext.Provider>,
+    );
+    expect(screen.getByTestId("tool-card-c1").textContent).not.toContain("已批准");
+    usePlanStateStore.setState({ bySession: {} });
+  });
+
+  it("plan：已批准但未声明范围时提示首写确认", () => {
+    usePlanStateStore.getState().applyUpdate("sess-e", {
+      ...EMPTY_PLAN_STATE,
+      approved: true,
+    });
+    render(
+      <SessionScopeContext.Provider value="sess-e">
+        <PlanCard
+          {...props({ action: "set", items: [{ id: "p1", text: "任务", status: "pending" }] })}
+        />
+      </SessionScopeContext.Provider>,
+    );
+    expandCard();
+    expect(screen.getByTestId("plan-card-baseline").textContent).toContain("首次写入会请求确认");
+    usePlanStateStore.setState({ bySession: {} });
   });
 
   it("ask：极简状态卡（问题本体在 AskPanel）", () => {

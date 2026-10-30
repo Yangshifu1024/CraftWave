@@ -739,6 +739,7 @@ fn command_allowlist_consumption() {
         enabled: true,
         allowlist_enabled: true,
         command_allowlist: vec!["npm install".to_owned()],
+        require_plan: false,
     };
     // 命中：围栏写信号 Confirm 免除 + 矩阵 NeedsApproval 免除 → 放行
     let gate = ApprovalGate::new(PermissionTier::ConfirmEach, Arc::new(Mutex::new(None)))
@@ -767,6 +768,7 @@ fn command_allowlist_consumption() {
             enabled: true,
             allowlist_enabled: true,
             command_allowlist: vec!["rm -rf /tmp/x".to_owned()],
+            require_plan: false,
         });
     let verdict = gate_evil.judge("command", &command_args("rm -rf /tmp/x"));
     let GateVerdict::Blocked { code, .. } = &verdict else {
@@ -803,6 +805,7 @@ fn approval_switch_enabled_false_auto_allows() {
         enabled: false,
         allowlist_enabled: false,
         command_allowlist: Vec::new(),
+        require_plan: false,
     };
     let gate = ApprovalGate::new(PermissionTier::ConfirmEach, Arc::new(Mutex::new(None)))
         .with_policy(policy_off.clone());
@@ -838,6 +841,7 @@ fn approval_switch_enabled_false_auto_allows() {
         enabled: false,
         allowlist_enabled: true,
         command_allowlist: vec![],
+        require_plan: false,
     });
     let args = serde_json::json!({
         "command": format!("echo x > {}", data.join("config.json").display())
@@ -1029,4 +1033,407 @@ fn batch_read_multiple_external_paths_ask_one_at_a_time() {
         gate.judge("batch_read", &args),
         GateVerdict::Allow
     ));
+}
+
+// ---- 计划范围门与硬门（25 号票，FR-06-02/03/§8.6）----
+
+use crate::backend::gate::{PlanScopeMemory, SessionPlanScope};
+use crate::storage::entries::PlanItem as PlanItemEntry;
+
+/// 造一个共享计划状态并批准（基线 = paths 参数；条目一个 in_progress，
+/// 不过期——E_PLAN_STALE 不触发的共同前提）。
+fn approved_plan(baseline: &[&str]) -> Arc<Mutex<Option<PlanState>>> {
+    let mut state = PlanState {
+        items: vec![PlanItemEntry {
+            id: "p1".to_owned(),
+            text: "任务".to_owned(),
+            status: PlanItemStatus::InProgress,
+        }],
+        paths: baseline.iter().map(|p| p.to_string()).collect(),
+        ..PlanState::default()
+    };
+    state.approve(1000);
+    Arc::new(Mutex::new(Some(state)))
+}
+
+/// 范围门装配：full_access + workspace（临时项目目录 canonical）+ 已批准
+/// 计划（基线由用例给）。返回门与项目根绝对路径。
+fn scoped_gate(baseline: &[&str]) -> (ApprovalGate, std::path::PathBuf, tempfile::TempDir) {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let project_root = dir.path().join("project");
+    std::fs::create_dir_all(&project_root).expect("建项目根");
+    let project = std::fs::canonicalize(&project_root).expect("canonicalize");
+    let gate = ApprovalGate::new(PermissionTier::FullAccess, approved_plan(baseline))
+        .with_workspace(crate::backend::gate::GateWorkspace {
+            roots: vec![project.clone()],
+            base: project.clone(),
+        });
+    (gate, project, dir)
+}
+
+/// 场景链路：批准具体文件基线 → 范围外写挂范围卡（plan_scope 带计划外
+/// 路径）→ 基线内写不触发范围门（full_access 落矩阵放行）。
+#[test]
+fn plan_scope_outside_suspends_inside_passes() {
+    let (gate, project, _keep) = scoped_gate(&["src/a.rs"]);
+    // 范围外：写 src/b.rs → 范围门挂起
+    let verdict = gate.judge(
+        "write",
+        &serde_json::json!({"path": "src/b.rs", "content": "x"}).to_string(),
+    );
+    let GateVerdict::Suspend {
+        fence_reason,
+        external_dir,
+        plan_scope,
+    } = &verdict
+    else {
+        panic!("范围外写应挂范围卡：{verdict:?}")
+    };
+    assert_eq!(plan_scope.as_deref(), Some("src/b.rs"), "载荷带计划外路径");
+    assert!(external_dir.is_none(), "与外部目录授权互斥");
+    assert!(fence_reason.is_none(), "纯范围卡无围栏原因");
+    // 范围内：写基线文件本身 → 不触发范围门
+    let verdict = gate.judge(
+        "write",
+        &serde_json::json!({"path": "src/a.rs", "content": "x"}).to_string(),
+    );
+    assert!(
+        matches!(verdict, GateVerdict::Allow),
+        "基线内写放行（full_access）：{verdict:?}"
+    );
+    // 目录子路径不因文件基线免问：src/a.rs 基线不含 src/sub/c.rs
+    let verdict = gate.judge(
+        "write",
+        &serde_json::json!({"path": "src/sub/c.rs", "content": "x"}).to_string(),
+    );
+    let GateVerdict::Suspend { plan_scope, .. } = &verdict else {
+        panic!("文件基线不含子路径授权：{verdict:?}")
+    };
+    assert_eq!(plan_scope.as_deref(), Some("src/sub/c.rs"));
+    let _ = project;
+}
+
+/// 目录基线含其子路径（写基线目录下任意深度的文件免问）；文件范围不自动
+/// 扩成顶层目录（同文件基线用例的对照面）。
+#[test]
+fn plan_scope_directory_baseline_covers_children() {
+    let (gate, _project, _keep) = scoped_gate(&["src"]);
+    for path in ["src/main.rs", "src/deep/nested/x.rs"] {
+        let verdict = gate.judge(
+            "write",
+            &serde_json::json!({"path": path, "content": "x"}).to_string(),
+        );
+        assert!(
+            matches!(verdict, GateVerdict::Allow),
+            "目录基线内写 {path} 应放行：{verdict:?}"
+        );
+    }
+    // 目录基线外的兄弟路径仍询问
+    let verdict = gate.judge(
+        "write",
+        &serde_json::json!({"path": "docs/readme.md", "content": "x"}).to_string(),
+    );
+    let GateVerdict::Suspend { plan_scope, .. } = &verdict else {
+        panic!("目录基线外写应询问：{verdict:?}")
+    };
+    assert_eq!(plan_scope.as_deref(), Some("docs/readme.md"));
+}
+
+/// 已批准但范围为空：首次写入也须确认（§8.6 空范围不豁免）。
+#[test]
+fn plan_scope_empty_baseline_first_write_suspends() {
+    let (gate, _project, _keep) = scoped_gate(&[]);
+    let verdict = gate.judge(
+        "write",
+        &serde_json::json!({"path": "notes.md", "content": "x"}).to_string(),
+    );
+    let GateVerdict::Suspend { plan_scope, .. } = &verdict else {
+        panic!("空基线首写应询问：{verdict:?}")
+    };
+    assert_eq!(plan_scope.as_deref(), Some("notes.md"));
+}
+
+/// 无已批准计划不守门（FR-06-02 默认"有计划即守门"——硬门关闭时未批准
+/// 计划的写不因范围门询问）。
+#[test]
+fn plan_scope_requires_approved_plan() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let project_root = dir.path().join("project");
+    std::fs::create_dir_all(&project_root).expect("建项目根");
+    let project = std::fs::canonicalize(&project_root).expect("canonicalize");
+    let gate = ApprovalGate::new(PermissionTier::FullAccess, Arc::new(Mutex::new(None)))
+        .with_workspace(crate::backend::gate::GateWorkspace {
+            roots: vec![project.clone()],
+            base: project.clone(),
+        });
+    let verdict = gate.judge(
+        "write",
+        &serde_json::json!({"path": "anywhere.rs", "content": "x"}).to_string(),
+    );
+    assert!(
+        matches!(verdict, GateVerdict::Allow),
+        "无批准计划不触发范围门：{verdict:?}"
+    );
+}
+
+/// E_PLAN_STALE 优先于范围门：计划全部完成后范围外写 → 过期硬拦（非
+/// 范围卡挂起），M1 行为零回归。
+#[test]
+fn plan_stale_precedes_scope_gate() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let project_root = dir.path().join("project");
+    std::fs::create_dir_all(&project_root).expect("建项目根");
+    let project = std::fs::canonicalize(&project_root).expect("canonicalize");
+    let mut state = PlanState {
+        items: vec![PlanItemEntry {
+            id: "p1".to_owned(),
+            text: "任务".to_owned(),
+            status: PlanItemStatus::Completed,
+        }],
+        paths: vec!["src/a.rs".to_owned()],
+        ..PlanState::default()
+    };
+    state.approve(1000);
+    let gate = ApprovalGate::new(
+        PermissionTier::FullAccess,
+        Arc::new(Mutex::new(Some(state))),
+    )
+    .with_workspace(crate::backend::gate::GateWorkspace {
+        roots: vec![project.clone()],
+        base: project.clone(),
+    });
+    let verdict = gate.judge(
+        "write",
+        &serde_json::json!({"path": "src/outside.rs", "content": "x"}).to_string(),
+    );
+    let GateVerdict::Blocked { code, .. } = &verdict else {
+        panic!("过期优先：应为 E_PLAN_STALE 硬拦：{verdict:?}")
+    };
+    assert_eq!(*code, "E_PLAN_STALE");
+}
+
+/// command 的写目标走 AST WriteTarget 同判（22 号票接缝）：基线外重定向
+/// → 范围卡；词法越界的基线外重定向（围栏 Confirm 待决）→ 范围卡一并
+/// 吸收围栏原因（fenceReason 同时带两路信息，一次交互覆盖本次调用）；
+/// 基线内重定向 → 围栏 Confirm 原卡（plan_scope None）；Opaque 不判范围。
+#[test]
+fn plan_scope_command_write_targets_same_judgement() {
+    let (gate, project, _keep) = scoped_gate(&["src/a.rs"]);
+    // 基线外重定向（roots 内）：范围门命中、围栏四象限 Allow → 纯范围卡
+    let verdict = gate.judge("command", &command_args("echo x > src/b.rs"));
+    let GateVerdict::Suspend {
+        fence_reason,
+        plan_scope,
+        ..
+    } = &verdict
+    else {
+        panic!("范围外命令写应挂范围卡：{verdict:?}")
+    };
+    assert_eq!(plan_scope.as_deref(), Some("src/b.rs"));
+    assert!(
+        fence_reason.is_none(),
+        "roots 内写围栏 Allow，范围卡无围栏原因：{fence_reason:?}"
+    );
+    // 词法越界的基线外重定向：围栏 Confirm 待决被范围卡吸收——plan_scope
+    // 与 fence_reason 同时带出（一次交互覆盖本次调用的全部审批）
+    let verdict = gate.judge("command", &command_args("echo x > ../outside/x.rs"));
+    let GateVerdict::Suspend {
+        fence_reason,
+        plan_scope,
+        ..
+    } = &verdict
+    else {
+        panic!("越界基线外命令写应挂范围卡：{verdict:?}")
+    };
+    assert_eq!(
+        plan_scope.as_deref(),
+        Some("../outside/x.rs"),
+        "范围门取 AST 字面量目标"
+    );
+    assert!(
+        fence_reason
+            .as_ref()
+            .is_some_and(|r| r.contains("越出工作区")),
+        "范围卡吸收围栏 Confirm 原因：{fence_reason:?}"
+    );
+    let _ = project;
+    // 基线内重定向（roots 内）：范围门不命中、围栏四象限 Allow →
+    // full_access 落矩阵放行（范围门不产生额外审批）
+    let verdict = gate.judge("command", &command_args("echo x > src/a.rs"));
+    assert!(
+        matches!(verdict, GateVerdict::Allow),
+        "基线内命令写放行：{verdict:?}"
+    );
+    // Opaque 写目标（$VAR）不做范围判定（值未知不猜）——落围栏掩码挂起
+    let verdict = gate.judge("command", &command_args("echo x > $OUT/target.rs"));
+    let GateVerdict::Suspend { plan_scope, .. } = &verdict else {
+        panic!("Opaque 应保守挂起：{verdict:?}")
+    };
+    assert!(plan_scope.is_none(), "Opaque 不判范围");
+}
+
+/// always_session 授权路径（恢复循环入口）：grant_plan_scope 把目标父目录
+/// 以目录范围并入后——目录内其他文件免问（本 run 热追加面）；未装配会话
+/// 桶时热追加仍生效（headless 面）。
+#[test]
+fn plan_scope_always_session_grant_covers_directory() {
+    let (gate, project, _keep) = scoped_gate(&["src/a.rs"]);
+    // 写 src/b.rs → 挂范围卡
+    let verdict = gate.judge(
+        "write",
+        &serde_json::json!({"path": "src/b.rs", "content": "x"}).to_string(),
+    );
+    assert!(matches!(
+        &verdict,
+        GateVerdict::Suspend {
+            plan_scope: Some(_),
+            ..
+        }
+    ));
+    // 用户「本会话始终允许」→ 宿主把目标父目录（src/）入基线扩展
+    //（恢复循环同款：目标词法路径按项目主目录展开后归一，取父目录）
+    let src = project.join("src");
+    std::fs::create_dir_all(&src).expect("建 src");
+    gate.grant_plan_scope(std::fs::canonicalize(&src).expect("canonicalize"));
+    // 目录内其他文件免问；目录外仍询问
+    let verdict = gate.judge(
+        "write",
+        &serde_json::json!({"path": "src/new.rs", "content": "x"}).to_string(),
+    );
+    assert!(
+        matches!(verdict, GateVerdict::Allow),
+        "授权目录内免问：{verdict:?}"
+    );
+    let verdict = gate.judge(
+        "write",
+        &serde_json::json!({"path": "docs/x.md", "content": "x"}).to_string(),
+    );
+    assert!(
+        matches!(
+            &verdict,
+            GateVerdict::Suspend {
+                plan_scope: Some(_),
+                ..
+            }
+        ),
+        "授权目录外仍询问：{verdict:?}"
+    );
+}
+
+/// 会话级授权桶（跨 run）：新 ApprovalGate 挂同一 SessionPlanScope——授权
+/// 跨 run 生效；其他会话的新桶不受影响。
+#[test]
+fn plan_scope_session_bucket_cross_run() {
+    let memory = PlanScopeMemory::new();
+    let bucket: SessionPlanScope = memory.bucket("sess-1");
+    let (gate, project, _keep) = scoped_gate(&["src/a.rs"]);
+    let gate = gate.with_plan_scope_memory(bucket.clone());
+    // run 1：授权 src/
+    let src = project.join("src");
+    std::fs::create_dir_all(&src).expect("建 src");
+    gate.grant_plan_scope(std::fs::canonicalize(&src).expect("canonicalize"));
+    // bucket 句柄同源：授权即时可见
+    assert_eq!(bucket.paths().len(), 1, "会话桶登记一条");
+    // run 2：新 gate 挂同桶 → 目录内写免问（跨 run 生效）
+    let gate2 = ApprovalGate::new(PermissionTier::FullAccess, approved_plan(&["src/a.rs"]))
+        .with_workspace(crate::backend::gate::GateWorkspace {
+            roots: vec![project.clone()],
+            base: project.clone(),
+        })
+        .with_plan_scope_memory(memory.bucket("sess-1"));
+    let verdict = gate2.judge(
+        "write",
+        &serde_json::json!({"path": "src/another.rs", "content": "x"}).to_string(),
+    );
+    assert!(
+        matches!(verdict, GateVerdict::Allow),
+        "跨 run 同桶生效：{verdict:?}"
+    );
+    // 其他会话的新桶为空：不延续
+    let gate3 = ApprovalGate::new(PermissionTier::FullAccess, approved_plan(&["src/a.rs"]))
+        .with_workspace(crate::backend::gate::GateWorkspace {
+            roots: vec![project.clone()],
+            base: project.clone(),
+        })
+        .with_plan_scope_memory(memory.bucket("sess-2"));
+    let verdict = gate3.judge(
+        "write",
+        &serde_json::json!({"path": "src/another.rs", "content": "x"}).to_string(),
+    );
+    assert!(
+        matches!(
+            &verdict,
+            GateVerdict::Suspend {
+                plan_scope: Some(_),
+                ..
+            }
+        ),
+        "其他会话不延续授权：{verdict:?}"
+    );
+    // forget 即清（表内映射移除——已取出的旧句柄不清空，与 ApprovalMemory
+    // 同语义：判定面从表内重新取桶即空）
+    memory.forget("sess-1");
+    assert!(
+        memory.bucket("sess-1").paths().is_empty(),
+        "会话删除随清（表内新取为空）"
+    );
+}
+
+/// 严格硬门（FR-06-02）：默认关（require_plan=false 无计划写放行）；开启
+/// 后无批准计划的写 E_PLAN_REQUIRED 硬拦；已批准计划不拦；只读工具不受
+/// 硬门影响。
+#[test]
+fn plan_hard_gate_default_off_and_on() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let project_root = dir.path().join("project");
+    std::fs::create_dir_all(&project_root).expect("建项目根");
+    let project = std::fs::canonicalize(&project_root).expect("canonicalize");
+    let make = |plan: Arc<Mutex<Option<PlanState>>>, require: bool| {
+        ApprovalGate::new(PermissionTier::FullAccess, plan)
+            .with_workspace(crate::backend::gate::GateWorkspace {
+                roots: vec![project.clone()],
+                base: project.clone(),
+            })
+            .with_policy(ApprovalPolicy {
+                require_plan: require,
+                ..ApprovalPolicy::default()
+            })
+    };
+    // 默认关：无计划写放行（FR-06-02 默认策略锚定）
+    let gate = make(Arc::new(Mutex::new(None)), false);
+    let verdict = gate.judge(
+        "write",
+        &serde_json::json!({"path": "a.rs", "content": "x"}).to_string(),
+    );
+    assert!(
+        matches!(verdict, GateVerdict::Allow),
+        "默认关不拦写：{verdict:?}"
+    );
+    // 开启 + 无已批准计划 → E_PLAN_REQUIRED 硬拦
+    let gate = make(Arc::new(Mutex::new(None)), true);
+    let verdict = gate.judge(
+        "write",
+        &serde_json::json!({"path": "a.rs", "content": "x"}).to_string(),
+    );
+    let GateVerdict::Blocked { code, .. } = &verdict else {
+        panic!("硬门开启无计划应硬拦：{verdict:?}")
+    };
+    assert_eq!(*code, "E_PLAN_REQUIRED");
+    // 开启 + 已批准计划（有过期门接管）→ 不落硬门
+    let gate = make(approved_plan(&[]), true);
+    let verdict = gate.judge(
+        "write",
+        &serde_json::json!({"path": "a.rs", "content": "x"}).to_string(),
+    );
+    assert!(
+        !matches!(&verdict, GateVerdict::Blocked { code, .. } if *code == "E_PLAN_REQUIRED"),
+        "已批准计划不触发硬门：{verdict:?}"
+    );
+    // 只读工具不受硬门影响
+    let gate = make(Arc::new(Mutex::new(None)), true);
+    let verdict = gate.judge("read", r#"{"path":"a.txt"}"#);
+    assert!(
+        matches!(verdict, GateVerdict::Allow),
+        "只读不受硬门：{verdict:?}"
+    );
 }

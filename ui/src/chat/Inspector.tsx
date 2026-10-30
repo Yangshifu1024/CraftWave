@@ -14,7 +14,7 @@
 import { useEffect, useState } from "react";
 import { CompactButton } from "@/chat/CompactionUI";
 import { ExternalGrantsPanel } from "@/chat/ExternalGrants";
-import { type PlanItem, usePlanStateStore } from "@/chat/plan-state";
+import { EMPTY_PLAN_STATE, type PlanItem, usePlanStateStore } from "@/chat/plan-state";
 import { QuotaPanel } from "@/chat/QuotaPanel";
 import { useRunMetricsStore, useSessionMetrics } from "@/chat/run-metrics";
 import { useSessionScope } from "@/chat/session-scope";
@@ -26,7 +26,7 @@ import {
   useUsageStats,
   useUsageStatsStore,
 } from "@/chat/usage-stats";
-import { getConfig, loadSubagentHistory, sessionUsage } from "@/ipc/client";
+import { approvePlan, getConfig, loadSubagentHistory, sessionUsage } from "@/ipc/client";
 import type { MessageEntry, ProviderConfig } from "@/ipc/types";
 import {
   markHistoryLoading,
@@ -67,11 +67,6 @@ function useContextWindow(): number {
   }, []);
   return window;
 }
-
-/** 空计划快照（模块级常量：selector 缺桶时返回稳定引用，防 React
- *  「getSnapshot should be cached」无限渲染循环——每次 `?? []` 都会新建
- *  数组引用，zustand 的 Object.is 比较恒不等）。 */
-const EMPTY_PLAN: PlanItem[] = [];
 
 /** 空子代理列表快照（同上：防 selector 引用抖动）。 */
 const EMPTY_SUBS: SubagentItem[] = [];
@@ -253,7 +248,8 @@ function UsageStatsSection() {
 function UsagePanel({ sessionId }: { sessionId: string }) {
   const { rate, turnUsage, sessionUsage, lastRun } = useSessionMetrics(sessionId);
   const contextWindow = useContextWindow();
-  const planItems = usePlanStateStore((s) => s.bySession[sessionId] ?? EMPTY_PLAN);
+  const plan = usePlanStateStore((s) => s.bySession[sessionId] ?? EMPTY_PLAN_STATE);
+  const planItems: PlanItem[] = plan.items;
   const legacy = useUsageStatsStore((s) => s.legacyTotals[sessionId]);
   const total = (u: { input: number; output: number }) => u.input + u.output;
   const hitRate =
@@ -268,12 +264,38 @@ function UsagePanel({ sessionId }: { sessionId: string }) {
     legacy !== undefined && total(sessionUsage) === 0 && legacy > 0 ? legacy : null;
   return (
     <div className="flex flex-col gap-3 overflow-y-auto p-3 text-ui-sm tabular-nums text-[var(--muted-foreground)]">
-      {/* 计划（B 组）：plan:update 驱动的当前计划（内存态，重启清空） */}
+      {/* 计划（B 组）：plan:update 驱动的当前计划（内存态，重启清空）。
+          25 号票：批准态标记（已批准 + 基线条目数）、写范围声明与批准按钮
+          （§8.6 批准基线冻结的用户面——批准动作经 #26c approve_plan）。 */}
       {planItems.length > 0 && (
         <section>
-          <h3 className="mb-1 text-ui-sm text-[var(--cw-dim)]">
-            计划（{planItems.filter((i) => i.status === "completed").length}/{planItems.length}）
+          <h3 className="mb-1 flex items-center gap-2 text-ui-sm text-[var(--cw-dim)]">
+            <span>
+              计划（{planItems.filter((i) => i.status === "completed").length}/{planItems.length}）
+            </span>
+            {plan.approved ? (
+              <span
+                data-testid="inspector-plan-baseline"
+                className="rounded bg-[var(--primary)]/10 px-1.5 py-0.5 text-[10px] text-[var(--primary)]"
+              >
+                已批准 · 基线 {plan.baselinePaths.length} 条
+              </span>
+            ) : (
+              <button
+                type="button"
+                data-testid="inspector-plan-approve"
+                onClick={() => void approvePlan(sessionId).catch(() => {})}
+                className="cursor-pointer rounded border border-[var(--border)] px-1.5 py-0.5 text-[10px] text-[var(--foreground)] hover:border-[var(--primary)]"
+              >
+                批准计划
+              </button>
+            )}
           </h3>
+          {plan.paths.length > 0 && (
+            <p data-testid="inspector-plan-paths" className="mb-1 break-all font-mono text-[10px]">
+              范围：{plan.paths.join("、")}
+            </p>
+          )}
           <ul className="space-y-0.5" data-testid="inspector-plan">
             {planItems.map((item) => (
               <li key={item.id} className="flex items-start gap-1.5">

@@ -42,6 +42,15 @@ fenceReason?: string,
  */
 previewHtml?: string, 
 /**
+ * 计划范围门的计划外写路径（FR-06-03，§8.6，25 号票）：Some =
+ * 范围门询问——选项三枚 allow_once/always_session/deny，
+ * always_session 把写目标父目录以目录范围并入会话基线扩展（§8.6；
+ * 会话级不持久化），allow_once 不扩大基线；载荷无推荐项，不参与
+ * autoConfirm 自动批准（计划范围须用户明确同意）。None = 非范围门
+ * 审批。
+ */
+planScope?: string, 
+/**
  * 用户可选的操作列表（如仅本次允许/拒绝）。
  */
 options: Array<AskOption>, } | { "kind": "mcpTrust", 

@@ -25,7 +25,7 @@
 //! 的 run 任务），由它发 runEnded(error) 终态帧——保证任何退出路径下前端
 //! 都能收到终态。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -149,13 +149,16 @@ pub enum GateVerdict {
     Allow,
     /// 挂起等待审批（`fence_reason`：围栏要求确认的写信号原因；`external_dir`：
     /// 外部目录授权目标（24 号票，§9.9——roots 外路径须"始终允许"授权该
-    /// 目录及子目录），构造询问载荷时用；与 fence_reason 互斥，最多一个 Some）。
+    /// 目录及子目录）；`plan_scope`：计划范围门的计划外写路径（25 号票，
+    /// §8.6——已批准计划基线外的写入须用户确认范围）。三者互斥，最多一个
+    /// Some）。
     Suspend {
         fence_reason: Option<String>,
         external_dir: Option<String>,
+        plan_scope: Option<String>,
     },
     /// 硬拦：错误结果帧回喂（code 取值为 E_FENCE_BLOCKED / E_TOOL_BLOCKED /
-    /// E_PLAN_STALE / E_INVALID_ARG 之一）。
+    /// E_PLAN_STALE / E_PLAN_REQUIRED / E_INVALID_ARG 之一）。
     Blocked { code: &'static str, message: String },
 }
 
@@ -185,7 +188,15 @@ pub struct PendingCall {
     /// 形态 externalDir，恢复循环在允许后调 allow_external_dir 并入会话
     /// roots 快照）；None = 普通审批/围栏挂起。
     pub external_dir: Option<String>,
+    /// 计划范围门的计划外写路径（25 号票，§8.6）：Some = 范围门挂起（载荷
+    /// 形态 approval.planScope，恢复循环在 allow_once 放行 / always_session
+    /// 把目标父目录并入会话基线扩展）；None = 非范围门挂起。
+    pub plan_scope: Option<String>,
 }
+
+/// 计划提醒的触发阈值（FR-06-04，附录 B 定 N=8，25 号票）：根会话每累计
+/// 8 次变更工具未伴随 plan:update → 下一拍请求注入一次性提醒。
+pub const PLAN_REMINDER_EVERY: u32 = 8;
 
 /// 跨挂起/恢复延续的驱动状态（恢复后不重发 runStarted、用量与工具计数
 /// 不回退、调用 id 映射同源）。
@@ -208,6 +219,15 @@ pub struct DriveState {
     /// 各信号纠偏水位。挂在驱动状态上跨审批挂起延续——恢复不丢历史、
     /// 重放批不重复计数（挂起时批内零执行，恢复后原样执行一次）。
     pub watchdog: RunWatchdog,
+    /// 计划提醒开关（FR-06-04，25 号票，§8.6）：仅根会话 run 装配为 true
+    ///（宿主 start_chat 构造初始 DriveState 时置位）；子代理 run 用缺省
+    /// Default（false）——"根会话"口径，子会话不计数不提醒。缺省 false
+    /// 保证既有测试装配（resume: None）零行为漂移。
+    pub plan_reminder_enabled: bool,
+    /// 自上次计划更新（plan 工具成功执行）以来的变更工具（FileWrite/
+    /// Network 能力）已执行次数：达 [`PLAN_REMINDER_EVERY`] 注入一次性提醒
+    /// 并清零；plan 成功更新即清零。挂在驱动状态上跨审批挂起延续。
+    pub plan_change_count: u32,
 }
 
 /// 主循环的退出态。
@@ -389,6 +409,11 @@ where
     //   推理增量不算——向用户可见的输出才算进展）。
     let mut pending_corrective: Option<String> = None;
     let mut turn_had_text = false;
+    // 计划提醒待注入（FR-06-04，25 号票，§8.6）：变更工具计数达阈值后置位，
+    // 下一拍 CallModel 以 hidden system 消息一次性注入（一次性 = take 后不
+    // 重发；不产生工具结果帧、不阻塞）。仅 plan_reminder_enabled 的根会话
+    // run 计数（子代理缺省关闭）。
+    let mut pending_plan_reminder: Option<String> = None;
 
     let mut run = run;
     loop {
@@ -435,6 +460,12 @@ where
                 // 提示追加在本拍请求 history 末尾（紧跟工具结果，语义最近；
                 // 请求面生效、不入史册）。
                 if let Some(text) = pending_corrective.take() {
+                    history.push(Arc::new(Message::System { content: text }));
+                }
+                // 计划提醒注入（FR-06-04，25 号票，§8.6）：变更工具计数达
+                // 阈值后的一次性 hidden system 提醒，同纠偏机制（请求面生效、
+                // 不入史册、不产生工具结果帧、不阻塞）；排在纠偏之后。
+                if let Some(text) = pending_plan_reminder.take() {
                     history.push(Arc::new(Message::System { content: text }));
                 }
                 turn_had_text = false;
@@ -534,6 +565,7 @@ where
                     GateVerdict::Suspend {
                         fence_reason,
                         external_dir,
+                        plan_scope,
                     },
                 )) = verdicts
                     .iter()
@@ -553,6 +585,7 @@ where
                             args_json,
                             fence_reason: fence_reason.clone(),
                             external_dir: external_dir.clone(),
+                            plan_scope: plan_scope.clone(),
                         },
                         state,
                     })));
@@ -598,6 +631,9 @@ where
                 // —— 源序拼装（FR-03-11）：帧按源序发出、answers 按源序
                 // 回喂——完成顺序不改序。 ——
                 let mut outcomes: Vec<Option<ToolExecution>> = vec![None; parts.len()];
+                // 真正进批次执行的位置集（Blocked 预填项不在此列——计划提醒
+                // 计数只认已执行的工具，硬拦结果不算"变更执行"，25 号票 §8.6）。
+                let executed_positions: HashSet<usize> = batch_positions.iter().copied().collect();
                 for (pos, exec) in batch_positions.into_iter().zip(executed) {
                     outcomes[pos] = Some(exec);
                 }
@@ -631,6 +667,23 @@ where
                             model_text,
                         } => {
                             records.push(super::watchdog::make_record(&name, &args_json, ok));
+                            // 计划提醒计数（FR-06-04，25 号票，§8.6）：仅根
+                            // 会话开关开启时计数；已执行（进批次）的 Completed
+                            // 才算——plan 成功更新清零（同批伴随清零），变更
+                            // 工具（FileWrite/Network 能力）累加，达 8 注入
+                            // 一次性提醒并清零重新累计。
+                            if state.plan_reminder_enabled && executed_positions.contains(&idx) {
+                                if name == "plan" && ok {
+                                    state.plan_change_count = 0;
+                                } else if is_change_tool(&name) {
+                                    state.plan_change_count += 1;
+                                    if state.plan_change_count >= PLAN_REMINDER_EVERY {
+                                        pending_plan_reminder =
+                                            Some(plan_reminder_text(state.plan_change_count));
+                                        state.plan_change_count = 0;
+                                    }
+                                }
+                            }
                             sink.send(ChatFrame::ToolResult {
                                 call_id: bridge.frame_call_id_for_model(&call_id),
                                 ok,
@@ -759,6 +812,30 @@ fn cancelled_result_frame(call_id: &str, ui_summary: &str, executed: bool) -> Ch
 fn is_interactive(name: &str) -> bool {
     crate::tools::lookup_spec(name)
         .is_some_and(|spec| spec.capability == crate::safety::tier::Capability::Interactive)
+}
+
+/// 变更工具判定（FR-06-04 计划提醒的计数口径，25 号票 §8.6）：FileWrite /
+/// Network 能力的工具执行一次计一次（write/edit/command/web_*/http_request
+/// 等）；ReadOnly/Interactive/Meta 不计。未知工具名不计（执行器会回喂
+/// E_INVALID_ARG，没有产生变更）。
+fn is_change_tool(name: &str) -> bool {
+    crate::tools::lookup_spec(name).is_some_and(|spec| {
+        matches!(
+            spec.capability,
+            crate::safety::tier::Capability::FileWrite | crate::safety::tier::Capability::Network
+        )
+    })
+}
+
+/// 计划提醒文本（一次性 hidden system 注入，§8.6）：固定中文话术，提示
+/// 模型同步计划条目状态。N 为触达阈值的变更次数（恒为
+/// [`PLAN_REMINDER_EVERY`]，入参便于测试断言与文案自洽）。
+fn plan_reminder_text(n: u32) -> String {
+    format!(
+        "计划纪律提醒：已连续执行 {n} 次变更类工具而未更新计划。\
+         请用 plan 工具同步当前进度（完成的条目标记 completed、进行中的标 in_progress），\
+         保持计划与实际执行一致后再继续。"
+    )
 }
 
 /// ask 混批（Q35/Q42）被跳过调用的统一"未执行"产物：明确告知模型该调用

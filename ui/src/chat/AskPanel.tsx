@@ -247,6 +247,18 @@ function ApprovalForm({
           {payload.fenceReason}
         </p>
       )}
+      {/* 计划范围门（25 号票，§8.6）：载荷带 planScope = 范围卡——明示
+          计划外写路径；三选项由后端下发（允许一次 / 本会话始终允许（写入
+          所在目录）/ 拒绝），选中 always_session 后后端把目标父目录并入
+          会话基线扩展。 */}
+      {payload.planScope && (
+        <p
+          data-testid="ask-plan-scope"
+          className="rounded bg-[var(--warning)]/10 px-2 py-1 font-mono text-ui-sm text-[var(--warning)]"
+        >
+          计划外路径：{payload.planScope}
+        </p>
+      )}
       {payload.diff && <DiffView diff={payload.diff} />}
       {/* HTML 产出预览入口（14 号票）：载荷附带 previewHtml（write/edit 目标
           为 .html/.htm 时由宿主构造）才显示，render_html 同款沙箱渲染 */}

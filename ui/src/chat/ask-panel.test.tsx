@@ -366,3 +366,50 @@ describe("externalDir 外部目录授权卡（24 号票，§9.9）", () => {
     );
   });
 });
+
+/** 计划范围卡载荷样例（25 号票，§8.6）：planScope + 三选项无推荐项。 */
+const planScopePayload: AskPayload = {
+  kind: "approval",
+  title: "计划范围确认",
+  command: undefined,
+  fenceReason: "写入路径「src/b.rs」不在已批准计划的范围内（批准范围：src/a.rs）",
+  planScope: "src/b.rs",
+  options: [
+    { id: "allow_once", label: "允许（仅本次）", mode: "allow_once" },
+    { id: "always_session", label: "本会话始终允许（写入所在目录）", mode: "always_session" },
+    { id: "deny", label: "拒绝", mode: "deny" },
+  ],
+};
+
+describe("计划范围卡（25 号票，§8.6）", () => {
+  it("范围卡展示计划外路径与三选项，点「本会话始终允许」回传 always_session", async () => {
+    useAskStore.getState().open("s1", "ask-scope", planScopePayload);
+    renderPanel();
+    // 计划外路径明示行
+    expect(screen.getByTestId("ask-plan-scope").textContent).toContain("src/b.rs");
+    expect(screen.getByText("计划范围确认")).toBeTruthy();
+    // 三选项渲染
+    expect(screen.getByTestId("ask-option-allow_once")).toBeTruthy();
+    expect(screen.getByTestId("ask-option-always_session")).toBeTruthy();
+    expect(screen.getByTestId("ask-option-deny")).toBeTruthy();
+    // 无推荐项不参与 autoConfirm 的 UI 面：载荷断言在契约测试锚点（后端侧
+    // recommended 全 None）；这里验证点击 always_session 的应答形状
+    fireEvent.click(screen.getByTestId("ask-option-always_session"));
+    await waitFor(() => expect(resolveAskMock).toHaveBeenCalled());
+    expect(resolveAskMock).toHaveBeenCalledWith("ask-scope", {
+      kind: "approval",
+      optionId: "always_session",
+    });
+  });
+
+  it("范围卡点拒绝回传 deny", async () => {
+    useAskStore.getState().open("s1", "ask-scope-2", planScopePayload);
+    renderPanel();
+    fireEvent.click(screen.getByTestId("ask-option-deny"));
+    await waitFor(() => expect(resolveAskMock).toHaveBeenCalled());
+    expect(resolveAskMock).toHaveBeenCalledWith("ask-scope-2", {
+      kind: "approval",
+      optionId: "deny",
+    });
+  });
+});

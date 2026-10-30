@@ -1,7 +1,7 @@
 # 实现：计划门 P1——批准基线、范围门与提醒（FR-06-02/03/04）
 
 Type: task
-Status: open
+Status: resolved
 
 ## 要做什么
 
@@ -53,8 +53,25 @@ FR 依据（原文摘引）：
 
 ## 验收
 
-- [ ] 批准计划时可见具体文件/目录范围；无范围时首写询问，范围外路径询问；"本会话始终允许"后仅在明确同意范围内免问
-- [ ] 计划全部完成后继续写 → E_PLAN_STALE（M1 行为零回归）
-- [ ] 硬门开关默认关；开启后无批准计划的写被 E_PLAN_REQUIRED 拒
-- [ ] 连续 8 次变更工具不更新计划 → 下一请求携带提醒；更新计划后计数清零
-- [ ] §8.6（基线语义、提醒注入形态、N=8）、§3.2（requirePlan、baselinePaths）回写完成
+- [x] 批准计划时可见具体文件/目录范围；无范围时首写询问，范围外路径询问；"本会话始终允许"后仅在明确同意范围内免问
+- [x] 计划全部完成后继续写 → E_PLAN_STALE（M1 行为零回归）
+- [x] 硬门开关默认关；开启后无批准计划的写被 E_PLAN_REQUIRED 拒
+- [x] 连续 8 次变更工具不更新计划 → 下一请求携带提醒；更新计划后计数清零
+- [x] §8.6（基线语义、提醒注入形态、N=8）、§3.2（requirePlan、baselinePaths）回写完成
+
+## 决议记录
+
+- **范围声明的数据来源（Q22 落地形态）**：plan 工具参数增可选 `paths: string[]`（§8.3 回写）——模型在计划里声明要写的具体文件/目录，计划卡与 Inspector 展示；`approve_plan`（#26c）冻结为 `PlanState.baselinePaths`（批准时刻的快照副本）。set 全量覆盖（未带 = 清空声明）、update 非空才覆盖；批准后模型改 paths 不影响已冻结基线（只随用户重新批准更新）；≤64 条、单条非空校验（E_INVALID_ARG）。
+- **范围门判定面**：基线条目与写目标统一归一（相对路径按项目主目录展开 + `canonicalize_best_effort`），"在基线内" = 目标等于条目（文件精确匹配）或以条目为前缀（目录含子路径）——文件范围绝不自动扩成顶层目录；基线为空时任何写目标命中（首写询问）。FileWrite 取 `path` 参数；command 走 22 号票 AST `WriteTarget` 同判（`TargetPath::Opaque` 值未知不猜，交围栏字面量掩码保守 Confirm，不进范围门）。未装配 workspace（headless 缺省）不判。
+- **范围门与围栏 Confirm 的顺序裁定**：范围门挂起优先于围栏 Confirm 挂起（否则 command 写目标先弹围栏卡、恢复重放按签名放行会让范围门对 command 形同虚设）；围栏 Block（灾难级）仍先于一切挂起。范围门命中时待决的围栏 Confirm 原因一并附在范围卡 `fenceReason`（一次交互覆盖本次调用全部审批，恢复重放按签名放行）。计划三门内部顺序固定：硬门 → E_PLAN_STALE → 范围门（票面口径）。
+- **always_session 的授权粒度**：把计划外写目标的**父目录**以目录范围（含子路径）并入会话基线扩展（与 24 号票外部目录授权的"该目录及子目录"粒度一致），询问卡选项文案明示「写入所在目录」；run 内经 `grant_plan_scope` 热追加（重放放行），跨 run 经会话桶 `PlanScopeMemory`（AppState 持有，进程内单例不持久化——退出即清、会话删除随清、备份恢复失效接线留 33 号票，同 `ApprovalMemory`/`SessionTrustSet` 口径）。
+- **范围卡不设推荐项**：三选项（allow_once/always_session/deny）均非 recommended——不参与 autoConfirm 自动批准（计划范围须用户明确同意，与外部目录授权/项目信任同精神；否则 autoConfirm 用户会在无人查看时自动放行范围外写入，架空基线）。allow_once 不扩大基线（同签名免批照旧）。
+- **批准基线的作用域**：与 M1 E_PLAN_STALE 一致为 run 级（PlanState 挂 RunHandle，run 结束即失）——跨 run 的免问靠 always_session 会话桶；这与既有批准快照/E_PLAN_STALE 的生命周期同构，未做会话级持久化（用户重新批准是廉价动作，且 26 号票 git 面与审计面按 run 装配读取批准范围）。
+- **计划提醒注入形态**：与 §5.7 看门狗纠偏同机制——下一拍 CallModel 前 `history.push(System{..})`（hidden system，请求面生效不入史册、不产生工具结果帧、不阻塞），一次性 take；计数挂 `DriveState`（`plan_change_count` + `plan_reminder_enabled`，根会话装配 true、子代理缺省 false——"根会话"口径），跨审批挂起经 resume 链天然延续；plan 工具成功更新即清零（同批伴随清零），Blocked（未执行）与 Cancelled 不计数（只认真正进批次执行的 Completed）。提醒文本固定中文话术（「计划纪律提醒：已连续执行 8 次变更类工具而未更新计划……」）。
+- **无挂起竞态丢提醒**：提醒置位发生在工具批收口（CallTools 内），下一拍 CallModel 即注入——两拍之间不存在挂起点（挂起只发生在门控预判），无丢失路径；取消/终态时未注入的提醒随 run 结束废弃。
+- **plan:update 全量态**：事件载荷扩为 `{sessionId, items, paths, approved, baselinePaths}`（plan 工具执行发、`approve_plan` 冻结后同键补发一次）——复用既有事件键（无新键），前端 plan-state store 扩 `SessionPlanState`，PlanCard/Inspector 同源展示基线标记与范围。批准按钮落在 Inspector 计划区块（`inspector-plan-approve`，M1 `approvePlan` IPC 面接通 UI；未批准时展示，批准后替换为基线徽标）——§10.7 常驻页本体仍归五页票。
+- **未做项（诚实记录）**：① 提醒计数对 Blocked/Cancelled 不计的直驱用例未单独成测（拼装逻辑 `executed_positions` 排除直白，由场景 A 阈值用例间接覆盖达阈值路径）；② command 写目标的 always_session 也按父目录粒度（与文件写一致）——删除类命令（rm x.js）授权后同目录其他文件免问，用户可在询问卡看到「写入所在目录」文案后选择拒绝；③ 真实多轮 mock（plan 轮 → write 范围外轮）受 MockOpenAI 双轮剧本结构限制，范围门全链以直驱 e2e（`e2e_plan_scope_suspend_resume_allow_once`）+ 门判定单测 + 载荷单测三段覆盖，start_chat 全链的宿主恢复循环（grant_plan_scope 调用）无独立 e2e——该调用为两行直排逻辑（归一 + parent + grant），risk 低，留 26/36 号票接线时顺带回归。
+
+## 检查链（2026-10-30 全绿）
+
+`cargo fmt --check` / `cargo build` / `cargo clippy --all-targets`（0 警告）/ `cargo test`（lib 726 + 集成 9 目标全过）/ `pnpm typecheck` / `pnpm test`（38 文件 378 用例）/ `pnpm lint`（biome 0 错误）。MACOSX_DEPLOYMENT_TARGET=13.0。已知抖动（thread-rendering 偶发、技能注册表单例时序）本轮未出现。

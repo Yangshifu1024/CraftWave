@@ -957,10 +957,15 @@ async fn run_subagent(
             ))
             .with_external_dirs(sub_extra_roots, data_root.clone())
             .with_session_memory(app.approval_memory.bucket(&ctx.session_id))
+            // 计划基线扩展桶（25 号票，§8.6）：子代理与主 run 同会话同桶
+            //——主 run 范围门「本会话始终允许」的授权目录对子代理同样生效
+            //（子代理自身计划独立，无已批准计划时范围门不触发）。
+            .with_plan_scope_memory(app.plan_scopes.bucket(&ctx.session_id))
             .with_policy(crate::backend::gate::ApprovalPolicy {
                 enabled: approval.enabled,
                 allowlist_enabled: approval.allowlist_enabled,
                 command_allowlist: approval.command_allowlist.clone(),
+                require_plan: approval.require_plan,
             });
         if let Some(ws) = gate_ws {
             gate = gate.with_workspace(ws);
@@ -1031,6 +1036,9 @@ async fn run_subagent(
                     &pending,
                     ctx.auto_confirm,
                     ctx.session_memory_enabled,
+                    // 范围卡基线对照（25 号票）：子代理计划独立，无已批准
+                    // 基线可对照，恒 None（范围门对子代理天然不触发）。
+                    None,
                 )
                 .await
                 {

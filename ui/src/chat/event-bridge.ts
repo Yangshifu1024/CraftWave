@@ -105,7 +105,13 @@ export function useBackendEvents(deps: EventBridgeDeps = defaultEventBridgeDeps)
         }
       }),
       deps.listen(EVENT_KEYS.planUpdate, (p: PlanUpdateEvent) => {
-        usePlanStateStore.getState().applyUpdate(p.sessionId, p.items);
+        // 25 号票：全量计划态（条目 + 写范围声明 + 批准态与冻结基线）
+        usePlanStateStore.getState().applyUpdate(p.sessionId, {
+          items: p.items,
+          paths: p.paths,
+          approved: p.approved,
+          baselinePaths: p.baselinePaths,
+        });
       }),
       deps.listen(EVENT_KEYS.runCompacting, (p: RunCompactingEvent) => {
         useCompactionStore.getState().setPhase(p.sessionId, "compacting");

@@ -30,4 +30,12 @@ allowlistEnabled: boolean,
  * 围栏 Confirm 与矩阵 NeedsApproval 免除，黑名单 Block 永不豁免，
  * plan 档不豁免）。
  */
-commandAllowlist: Array<string>, };
+commandAllowlist: Array<string>, 
+/**
+ * 严格计划硬门（FR-06-02，§8.6，25 号票实装）：true 且无已批准计划
+ * 时 FileWrite/Network 工具直接 E_PLAN_REQUIRED 硬拦（不挂起）。默认
+ * 关（默认"有计划即守门"：无计划时不阻写，PRD 定稿策略）；设置页
+ * 安全页「严格计划模式」开关承载。旧配置无该字段时 serde default
+ * 回填 false（零迁移）。
+ */
+requirePlan: boolean, };

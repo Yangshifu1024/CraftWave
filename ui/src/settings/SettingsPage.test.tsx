@@ -43,6 +43,7 @@ const BASE_CONFIG: AppConfig = {
     sessionMemoryEnabled: true,
     allowlistEnabled: true,
     commandAllowlist: [],
+    requirePlan: false,
   },
   ui: { language: "zh-CN", theme: "system" },
   log: { level: "info" },
@@ -443,6 +444,17 @@ describe("安全与审批页（23 号票：四开关 + 白名单管理）", () =
     expect(screen.getByLabelText("自动放行等待")).toBeTruthy();
     expect(screen.getByLabelText("会话内记忆")).toBeTruthy();
     expect(screen.getByLabelText("命令白名单")).toBeTruthy();
+  });
+
+  it("严格计划模式开关（25 号票 FR-06-02）：默认关、可切换写入草稿", async () => {
+    await openSecurityPage();
+    const toggle = screen.getByTestId("require-plan-switch");
+    // 默认关（默认有计划才守门）
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    fireEvent.click(toggle);
+    const draft = useSettingsStore.getState().config?.approval;
+    expect(draft?.requirePlan).toBe(true);
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
   });
 
   it("四开关逐项可切换并写入草稿", async () => {

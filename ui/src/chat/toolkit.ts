@@ -136,6 +136,11 @@ export const CW_TOOL_PARAMETERS: Record<string, JSONSchema7> = {
           additionalProperties: false,
         },
       },
+      paths: {
+        type: "array",
+        items: { type: "string" },
+        description: "本计划涉及的具体文件/目录路径（写范围声明，≤64 条）",
+      },
     },
     required: ["action"],
     additionalProperties: false,

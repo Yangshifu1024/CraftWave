@@ -803,6 +803,7 @@ impl ToolGate for SuspendOnceGate {
             GateVerdict::Suspend {
                 fence_reason: None,
                 external_dir: None,
+                plan_scope: None,
             }
         }
     }
@@ -1460,9 +1461,27 @@ mod command_face {
         assert_eq!(update["items"].as_array().unwrap().len(), 2);
         assert_eq!(update["items"][0]["status"], "in_progress");
 
-        // run 活跃期间批准 → 快照冻结（approve_plan 命令面）
-        craftwave_lib::host::commands::chat::approve_plan_core(&runs, "sess-plan")
+        // run 活跃期间批准 → 快照冻结（approve_plan 命令面，25 号票起同键
+        // 补发 plan:update 全量计划态）
+        let events_dyn: std::sync::Arc<dyn craftwave_lib::util::events::EventSink> = events.clone();
+        craftwave_lib::host::commands::chat::approve_plan_core(&runs, "sess-plan", &events_dyn)
             .expect("活跃 run 上批准成功");
+        // 25 号票：批准后的 plan:update 全量态（第二条——首条是 plan 工具
+        // 执行发的；前端计划卡/Inspector 基线标记的数据面）
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let approved_update = loop {
+            let updates = events.payloads_of("plan:update");
+            if updates.len() >= 2 {
+                break updates[1].clone();
+            }
+            assert!(Instant::now() < deadline, "等待批准后的 plan:update 超时");
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        };
+        assert_eq!(approved_update["approved"], true, "批准态随事件带出");
+        let baseline = approved_update["baselinePaths"]
+            .as_array()
+            .expect("基线数组");
+        assert_eq!(baseline.len(), 0, "模型未声明 paths 时冻结为空基线");
 
         let ended = wait_ended(&sink, Duration::from_secs(10)).await;
         assert!(matches!(
@@ -1474,8 +1493,12 @@ mod command_face {
         ));
         // run 结束后（收尾摘除竞态前批准仍可能成功；无活跃 run 的会话报 E_NOT_FOUND）
         let empty_runs = RunManager::new();
-        let err = craftwave_lib::host::commands::chat::approve_plan_core(&empty_runs, "no-run")
-            .unwrap_err();
+        let err = craftwave_lib::host::commands::chat::approve_plan_core(
+            &empty_runs,
+            "no-run",
+            &events_dyn,
+        )
+        .unwrap_err();
         assert_eq!(err.code, "E_NOT_FOUND");
     }
 
@@ -3599,4 +3622,131 @@ mod image_face {
             "followUp 投递的 user 消息应含文本 + image_url 多模态块；实际：{contents:?}"
         );
     }
+}
+
+// —— 8. 计划范围门链路（25 号票，FR-06-03/§8.6）——
+
+/// 范围门直驱全链：已批准计划（基线 src/a.rs）下模型写范围外路径 →
+/// RunExit::Suspended 载荷带 plan_scope（run_loop 集成面：GateVerdict::
+/// Suspend.plan_scope → PendingCall.plan_scope）→ 宿主语义恢复（签名登记
+/// + 恢复循环同款）→ 重放放行跑到 Done。
+#[tokio::test]
+async fn e2e_plan_scope_suspend_resume_allow_once() {
+    use craftwave_lib::backend::gate::{ApprovalGate, GateWorkspace};
+    use craftwave_lib::tools::plan::PlanState;
+    use std::sync::{Arc, Mutex};
+
+    // mock：轮 1 = write 调用（范围外）；轮 2（带 tool_result）默认文本。
+    let write_script = vec![
+        content_delta("写个文件"),
+        tool_open(0, "call_w1", "write"),
+        tool_args_delta(0, r#"{"path":"src/b.rs","content":"fn b() {}\n"}"#),
+        finish_chunk("tool_calls"),
+        usage_event(),
+        done_marker(),
+    ];
+    let mock = MockOpenAI::start_with_turn1(write_script).await;
+
+    // 已批准计划：基线 src/a.rs（条目 in_progress，不过期门）
+    let mut plan_state = PlanState {
+        items: vec![craftwave_lib::storage::entries::PlanItem {
+            id: "p1".to_owned(),
+            text: "写 a".to_owned(),
+            status: craftwave_lib::storage::entries::PlanItemStatus::InProgress,
+        }],
+        paths: vec!["src/a.rs".to_owned()],
+        ..PlanState::default()
+    };
+    plan_state.approve(1000);
+    let plan: Arc<Mutex<Option<PlanState>>> = Arc::new(Mutex::new(Some(plan_state)));
+
+    // 临时项目目录 + 范围门（full_access：矩阵放行，隔离范围门行为）
+    let dir = tempfile::tempdir().expect("临时目录");
+    let project_root = dir.path().join("project");
+    std::fs::create_dir_all(&project_root).expect("建项目根");
+    let project = std::fs::canonicalize(&project_root).expect("canonicalize");
+    let gate = ApprovalGate::new(
+        craftwave_lib::safety::tier::PermissionTier::FullAccess,
+        plan,
+    )
+    .with_workspace(GateWorkspace {
+        roots: vec![project.clone()],
+        base: project.clone(),
+    });
+
+    let driver = TurnDriver::new(mock_model(&mock), RunSpec::new(), vec![tool_def("write")]);
+    let gate = Arc::new(gate);
+    let gate_arc: Arc<dyn ToolGate> = gate.clone();
+    let sink = SharedSink::default();
+    let mut sink_handle = sink.clone();
+    let exit = drive_run(
+        &driver,
+        new_run("写范围外的文件"),
+        "run-plan-scope",
+        "gpt-4o-mock",
+        CancellationToken::new(),
+        fake_executor_text("写入成功"),
+        gate_arc.clone(),
+        &mut sink_handle,
+        None,
+        None,
+        None,
+        std::time::Duration::from_secs(30),
+    )
+    .await
+    .expect("挂起路径正常返回");
+    let RunExit::Suspended(info) = exit else {
+        panic!("范围外写应挂起：{exit:?}");
+    };
+    let craftwave_lib::backend::run_loop::SuspendedInfo {
+        run_json,
+        pending,
+        state,
+    } = *info;
+    assert_eq!(pending.name, "write");
+    assert_eq!(
+        pending.plan_scope.as_deref(),
+        Some("src/b.rs"),
+        "挂起载荷带计划外路径"
+    );
+    assert_eq!(state.tool_count, 0, "挂起时批内零执行");
+
+    // 恢复循环的 allow_once 语义：签名登记（approve）后原样重放
+    gate.approve(&pending.name, &pending.args_json);
+    let _ = &project;
+    let resumed = resume_run(&run_json).expect("反序列化恢复");
+    let sink2 = SharedSink::default();
+    let mut sink2_handle = sink2.clone();
+    let exit = drive_run(
+        &driver,
+        resumed,
+        "run-plan-scope",
+        "gpt-4o-mock",
+        CancellationToken::new(),
+        fake_executor_text("写入成功"),
+        gate_arc.clone(),
+        &mut sink2_handle,
+        Some(state),
+        None,
+        None,
+        std::time::Duration::from_secs(30),
+    )
+    .await
+    .expect("恢复路径跑到完成");
+    assert!(matches!(exit, RunExit::Done(_)), "恢复后 Done：{exit:?}");
+    assert_eq!(
+        sink2.count_kind(|f| matches!(f, ChatFrame::ToolResult { ok: true, .. })),
+        1,
+        "重放放行并执行"
+    );
+    // 范围门不因 allow_once 扩基线：同 run 内再写 src/c.rs 仍会挂起
+    //（由 gate 判定面保证——gate_test 覆盖，此处签名面验证）
+    let verdict = gate.judge(
+        "write",
+        &serde_json::json!({"path": "src/c.rs", "content": "x"}).to_string(),
+    );
+    let GateVerdict::Suspend { plan_scope, .. } = &verdict else {
+        panic!("allow_once 不扩大基线：{verdict:?}")
+    };
+    assert_eq!(plan_scope.as_deref(), Some("src/c.rs"));
 }

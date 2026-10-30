@@ -1,8 +1,8 @@
 //! plan 工具（§8.3 Meta 行 + §8.6 计划门）：计划条目的 set/update 纯逻辑。
 //!
 //! 状态承载（PlanState）由 RunHandle 持有、executor 读写（工具是模型更新
-//! 计划的唯一入口）；批准快照（approvedSnapshot）由 `approve_plan` 命令
-//! 冻结（§8.6），守门判定在 ApprovalGate。
+//! 计划的唯一入口）；批准快照（approvedSnapshot）与写范围基线（baselinePaths）
+//! 由 `approve_plan` 命令冻结（§8.6，25 号票），守门判定在 ApprovalGate。
 
 use serde::Deserialize;
 
@@ -15,25 +15,40 @@ use super::{ToolAnnotations, ToolOutcome, ToolSpec};
 /// 单项上限（§8.3 plan 行：≤100 项）。
 pub const MAX_ITEMS: usize = 100;
 
-/// 计划状态（§8.6 PlanState）。
+/// 写范围声明上限（§8.3 plan 行 25 号票增补：paths ≤64 条）。
+pub const MAX_PATHS: usize = 64;
+
+/// 计划状态（§8.6 PlanState，25 号票增范围字段）。
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlanState {
     /// 当前计划条目（模型通过 plan 工具维护）。
     pub items: Vec<PlanItem>,
+    /// 模型声明的计划写范围（plan 工具 `paths` 参数，§8.3）：具体文件/目录
+    /// 路径字符串，随 `plan:update` 事件展示给用户——批准时冻结为基线。
+    /// 未声明 = 空（批准后首写也须范围门确认，§8.6）。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paths: Vec<String>,
     /// 用户批准时冻结的快照（None = 未批准，不阻写）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub approved_snapshot: Option<Vec<PlanItem>>,
     /// 用户批准的时间戳（毫秒）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub approved_at: Option<i64>,
+    /// 用户批准时冻结的文件/目录范围（§8.6 基线，25 号票）：批准时刻
+    /// `paths` 的快照副本；判定口径（目录含子路径、文件精确匹配、不自动
+    /// 扩顶层目录）在 ApprovalGate（canonical 归一需要 workspace 基准）。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub baseline_paths: Vec<String>,
 }
 
 impl PlanState {
-    /// 冻结批准快照（approve_plan 命令）。
+    /// 冻结批准快照（approve_plan 命令，§8.6）：条目快照 + 写范围基线同时
+    /// 冻结（用户看到并批准的范围）。基线为空不豁免首写（范围门判定面）。
     pub fn approve(&mut self, now_ms: i64) {
         self.approved_snapshot = Some(self.items.clone());
         self.approved_at = Some(now_ms);
+        self.baseline_paths = self.paths.clone();
     }
 
     /// 计划门守门条件（§8.6）：已批准且当前条目全部 completed。
@@ -46,9 +61,15 @@ impl PlanState {
                 .iter()
                 .all(|i| i.status == PlanItemStatus::Completed)
     }
+
+    /// 是否已批准（§8.6 范围门与硬门的共同前提：无批准计划不守门——
+    /// FR-06-02 默认"有计划即守门"）。
+    pub fn is_approved(&self) -> bool {
+        self.approved_snapshot.is_some()
+    }
 }
 
-/// plan 工具参数（§8.3）。
+/// plan 工具参数（§8.3，25 号票增 `paths` 写范围声明）。
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlanArgs {
@@ -56,6 +77,10 @@ pub struct PlanArgs {
     pub action: PlanAction,
     #[serde(default)]
     pub items: Vec<PlanItem>,
+    /// 计划写范围声明（可选）：具体文件/目录路径。set = 全量覆盖（未带 =
+    /// 清空声明）；update = 非空才覆盖（条目微调不带 paths 不清范围）。
+    #[serde(default)]
+    pub paths: Vec<String>,
 }
 
 /// plan 工具的动作类型。
@@ -80,6 +105,18 @@ pub fn apply(state: &mut PlanState, args: &PlanArgs) -> Result<Vec<PlanItem>, To
     if let Some(dup) = first_duplicate_id(&args.items) {
         return Err(ToolError::invalid_arg(format!("计划条目 id 重复：{dup}")));
     }
+    // paths 声明校验（§8.3 plan 行 25 号票增补：≤64 条、单条非空）。
+    if args.paths.len() > MAX_PATHS {
+        return Err(ToolError::invalid_arg(format!(
+            "计划写范围声明超上限：{}（≤{MAX_PATHS}）",
+            args.paths.len()
+        )));
+    }
+    if let Some(blank) = args.paths.iter().find(|p| p.trim().is_empty()) {
+        return Err(ToolError::invalid_arg(format!(
+            "计划写范围声明含空白路径：{blank:?}"
+        )));
+    }
     match args.action {
         PlanAction::Set => {
             if args.items.is_empty() {
@@ -87,6 +124,8 @@ pub fn apply(state: &mut PlanState, args: &PlanArgs) -> Result<Vec<PlanItem>, To
             }
             validate_single_in_progress(&args.items)?;
             state.items = args.items.clone();
+            // set = 全量替换语义：paths 未带 = 清空声明（模型重新声明范围）。
+            state.paths = args.paths.clone();
         }
         PlanAction::Update => {
             if args.items.is_empty() {
@@ -99,6 +138,10 @@ pub fn apply(state: &mut PlanState, args: &PlanArgs) -> Result<Vec<PlanItem>, To
                 }
             }
             validate_single_in_progress(&state.items)?;
+            // update = 条目微调语义：paths 非空才覆盖（不带 paths 不清范围）。
+            if !args.paths.is_empty() {
+                state.paths = args.paths.clone();
+            }
         }
     }
     Ok(state.items.clone())
@@ -135,7 +178,8 @@ pub fn spec() -> ToolSpec {
     ToolSpec {
         name: "plan".to_string(),
         description: "维护任务计划清单。set 全量替换条目；update 按 id 更新或追加。\
-最多 100 项，同一时刻最多 1 个 in_progress。开始执行前先建计划，完成一项更新一项。"
+最多 100 项，同一时刻最多 1 个 in_progress。开始执行前先建计划，完成一项更新一项。\
+paths 声明本计划要写入的具体文件/目录范围（批准后用户按此范围授权，范围外写入会请求确认）。"
             .to_string(),
         capability: Capability::Meta,
         params_schema: serde_json::json!({
@@ -154,6 +198,11 @@ pub fn spec() -> ToolSpec {
                         "required": ["id", "text", "status"],
                         "additionalProperties": false
                     }
+                },
+                "paths": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "本计划涉及的具体文件/目录路径（写范围声明，≤64 条）"
                 }
             },
             "required": ["action"],

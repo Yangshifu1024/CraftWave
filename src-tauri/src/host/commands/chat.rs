@@ -863,11 +863,64 @@ fn emit_queue_state(
 /// command=命令行 + fenceReason（§3.2）。`session_memory_enabled`（23 号票
 /// ③ 会话内记忆启用）为 true 且待批调用是命令类时，选项增「始终允许
 /// （本会话）」（mode=always_session）——选中后同签名命令本会话跨 run 免批
-/// （记忆在会话级审批记忆桶，不持久化）。
+/// （记忆在会话级审批记忆桶，不持久化）。`plan_scope_note`（25 号票，§8.6）
+/// 为已批准计划基线的人话摘要，范围门挂起（pending.plan_scope）时随范围卡
+/// 展示对照；其他形态传 None。
 pub(crate) fn build_approval_payload(
     pending: &PendingCall,
     session_memory_enabled: bool,
+    plan_scope_note: Option<&str>,
 ) -> AskPayload {
+    // 计划范围卡（25 号票，FR-06-03/§8.6）：计划外写路径 + 批准基线对照 +
+    // 三选项（允许一次 / 本会话始终允许（父目录入基线）/ 拒绝）。无推荐项
+    // ——不参与 autoConfirm 自动批准（计划范围须用户明确同意，与外部目录
+    // 授权同精神）；command 场景附命令行原文（用户需知道执行什么）；围栏
+    // Confirm 待决时一并附上（门判定层吸收——一次交互覆盖本次调用的全部
+    // 审批）。
+    if let Some(path) = &pending.plan_scope {
+        let mut reason = format!("写入路径「{path}」不在已批准计划的范围内");
+        if let Some(note) = plan_scope_note {
+            reason.push_str(&format!("（批准范围：{note}）"));
+        }
+        if let Some(fence) = &pending.fence_reason {
+            reason.push_str(&format!("；{fence}"));
+        }
+        let command = if pending.name == "command" {
+            serde_json::from_str::<serde_json::Value>(&pending.args_json)
+                .ok()
+                .and_then(|v| v.get("command").and_then(|c| c.as_str()).map(str::to_owned))
+        } else {
+            None
+        };
+        return AskPayload::Approval {
+            title: "计划范围确认".to_owned(),
+            diff: None,
+            command,
+            fence_reason: Some(reason),
+            preview_html: None,
+            plan_scope: Some(path.clone()),
+            options: vec![
+                AskOption {
+                    id: "allow_once".to_owned(),
+                    label: "允许（仅本次）".to_owned(),
+                    recommended: None,
+                    mode: Some(AskMode::AllowOnce),
+                },
+                AskOption {
+                    id: "always_session".to_owned(),
+                    label: "本会话始终允许（写入所在目录）".to_owned(),
+                    recommended: None,
+                    mode: Some(AskMode::AlwaysSession),
+                },
+                AskOption {
+                    id: "deny".to_owned(),
+                    label: "拒绝".to_owned(),
+                    recommended: None,
+                    mode: Some(AskMode::Deny),
+                },
+            ],
+        };
+    }
     // 外部目录授权卡（24 号票，§9.9）：路径 + 粒度说明 + 允许/拒绝。授权
     // 仅本会话有效（会话 roots 快照），无 recommended——不参与 autoConfirm。
     if let Some(dir) = &pending.external_dir {
@@ -906,6 +959,7 @@ pub(crate) fn build_approval_payload(
             command: Some(format!("{} {}", pending.name, pending.args_json)),
             fence_reason: pending.fence_reason.clone(),
             preview_html: None,
+            plan_scope: None,
             options: vec![
                 AskOption {
                     id: "allow_once".to_owned(),
@@ -1069,6 +1123,7 @@ pub(crate) fn build_approval_payload(
         command,
         fence_reason: pending.fence_reason.clone(),
         preview_html,
+        plan_scope: None,
         options,
     }
 }
@@ -1089,7 +1144,8 @@ pub(crate) enum ApprovalResolution {
 /// 主 run 与子代理（10 号票）共用：取消令牌与询问槽由调用方注入
 /// （主 run = RunHandle.cancel/ask；子代理 = SubHandle.cancel/ask）。
 /// `session_memory_enabled`（23 号票 ③）：true 时命令类审批载荷增
-/// 「始终允许（本会话）」选项。
+/// 「始终允许（本会话）」选项。`plan_scope_note`（25 号票，§8.6）：范围门
+/// 挂起时随载荷展示的批准基线对照摘要（宿主从共享计划状态拼装）。
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn wait_approval_with(
     events: &Arc<dyn EventSink>,
@@ -1100,10 +1156,11 @@ pub(crate) async fn wait_approval_with(
     pending: &PendingCall,
     auto_confirm: bool,
     session_memory_enabled: bool,
+    plan_scope_note: Option<&str>,
 ) -> ApprovalResolution {
     let (tx, rx) = tokio::sync::oneshot::channel::<AskAnswer>();
     let ask_id = uuid::Uuid::new_v4().to_string();
-    let payload = build_approval_payload(pending, session_memory_enabled);
+    let payload = build_approval_payload(pending, session_memory_enabled, plan_scope_note);
     {
         let mut slot = ask_slot
             .lock()
@@ -2301,10 +2358,15 @@ pub async fn start_chat_core(
             // 恢复循环在用户允许后热追加；数据目录根做禁授权目标判定。
             .with_external_dirs(roots.extra_dirs.clone(), app.store.root().to_path_buf())
             .with_session_memory(app.approval_memory.bucket(&session_id))
+            // 计划基线扩展桶（25 号票，§8.6 范围门 always_session）：主 run
+            // 装配会话桶——「本会话始终允许」的授权目录跨 run 生效（进程内
+            // 不持久化）。
+            .with_plan_scope_memory(app.plan_scopes.bucket(&session_id))
             .with_policy(crate::backend::gate::ApprovalPolicy {
                 enabled: approval.enabled,
                 allowlist_enabled: approval.allowlist_enabled,
                 command_allowlist: approval.command_allowlist.clone(),
+                require_plan: approval.require_plan,
             });
         if let Some(ws) = gate_ws {
             gate = gate.with_workspace(ws);
@@ -2325,6 +2387,10 @@ pub async fn start_chat_core(
     let stall_timeout =
         std::time::Duration::from_secs(u64::from(app.config.load()?.watchdog.stall_timeout_secs));
     let run_id_for_result = run_id.clone();
+    // 项目主目录（25 号票，§8.6 范围门恢复循环）：always_session 授权时把
+    // 计划外写目标的词法路径展开为绝对路径再归一（与范围门判定同款基准）。
+    let project_root_for_scope =
+        crate::host::commands::workspace::resolve_session_roots(app, &session_id).project_root;
     // steer 插话源（06 号票，§5.5）：RunHandle 的插话队列 + 宿主副作用
     // （canonical 落盘 + run:inject 回执）收进 HostSteerSource，RunLoop 于
     // turn 边界经 trait 取文本
@@ -2380,7 +2446,13 @@ pub async fn start_chat_core(
             run_counted: false,
         };
         let mut run = AgentRun::from_spec(&spec, (*prompt).clone(), Some(history));
-        let mut resume_state: Option<DriveState> = None;
+        // 计划提醒（FR-06-04，25 号票，§8.6）：根会话 run 启用变更计数与
+        // 注入（子代理 run 的 DriveState 缺省关闭——"根会话"口径）；初始
+        // 状态经 drive_run 的 resume 链传递，跨审批挂起延续。
+        let mut resume_state: Option<DriveState> = Some(DriveState {
+            plan_reminder_enabled: true,
+            ..DriveState::default()
+        });
         // 错误终态信息（37 号票起带 code：看门狗终止 E_RUN_STALLED，其余
         // E_INTERNAL 兜底——§11.3 分类器为后续票）：loop 内记录、收尾随
         // run:error 事件发出（17 号票）
@@ -2428,6 +2500,9 @@ pub async fn start_chat_core(
                         pending,
                         state,
                     } = *info;
+                    // 范围卡基线对照摘要（25 号票，§8.6）：从共享计划状态读
+                    // 已批准冻结基线（挂起恢复时读最新值）。
+                    let plan_scope_note = plan_scope_note_of(&handle);
                     match wait_approval_with(
                         &events,
                         &session_id,
@@ -2437,6 +2512,7 @@ pub async fn start_chat_core(
                         &pending,
                         auto_confirm,
                         session_memory_enabled,
+                        plan_scope_note.as_deref(),
                     )
                     .await
                     {
@@ -2464,6 +2540,30 @@ pub async fn start_chat_core(
                                 }
                             }
                             gate.approve(&pending.name, &pending.args_json);
+                            // 25 号票（§8.6 范围门）：always_session → 把写
+                            // 目标父目录以目录范围（含子路径）并入会话基线
+                            // 扩展——本 run 热追加（重放放行）+ 会话桶（跨
+                            // run 生效，进程内不持久化，Q41 精神：明确授权
+                            // 不跨生命周期）。归一失败（畸形路径）只放弃
+                            // 授权不阻断恢复（重放判定仍命中会再次询问）。
+                            if option_id == "always_session"
+                                && let Some(raw) = &pending.plan_scope
+                            {
+                                let lexical = if std::path::Path::new(raw).is_absolute() {
+                                    std::path::PathBuf::from(raw)
+                                } else {
+                                    project_root_for_scope.join(raw)
+                                };
+                                if let Ok(resolved) =
+                                    crate::safety::safe_join::canonicalize_best_effort(&lexical)
+                                {
+                                    let dir = resolved
+                                        .parent()
+                                        .map(std::path::Path::to_path_buf)
+                                        .unwrap_or(resolved);
+                                    gate.grant_plan_scope(dir);
+                                }
+                            }
                             // 23 号票：always_session → 会话级免批桶登记
                             //（同签名命令本会话跨 run 免批；新会话不延续，
                             // Q41 恢复不复活——记忆不持久化）
@@ -3056,29 +3156,61 @@ pub(crate) async fn resolve_ask(
     }
 }
 
-/// approve_plan 主体（§3.3 #26c：冻结当前计划为批准快照，§8.6）。
-pub fn approve_plan_core(runs: &RunManager, session_id: &str) -> Result<(), IpcError> {
-    let Some(handle) = runs.get(session_id) else {
-        return Err(IpcError::not_found(format!("会话无活跃 run：{session_id}")));
-    };
-    let mut plan = handle
+/// 范围卡基线对照摘要（25 号票，§8.6）：已批准冻结基线的人话清单；未批准
+/// 或基线为空返回 None（范围卡不带对照段——基线空时文案由载荷侧说明首写
+/// 须确认）。
+fn plan_scope_note_of(handle: &RunHandle) -> Option<String> {
+    let plan = handle
         .plan
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some(state) = plan.as_mut() else {
-        return Err(IpcError::invalid_arg("尚无计划可批准（等模型先建计划）"));
+    let state = plan.as_ref()?;
+    if !state.is_approved() || state.baseline_paths.is_empty() {
+        return None;
+    }
+    Some(state.baseline_paths.join("、"))
+}
+
+/// approve_plan 主体（§3.3 #26c：冻结当前计划为批准快照与写范围基线，
+/// §8.6）。冻结后同键补发一次 `plan:update` 全量计划态（§3.5，25 号票）——
+/// 前端计划卡/Inspector 展示基线标记与待批准范围的数据面。
+pub fn approve_plan_core(
+    runs: &RunManager,
+    session_id: &str,
+    events: &Arc<dyn EventSink>,
+) -> Result<(), IpcError> {
+    let Some(handle) = runs.get(session_id) else {
+        return Err(IpcError::not_found(format!("会话无活跃 run：{session_id}")));
     };
-    state.approve(now_ms());
+    let payload = {
+        let mut plan = handle
+            .plan
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(state) = plan.as_mut() else {
+            return Err(IpcError::invalid_arg("尚无计划可批准（等模型先建计划）"));
+        };
+        state.approve(now_ms());
+        serde_json::json!({
+            "sessionId": session_id,
+            "items": state.items,
+            "paths": state.paths,
+            "approved": state.is_approved(),
+            "baselinePaths": state.baseline_paths,
+        })
+    };
+    events.emit(keys::PLAN_UPDATE, payload);
     Ok(())
 }
 
 /// approve_plan 命令（§3.3 #26c）。
 #[tauri::command]
 pub(crate) async fn approve_plan(
+    app: State<'_, AppState>,
     runs: State<'_, RunManager>,
     session_id: String,
 ) -> Result<(), IpcError> {
-    approve_plan_core(&runs, &session_id)
+    approve_plan_core(&runs, &session_id, &app.events)
 }
 
 // ---- 帧重放与热重连（§5.8/D16，§3.3 #20/#57/#59c，05 号票） ----
