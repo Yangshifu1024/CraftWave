@@ -93,6 +93,11 @@ fn export_contract_types_and_match_manifest() {
     // 技能清单行（09 号票，§3.3 #48）：skill_list 返回 Vec<SkillListEntry>
     // 非名义根，显式补根导出（连带 SkillSource 枚举）。
     <crate::knowledge::commands::SkillListEntry as ts_rs::TS>::export_all(&cfg).unwrap();
+    // 子代理契约（10 号票）：SubSpawnArgs 是 subagent 工具参数（非命令负载），
+    // SubMeta 是子代理历史 meta（回看面），显式补根导出（连带 SubOutcome/
+    // SubHistoryLine 等依赖）。
+    <crate::host::commands::subagent::SubSpawnArgs as ts_rs::TS>::export_all(&cfg).unwrap();
+    <crate::host::commands::subagent::SubMeta as ts_rs::TS>::export_all(&cfg).unwrap();
 
     // ①b 内置预设清单常量（03 号票单源定稿）：serde 序列化权威清单写入
     //    BuiltinPresets.ts（前端 settings/presets.ts re-export 消费）——
@@ -284,6 +289,14 @@ fn export_ipc_manifest_and_cross_lang_fixture() {
     assert_eq!(find("skill_reload").ret_type, "()");
     assert_eq!(find("skill_inspect").args_type, "SkillInspectArgs");
     assert_eq!(find("skill_inspect").ret_type, "SkillInspectResult");
+    // 子代理两命令（10 号票，§3.3 #58/#59 逐字；#59 返回 Vec 非名义）
+    assert_eq!(find("stop_subagent").args_type, "StopSubagentArgs");
+    assert_eq!(find("stop_subagent").ret_type, "()");
+    assert_eq!(
+        find("load_subagent_history").args_type,
+        "LoadSubagentHistoryArgs"
+    );
+    assert_eq!(find("load_subagent_history").ret_type, "Vec<MessageEntry>");
     // 标题栏命令（骨架既有）仍在注册表
     assert!(
         commands
@@ -308,17 +321,22 @@ fn export_ipc_manifest_and_cross_lang_fixture() {
             }))
             .collect::<Vec<_>>(),
     });
-    assert_eq!(manifest["frames"].as_array().unwrap().len(), 11);
+    assert_eq!(manifest["frames"].as_array().unwrap().len(), 15);
     // 事件键：14 号票 5 键 + 17 号票 5 键（run 终态三键 + notify/退出两键）
     // + 04 号票压缩三键（run:compacting/compacted/compact_failed）
     // + 06 号票三键（run:start / run:inject / run:queue）+ 08 号票 mcp:status
-    assert_eq!(manifest["events"].as_array().unwrap().len(), 17);
-    // 08 号票：注册表分「静态段 + 动态段」两断言——静态段钉死（09 号票起
-    // 9 个：+skill，§8.3 M2 表 Meta 行）；动态段（MCP）运行时可变，manifest
-    // 落盘时为当前快照（恒 ≥ 静态段）。
-    assert_eq!(manifest["tools"].as_array().unwrap().len(), 9);
-    assert_eq!(manifest["toolSpecs"].as_array().unwrap().len(), 9);
-    assert_eq!(crate::tools::STATIC_TOOL_NAMES.len(), 9, "静态段工具数漂移");
+    // + 10 号票子代理六键（sub:spawn/step/report/usage/done/error）
+    assert_eq!(manifest["events"].as_array().unwrap().len(), 23);
+    // 08 号票：注册表分「静态段 + 动态段」两断言——静态段钉死（10 号票起
+    // 10 个：+subagent，§8.3 M2 表 Meta 行）；动态段（MCP）运行时可变，
+    // manifest 落盘时为当前快照（恒 ≥ 静态段）。
+    assert_eq!(manifest["tools"].as_array().unwrap().len(), 10);
+    assert_eq!(manifest["toolSpecs"].as_array().unwrap().len(), 10);
+    assert_eq!(
+        crate::tools::STATIC_TOOL_NAMES.len(),
+        10,
+        "静态段工具数漂移"
+    );
     fs::create_dir_all(target_dir()).unwrap();
     fs::write(
         target_dir().join("ipc-manifest.json"),

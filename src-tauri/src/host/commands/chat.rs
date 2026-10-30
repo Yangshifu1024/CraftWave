@@ -43,13 +43,14 @@ use rig::run::spec::RunSpec;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 use tauri::ipc::Channel;
+use tokio_util::sync::CancellationToken;
 
 use crate::agent::{FrameHub, HubSink, RunHandle, RunManager};
 use crate::backend::ask::{
     ApprovalDiff, AskAnswer, AskMode, AskOption, AskPayload, AskSlot, DiffHunk, DiffLine,
     DiffLineKind,
 };
-use crate::backend::exec::{ExecutorEnv, ToolsetExecutor};
+use crate::backend::exec::{AskSlotCell, ExecutorEnv, ToolsetExecutor};
 use crate::backend::frames::{
     ChatFrame, EndReason, FrameError, FrameSink, RunSnapshot, SequencedFrame, SequencedSink,
     UsageTotal,
@@ -704,7 +705,7 @@ pub(crate) fn build_approval_payload(pending: &PendingCall) -> AskPayload {
 
 /// 挂起等待的裁决（option_id 供 MCP「始终允许」的持久许可授予面，08 号票）。
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum ApprovalResolution {
+pub(crate) enum ApprovalResolution {
     /// 批准（option_id：allow_once / always_allow / autoConfirm 的
     /// recommended 项）。
     Allowed { option_id: String },
@@ -714,10 +715,15 @@ enum ApprovalResolution {
 
 /// 挂起等待审批：注册 AskSlot + ask:opened → 等 resolve_ask / 取消 /
 /// autoConfirm 超时（§5.4）。等待结束统一清槽 + ask:closed。
+/// 主 run 与子代理（10 号票）共用：取消令牌与询问槽由调用方注入
+/// （主 run = RunHandle.cancel/ask；子代理 = SubHandle.cancel/ask）。
 #[allow(clippy::too_many_arguments)]
-async fn wait_approval(
+pub(crate) async fn wait_approval_with(
     events: &Arc<dyn EventSink>,
-    handle: &Arc<RunHandle>,
+    session_id: &str,
+    run_id: &str,
+    cancel: &CancellationToken,
+    ask_slot: &Arc<AskSlotCell>,
     pending: &PendingCall,
     auto_confirm: bool,
 ) -> ApprovalResolution {
@@ -725,18 +731,17 @@ async fn wait_approval(
     let ask_id = uuid::Uuid::new_v4().to_string();
     let payload = build_approval_payload(pending);
     {
-        let mut slot = handle
-            .ask
+        let mut slot = ask_slot
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        // 串行执行下不应有并存 ask；防御性拒绝（工具侧同口径）
+        // 同一时刻只允许一个未决询问：槽位已被占用则直接拒绝（防御性）
         if slot.is_some() {
             return ApprovalResolution::Denied;
         }
         *slot = Some(AskSlot {
             ask_id: ask_id.clone(),
-            session_id: handle.session_id.clone(),
-            run_id: handle.run_id.clone(),
+            session_id: session_id.to_owned(),
+            run_id: run_id.to_owned(),
             kind: "approval",
             // 原始载荷留存：重连后的待审批恢复查询（§5.6 #59c）据此展示
             // 原始操作及参数（diff/命令/围栏原因与选项）
@@ -747,7 +752,7 @@ async fn wait_approval(
     events.emit(
         keys::ASK_OPENED,
         serde_json::json!({
-            "sessionId": handle.session_id,
+            "sessionId": session_id,
             "askId": ask_id,
             "payload": payload,
         }),
@@ -764,7 +769,7 @@ async fn wait_approval(
     }
     let wait = tokio::select! {
         biased;
-        _ = handle.cancel.cancelled() => Wait::Cancelled,
+        _ = cancel.cancelled() => Wait::Cancelled,
         // autoConfirm 300s 只对「有推荐项（allow_once）」的载荷生效——
         // mcpTrust 等无 recommended 的信任询问不参与自动批准（FR-08-04：
         // 高危外部调用永远过人，08 号票）。
@@ -802,8 +807,7 @@ async fn wait_approval(
         ),
     };
     // 单一出口清槽 + ask:closed（resolve_ask 只投递不清理）
-    *handle
-        .ask
+    *ask_slot
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
     events.emit(
@@ -815,8 +819,9 @@ async fn wait_approval(
 
 /// 拒绝/取消的收场：挂起调用补拒绝结果帧 + runEnded(cancelled)（§5.3
 /// AwaitingApproval → Cancelled；run 已序列化，模型侧不再收下一轮，帧面
-/// 补 E_CANCELLED 结果让前端工具卡不悬空）。
-fn denied_finish(sink: &mut dyn FrameSink, pending: &PendingCall, state: &DriveState) {
+/// 补 E_CANCELLED 结果让前端工具卡不悬空）。主 run 与子代理（10 号票）
+/// 共用（DriveState 自带帧序映射与计数，无 run 句柄依赖）。
+pub(crate) fn denied_finish(sink: &mut dyn FrameSink, pending: &PendingCall, state: &DriveState) {
     let frame_call_id = state
         .model_call_ids
         .get(&pending.model_call_id)
@@ -1694,6 +1699,22 @@ pub async fn start_chat_core(
             // run 内技能快照（09 号票，Q20）：`skill` 工具只读快照——正文
             // 全文与 description 同版本固定，reload/toggle 不影响活跃 run。
             skills: Some(Arc::new(run_skills.snapshot)),
+            // 子代理委派面（10 号票，§5.9）：主代理环境可委派；白名单不限
+            // （allowed_tools=None = 主代理全表）。
+            subagents: Some(Arc::new(
+                crate::host::commands::subagent::SubagentSpawnerImpl {
+                    app: app.share_handles(),
+                    ctx: crate::host::commands::subagent::SubagentContext {
+                        session_id: session_id.clone(),
+                        parent_run_id: run_id.clone(),
+                        parent_hub: handle.hub.clone(),
+                        tier: run_config.tier,
+                        model_id: run_config.model_id.clone(),
+                        auto_confirm,
+                    },
+                },
+            )),
+            allowed_tools: None,
         }),
     );
     // 审批门装配 MCP 判定视图（08 号票：Q44 动态许可核验 + 未声明
@@ -1799,7 +1820,17 @@ pub async fn start_chat_core(
                         pending,
                         state,
                     } = *info;
-                    match wait_approval(&events, &handle, &pending, auto_confirm).await {
+                    match wait_approval_with(
+                        &events,
+                        &session_id,
+                        &run_id,
+                        &handle.cancel,
+                        &handle.ask,
+                        &pending,
+                        auto_confirm,
+                    )
+                    .await
+                    {
                         ApprovalResolution::Allowed { option_id } => {
                             gate.approve(&pending.name, &pending.args_json);
                             // MCP「始终允许」（Q44，08 号票）：写工具级许可表
@@ -2311,7 +2342,8 @@ pub async fn resolve_ask_core(
 
 /// resolve_ask 命令（§3.3 #22；08 号票增补：run 槽未命中时落应用级询问槽
 /// （MCP TOFU / 09 号票起技能 projectTrust 同槽），槽表 `AppState.app_asks`
-/// ——信任询问不属任何 run）。
+/// ——信任询问不属任何 run；10 号票增补：中间再查子代理注册表——子代理
+/// 审批挂起的 ask 挂 SubHandle.ask）。
 #[tauri::command]
 pub(crate) async fn resolve_ask(
     app: State<'_, AppState>,
@@ -2322,6 +2354,20 @@ pub(crate) async fn resolve_ask(
     match resolve_ask_core(&runs, &ask_id, answer.clone()).await {
         Ok(()) => Ok(()),
         Err(err) if err.code == crate::util::errors::E_NOT_FOUND => {
+            // 子代理槽（10 号票）：活跃子代理的审批挂起
+            if let Some(sub) = app.subs.find_by_ask(&ask_id) {
+                let tx = sub
+                    .ask
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .take()
+                    .map(|slot| slot.tx);
+                if let Some(tx) = tx
+                    && tx.send(answer.clone()).is_ok()
+                {
+                    return Ok(());
+                }
+            }
             if app.resolve_app_ask(&ask_id, answer) {
                 Ok(())
             } else {

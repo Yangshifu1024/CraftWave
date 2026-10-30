@@ -12,6 +12,7 @@
 
 import { type ToolCallMessagePartProps, useToolArgsStatus } from "@assistant-ui/react";
 import {
+  Bot,
   ChevronRight,
   CircleAlert,
   ClipboardList,
@@ -33,6 +34,7 @@ import { useSessionScope } from "@/chat/session-scope";
 import { Button } from "@/components/ui/button";
 import * as client from "@/ipc/client";
 import type { ToolOutcome } from "@/ipc/types";
+import { outcomeLabel, useSubagentsStore } from "@/stores/subagents";
 
 /** 卡片通用状态判定（与 mirror 原型同口径，供测试直接断言）。 */
 export function cardPhase(
@@ -512,6 +514,87 @@ export function SkillCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
       )}
     </ToolCardShell>
   );
+}
+
+/**
+ * subagent 工具卡（10 号票，FR-07-02/06）：角色徽标 + task 摘要 + 实时
+ * 步数/状态（subagents store 按 callId 关联，sub:step/subFrame 驱动）+
+ * `<report>` 折叠全文（subReport 后展开可见）；终态徽标按四象限着色。
+ */
+export function SubagentCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
+  const args = (props.args ?? {}) as CardArgs;
+  const { toolCallId, result, isError } = props;
+  const role = str(args, "role") || "子代理";
+  const task = str(args, "task");
+  // 按 callId 关联 store 记录（subStarted.callId = 委派工具调用的帧面 id）
+  const item = useSubagentsStore((s) =>
+    Object.values(s.bySession)
+      .flat()
+      .find((entry) => entry.callId === toolCallId),
+  );
+  const setOpenSubState = useSubagentsStore((s) => s.openSubId);
+  void setOpenSubState;
+  const running = item !== undefined && item.state === "running";
+  const turn = item?.turn ?? 0;
+  const outcome = item !== undefined && item.state !== "running" ? outcomeLabel(item.state) : "";
+  return (
+    <ToolCardShell
+      {...props}
+      icon={<Bot size={16} />}
+      label={role}
+      runningLabel={`子代理 ${role} 执行中（第 ${turn} 轮）`}
+      summary={task.length > 60 ? `${task.slice(0, 60)}…` : task || role}
+      badges={
+        item !== undefined ? (
+          <span
+            className={`text-ui-sm tabular-nums ${
+              running ? "text-blue-600 dark:text-blue-400" : outcomeColorOf(item.state)
+            }`}
+          >
+            {running ? `第 ${turn} 轮` : outcome}
+          </span>
+        ) : undefined
+      }
+    >
+      {task.length > 0 && (
+        <div className="mb-1">
+          <p className="text-ui-sm text-[var(--muted-foreground)]">任务</p>
+          <p className="whitespace-pre-wrap text-ui-sm">{task}</p>
+        </div>
+      )}
+      {item !== undefined && item.report.length > 0 && (
+        <details>
+          <summary className="cursor-pointer text-[var(--muted-foreground)]">
+            &lt;report&gt; 汇报
+          </summary>
+          <pre className="mt-1 max-h-60 overflow-auto whitespace-pre-wrap rounded border border-[var(--border)] p-2 text-ui-sm">
+            {item.report}
+          </pre>
+        </details>
+      )}
+      {isError && result !== undefined && (
+        <p className="text-ui-sm text-red-600 dark:text-red-400">
+          {typeof result === "string" ? result : "子代理异常结束"}
+        </p>
+      )}
+    </ToolCardShell>
+  );
+}
+
+/** 终态徽标配色（与 Inspector 子代理页同语义）。 */
+function outcomeColorOf(state: string): string {
+  switch (state) {
+    case "report":
+      return "text-emerald-600 dark:text-emerald-400";
+    case "partial":
+      return "text-amber-600 dark:text-amber-400";
+    case "cancelled":
+      return "text-[var(--muted-foreground)]";
+    case "no_report":
+      return "text-red-600 dark:text-red-400";
+    default:
+      return "";
+  }
 }
 
 /**

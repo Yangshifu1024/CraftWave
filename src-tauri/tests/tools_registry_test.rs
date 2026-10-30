@@ -11,7 +11,8 @@ fn registry_names_and_order_are_pinned() {
     assert_eq!(names, STATIC_TOOL_NAMES.to_vec());
     // 顺序钉死（追加新工具在尾部，不重排既有顺序；suggest 仅 run 尾调用
     // 不开放模型，不在注册表——14 号票；skill 随 09 号票 §8.3 M2 表进
-    // 静态段尾部，description 动态列出启用技能名）。
+    // 静态段尾部，description 动态列出启用技能名；subagent 随 10 号票
+    // §8.3 M2 表 Meta 行进静态段尾部，description 内嵌 7 角色清单）。
     assert_eq!(
         names,
         [
@@ -23,7 +24,8 @@ fn registry_names_and_order_are_pinned() {
             "command",
             "plan",
             "ask",
-            "skill"
+            "skill",
+            "subagent"
         ]
     );
 }
@@ -88,6 +90,9 @@ fn capabilities_match_design() {
     // skill（09 号票，§8.3 M2 表）：Meta 能力——全档放行（加载技能正文
     // 是无副作用操作，信任控制在技能面自身，§9.8）。
     assert_eq!(cap_of("skill"), Capability::Meta);
+    // subagent（10 号票，§8.3 M2 表）：Meta 能力——全档放行（委派面的
+    // 权限控制在子代理工具表/白名单与并发闸，§5.9）。
+    assert_eq!(cap_of("subagent"), Capability::Meta);
 }
 
 #[test]
@@ -97,7 +102,18 @@ fn filter_for_tier_matches_matrix() {
         .iter()
         .map(|s| s.name.to_string())
         .collect();
-    assert_eq!(plan, ["read", "list_files", "grep", "plan", "ask", "skill"]);
+    assert_eq!(
+        plan,
+        [
+            "read",
+            "list_files",
+            "grep",
+            "plan",
+            "ask",
+            "skill",
+            "subagent"
+        ]
+    );
 
     // confirm_each / auto_edit / full_access：全保留（审批在门控做）。
     for tier in [
@@ -107,7 +123,7 @@ fn filter_for_tier_matches_matrix() {
     ] {
         assert_eq!(
             filter_for_tier(build_registry(), tier).len(),
-            9,
+            10,
             "{tier:?} 应全保留"
         );
     }

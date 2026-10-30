@@ -234,10 +234,11 @@ describe("§12.3 manifest 双向扫描", () => {
     expect(offenders, `未知 invoke 命令：\n${offenders.join("\n")}`).toEqual([]);
   });
 
-  it("manifest.frames 覆盖 §3.4 P0 全集 9 帧 + M2 压缩帧/摘要帧", () => {
-    // 帧清单必须恰好是 P0 全集 9 帧 + 04 号票 compactDone + 05 号票 runSnapshot：
-    // 一个不能少（且不允许混入未知帧）
-    expect(manifest.frames).toHaveLength(11);
+  it("manifest.frames 覆盖 §3.4 P0 全集 9 帧 + M2 压缩帧/摘要帧/子代理 4 帧", () => {
+    // 帧清单必须恰好是 P0 全集 9 帧 + 04 号票 compactDone + 05 号票
+    // runSnapshot + 10 号票子代理 4 帧（subStarted/subFrame/subReport/
+    // subDone）：一个不能少（且不允许混入未知帧）
+    expect(manifest.frames).toHaveLength(15);
     for (const frame of [
       "runStarted",
       "stepStarted",
@@ -250,12 +251,16 @@ describe("§12.3 manifest 双向扫描", () => {
       "runEnded",
       "compactDone",
       "runSnapshot",
+      "subStarted",
+      "subFrame",
+      "subReport",
+      "subDone",
     ]) {
       expect(manifest.frames).toContain(frame);
     }
   });
 
-  it("manifest.tools 覆盖工具注册表 9 工具（§8.3 M1 模型可见子集 + 09 号票 skill）", () => {
+  it("manifest.tools 覆盖工具注册表 10 工具（§8.3 M1 模型可见子集 + 09 号票 skill + 10 号票 subagent）", () => {
     expect(manifest.tools).toEqual([
       "read",
       "write",
@@ -266,12 +271,13 @@ describe("§12.3 manifest 双向扫描", () => {
       "plan",
       "ask",
       "skill",
+      "subagent",
     ]);
   });
 
   it("toolkit 参数表与 manifest.toolSpecs 逐字同源（§10.3 镜像声明）", () => {
     // Rust 工具参数 schema 与前端 toolkit 声明必须逐字一致（模型卡渲染依赖它）
-    expect(manifest.toolSpecs).toHaveLength(9);
+    expect(manifest.toolSpecs).toHaveLength(10);
     for (const spec of manifest.toolSpecs) {
       const local = (CW_TOOL_PARAMETERS as Record<string, unknown>)[spec.name];
       expect(local, `toolkit 缺工具 ${spec.name} 的参数声明`).toBeDefined();
@@ -286,10 +292,10 @@ describe("§12.3 manifest 双向扫描", () => {
     }
   });
 
-  it("manifest.events 覆盖 §3.5 实装 14 键且与 EVENT_KEYS 一致", () => {
-    // 事件清单双保险：manifest 恰好 17 键（14/17 号票 10 键 + 04 号票压缩
+  it("manifest.events 覆盖 §3.5 实装键且与 EVENT_KEYS 一致", () => {
+    // 事件清单双保险：manifest 恰好 23 键（14/17 号票 10 键 + 04 号票压缩
     // 三键 + 06 号票 run:start/run:inject/run:queue 三键 + 08 号票
-    // mcp:status），且与前端 EVENT_KEYS 注册表完全一致
+    // mcp:status + 10 号票 sub:* 六键），且与前端 EVENT_KEYS 注册表完全一致
     expect(manifest.events).toEqual([
       "ask:opened",
       "ask:closed",
@@ -308,6 +314,12 @@ describe("§12.3 manifest 双向扫描", () => {
       "run:compacted",
       "run:compact_failed",
       "mcp:status",
+      "sub:spawn",
+      "sub:step",
+      "sub:report",
+      "sub:usage",
+      "sub:done",
+      "sub:error",
     ]);
     expect(Object.values(EVENT_KEYS).sort()).toEqual([...manifest.events].sort());
   });
@@ -399,6 +411,41 @@ describe("§12.3 manifest 双向扫描", () => {
     // 双向：client.ts 已接线（禁止只注册不使用）
     for (const name of ["skill_list", "skill_toggle", "skill_reload", "skill_inspect"]) {
       expect(Object.values(COMMANDS), `${name} 应在 client.ts 接线`).toContain(name);
+    }
+  });
+
+  it("子代理两命令（10 号票，§3.3 #58/#59）在两侧接线且契约类型名一致", () => {
+    const find = (name: string) => {
+      const command = manifest.commands.find((c) => c.name === name);
+      expect(command, `manifest 缺命令 ${name}`).toBeDefined();
+      return command!;
+    };
+    // #58 级联取消（stop_subagent：令牌置位即返回）
+    expect(find("stop_subagent")).toMatchObject({
+      args_type: "StopSubagentArgs",
+      ret_type: "()",
+    });
+    // #59 历史回看（load_subagent_history 返回 WireMessage 序列，元素
+    // MessageEntry 非名义根）
+    expect(find("load_subagent_history")).toMatchObject({
+      args_type: "LoadSubagentHistoryArgs",
+      ret_type: "Vec<MessageEntry>",
+    });
+    // 双向：client.ts 已接线（禁止只注册不使用）
+    for (const name of ["stop_subagent", "load_subagent_history"]) {
+      expect(Object.values(COMMANDS), `${name} 应在 client.ts 接线`).toContain(name);
+    }
+    // sub:* 六事件已在 EVENT_KEYS 注册（与 manifest 一致性由上方 events
+    // 断言把守，这里防误删）
+    for (const key of [
+      "sub:spawn",
+      "sub:step",
+      "sub:report",
+      "sub:usage",
+      "sub:done",
+      "sub:error",
+    ]) {
+      expect(Object.values(EVENT_KEYS)).toContain(key);
     }
   });
 

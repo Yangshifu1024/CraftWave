@@ -51,6 +51,22 @@ pub mod keys {
     /// MCP 连接池状态变化（§3.5【M2】增补键，08 号票：payload
     /// { scope, name, state: "starting"|"ready"|"stopped"|"error", detail? }）。
     pub const MCP_STATUS: &str = "mcp:status";
+    /// 子代理委派启动（§3.5【M2】增补键，10 号票：payload
+    /// { sessionId, runId, subId, role }，跨 Tab Inspector 订阅）。
+    pub const SUB_SPAWN: &str = "sub:spawn";
+    /// 子代理步数推进（10 号票：payload { sessionId, runId, subId, turn }）。
+    pub const SUB_STEP: &str = "sub:step";
+    /// 子代理结构化汇报产出（10 号票：payload { sessionId, runId, subId, report }）。
+    pub const SUB_REPORT: &str = "sub:report";
+    /// 子代理用量增量（10 号票：payload { sessionId, runId, subId, usage }；
+    /// 仅子代理面板展示自身消耗，不重复累进会话累计——会话累计由 tokens:update
+    /// 单一出口承担，父级汇总只计一次，Q40）。
+    pub const SUB_USAGE: &str = "sub:usage";
+    /// 子代理终态（10 号票：payload { sessionId, runId, subId, outcome }，
+    /// outcome ∈ report|partial|no_report|cancelled）。
+    pub const SUB_DONE: &str = "sub:done";
+    /// 子代理异常终态（10 号票：payload { sessionId, runId, subId, code, message }）。
+    pub const SUB_ERROR: &str = "sub:error";
 }
 
 /// 事件发射抽象：`emit(key, payload)`，payload 为已序列化 JSON。

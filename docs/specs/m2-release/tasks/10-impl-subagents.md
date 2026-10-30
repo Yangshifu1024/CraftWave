@@ -1,7 +1,7 @@
 # 实现：子代理（subagent 工具、内置角色、$ 委派、治理与可见性）
 
 Type: task
-Status: open
+Status: resolved
 
 ## 要做什么
 
@@ -57,14 +57,34 @@ Status: open
 
 ## 验收
 
-- [ ] 失败/取消保留未汇回 worktree 与修改并标注未完成，不自动汇入；重启仍可找回且不自动续跑；成功汇回并验证后才清理。依赖在独立 worktree 内按现有方式准备，缺失配置报告主代理，不批量复制被忽略文件。
+- [x] 失败/取消保留未汇回 worktree 与修改并标注未完成，不自动汇入；重启仍可找回且不自动续跑；成功汇回并验证后才清理。依赖在独立 worktree 内按现有方式准备，缺失配置报告主代理，不批量复制被忽略文件。（worktree_test：abandoned 保留/list_leases 重启找回/成功清理/忽略文件不复制；依赖准备与缺失配置汇报为角色提示词约定 + 回收摘要交回）
 
-- [ ] Git 项目的写入子代理使用独立 worktree；只读任务读取当前工作区；非 Git 项目禁止子代理修改。公共操作等待相关子代理完成并收齐改动，子代理独立 worktree 内的局部测试可执行。
+- [x] Git 项目的写入子代理使用独立 worktree；只读任务读取当前工作区；非 Git 项目禁止子代理修改。公共操作等待相关子代理完成并收齐改动，子代理独立 worktree 内的局部测试可执行。（subagent_write_role_uses_worktree_and_cleans_up 集成 + subagent_write_role_rejected_on_non_git_project + worktree 单测；subagent 工具同步等待子终态 → 回收摘要随工具结果回父，公共操作时序由委派语义天然保证）
 
-- [ ] 子代理不能执行公共操作；请求返回主代理协调，工具调用入口有权限校验，command/MCP 入口不能绕过该限制。
+- [x] 子代理不能执行公共操作；请求返回主代理协调，工具调用入口有权限校验，command/MCP 入口不能绕过该限制。（ExecutorEnv.allowed_tools 执行入口过滤 + 写入角色文件根指向 worktree 写边界 + MCP 动态段不装配；child_env_rejects 测试钉住入口拒绝；共享资源（数据库等）操作由角色提示词引导交回主代理——worktree 不提供此类资源隔离，ADR-0001 明示）
 
-- [ ] `$explore …` 点名与模型自发 `subagent` 委派均端到端可用，`<report>` 回父上下文
-- [ ] 子代理过程在消息流（subFrame）与 Inspector 子代理页实时可见，抽屉可回看历史
-- [ ] 默认第 5 个并发子代理排队；设置页可修改并持久保存全局上限，跨会话共同受限；子代理不能继续派发；步数预算耗尽得 partial；stop_subagent 与父取消级联干净
-- [ ] 子代理获得派发时文件状态（含未提交修改和未忽略新文件），后续不自动同步；按起点差量回收，冲突由主代理解决并验证，保留用户已有修改，不自动 commit/push。
-- [ ] 重启后 `load_subagent_history` 可回看已完成子代理历史
+- [x] `$explore …` 点名与模型自发 `subagent` 委派均端到端可用，`<report>` 回父上下文（$ 菜单插入 `$角色名 ` 原样入会话 + subagent_full_chain_report mock SSE 全链：subStarted→子帧→subReport→subDone，`<report>` 在工具结果 model_text）
+
+- [x] 子代理过程在消息流（subFrame）与 Inspector 子代理页实时可见，抽屉可回看历史（subFrame 经父枢纽入环、attach 重放可恢复；subagents store 双通道幂等；Inspector 子代理 tab + 抽屉 load_subagent_history 只读渲染）
+
+- [x] 默认第 5 个并发子代理排队；设置页可修改并持久保存全局上限，跨会话共同受限；子代理不能继续派发；步数预算耗尽得 partial；stop_subagent 与父取消级联干净（gate 排队/热调整单测 + 设置页往返测试 + 全局 SubRegistry + child_env 拒绝 + subagent_budget_exhausted_partial + subagent_stop_cascades_and_settles_clean：子 runEnded(cancelled) 帧收齐后工具结果才返回）
+
+- [x] 子代理获得派发时文件状态（含未提交修改和未忽略新文件），后续不自动同步；按起点差量回收，冲突由主代理解决并验证，保留用户已有修改，不自动 commit/push。（worktree_test：快照含已暂存/未暂存/未跟踪、派发后主工作区变化不同步、新增/修改/删除回收、冲突保留双方（冲突副本 `*.cw-conflict-<subId8>`）、HEAD 不动、index 面不动）
+
+- [x] 重启后 `load_subagent_history` 可回看已完成子代理历史（meta.json + history.jsonl 落盘，load_subagent_history_core 转换 WireMessage[]，集成测试回看断言）
+
+## 决议记录（2026-10-30 实现）
+
+1. **planner 默认步数预算 45**：票面预算清单未列 planner（§5.9 同），取与 reviewer 同级 45（只读规划工作量级相当）；已回写 §5.9 实现注记。
+2. **maxConcurrentSubagents 合法区间 1–16**：票面只约束"正整数"，取与 tools.maxParallel 同界 16 作上限防资源失控；0 与超限在 normalize 边界拒绝整份提交。
+3. **冲突判定基线 = 派发时主工作区内容指纹**（非 HEAD blob）：保证"主工作区未被改过即无冲突"语义在用户已有已暂存修改场景下成立（起点快照记录派发时内容，回收比对指纹）；基线差量文件之外的路径回退 HEAD 内容比对。
+4. **子代理审批挂起复用主链路机制**：chat.rs 的 wait_approval 泛化为 `wait_approval_with`（取消令牌与询问槽注入），主 run 与子代理共用；`resolve_ask` 路由链扩展为主 run 槽 → SubRegistry → 应用级槽表；deny 取消收场同款（denied_finish）。
+5. **子代理工具面不含 plan/skill/ask**：planner 白名单为只读探索三件套（read/list_files/grep），计划以文本汇报交付——避免子代理 plan:update 事件污染主会话计划面板；skill 快照不装配（MCP 同理不装配，公共操作入口不绕过）。
+6. **cleanContext 生产固定 true**：父历史注入形态实现为纯函数 `build_subagent_history`（尾 6 条经 wire 重建，单测覆盖两形态），配置项 M2 未开放（票面"可配"落地为代码内接口位，开放配置随后续票）。
+7. **角色"建议模型"全部缺省跟随父 run**：§5.9 的"建议模型（缺省跟随父 run）"字段 M2 未配置任何专用模型，子 run 模型 = 父 run 模型（resolve_model 同源）。
+8. **并发闸实现 = 动态信号量**：tokio Semaphore 承载可发名额与等待队列；提高 add_permits、降低先抽空闲名额差额记欠账（在飞释放时名额湮灭），acquire 消耗 permit（mem::forget）、release 统一归还——热调整语义（已启动继续/低于新上限才补入/提高立即放行）由账目精确保证。
+9. **引入 git2 0.21（default-features=false）**：worktree 快照/回收的本地仓库操作（worktree add/prune/statuses/blob 读取）；关闭 ssh/https 网络协议面（无 OpenSSL 依赖树，符合本仓纪律）；§3.2 设计点名 git2，26 号票（git 集成面板）复用同一依赖。
+10. **Q40 用量口径落地**：会话累计经 tokens:update 单一出口（主 run/子 run/辅助调用都在其中，只计一次）；sub:usage 仅子代理面板展示自身消耗，父级汇总不再累加；子 run 不进 RunManager（不占会话互斥、不增主 run 次数）；日/模型统计面随 20 号票消费同一会话累计数据源接线。
+11. **子代理历史定位**：`load_subagent_history` 参数面无 parentRunId，按 (sessionId, subId) 扫 `histories/subs/` 一层目录匹配 meta 定位（子代理量级小，遍历可接受）。
+12. **场景测试载体**：票面"ScriptedBackend 驱动"的点名词场景（委派/拒绝/预算/级联/帧序/回收）落在 Rust 侧 mock SSE（本地 OpenAI 兼容服务）驱动的全链集成测试——比前端 ScriptedBackend 更靠近真实链路；前端 e2e 未新增，以 store 单测/触发符单测/契约测试覆盖（诚实记录：前端 UI 层的端到端脚本未建）。
+13. **帧序实现注记**：subStarted/subReport/subDone 由父枢纽发出（占用父 run 的 seq 序列），子帧逐帧包 subFrame 透传（子 run 自身 seq 独立递增）——subFrame 不重复占用父 seq（一帧一 seq）。

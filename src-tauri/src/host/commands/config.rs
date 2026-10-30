@@ -32,5 +32,9 @@ pub async fn save_config(
 ) -> Result<AppConfig, IpcError> {
     // 契约命名单一事实源：平铺形参回组为文档契约结构
     let args = SaveConfigArgs { config };
-    service::save_config(&state.config, args.config)
+    let normalized = service::save_config(&state.config, args.config)?;
+    // 子代理全局并发上限热应用（10 号票 Q13：保存边界即生效——已启动任务
+    // 继续不取消，降低暂停补入，提高立即放行排队任务）
+    state.apply_subagent_limit();
+    Ok(normalized)
 }

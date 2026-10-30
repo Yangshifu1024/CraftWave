@@ -254,8 +254,9 @@ fn floor_char_boundary(s: &str, mut index: usize) -> usize {
 /// 动态段运行时可变，钉死测试改为两断言（见 mod 的 compact_test 与
 /// ipc_manifest_test）。09 号票增 skill（§8.3 M2 表 Meta 行；description
 /// 动态列出启用技能名清单——build_registry 每次现读技能注册表，
-/// toggle/reload 后下一 run 生效）：静态 9 个。
-pub const STATIC_TOOL_NAMES: [&str; 9] = [
+/// toggle/reload 后下一 run 生效）；10 号票增 subagent（§8.3 M2 表 Meta 行，
+/// 子代理委派入口）：静态 10 个。
+pub const STATIC_TOOL_NAMES: [&str; 10] = [
     "read",
     "write",
     "edit",
@@ -265,6 +266,7 @@ pub const STATIC_TOOL_NAMES: [&str; 9] = [
     "plan",
     "ask",
     "skill",
+    "subagent",
 ];
 
 /// 静态注册表（§8.1：启动时构建）。顺序与 [`STATIC_TOOL_NAMES`] 一致。
@@ -279,6 +281,7 @@ pub fn build_registry() -> Vec<ToolSpec> {
         plan::spec(),
         ask::spec(),
         crate::knowledge::skills::skill_spec(),
+        crate::agent::roles::subagent_spec(),
     ]
 }
 

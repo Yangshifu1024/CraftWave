@@ -914,7 +914,13 @@ function AgentPage() {
   const customPrompt = config.agent?.customPrompt ?? "";
   const patchAgent = (patch: Partial<NonNullable<AppConfig["agent"]>>) =>
     patchConfig({
-      agent: { ...config.agent, ...patch },
+      // 生成物 AgentConfig 的 maxConcurrentSubagents 是必填（serde default
+      // 回填 4）：旧草稿缺 agent 组时以缺省值补底再覆写
+      agent: {
+        maxConcurrentSubagents: config.agent?.maxConcurrentSubagents ?? 4,
+        ...config.agent,
+        ...patch,
+      },
     });
   const stallTimeoutSecs = config.watchdog.stallTimeoutSecs;
   const patchWatchdog = (patch: Partial<AppConfig["watchdog"]>) =>
@@ -946,6 +952,32 @@ function AgentPage() {
               patchAgent({ customPrompt: e.target.value === "" ? undefined : e.target.value })
             }
           />
+        </SettingsRow>
+      </SettingsSection>
+      <SettingsSection title="子代理">
+        <SettingsRow
+          title="全局并发上限"
+          description="应用内所有会话共用的子代理并发名额（满额排队不拒绝）。运行中修改：已启动任务继续；降低后暂停补入直到低于新上限，提高后立即按新上限启动排队任务。合法范围 1–16，默认 4；保存后立即生效。"
+        >
+          <label className="flex w-full items-center gap-3 text-ui-base">
+            <input
+              aria-label="子代理全局并发上限"
+              data-testid="subagent-concurrency-input"
+              type="number"
+              min={1}
+              max={16}
+              step={1}
+              value={config.agent?.maxConcurrentSubagents ?? 4}
+              onChange={(e) => {
+                const parsed = Number(e.target.value);
+                if (Number.isFinite(parsed) && parsed > 0) {
+                  patchAgent({ maxConcurrentSubagents: parsed });
+                }
+              }}
+              className="w-32 rounded-[var(--cw-radius)] border border-[var(--cw-border)] bg-transparent px-3 py-2 text-ui-base tabular-nums outline-none focus:border-[var(--cw-focus)]"
+            />
+            <span className="shrink-0 text-ui-sm text-[var(--muted-foreground)]">1–16 个</span>
+          </label>
         </SettingsRow>
       </SettingsSection>
       <SettingsSection title="运行监督">

@@ -201,6 +201,7 @@ fn agent_custom_prompt_normalize_and_roundtrip() {
     let mut config = AppConfig {
         agent: Some(AgentConfig {
             custom_prompt: Some("  始终用中文回复  ".into()),
+            max_concurrent_subagents: crate::providers::types::DEFAULT_MAX_CONCURRENT_SUBAGENTS,
         }),
         ..AppConfig::default()
     };
@@ -218,6 +219,7 @@ fn agent_custom_prompt_normalize_and_roundtrip() {
         let mut config = AppConfig {
             agent: Some(AgentConfig {
                 custom_prompt: Some(blank.into()),
+                max_concurrent_subagents: crate::providers::types::DEFAULT_MAX_CONCURRENT_SUBAGENTS,
             }),
             ..AppConfig::default()
         };
@@ -311,6 +313,69 @@ fn watchdog_stall_timeout_defaults_and_bounds() {
             config.normalize().unwrap_err().code,
             E_INVALID_ARG,
             "stallTimeoutSecs = {bad} 应拒绝"
+        );
+    }
+}
+
+// 断言（10 号票，Q13）：agent.maxConcurrentSubagents 的 normalize 与缺省——
+// 旧配置缺 agent 组/缺字段回填 4（正整数语义），0/超限拒绝整份提交，
+// save_config 往返保持 camelCase 键面。
+#[test]
+fn agent_max_concurrent_subagents_defaults_and_bounds() {
+    use crate::providers::types::{
+        AgentConfig, DEFAULT_MAX_CONCURRENT_SUBAGENTS, MAX_CONCURRENT_SUBAGENTS_LIMIT,
+    };
+
+    // 缺省：AgentConfig::default() = 4
+    let mut config = AppConfig::default();
+    assert_eq!(
+        config.agent.as_ref().map(|a| a.max_concurrent_subagents),
+        None,
+        "agent 组整体缺省 = None"
+    );
+    config.normalize().unwrap();
+
+    // serde 缺省容忍：旧配置无 agent 键 / agent 组无 maxConcurrentSubagents
+    // 键 → 回填 4
+    let raw_no_agent = r#"{"schemaVersion":2,"providers":[],"approval":{"enabled":true,"autoConfirm":false,"commandAllowlist":[]},"ui":{"language":"zh-CN","theme":"system"},"log":{"level":"info"},"notifications":{"enabled":true,"interventionOnly":false}}"#;
+    let parsed: AppConfig = serde_json::from_str(raw_no_agent).unwrap();
+    assert!(parsed.agent.is_none(), "旧配置无 agent 组保持 None");
+    let raw_partial = r#"{"schemaVersion":2,"providers":[],"agent":{"customPrompt":"hi"},"approval":{"enabled":true,"autoConfirm":false,"commandAllowlist":[]},"ui":{"language":"zh-CN","theme":"system"},"log":{"level":"info"},"notifications":{"enabled":true,"interventionOnly":false}}"#;
+    let parsed: AppConfig = serde_json::from_str(raw_partial).unwrap();
+    assert_eq!(
+        parsed.agent.as_ref().unwrap().max_concurrent_subagents,
+        DEFAULT_MAX_CONCURRENT_SUBAGENTS,
+        "旧配置 agent 组缺字段 → serde default 回填 4"
+    );
+
+    // 合法边界：1 与 16 通过，serde 往返保持 camelCase 键面
+    for ok in [1, 4, MAX_CONCURRENT_SUBAGENTS_LIMIT] {
+        let mut config = AppConfig {
+            agent: Some(AgentConfig {
+                max_concurrent_subagents: ok,
+                ..AgentConfig::default()
+            }),
+            ..AppConfig::default()
+        };
+        config.normalize().unwrap();
+        let value = serde_json::to_value(&config).unwrap();
+        assert_eq!(value["agent"]["maxConcurrentSubagents"], ok);
+        assert_eq!(serde_json::from_value::<AppConfig>(value).unwrap(), config);
+    }
+
+    // 非正整数（0）与超上限拒绝整份提交
+    for bad in [0, MAX_CONCURRENT_SUBAGENTS_LIMIT + 1, 100_000] {
+        let mut config = AppConfig {
+            agent: Some(AgentConfig {
+                max_concurrent_subagents: bad,
+                ..AgentConfig::default()
+            }),
+            ..AppConfig::default()
+        };
+        assert_eq!(
+            config.normalize().unwrap_err().code,
+            E_INVALID_ARG,
+            "maxConcurrentSubagents = {bad} 应拒绝"
         );
     }
 }

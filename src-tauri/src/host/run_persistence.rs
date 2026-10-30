@@ -184,6 +184,13 @@ impl RunRecorder {
             ChatFrame::CompactDone { .. } => {}
             // runState 摘要帧（05 号票）：attach 对账辅助，无 canonical 产物
             ChatFrame::RunSnapshot { .. } => {}
+            // 子代理 4 帧（10 号票）：子代理过程经 subFrame 在父 run 帧面
+            // 透传，canonical 只记父 run 的 subagent 工具调用与结果本身
+            //（不展开子帧），子代理历史独立落 histories/subs/（§5.9）
+            ChatFrame::SubStarted { .. } => {}
+            ChatFrame::SubFrame { .. } => {}
+            ChatFrame::SubReport { .. } => {}
+            ChatFrame::SubDone { .. } => {}
             ChatFrame::RunEnded {
                 duration_ms,
                 tool_count,

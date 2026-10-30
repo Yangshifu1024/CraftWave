@@ -20,6 +20,7 @@ import {
 import {
   ArrowDown,
   ArrowUp,
+  Bot,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -302,8 +303,19 @@ function SteerNodes() {
  *  Enter 三态路由（06 号票）/Shift+Enter 换行/IME 组合期防误发由
  *  useComposerKeys + ComposerPrimitive.Input 共同承担。 */
 function ComposerBar() {
-  const { onKeyDown, onCursor, atMenu, skillMenu, pickActive, pickSkill, hoverIndex, hoverSkill } =
-    useComposerKeys();
+  const {
+    onKeyDown,
+    onCursor,
+    atMenu,
+    skillMenu,
+    dollarMenu,
+    pickActive,
+    pickSkill,
+    pickDollar,
+    hoverIndex,
+    hoverSkill,
+    hoverDollar,
+  } = useComposerKeys();
   return (
     <div className="relative">
       {/* @ 路径补全浮层（search_workspace_paths 驱动；Tab/Enter 选中，Esc 关闭） */}
@@ -359,6 +371,37 @@ function ComposerBar() {
                   <span className="truncate text-[var(--foreground)]">{skill.name}</span>
                   <span className="truncate text-ui-sm text-[var(--muted-foreground)]">
                     {skill.description}
+                  </span>
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {/* $ 角色菜单浮层（10 号票，FR-07-02：静态 7 角色清单，↑↓ 导航、
+          Tab/Enter 选中插入 $角色名 前缀，Esc 关闭；选中后用户续写任务） */}
+      {dollarMenu !== null && dollarMenu.items.length > 0 && (
+        <ul
+          data-testid="dollar-menu"
+          className="cw-pop-in absolute bottom-full left-0 z-20 mb-1 max-h-56 w-80 overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--card)] p-1 text-ui-sm shadow"
+        >
+          {dollarMenu.items.map((role, index) => (
+            <li key={role.name}>
+              <button
+                type="button"
+                className={`flex w-full items-start gap-2 rounded-md px-2 py-1 text-left ${
+                  index === dollarMenu.activeIndex
+                    ? "bg-[var(--accent)] text-[var(--foreground)]"
+                    : "text-[var(--muted-foreground)]"
+                }`}
+                onClick={pickDollar}
+                onMouseEnter={() => hoverDollar(index)}
+              >
+                <Bot size={12} aria-hidden className="mt-0.5 shrink-0" />
+                <span className="flex min-w-0 flex-col">
+                  <span className="truncate text-[var(--foreground)]">${role.name}</span>
+                  <span className="truncate text-ui-sm text-[var(--muted-foreground)]">
+                    {role.summary}
                   </span>
                 </span>
               </button>

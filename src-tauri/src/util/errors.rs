@@ -136,6 +136,9 @@ pub const E_RUN_STALLED: &str = "E_RUN_STALLED";
 /// 未信任的项目资源访问/注入（§9.8，09 号票首次实装：未信任技能的
 /// `skill` 工具调用按本码拒绝回喂，模型须先经用户信任确认）。
 pub const E_PROJECT_UNTRUSTED: &str = "E_PROJECT_UNTRUSTED";
+/// 子代理步数/预算耗尽（§5.9，10 号票）：以工具级失败回喂父 run，
+/// 子代理终态归 outcome=partial。
+pub const E_SUB_BUDGET: &str = "E_SUB_BUDGET";
 
 /// IPC 命令统一错误负载（§3.1/§3.6，D14）：`{ code, message, detail? }`，camelCase。
 ///

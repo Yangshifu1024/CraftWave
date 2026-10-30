@@ -308,13 +308,34 @@ describe("自定义提示词（03 号票 agent.customPrompt）", () => {
     saveConfigMock.mockImplementation(async (config) => structuredClone(config));
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(() => expect(saveConfigMock).toHaveBeenCalled());
-    expect(saveConfigMock.mock.calls[0]?.[0].agent).toEqual({ customPrompt: "始终用中文回复" });
+    // 10 号票起 agent 组含 maxConcurrentSubagents（缺省 4 随草稿一起提交）
+    expect(saveConfigMock.mock.calls[0]?.[0].agent).toEqual({
+      customPrompt: "始终用中文回复",
+      maxConcurrentSubagents: 4,
+    });
 
     // 清空：草稿值置 undefined（等价空），提交载荷 customPrompt 为 undefined
     fireEvent.change(input, { target: { value: "" } });
     await waitFor(() =>
       expect(useSettingsStore.getState().config?.agent?.customPrompt).toBeUndefined(),
     );
+    unmount();
+  });
+});
+
+describe("子代理全局并发上限（10 号票，agent.maxConcurrentSubagents）", () => {
+  it("工作区与智能体页数字输入编辑进草稿并随保存提交（1–16 提示，缺省 4）", async () => {
+    const { unmount } = render(<SettingsPage initialPage="agent" onClose={() => {}} />);
+    const input = await screen.findByTestId("subagent-concurrency-input");
+    expect((input as HTMLInputElement).value).toBe("4");
+    fireEvent.change(input, { target: { value: "6" } });
+    expect(useSettingsStore.getState().config?.agent?.maxConcurrentSubagents).toBe(6);
+    saveConfigMock.mockImplementation(async (config) => structuredClone(config));
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(saveConfigMock).toHaveBeenCalled());
+    expect(saveConfigMock.mock.calls.at(-1)?.[0].agent).toMatchObject({
+      maxConcurrentSubagents: 6,
+    });
     unmount();
   });
 });

@@ -116,6 +116,44 @@ pub enum ChatFrame {
         #[serde(flatten)]
         snapshot: RunSnapshot,
     },
+    /// 子代理委派开始（§3.4【M2】增补帧，10 号票）：告知前端本次委派的父
+    /// 工具调用 id、子代理 id 与角色。帧序不变量：subStarted 必先于该子代理
+    /// 的全部 subFrame，subDone 必收尾（§5.9）。
+    SubStarted {
+        call_id: String,
+        sub_id: String,
+        role: String,
+    },
+    /// 子代理帧透传（§3.4【M2】增补帧，10 号票）：主代理所派子代理 run 的
+    /// 原始帧原样包装转发（子 run 的 seq 独立递增，与父 run 帧序互不干扰）；
+    /// M2 禁止子代理再委派（Q13，subFrame 内不会嵌套 SubStarted）。
+    SubFrame {
+        sub_id: String,
+        /// 子 run 的原始帧（Box 折叠枚举尺寸；serde 序列化内联展开）。
+        frame: Box<ChatFrame>,
+    },
+    /// 子代理结构化汇报（§3.4【M2】增补帧，10 号票）：`<report>` 文本回父。
+    SubReport { sub_id: String, report: String },
+    /// 子代理终态（§3.4【M2】增补帧，10 号票）：四象限收口，必为该子代理
+    /// 帧序列的最后一帧。
+    SubDone { sub_id: String, outcome: SubOutcome },
+}
+
+/// 子代理终态四象限（§5.9，FR-07-02/09）：report=正常完成带汇报；
+/// partial=预算耗尽（E_SUB_BUDGET）可能带部分汇报；no_report=异常结束
+/// 无汇报；cancelled=被取消（stop_subagent / 父取消级联）。
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "snake_case")]
+pub enum SubOutcome {
+    /// 正常完成且有结构化汇报。
+    Report,
+    /// 预算耗尽（可能有部分汇报）。
+    Partial,
+    /// 结束但无可用汇报（异常/空输出）。
+    NoReport,
+    /// 被取消。
+    Cancelled,
 }
 
 /// run 结束原因。

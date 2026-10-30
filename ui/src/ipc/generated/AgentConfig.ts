@@ -2,7 +2,8 @@
 
 /**
  * 智能体行为配置（§3.2 agent 组）。M2 03 号票起承载 customPrompt；
- * maxConcurrentSubagents（10 号票）/ commandAudit（36 号票）随对应票补齐。
+ * M2 10 号票补 maxConcurrentSubagents（子代理全局并发上限）；commandAudit
+ * （36 号票）随对应票补齐。
  */
 export type AgentConfig = { 
 /**
@@ -10,4 +11,11 @@ export type AgentConfig = {
  * （§6.2 注入次序首位：customPrompt → 压缩 summary → 当前计划）。
  * 空/未配置零注入；save_config 即时生效于下次 run（§7.6 缓存热替换）。
  */
-customPrompt?: string, };
+customPrompt?: string, 
+/**
+ * 子代理全局并发上限（FR-07-04/§5.9 Q13，10 号票）：应用内所有会话共用，
+ * 满额排队不拒绝；要求正整数，旧配置缺省回填 4，非法值在保存边界拒绝。
+ * 运行中修改：已启动任务继续不取消；降低后暂停补入直到运行数低于新上限，
+ * 提高后立即按新上限启动排队任务（并发闸 [`crate::agent::sub_registry`]）。
+ */
+maxConcurrentSubagents: number, };

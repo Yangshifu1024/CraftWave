@@ -19,6 +19,7 @@ import type { ChatModelAdapter, ChatModelRunResult, ThreadMessage } from "@assis
 import * as client from "@/ipc/client";
 import type { MessageEntry, RunConfig, SequencedFrame } from "@/ipc/types";
 import { syncTreeBeforeSend, useSessionPersistStore } from "@/stores/session";
+import { applySubagentFrame } from "@/stores/subagents";
 import { bindCancelToRun } from "./cancel-bridge";
 import { type ChatPart, FrameBuffer, type FrameSnapshot, toParts } from "./frames";
 import { tierOf } from "./permission-tier";
@@ -295,6 +296,8 @@ export function createTauriChatAdapter(deps: TauriAdapterDeps): ChatModelAdapter
               }
               buffer.push(frame);
               deps.onFrame?.(frame);
+              // 子代理 4 帧（10 号票）：实时路径同步 subagents store
+              applySubagentFrame(deps.sessionId, frame);
             },
           })
           .catch((err: unknown) => {

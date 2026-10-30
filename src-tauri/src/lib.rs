@@ -87,6 +87,11 @@ use knowledge::commands::{
     SkillInspectArgs, SkillInspectResult, SkillListEntry, SkillToggleArgs, skill_inspect,
     skill_list, skill_reload, skill_toggle,
 };
+// 子代理两命令（10 号票，§3.3 #58/#59）
+#[allow(unused_imports)]
+use host::commands::subagent::{
+    LoadSubagentHistoryArgs, StopSubagentArgs, load_subagent_history, stop_subagent,
+};
 #[allow(unused_imports)]
 use providers::types::{AppConfig, ProviderConfig};
 #[allow(unused_imports)]
@@ -99,6 +104,10 @@ use storage::ProjectMeta;
 use storage::SessionMeta;
 #[allow(unused_imports)]
 use storage::SessionTreeData;
+// 子代理历史命令返回面（10 号票：Vec<MessageEntry> 经 cfg(test) 的
+// export_contract_ts 解析，需要真实类型路径在作用域内）
+#[allow(unused_imports)]
+use storage::MessageEntry;
 #[allow(unused_imports)]
 use storage::config_store::ConfigStore;
 
@@ -223,6 +232,9 @@ ipc_commands! {
     knowledge::commands::skill_toggle => args: SkillToggleArgs, ret: ();
     knowledge::commands::skill_reload => args: (), ret: ();
     knowledge::commands::skill_inspect => args: SkillInspectArgs, ret: SkillInspectResult;
+    // 子代理两命令（10 号票，§3.3 #58/#59 逐字）
+    host::commands::subagent::stop_subagent => args: StopSubagentArgs, ret: ();
+    host::commands::subagent::load_subagent_history => args: LoadSubagentHistoryArgs, ret: Vec<MessageEntry>;
     #[cfg(debug_assertions)]
     mock_chat::mock_chat_run => args: (), ret: ();
     select_dir => args: (), ret: Option<String>;
@@ -313,6 +325,9 @@ pub fn run() {
                 .path()
                 .resolve("resources/skills", tauri::path::BaseDirectory::Resource)
                 .ok();
+            // 子代理全局并发上限（10 号票，§5.9 Q13）：启动时按配置应用一次
+            // （save_config 修改后在保存边界热生效）
+            state.apply_subagent_limit();
             // 技能注册表装配（09 号票）：三来源根一次配齐 + 首扫（进程级
             // 单例；后续 run 装配与命令面按活跃会话上下文重扫）。
             knowledge::commands::configure_registry(&state);

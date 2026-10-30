@@ -35,10 +35,17 @@ import type {
   RunStartEvent,
   RunSuggestionsEvent,
   StoredCompactionEntry,
+  SubDoneEvent,
+  SubErrorEvent,
+  SubReportEvent,
+  SubSpawnEvent,
+  SubStepEvent,
+  SubUsageEvent,
   TokensUpdateEvent,
 } from "@/ipc/types";
 import { useAskStore } from "@/stores/ask";
 import { useSessionsStore } from "@/stores/sessions";
+import { subDone, subError, subReport, subSpawn, subStep, subUsage } from "@/stores/subagents";
 
 /** 事件桥依赖面：listen 函数可注入（生产用 ipc/client 的 listenEvent，测试换假实现）。
  *  handler 参数标成 never 是为了让各种带具体类型的事件处理函数都能直接传入
@@ -141,6 +148,27 @@ export function useBackendEvents(deps: EventBridgeDeps = defaultEventBridgeDeps)
             console.warn("[followUp] 自动投递观察态接入失败", err);
           });
         }
+      }),
+      // ---- 子代理生命周期（10 号票，§3.5：跨 Tab Inspector 订阅）----
+      deps.listen(EVENT_KEYS.subSpawn, (p: SubSpawnEvent) => {
+        subSpawn(p);
+      }),
+      deps.listen(EVENT_KEYS.subStep, (p: SubStepEvent) => {
+        subStep(p);
+      }),
+      deps.listen(EVENT_KEYS.subReport, (p: SubReportEvent) => {
+        subReport(p);
+      }),
+      deps.listen(EVENT_KEYS.subUsage, (p: SubUsageEvent) => {
+        // 子代理自身消耗（Q40）：仅子面板展示，不再累进会话总量
+        //（会话累计由 tokens:update 单一出口承担）
+        subUsage(p);
+      }),
+      deps.listen(EVENT_KEYS.subDone, (p: SubDoneEvent) => {
+        subDone(p);
+      }),
+      deps.listen(EVENT_KEYS.subError, (p: SubErrorEvent) => {
+        subError(p);
       }),
     ];
     return () => {

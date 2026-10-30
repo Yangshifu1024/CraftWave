@@ -15,9 +15,31 @@
 //!
 //! 对外类型统一从本模块重导出，调用方无需感知 run_manager 子模块的存在。
 
+pub mod roles;
 pub mod run_manager;
+pub mod sub_registry;
+pub mod worktree;
 
+#[cfg(test)]
+#[path = "roles_test.rs"]
+mod roles_test;
+
+#[cfg(test)]
+#[path = "sub_registry_test.rs"]
+mod sub_registry_test;
+
+#[cfg(test)]
+#[path = "worktree_test.rs"]
+mod worktree_test;
+
+pub use roles::{ROLES, SubagentRole, WorkspaceKind, clamp_budget_steps, find_role};
 pub use run_manager::{
     AttachOutcome, FRAME_BUFFER_CAPACITY, FrameHub, HubSink, RunHandle, RunManager, RunState,
     RunStatus,
+};
+pub use sub_registry::{ConcurrencyGate, SubHandle, SubRegistry};
+pub use worktree::{
+    LEASE_ABANDONED, LEASE_ACTIVE, LEASE_RECOVERED, RecoveryReport, WorktreeLease,
+    cleanup as cleanup_worktree, create_lease, list_leases, load_lease, project_is_git,
+    recover as recover_worktree,
 };

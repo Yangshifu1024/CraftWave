@@ -257,10 +257,17 @@ impl Default for NotificationConfig {
     }
 }
 
+/// 子代理全局并发上限的缺省值（§3.2 agent 组/§5.9 Q13：所有会话共用，缺省 4）。
+pub const DEFAULT_MAX_CONCURRENT_SUBAGENTS: u32 = 4;
+/// maxConcurrentSubagents 合法区间上限（与工具批并发 tools.maxParallel 同界，
+/// 防资源失控；下限 1 由"正整数"语义承担）。
+pub const MAX_CONCURRENT_SUBAGENTS_LIMIT: u32 = 16;
+
 /// 智能体行为配置（§3.2 agent 组）。M2 03 号票起承载 customPrompt；
-/// maxConcurrentSubagents（10 号票）/ commandAudit（36 号票）随对应票补齐。
+/// M2 10 号票补 maxConcurrentSubagents（子代理全局并发上限）；commandAudit
+/// （36 号票）随对应票补齐。
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentConfig {
     /// 自定义提示词（FR-09-06）：非空时注入为每次对话的系统级前缀
@@ -269,6 +276,27 @@ pub struct AgentConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub custom_prompt: Option<String>,
+    /// 子代理全局并发上限（FR-07-04/§5.9 Q13，10 号票）：应用内所有会话共用，
+    /// 满额排队不拒绝；要求正整数，旧配置缺省回填 4，非法值在保存边界拒绝。
+    /// 运行中修改：已启动任务继续不取消；降低后暂停补入直到运行数低于新上限，
+    /// 提高后立即按新上限启动排队任务（并发闸 [`crate::agent::sub_registry`]）。
+    #[serde(default = "default_max_concurrent_subagents")]
+    pub max_concurrent_subagents: u32,
+}
+
+/// serde 缺省值函数：子代理全局并发上限缺省 4（§5.9 Q13）。
+fn default_max_concurrent_subagents() -> u32 {
+    DEFAULT_MAX_CONCURRENT_SUBAGENTS
+}
+
+// AgentConfig 的缺省值：无自定义提示词 + 并发上限 4。
+impl Default for AgentConfig {
+    fn default() -> Self {
+        Self {
+            custom_prompt: None,
+            max_concurrent_subagents: DEFAULT_MAX_CONCURRENT_SUBAGENTS,
+        }
+    }
 }
 
 /// 上下文压缩配置（§3.2 compaction 组，FR-03-05，04 号票实装）。
@@ -543,6 +571,18 @@ impl AppConfig {
             .take()
             .map(|m| m.trim().to_owned())
             .filter(|m| !m.is_empty());
+        // agent.maxConcurrentSubagents：正整数且不超过 16（§5.9 Q13——所有会话
+        // 共用的子代理并发上限，越界视为配置错误拒绝整份提交；旧配置缺字段由
+        // serde default 回填 4）。
+        if let Some(agent) = &self.agent
+            && (agent.max_concurrent_subagents == 0
+                || agent.max_concurrent_subagents > MAX_CONCURRENT_SUBAGENTS_LIMIT)
+        {
+            return Err(IpcError::invalid_arg(format!(
+                "agent.maxConcurrentSubagents 必须在 1–{MAX_CONCURRENT_SUBAGENTS_LIMIT} 内（实际 {}）",
+                agent.max_concurrent_subagents
+            )));
+        }
         // agent.customPrompt：空白归一为 None（"没填"与"填了又删掉"等价零注入）
         if let Some(agent) = &mut self.agent {
             agent.custom_prompt = agent

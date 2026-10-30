@@ -23,6 +23,7 @@ import {
   PlanCard,
   ReadCard,
   SkillCard,
+  SubagentCard,
   WriteCard,
 } from "./ToolCards";
 
@@ -157,6 +158,38 @@ export const CW_TOOL_PARAMETERS: Record<string, JSONSchema7> = {
     required: ["name"],
     additionalProperties: false,
   },
+  // subagent 工具（§8.3 M2 表 Meta 行，10 号票；与 agent/roles.rs 的
+  // subagent_spec params_schema 逐字镜像，contract.test 双向锁定）
+  subagent: {
+    type: "object",
+    properties: {
+      role: {
+        type: "string",
+        enum: [
+          "explore",
+          "planner",
+          "implementer",
+          "reviewer",
+          "tester",
+          "frontend-dev",
+          "backend-dev",
+        ],
+        description: "角色名（见 description 清单）",
+      },
+      task: {
+        type: "string",
+        description: "完整自足的任务描述（子代理无本对话历史）",
+      },
+      budgetSteps: {
+        type: "integer",
+        minimum: 1,
+        maximum: 1000,
+        description: "步数预算（模型请求轮次上限），缺省按角色默认",
+      },
+    },
+    required: ["role", "task"],
+    additionalProperties: false,
+  },
 };
 
 /**
@@ -218,5 +251,11 @@ export const cwToolkit = defineToolkit({
     description: "加载技能的完整操作指引（正文按需进上下文）",
     parameters: CW_TOOL_PARAMETERS.skill,
     render: SkillCard,
+  },
+  subagent: {
+    type: "frontend",
+    description: "委派子代理执行独立任务（过程实时可见，汇报回父上下文）",
+    parameters: CW_TOOL_PARAMETERS.subagent,
+    render: SubagentCard,
   },
 });

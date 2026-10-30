@@ -25,6 +25,7 @@ import type {
   InjectRunMessageResult,
   IpcError,
   LaunchDecision,
+  LoadSubagentHistoryArgs,
   McpListConfigResult,
   McpSaveConfigArgs,
   McpScope,
@@ -33,6 +34,7 @@ import type {
   McpSnapshotResult,
   McpTestArgs,
   McpTestResult,
+  MessageEntry,
   NotificationPermissionStatus,
   OpenDirArgs,
   ProjectMeta,
@@ -56,6 +58,7 @@ import type {
   SkillToggleArgs,
   StartChatArgs,
   StartChatResult,
+  StopSubagentArgs,
   ToolOutcome,
   WorkspacePathHit,
 } from "./types";
@@ -114,6 +117,9 @@ export const COMMANDS = {
   skillToggle: "skill_toggle",
   skillReload: "skill_reload",
   skillInspect: "skill_inspect",
+  // 子代理两命令（10 号票，§3.3 #58/#59）
+  stopSubagent: "stop_subagent",
+  loadSubagentHistory: "load_subagent_history",
 } as const;
 
 /**
@@ -140,6 +146,13 @@ export const EVENT_KEYS = {
   runCompacted: "run:compacted",
   runCompactFailed: "run:compact_failed",
   mcpStatus: "mcp:status",
+  // 子代理生命周期（10 号票，§3.5【M2】：跨 Tab Inspector 订阅）
+  subSpawn: "sub:spawn",
+  subStep: "sub:step",
+  subReport: "sub:report",
+  subUsage: "sub:usage",
+  subDone: "sub:done",
+  subError: "sub:error",
 } as const;
 
 /**
@@ -511,4 +524,22 @@ export function skillInspect(args: SkillInspectArgs): Promise<SkillInspectResult
   return invoke<SkillInspectResult>(COMMANDS.skillInspect, {
     name: args.name,
   } satisfies SkillInspectArgs);
+}
+
+// ---- 子代理（§3.3 #58/#59，10 号票）----
+
+/** §3.3 #58：级联取消一个活跃子代理（令牌置位即返回；终态以该子代理的
+ *  runEnded + subDone 帧为权威）。id 不存在或已结束 reject E_NOT_FOUND。 */
+export function stopSubagent(args: StopSubagentArgs): Promise<void> {
+  return invoke<void>(COMMANDS.stopSubagent, { subId: args.subId } satisfies StopSubagentArgs);
+}
+
+/** §3.3 #59：子代理历史回看（抽屉面）。返回该子代理的 WireMessage 序列
+ *  （assistant 汇报与工具调用，与主会话消息格式同形）；不存在 reject
+ *  E_NOT_FOUND。 */
+export function loadSubagentHistory(args: LoadSubagentHistoryArgs): Promise<MessageEntry[]> {
+  return invoke<MessageEntry[]>(COMMANDS.loadSubagentHistory, {
+    sessionId: args.sessionId,
+    subId: args.subId,
+  } satisfies LoadSubagentHistoryArgs);
 }

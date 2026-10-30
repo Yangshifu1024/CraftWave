@@ -180,7 +180,7 @@ describe("settings store", () => {
     useSettingsStore.setState({ config: structuredClone(draft) });
     // 草稿层写入 agent.customPrompt（工作区与智能体页的文本框路径）
     useSettingsStore.getState().patchConfig({
-      agent: { customPrompt: "始终用中文回复" },
+      agent: { maxConcurrentSubagents: 4, customPrompt: "始终用中文回复" },
     });
     expect(useSettingsStore.getState().config?.agent?.customPrompt).toBe("始终用中文回复");
     // 草稿脏：与基线出现差集（agent 组是 agent 页切片）
@@ -188,23 +188,27 @@ describe("settings store", () => {
     // 提交：save_config 载荷带 agent 字段；归一化结果回写草稿与基线
     const normalized: AppConfig = {
       ...draft,
-      agent: { customPrompt: "始终用中文回复" },
+      agent: { maxConcurrentSubagents: 4, customPrompt: "始终用中文回复" },
     };
     saveConfig.mockResolvedValue(normalized);
     const ok = await useSettingsStore.getState().saveAll();
     expect(ok).toBe(true);
     expect(saveConfig).toHaveBeenCalledWith(
-      expect.objectContaining({ agent: { customPrompt: "始终用中文回复" } }),
+      expect.objectContaining({
+        agent: { maxConcurrentSubagents: 4, customPrompt: "始终用中文回复" },
+      }),
     );
     expect(useSettingsStore.getState().config?.agent?.customPrompt).toBe("始终用中文回复");
     expect(useSettingsStore.getState().baseline?.agent?.customPrompt).toBe("始终用中文回复");
 
     // 清空（空串 → 归一化后零注入）：后端 normalize 空白归 None，回显无该键
-    useSettingsStore.getState().patchConfig({ agent: { customPrompt: "" } });
+    useSettingsStore
+      .getState()
+      .patchConfig({ agent: { maxConcurrentSubagents: 4, customPrompt: "" } });
     saveConfig.mockResolvedValue(draft);
     await useSettingsStore.getState().saveAll();
     expect(saveConfig).toHaveBeenLastCalledWith(
-      expect.objectContaining({ agent: { customPrompt: "" } }),
+      expect.objectContaining({ agent: { maxConcurrentSubagents: 4, customPrompt: "" } }),
     );
     expect(useSettingsStore.getState().config?.agent?.customPrompt).toBeUndefined();
   });

@@ -59,6 +59,20 @@ pub trait McpCaller: Send + Sync {
     ) -> Pin<Box<dyn Future<Output = ToolOutcome> + Send + '_>>;
 }
 
+/// 子代理委派面（10 号票，§5.9）：subagent 工具的执行入口由 host 装配注入
+/// （依赖倒置——backend 只见本 trait，委派语义/并发治理/worktree 回收都在
+/// host/agent 层）。`parent_token` 是父 run 的取消令牌：实现据此派生子令牌
+/// 达成取消级联（S5）。
+pub trait SubagentSpawner: Send + Sync {
+    /// 委派一个子代理并等待其终态汇报（阻塞到子 run 收尾）；父取消时级联
+    /// 取消子代理并等子 runEnded 帧收齐后才返回（不留僵尸子 run）。
+    fn spawn(
+        &self,
+        args_json: &str,
+        parent_token: &CancellationToken,
+    ) -> Pin<Box<dyn Future<Output = ToolExecution> + Send + '_>>;
+}
+
 /// ask 槽单元：互斥锁包着的"至多一个未决询问"（agent 模块构造、backend
 /// 执行器写入、宿主命令 resolve_ask 读取后送回应答）。
 pub type AskSlotCell = Mutex<Option<AskSlot>>;
@@ -86,6 +100,13 @@ pub struct ExecutorEnv {
     /// run 内技能快照（09 号票，Q20 版本固定：run 开始时拍定正文全文，
     /// `skill` 工具只读快照不触盘；None = 未装配快照——无技能环境）。
     pub skills: Option<Arc<crate::knowledge::skills::SkillSnapshot>>,
+    /// 子代理委派面（10 号票，§5.9）：None = 不得委派（子代理环境的工具表
+    /// 已过滤 subagent，绕过工具表直接调用也在此拒绝——Q13 仅主代理可委派）。
+    pub subagents: Option<Arc<dyn SubagentSpawner>>,
+    /// 本环境的工具白名单（10 号票，FR-05-01 三处同源的角色边界落实）：
+    /// Some(名单) 时执行入口只放行名单内工具（工具可见面 = 执行许可）；
+    /// None = 不限（主代理环境）。
+    pub allowed_tools: Option<Vec<String>>,
 }
 
 /// 工具注册表全集的执行器：模型可见的 8 个工具（§8.3）都经它执行。
@@ -551,6 +572,21 @@ impl CancellableExecutor for ToolsetExecutor {
         token: &'a CancellationToken,
     ) -> Pin<Box<dyn Future<Output = ToolExecution> + Send + 'a>> {
         Box::pin(async move {
+            // 10 号票（FR-05-01 三处同源）：环境带工具白名单（子代理角色边界）
+            // 时，执行入口只放行名单内工具——工具可见面 = 执行许可，不依赖
+            // 模型自觉。
+            if let Some(allowed) = self.env.as_ref().and_then(|e| e.allowed_tools.as_ref())
+                && !allowed.iter().any(|n| n == name)
+            {
+                let outcome = ToolOutcome::failure(
+                    ToolError::tool_blocked(format!(
+                        "当前角色不允许使用工具 {name}（工具白名单外）"
+                    )),
+                    format!("已拦截：角色工具白名单不含 {name}"),
+                );
+                self.persist_outcome(call_id, &outcome);
+                return completed_of(outcome);
+            }
             match name {
                 "command" => {
                     let outcome =
@@ -623,6 +659,65 @@ impl CancellableExecutor for ToolsetExecutor {
                             serde_json::json!({ "name": entry.name, "body": entry.body }),
                             ui_summary.clone(),
                         );
+                        self.persist_outcome(call_id, &outcome);
+                    }
+                    execution
+                }
+                "subagent" => {
+                    // 子代理委派（10 号票，§5.9）：执行面由 host 装配注入
+                    // （委派治理/并发/worktree 回收在 agent + host 层）。
+                    // None = 子代理环境或未装配——Q13 仅主代理可委派：子代理
+                    // 工具表已过滤 subagent，绕过工具表直接调用也在此拒绝。
+                    let Some(spawner) = self.env.as_ref().and_then(|e| e.subagents.clone()) else {
+                        let message = "仅主代理可以委派子代理；子代理需进一步拆分任务时，\
+                                       把拆分建议写进你的汇报，交回主代理协调执行";
+                        let outcome = ToolOutcome::failure(
+                            ToolError::tool_blocked(message),
+                            "已拦截：子代理不能再委派",
+                        );
+                        self.persist_outcome(call_id, &outcome);
+                        return completed_of(outcome);
+                    };
+                    let execution = spawner.spawn(args_json, token).await;
+                    // 委派结果边车（卡片恢复面：成功带汇报摘要，失败带错误面）
+                    if let ToolExecution::Completed {
+                        ok,
+                        ui_summary,
+                        error,
+                        ..
+                    } = &execution
+                    {
+                        let outcome = if *ok {
+                            ToolOutcome::success(
+                                serde_json::json!({ "outcome": "report" }),
+                                ui_summary.clone(),
+                            )
+                        } else {
+                            // 帧面错误码（String）→ 注册表 &'static 常量匹配
+                            //（未收录码兜底 E_INTERNAL，不改写注册表键面）
+                            let code = match error.as_ref().map(|e| e.code.as_str()) {
+                                Some(c) if c == crate::util::errors::E_SUB_BUDGET => {
+                                    crate::util::errors::E_SUB_BUDGET
+                                }
+                                Some(c) if c == crate::util::errors::E_IO => {
+                                    crate::util::errors::E_IO
+                                }
+                                Some(c) if c == crate::util::errors::E_INVALID_ARG => {
+                                    crate::util::errors::E_INVALID_ARG
+                                }
+                                _ => crate::util::errors::E_INTERNAL,
+                            };
+                            ToolOutcome::failure(
+                                ToolError::new(
+                                    code,
+                                    error
+                                        .as_ref()
+                                        .map(|e| e.message.clone())
+                                        .unwrap_or_else(|| ui_summary.clone()),
+                                ),
+                                ui_summary.clone(),
+                            )
+                        };
                         self.persist_outcome(call_id, &outcome);
                     }
                     execution

@@ -68,6 +68,7 @@ export * from "./generated/Language";
 export * from "./generated/LaunchDecision";
 export * from "./generated/ListSessionsArgs";
 export * from "./generated/LoadSessionTreeArgs";
+export * from "./generated/LoadSubagentHistoryArgs";
 export * from "./generated/LoadToolOutcomesArgs";
 export * from "./generated/LogConfig";
 export * from "./generated/LogLevel";
@@ -142,8 +143,12 @@ export * from "./generated/SkillToggleArgs";
 export * from "./generated/SkillTrustScope";
 export * from "./generated/StartChatArgs";
 export * from "./generated/StartChatResult";
+export * from "./generated/StopSubagentArgs";
 export * from "./generated/StoredCompactionEntry";
 export * from "./generated/StoredEntry";
+export * from "./generated/SubMeta";
+export * from "./generated/SubOutcome";
+export * from "./generated/SubSpawnArgs";
 export * from "./generated/serde_json/JsonValue";
 export * from "./generated/Theme";
 export * from "./generated/ToolError";
@@ -253,4 +258,57 @@ export type McpStatusEvent = {
   state: "starting" | "ready" | "stopped" | "error";
   /** 状态明细（Error 原因 / Ready 工具数说明；无则缺省）。 */
   detail?: string;
+};
+
+// ---- 子代理生命周期事件载荷族（10 号票，§3.5【M2】六键；Rust 发射面为
+// json! 字面量、无结构体来源，随本票手写收编——payload 统一形如
+// { sessionId, runId, subId, ...可选字段 }）----
+
+/** sub:spawn：子代理委派启动（跨 Tab Inspector 订阅）。 */
+export type SubSpawnEvent = {
+  sessionId: string;
+  runId: string;
+  subId: string;
+  role: string;
+};
+
+/** sub:step：子代理轮次推进。 */
+export type SubStepEvent = {
+  sessionId: string;
+  runId: string;
+  subId: string;
+  turn: number;
+};
+
+/** sub:report：`<report>` 结构化汇报全文产出。 */
+export type SubReportEvent = {
+  sessionId: string;
+  runId: string;
+  subId: string;
+  report: string;
+};
+
+/** sub:usage：子代理自身用量累计（Q40：仅子面板展示，不重复累进会话总量）。 */
+export type SubUsageEvent = {
+  sessionId: string;
+  runId: string;
+  subId: string;
+  usage: UsageTotal;
+};
+
+/** sub:done：子代理终态（四象限）。 */
+export type SubDoneEvent = {
+  sessionId: string;
+  runId: string;
+  subId: string;
+  outcome: "report" | "partial" | "no_report" | "cancelled";
+};
+
+/** sub:error：子代理异常终态说明。 */
+export type SubErrorEvent = {
+  sessionId: string;
+  runId: string;
+  subId: string;
+  code?: string;
+  message?: string;
 };

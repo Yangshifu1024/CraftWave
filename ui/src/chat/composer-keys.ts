@@ -40,6 +40,26 @@ export interface SkillMenuState {
   activeIndex: number;
 }
 
+/** 内置子代理角色（FR-07-02，10 号票：$ 触发符菜单的静态清单；与 Rust
+ *  agent/roles.rs 的 ROLES 同名单——7 角色由契约测试对照 subagent 工具
+ *  description 双侧钉住）。 */
+export const SUBAGENT_ROLES: { name: string; summary: string }[] = [
+  { name: "explore", summary: "只读探索：大范围检索代码与文档，返回调研结论" },
+  { name: "planner", summary: "只读规划：分析现状并产出可执行的分步计划" },
+  { name: "implementer", summary: "实现者：在独立工作区修改代码完成指定任务" },
+  { name: "reviewer", summary: "只读评审：审查代码/改动质量并给出风险清单" },
+  { name: "tester", summary: "测试者：在独立工作区运行局部测试并回报证据" },
+  { name: "frontend-dev", summary: "前端实现者：在独立工作区修改界面层代码" },
+  { name: "backend-dev", summary: "后端实现者：在独立工作区修改服务端代码" },
+];
+
+/** $ 菜单快照（FR-07-02，10 号票；浮层渲染面）。 */
+export interface DollarMenuState {
+  query: string;
+  items: { name: string; summary: string }[];
+  activeIndex: number;
+}
+
 /**
  * Enter 键的三态路由判定（纯函数，FR-01-07 两种语义界面明确）：
  * - Alt+Enter → followUp 排队（任何时刻可排，含运行中）；
@@ -101,6 +121,63 @@ export function detectSlashQuery(
   return null;
 }
 
+/**
+ * 从 (text, cursor) 检测 `$` 角色触发（FR-07-02，10 号票；与 detectAtQuery/
+ * detectSlashQuery 同构的光标锚定 + 首字符互斥）：
+ * - 光标往回到最近的 `$` 之间无空白 → 查询中；
+ * - `$` 必须在行首或前一字符是空白（排除 `cost$100` 这类文本误触）；
+ * - 与 `@`/`/` 互斥：光标前最近的触发符是谁就归谁的菜单（useComposerKeys
+ *   内按 @ → / → $ 顺序检测）。
+ * 返回插入位（`$` 的下标）与查询词；非触发态返回 null。
+ */
+export function detectDollarQuery(
+  text: string,
+  cursor: number,
+): { at: number; query: string } | null {
+  let i = cursor - 1;
+  while (i >= 0) {
+    const ch = text[i];
+    if (ch === "$") {
+      // `$` 的前一字符（若有）必须是空白——行首或空白后的 `$` 才是触发符
+      if (i > 0 && !/\s/.test(text[i - 1])) return null;
+      return { at: i, query: text.slice(i + 1, cursor) };
+    }
+    if (ch === "@" || ch === "/") return null; // 更近的 @// 触发归各自菜单
+    if (/\s/.test(ch)) return null; // $ 与光标间隔了空白：非触发态
+    i -= 1;
+  }
+  return null;
+}
+
+/** 角色清单的查询过滤（名称前缀优先、其次包含；大小写不敏感）。 */
+export function filterRoles(
+  roles: { name: string; summary: string }[],
+  query: string,
+): { name: string; summary: string }[] {
+  const q = query.trim().toLowerCase();
+  if (q === "") return roles;
+  const starts: { name: string; summary: string }[] = [];
+  const contains: { name: string; summary: string }[] = [];
+  for (const role of roles) {
+    const name = role.name.toLowerCase();
+    if (name.startsWith(q)) starts.push(role);
+    else if (name.includes(q)) contains.push(role);
+  }
+  return [...starts, ...contains];
+}
+
+/** 选中角色的插入文本（票面定案：插入 `$角色名 ` 后用户续写任务，发送
+ *  文本原样入会话——模型经 subagent 工具 description 理解点名语义）。 */
+export function insertDollarInvocation(
+  text: string,
+  at: number,
+  cursor: number,
+  name: string,
+): string {
+  const rest = text.slice(cursor).replace(/^\s+/, "");
+  return `${text.slice(0, at)}$${name} ${rest}`;
+}
+
 /** 选中技能的插入文本（票面定案：展开为明确指令文本，避免依赖模型对裸
  *  `/名` 的理解；尾部空格衔接用户后续输入——后续文本若以空白开头则剥掉
  *  首段空白，避免出现双空格）。 */
@@ -146,10 +223,13 @@ export function useComposerKeys(): {
   onCursor: (cursor: number) => void;
   atMenu: AtMenuState | null;
   skillMenu: SkillMenuState | null;
+  dollarMenu: DollarMenuState | null;
   pickActive: () => void;
   pickSkill: () => void;
+  pickDollar: () => void;
   hoverIndex: (index: number) => void;
   hoverSkill: (index: number) => void;
+  hoverDollar: (index: number) => void;
 } {
   const sessionId = useSessionScope();
   const aui = useAui();
@@ -188,6 +268,7 @@ export function useComposerKeys(): {
       return;
     }
     setSkillMenu(null); // @ 触发优先：关掉可能开着的 / 菜单（互斥）
+    setDollarMenu(null); // 同时关掉可能开着的 $ 菜单（10 号票三符互斥）
     setAtMenu((prev) =>
       prev !== null && prev.query === detected.query
         ? prev
@@ -234,6 +315,21 @@ export function useComposerKeys(): {
     setSkillMenu({ query: detected.query, items, activeIndex: 0 });
   }, [text, skills]);
 
+  // ---- $ 角色菜单状态机（FR-07-02，10 号票）：静态 7 角色清单；与 @ //
+  // 互斥（先测 @ 再测 /，都未命中才测 $）。
+  const [dollarMenu, setDollarMenu] = useState<DollarMenuState | null>(null);
+  useEffect(() => {
+    const detected = detectDollarQuery(text, cursorRef.current);
+    if (detected === null) {
+      setDollarMenu(null);
+      return;
+    }
+    setAtMenu(null); // $ 触发：关掉可能开着的 @ / 菜单（互斥）
+    setSkillMenu(null);
+    const items = filterRoles(SUBAGENT_ROLES, detected.query);
+    setDollarMenu({ query: detected.query, items, activeIndex: 0 });
+  }, [text]);
+
   /** 插入当前选中项（键盘 Tab/Enter 与浮层点击共用）。 */
   const pickActive = useCallback(() => {
     const snapshot = atMenu;
@@ -266,6 +362,22 @@ export function useComposerKeys(): {
     }
     setSkillMenu(null);
   }, [aui, skillMenu, text]);
+
+  /** 插入选中角色的 `$角色名 ` 前缀（10 号票定案：点名语义由发送文本原样
+   *  承载——模型经 subagent 工具 description 理解）。 */
+  const pickDollar = useCallback(() => {
+    const snapshot = dollarMenu;
+    if (snapshot === null) return;
+    const role = snapshot.items[snapshot.activeIndex];
+    if (role !== undefined) {
+      const at = cursorRef.current;
+      aui.composer.setText(
+        insertDollarInvocation(text, detectDollarQuery(text, at)?.at ?? at - 1, at, role.name),
+        { origin: "user" },
+      );
+    }
+    setDollarMenu(null);
+  }, [aui, dollarMenu, text]);
 
   // ---- 历史翻阅（↑↓ 空输入，§10.6）----
   const historyRef = useRef<{ index: number; draft: string }>({ index: -1, draft: "" });
@@ -320,6 +432,32 @@ export function useComposerKeys(): {
       if (event.key === "Escape") {
         event.preventDefault();
         setSkillMenu(null);
+        return;
+      }
+    }
+    // 1c) $ 角色菜单导航（10 号票，§10.6：触发符菜单 > ghost hint）
+    if (dollarMenu !== null && dollarMenu.items.length > 0) {
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        const delta = event.key === "ArrowDown" ? 1 : -1;
+        setDollarMenu((prev) =>
+          prev === null || prev.items.length === 0
+            ? prev
+            : {
+                ...prev,
+                activeIndex: (prev.activeIndex + delta + prev.items.length) % prev.items.length,
+              },
+        );
+        return;
+      }
+      if (event.key === "Tab" || event.key === "Enter") {
+        event.preventDefault();
+        pickDollar();
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setDollarMenu(null);
         return;
       }
     }
@@ -410,5 +548,22 @@ export function useComposerKeys(): {
     setSkillMenu((prev) => (prev === null ? prev : { ...prev, activeIndex: index }));
   }, []);
 
-  return { onKeyDown, onCursor, atMenu, skillMenu, pickActive, pickSkill, hoverIndex, hoverSkill };
+  /** $ 角色菜单浮层 hover 高亮。 */
+  const hoverDollar = useCallback((index: number) => {
+    setDollarMenu((prev) => (prev === null ? prev : { ...prev, activeIndex: index }));
+  }, []);
+
+  return {
+    onKeyDown,
+    onCursor,
+    atMenu,
+    skillMenu,
+    dollarMenu,
+    pickActive,
+    pickSkill,
+    pickDollar,
+    hoverIndex,
+    hoverSkill,
+    hoverDollar,
+  };
 }

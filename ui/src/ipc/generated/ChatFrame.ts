@@ -2,6 +2,7 @@
 import type { EndReason } from "./EndReason";
 import type { FrameError } from "./FrameError";
 import type { RunSnapshotStatus } from "./RunSnapshotStatus";
+import type { SubOutcome } from "./SubOutcome";
 import type { UsageTotal } from "./UsageTotal";
 
 /**
@@ -51,4 +52,8 @@ usage: UsageTotal,
 /**
  * 已发出的最大帧序号（前端对账基准）。
  */
-lastSeq: number, };
+lastSeq: number, } | { "type": "subStarted", callId: string, subId: string, role: string, } | { "type": "subFrame", subId: string, 
+/**
+ * 子 run 的原始帧（Box 折叠枚举尺寸；serde 序列化内联展开）。
+ */
+frame: ChatFrame, } | { "type": "subReport", subId: string, report: string, } | { "type": "subDone", subId: string, outcome: SubOutcome, };

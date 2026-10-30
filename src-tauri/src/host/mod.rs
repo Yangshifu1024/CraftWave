@@ -79,6 +79,10 @@ pub struct AppState {
     /// AppHandle 的 Resource 目录解析好传入；None = 走源码树回退（dev/
     /// headless）或无内置来源。
     pub resource_skills_dir: Option<PathBuf>,
+    /// 子代理注册表（10 号票，§5.9）：进程内全部活跃子代理 + 全局并发闸
+    /// （所有会话共用上限，`agent.maxConcurrentSubagents`，缺省 4；
+    /// save_config 时经 [`Self::apply_subagent_limit`] 热调整）。
+    pub subs: Arc<crate::agent::SubRegistry>,
 }
 
 impl AppState {
@@ -106,7 +110,26 @@ impl AppState {
             )),
             app_asks: Arc::new(Mutex::new(HashMap::new())),
             resource_skills_dir: None,
+            subs: Arc::new(crate::agent::SubRegistry::new(
+                crate::providers::types::DEFAULT_MAX_CONCURRENT_SUBAGENTS as usize,
+            )),
         }
+    }
+
+    /// 把配置里的子代理全局并发上限热应用到注册表（save_config 边界调用；
+    /// Q13 热调整语义：已启动任务继续，降低暂停补入，提高立即放行排队任务）。
+    pub fn apply_subagent_limit(&self) {
+        let limit = self
+            .config
+            .load()
+            .map(|c| {
+                c.agent
+                    .as_ref()
+                    .map(|a| a.max_concurrent_subagents)
+                    .unwrap_or(crate::providers::types::DEFAULT_MAX_CONCURRENT_SUBAGENTS)
+            })
+            .unwrap_or(crate::providers::types::DEFAULT_MAX_CONCURRENT_SUBAGENTS);
+        self.subs.gate().set_limit(limit.max(1) as usize);
     }
 
     /// 产出一份全部字段同源的轻量副本（Arc/内部 Arc 克隆，零深拷贝）——
@@ -127,6 +150,7 @@ impl AppState {
             mcp: self.mcp.clone(),
             app_asks: self.app_asks.clone(),
             resource_skills_dir: self.resource_skills_dir.clone(),
+            subs: self.subs.clone(),
         }
     }
 
