@@ -477,3 +477,101 @@ it("历史工具结果是纯字符串时仍显示失败原因并可复制", asyn
   expect(copy).toHaveBeenCalledWith("E_COMMAND: 目录不存在");
   copy.mockRestore();
 });
+
+describe("read 文档态（16 号票）", () => {
+  /** pdf 文档卡的边车 data（read 文档管线结构化输出）。 */
+  const pdfOutcome = {
+    ok: true,
+    uiSummary: "读取 docs/report.pdf（pdf：共 12 页，输出第 2–2 页）",
+    data: {
+      kind: "pdf",
+      path: "docs/report.pdf",
+      pageCount: 12,
+      pages: [2, 2],
+      content: "--- 第 2 页 ---\n正文内容",
+      truncated: false,
+    },
+  };
+
+  it("扩展名徽标（pdf）在摘要行 + 页数摘要 + 内容折叠预览", async () => {
+    loadToolOutcomes.mockResolvedValue({ c1: pdfOutcome });
+    render(<ReadCard {...props({ path: "docs/report.pdf", page: 2 }, resultOf("已读取"))} />);
+    const card = screen.getByTestId("tool-card-c1");
+    // 徽标与页码参数（摘要行，展开前可见）
+    expect(screen.getByTestId("doc-format-badge").textContent).toBe("pdf");
+    fireEvent.click(card.querySelector("button")!);
+    await vi.waitFor(() => expect(card.textContent).toContain("共 12 页"));
+    expect(card.textContent).toContain("第 2 页");
+    // 内容折叠预览存在
+    const preview = [...card.querySelectorAll("details")].find((d) =>
+      d.querySelector("summary")?.textContent?.includes("内容预览"),
+    );
+    expect(preview?.textContent).toContain("--- 第 2 页 ---");
+  });
+
+  it("xlsx 徽标 + sheet 数摘要", async () => {
+    loadToolOutcomes.mockResolvedValue({
+      c1: {
+        ok: true,
+        uiSummary: "读取 docs/data.xlsx",
+        data: {
+          kind: "xlsx",
+          path: "docs/data.xlsx",
+          sheets: ["销售数据", "汇总", "说明"],
+          selectedSheets: ["销售数据"],
+          rowCount: 4,
+          content: "## 销售数据\n| 产品 | 销售额 |",
+          truncated: true,
+        },
+      },
+    });
+    render(<ReadCard {...props({ path: "docs/data.xlsx" }, resultOf("已读取"))} />);
+    expect(screen.getByTestId("doc-format-badge").textContent).toBe("xlsx");
+    fireEvent.click(screen.getByTestId("tool-card-c1").querySelector("button")!);
+    const card = screen.getByTestId("tool-card-c1");
+    await vi.waitFor(() => expect(card.textContent).toContain("3 个 sheet"));
+    // truncated 提示行（提示模型继续，非按钮）
+    expect(screen.getByTestId("doc-resume-hint").textContent).toContain("继续读取");
+  });
+
+  it("warnings 黄条（降级解析提示仅 UI）+ 预览前 80 行截断", async () => {
+    const lines = Array.from({ length: 120 }, (_, i) => `第 ${i + 1} 行`).join("\n");
+    loadToolOutcomes.mockResolvedValue({
+      c1: {
+        ok: true,
+        uiSummary: "读取 docs/a.docx（docx：3 段、2 个表格）",
+        detail: {
+          warnings: ["降级解析：docx-rs 读取失败（zip 解析错误），已用 zip+quick-xml 兜底解析"],
+        },
+        data: {
+          kind: "docx",
+          path: "docs/a.docx",
+          paragraphCount: 3,
+          tableCount: 2,
+          content: lines,
+          truncated: false,
+        },
+      },
+    });
+    render(<ReadCard {...props({ path: "docs/a.docx" }, resultOf("已读取"))} />);
+    fireEvent.click(screen.getByTestId("tool-card-c1").querySelector("button")!);
+    const card = await vi.waitFor(() => {
+      const warnings = screen.getByTestId("doc-warnings");
+      expect(warnings.textContent).toContain("降级解析");
+      return screen.getByTestId("tool-card-c1");
+    });
+    expect(card.textContent).toContain("3 段 · 2 个表格");
+    // 预览前 80 行：第 80 行在内、第 81 行不在
+    const preview = [...card.querySelectorAll("details")].find((d) =>
+      d.querySelector("summary")?.textContent?.includes("内容预览"),
+    );
+    expect(preview?.textContent).toContain("第 80 行");
+    expect(preview?.textContent).not.toContain("第 81 行");
+  });
+
+  it("普通文本文件不进入文档态（无徽标）", () => {
+    render(<ReadCard {...props({ path: "src/main.rs" }, resultOf("已读取"))} />);
+    expect(screen.getByTestId("tool-card-c1").textContent).toContain("main.rs");
+    expect(screen.queryByTestId("doc-format-badge")).toBeNull();
+  });
+});

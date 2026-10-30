@@ -314,9 +314,12 @@ function FileChip({ path }: { path: string }) {
   );
 }
 
-/** read：路径 + 行区间（详情含区间说明）。 */
+/** read：路径 + 行区间（详情含区间说明）。16 号票：.docx/.xlsx/.pdf 等文档
+ *  扩展名进入文档态（徽标 + 页数/sheet 摘要 + 内容折叠预览 + warnings 黄条）。 */
 export function ReadCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
   const args = (props.args ?? {}) as CardArgs;
+  const ext = docExtension(str(args, "path"));
+  if (ext) return <DocReadCard {...props} ext={ext} />;
   const offset = num(args, "offset");
   const limit = num(args, "limit");
   const range =
@@ -333,6 +336,145 @@ export function ReadCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
       summaryNode={<FileChip path={str(args, "path")} />}
     >
       {range && <p className="text-[var(--muted-foreground)]">{range}</p>}
+    </ToolCardShell>
+  );
+}
+
+/** 文档扩展名清单（与后端 tools/doc.rs detect_format 对齐）。 */
+const DOC_EXTENSIONS = ["docx", "xlsx", "xlsm", "xlsb", "xls", "ods", "pdf"];
+
+/** 按路径扩展名判定文档格式（大小写不敏感；非文档返回 null）。 */
+function docExtension(path: string): string | null {
+  const dot = path.lastIndexOf(".");
+  if (dot < 0) return null;
+  const ext = path.slice(dot + 1).toLowerCase();
+  return DOC_EXTENSIONS.includes(ext) ? ext : null;
+}
+
+/** 文档态徽标配色：格式缩写（与 FileTypeIcon 的文件色语义一致）。 */
+function docBadgeClass(ext: string): string {
+  switch (ext) {
+    case "pdf":
+      return "bg-[var(--destructive)]/10 text-[var(--destructive)]";
+    case "docx":
+      return "bg-[#3178c6]/10 text-[#3178c6]";
+    default:
+      return "bg-emerald-600/10 text-emerald-600 dark:text-emerald-400";
+  }
+}
+
+/** read 文档态边车 data 的形状（16 号票：文档管线结构化输出，字段随格式可选）。 */
+interface DocReadOutcome {
+  kind?: unknown;
+  content?: unknown;
+  truncated?: unknown;
+  resumeHint?: unknown;
+  paragraphCount?: unknown;
+  tableCount?: unknown;
+  pageCount?: unknown;
+  sheets?: unknown;
+}
+
+/** 文档读取卡：扩展名徽标 + 页数/sheet/段落摘要 + 内容 Markdown 折叠预览
+ *  （前 80 行）+ truncated 续读提示行（提示模型，非按钮）+ warnings 黄条
+ *  （降级解析等仅 UI 提示，§8.2）。 */
+function DocReadCard({
+  ext,
+  ...props
+}: ToolCallMessagePartProps<CardArgs, unknown> & { ext: string }) {
+  const args = (props.args ?? {}) as CardArgs;
+  const { result, isError } = props;
+  // 结构化输出在边车 data（帧面 result 是模型通道压缩文本），失败不拉取。
+  const settled = result !== undefined && !isError;
+  const outcome = useToolOutcomeDetail(props.toolCallId, settled);
+  const data = (outcome?.data ?? null) as DocReadOutcome | null;
+  const content = typeof data?.content === "string" ? data.content : null;
+  const truncated = data?.truncated === true;
+  const resumeHint = typeof data?.resumeHint === "string" ? data.resumeHint : null;
+  const pageCount = typeof data?.pageCount === "number" ? data.pageCount : undefined;
+  const sheets = Array.isArray(data?.sheets)
+    ? (data.sheets as unknown[]).filter((s): s is string => typeof s === "string")
+    : [];
+  const paragraphCount = typeof data?.paragraphCount === "number" ? data.paragraphCount : undefined;
+  const tableCount = typeof data?.tableCount === "number" ? data.tableCount : undefined;
+  // warnings（§8.2 仅 UI）：detail 是 JsonValue，按对象形状安全提取。
+  const detailRecord =
+    outcome?.detail && typeof outcome.detail === "object" && !Array.isArray(outcome.detail)
+      ? (outcome.detail as { warnings?: unknown })
+      : null;
+  const rawWarnings = detailRecord?.warnings;
+  const warnings = Array.isArray(rawWarnings)
+    ? (rawWarnings as unknown[]).filter((w): w is string => typeof w === "string")
+    : [];
+  // 内容预览前 80 行（表格与段落足够看清结构，全量走详细数据）。
+  const preview =
+    content !== null
+      ? content.split("\n").slice(0, 80).join("\n") +
+        (content.split("\n").length > 80 ? "\n…（预览前 80 行，全量见详细数据）" : "")
+      : null;
+  // 参数区说明：pdf 页码 / xlsx sheet。
+  const page = num(args, "page");
+  const pages = Array.isArray(args.pages) ? (args.pages as number[]) : null;
+  const sheet = str(args, "sheet");
+  const rangeText = [
+    page !== undefined ? `第 ${page} 页` : undefined,
+    pages !== null && pages.length === 2 ? `第 ${pages[0]}–${pages[1]} 页` : undefined,
+    sheet ? `sheet：${sheet}` : undefined,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return (
+    <ToolCardShell
+      {...props}
+      icon={<Search size={16} />}
+      label="读取"
+      runningLabel="正在读取"
+      summary={str(args, "path")}
+      summaryNode={<FileChip path={str(args, "path")} />}
+      badges={
+        <span
+          data-testid="doc-format-badge"
+          className={`shrink-0 rounded px-1.5 py-0.5 text-ui-sm font-medium uppercase ${docBadgeClass(ext)}`}
+        >
+          {ext}
+        </span>
+      }
+    >
+      {rangeText && <p className="text-[var(--muted-foreground)]">（{rangeText}）</p>}
+      {/* 页数 / sheet 数 / 段落表格摘要（终态后可见） */}
+      {(pageCount !== undefined || sheets.length > 0 || paragraphCount !== undefined) && (
+        <p data-testid="doc-summary" className="text-ui-sm text-[var(--muted-foreground)]">
+          {pageCount !== undefined && `共 ${pageCount} 页`}
+          {sheets.length > 0 && `${pageCount !== undefined ? " · " : ""}${sheets.length} 个 sheet`}
+          {paragraphCount !== undefined &&
+            `${pageCount !== undefined || sheets.length > 0 ? " · " : ""}${paragraphCount} 段${tableCount !== undefined ? ` · ${tableCount} 个表格` : ""}`}
+        </p>
+      )}
+      {/* warnings 黄条（降级解析等，§8.2 仅 UI 不进模型文本） */}
+      {warnings.length > 0 && (
+        <div
+          data-testid="doc-warnings"
+          className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-ui-sm text-amber-700 dark:text-amber-400"
+        >
+          {warnings.map((w) => (
+            <p key={w}>{w}</p>
+          ))}
+        </div>
+      )}
+      {/* truncated 续读提示：给模型看的信息行（非按钮），帮助用户理解下一步 */}
+      {truncated && (
+        <p data-testid="doc-resume-hint" className="text-ui-sm text-[var(--muted-foreground)]">
+          {resumeHint ?? "内容超限已截断"}（可在对话中让模型按提示继续读取）
+        </p>
+      )}
+      {preview !== null && (
+        <details>
+          <summary className="cursor-pointer text-[var(--muted-foreground)]">内容预览</summary>
+          <div className="mt-1 max-h-60 overflow-auto rounded border border-[var(--border)] p-2">
+            <Markdown>{preview}</Markdown>
+          </div>
+        </details>
+      )}
     </ToolCardShell>
   );
 }

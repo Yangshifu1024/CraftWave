@@ -13,6 +13,9 @@ fn text_args(path: &str) -> ReadArgs {
         offset: None,
         limit: None,
         kind: None,
+        page: None,
+        pages: None,
+        sheet: None,
     }
 }
 

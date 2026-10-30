@@ -106,6 +106,28 @@ url = "2.5"
 # 结果锚点与摘要块（属性顺序/引号形式无关），比正则宽松且对改版容错。
 dom_query = "0.29"
 
+# 【M2 16 号票】文档读取三选（15 号票选型定案，§8.9 读侧；全部纯 Rust、
+# MIT/Apache 兼容许可、零系统依赖）：
+# - xlsx → calamine（只读 reader，worksheet_range 天然二维表；xls/xlsm/
+#   xlsb/ods 顺带覆盖）；
+# - docx → docx-rs（bokuweb，read_docx 读侧；两个开放缺陷 #873/#933 由
+#   tools/doc.rs 的降级路径兜底）；
+# - pdf → pdf-extract（extract_text_from_mem 系 API，内置 CMap 处理；对
+#   不可信输入可能 panic #97/#141，工具边界 catch_unwind 包裹）。
+calamine = "0.37"
+docx-rs = "0.4"
+pdf-extract = "0.12"
+# docx 降级路径（15 号票兜底方案）：zip + quick-xml 手解 word/document.xml。
+# quick-xml 0.42 已在依赖树内（tauri → plist），锁同版本不新增下载；
+# zip 随 docx-rs 进入依赖树（8.6），声明同版本直接使用（calamine 另锁 9.1，
+# 为上游各自声明，不强行归一）。
+quick-xml = "0.42"
+zip = "8.6"
+# pdf 加密检测（16 号票）：lopdf 随 pdf-extract 进入依赖树（0.42），声明
+# 同版本读取 trailer 的 /Encrypt 字典——加密文档在解析前给出明确错误，
+# 不依赖解析器对加密文件的未定义行为。
+lopdf = "0.42"
+
 # 【S5 spike，cfg(unix)】进程组收割：kill(-pgid, SIGTERM/SIGKILL)
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

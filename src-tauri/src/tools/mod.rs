@@ -15,6 +15,9 @@ pub mod ask;
 pub mod batch_read;
 pub mod calculate;
 pub mod command;
+// 文档读取管线（16 号票，§8.9 读侧）：read 工具按扩展名分派 docx/xlsx/pdf
+// 解析；不设独立工具（§8.3 read 行），注册表清单不变。
+pub mod doc;
 pub mod edit;
 pub mod glob;
 pub mod grep;

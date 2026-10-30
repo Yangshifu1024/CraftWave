@@ -1,6 +1,8 @@
 //! `read` 工具（ReadOnly，§8.3）：文本按行窗口（默认 2000 行，offset/limit）；
 //! kind:"image" 走 base64（≤3MiB）；文本解码与 read_workspace_file 共用
-//! util::encoding（C-10）。
+//! util::encoding（C-10）。16 号票：.docx/.xlsx/.pdf 按扩展名分派进
+//! tools/doc.rs 文档管线（§8.9 读侧），参数 page/pages（pdf 分页）与
+//! sheet（xlsx 选表）随分派传入。
 
 use base64::Engine;
 use serde::Deserialize;
@@ -16,18 +18,25 @@ pub const DEFAULT_LINE_LIMIT: u64 = 2000;
 /// 图片单文件上限（§8.3）。
 pub const MAX_IMAGE_BYTES: usize = 3 * 1024 * 1024;
 
-/// read 工具参数：目标路径 + 可选行窗口与读取类型。
+/// read 工具参数：目标路径 + 可选行窗口与读取类型（文档扩展名时附带
+/// page/pages/sheet 文档参数）。
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReadArgs {
     /// 工作区内目标文件路径（相对或绝对，须在 roots 内）。
     pub path: String,
-    /// 行窗口起点，1-based（缺省 1；0 容错为 1）。
+    /// 行窗口起点，1-based（缺省 1；0 容错为 1）。仅文本路径有效。
     pub offset: Option<u64>,
-    /// 行数（缺省 2000）。
+    /// 行数（缺省 2000）。仅文本路径有效。
     pub limit: Option<u64>,
-    /// 缺省 text。
+    /// 缺省 text；kind:"image" 对文档扩展名是误用（明确拒绝）。
     pub kind: Option<ReadKind>,
+    /// pdf 单页页码（1-based，文档管线，16 号票 §8.3/§8.9）。
+    pub page: Option<u32>,
+    /// pdf 页码窗口 [起, 止]（1-based 闭区间，单次 ≤20 页）。
+    pub pages: Option<(u32, u32)>,
+    /// xlsx 要读取的 sheet 名（缺省输出清单 + 首 sheet 预览）。
+    pub sheet: Option<String>,
 }
 
 /// 读取类型：文本（按行窗口）或图片（base64 供视觉模型）。
@@ -43,6 +52,28 @@ pub enum ReadKind {
 /// 执行 read。headless 纯逻辑：vision 模型前置校验由调用方（run loop）
 /// 在选择 kind:"image" 前完成，本函数只做大小与格式校验（票 Answer 已记录）。
 pub fn run(ctx: &ToolsContext, args: &ReadArgs) -> ToolOutcome {
+    // 文档分派（16 号票，§8.3/§8.9）：.docx/.xlsx/.pdf 等扩展名走文档管线
+    // （tools/doc.rs），与文本/图片路径并列；kind:"image" 对文档是误用。
+    if crate::tools::doc::detect_format(&args.path).is_some() {
+        if args.kind == Some(ReadKind::Image) {
+            return ToolOutcome::failure(
+                ToolError::invalid_arg(format!(
+                    "文档文件不支持图片读取：{}（文档按扩展名自动走文档解析，无需 kind 参数）",
+                    args.path
+                )),
+                format!("文档不支持图片读取：{}", args.path),
+            );
+        }
+        return crate::tools::doc::run(
+            ctx,
+            &crate::tools::doc::DocArgs {
+                path: args.path.clone(),
+                page: args.page,
+                pages: args.pages,
+                sheet: args.sheet.clone(),
+            },
+        );
+    }
     match args.kind.unwrap_or(ReadKind::Text) {
         ReadKind::Text => read_text(ctx, args),
         ReadKind::Image => read_image(ctx, args),
@@ -243,23 +274,42 @@ fn image_mime(path: &str) -> Option<&'static str> {
     }
 }
 
-/// read 工具规格（能力 ReadOnly，全档放行）。
+/// read 工具规格（能力 ReadOnly，全档放行）。16 号票：params_schema 增
+/// 文档参数（page/pages/sheet，§8.3 read 行回写），描述补文档分派语义；
+/// 文档参数 schema 片段单一来源在 doc::params_schema_properties()。
 pub fn spec() -> ToolSpec {
+    let mut params_schema = json!({
+        "type": "object",
+        "properties": {
+            "path": { "type": "string", "description": "工作区内相对路径（或绝对路径，须在 roots 内）" },
+            "offset": { "type": "integer", "description": "起始行号（1-based）" },
+            "limit": { "type": "integer", "description": "返回行数，默认 2000" },
+            "kind": { "type": "string", "enum": ["text", "image"] }
+        },
+        "required": ["path"],
+        "additionalProperties": false
+    });
+    if let (Some(props), Some(doc_props)) = (
+        params_schema
+            .get_mut("properties")
+            .and_then(|p| p.as_object_mut()),
+        crate::tools::doc::params_schema_properties()
+            .as_object()
+            .cloned(),
+    ) {
+        for (key, value) in doc_props {
+            props.insert(key, value);
+        }
+    }
     ToolSpec {
         name: "read".to_string(),
-        description: "读取工作区内文件。文本按行窗口返回（默认 2000 行，可用 offset/limit 翻页）；kind=\"image\" 以 base64 返回图片（≤3MiB）供视觉模型查看。二进制文件不支持文本读取。".to_string(),
+        description: "读取工作区内文件。文本按行窗口返回（默认 2000 行，可用 offset/limit 翻页）；\
+             kind=\"image\" 以 base64 返回图片（≤3MiB）供视觉模型查看；\
+             .docx/.xlsx/.pdf 等文档自动走文档解析：docx 输出段落与 Markdown 表格，xlsx 逐 sheet 表格（sheet 参数选表），\
+             pdf 输出按页线性文本（>10 页须显式 page/pages，单次 ≤20 页）。二进制文件不支持文本读取。"
+            .to_string(),
         capability: Capability::ReadOnly,
-        params_schema: json!({
-            "type": "object",
-            "properties": {
-                "path": { "type": "string", "description": "工作区内相对路径（或绝对路径，须在 roots 内）" },
-                "offset": { "type": "integer", "description": "起始行号（1-based）" },
-                "limit": { "type": "integer", "description": "返回行数，默认 2000" },
-                "kind": { "type": "string", "enum": ["text", "image"] }
-            },
-            "required": ["path"],
-            "additionalProperties": false
-        }),
+        params_schema,
         annotations: ToolAnnotations {
             read_only_hint: true,
             destructive_hint: false,

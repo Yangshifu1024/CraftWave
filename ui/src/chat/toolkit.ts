@@ -43,6 +43,25 @@ export const CW_TOOL_PARAMETERS: Record<string, JSONSchema7> = {
       offset: { type: "integer", description: "起始行号（1-based）" },
       limit: { type: "integer", description: "返回行数，默认 2000" },
       kind: { type: "string", enum: ["text", "image"] },
+      // 文档参数（16 号票，§8.3 read 行）：.docx/.xlsx/.pdf 按扩展名分派
+      // 进文档管线；与 Rust doc::params_schema_properties() 逐字镜像。
+      page: {
+        type: "integer",
+        minimum: 1,
+        description: "（pdf）单页页码（1-based）；与 pages 二选一",
+      },
+      pages: {
+        type: "array",
+        items: { type: "integer", minimum: 1 },
+        minItems: 2,
+        maxItems: 2,
+        description:
+          "（pdf）页码窗口 [起, 止]（1-based 闭区间，单次 ≤20 页）；>10 页的 PDF 必须给 page 或 pages",
+      },
+      sheet: {
+        type: "string",
+        description: "（xlsx）要读取的 sheet 名；缺省输出 sheet 名清单 + 首 sheet 前 100 行",
+      },
     },
     required: ["path"],
     additionalProperties: false,
