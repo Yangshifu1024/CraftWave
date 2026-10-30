@@ -50,7 +50,13 @@ function configFixture(providers: ProviderConfig[]): AppConfig {
   return {
     schemaVersion: 2,
     providers,
-    approval: { enabled: true, autoConfirm: false, commandAllowlist: [] },
+    approval: {
+      enabled: true,
+      autoConfirm: false,
+      sessionMemoryEnabled: true,
+      allowlistEnabled: true,
+      commandAllowlist: [],
+    },
     ui: { language: "zh-CN", theme: "system" },
     log: { level: "info" },
     compaction: { threshold: 0.6, timeoutSecs: 180 },

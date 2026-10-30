@@ -20,7 +20,14 @@ import { newProviderFromPreset } from "@/settings/presets";
 export const DEFAULT_CONFIG: AppConfig = {
   schemaVersion: 2,
   providers: [],
-  approval: { enabled: true, autoConfirm: false, commandAllowlist: [] },
+  // 审批四开关缺省口径（23 号票，FR-14-04）：①开 ②关 ③会话记忆开 ④白名单开
+  approval: {
+    enabled: true,
+    autoConfirm: false,
+    sessionMemoryEnabled: true,
+    allowlistEnabled: true,
+    commandAllowlist: [],
+  },
   ui: { language: "zh-CN", theme: "system" },
   log: { level: "info" },
   notifications: { enabled: true, interventionOnly: false },
@@ -57,6 +64,10 @@ interface SettingsState {
   upsertProvider: (provider: ProviderConfig, newKey?: string) => Promise<boolean>;
   /** 删除供应商（即时持久化） */
   removeProvider: (providerId: string) => Promise<boolean>;
+  /** 命令白名单追加（即时持久化，23 号票）：审批弹窗勾选「加入白名单」的
+   *  写入入口——前缀已存在时不重复追加；config 与 baseline 一起前移，
+   *  脏判定不受影响。失败抛错（调用方决定提示面）。 */
+  appendToAllowlist: (prefix: string) => Promise<void>;
   /** 草稿层设置全局默认模型 */
   setActiveModel: (modelId: string) => void;
   /** 草稿层局部覆写（ui/proxy/approval/log 等非供应商字段） */
@@ -114,6 +125,20 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       set({ error: client.toIpcError(err).message, saving: false });
       return false;
     }
+  },
+
+  appendToAllowlist: async (prefix) => {
+    const current = get().config;
+    if (!current) throw new Error("配置尚未加载，无法写入白名单");
+    const list = current.approval.commandAllowlist ?? [];
+    if (list.includes(prefix)) return; // 幂等：已在白名单不重复追加
+    const next = {
+      ...current,
+      approval: { ...current.approval, commandAllowlist: [...list, prefix] },
+    };
+    const saved = await client.saveConfig(next);
+    // 即时持久化：config 与 baseline 一起前移（upsertProvider 同款）
+    set({ config: saved, baseline: structuredClone(saved) });
   },
 
   removeProvider: async (providerId) => {

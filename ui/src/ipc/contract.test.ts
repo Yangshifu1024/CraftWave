@@ -884,3 +884,36 @@ describe("§12.3 契约生成物：ts-rs generated/ ↔ manifest ↔ types.ts �
     }
   });
 });
+
+describe("23 号票：审批记忆与白名单契约面", () => {
+  /** 读生成物文本（断言字段级键面）。 */
+  function generated(name: string): string {
+    return readFileSync(resolve(import.meta.dirname, "./generated", `${name}.ts`), "utf8");
+  }
+
+  it("ApprovalConfig 生成物含审批四开关与白名单五字段（FR-14-04 字段级）", () => {
+    const source = generated("ApprovalConfig");
+    for (const field of [
+      "enabled",
+      "autoConfirm",
+      "sessionMemoryEnabled",
+      "allowlistEnabled",
+      "commandAllowlist",
+    ]) {
+      expect(source.includes(field), `ApprovalConfig 缺字段 ${field}`).toBe(true);
+    }
+  });
+
+  it("approval 选项 mode 键面含 always_session（§3.2 AskMode/AskOption 生成物）", () => {
+    expect(generated("AskMode")).toContain('"allow_once" | "always_session" | "deny"');
+    const askOption = generated("AskOption");
+    for (const field of ["id", "label", "recommended", "mode"]) {
+      expect(askOption.includes(field), `AskOption 缺字段 ${field}`).toBe(true);
+    }
+  });
+
+  it("AskAnswer.approval 的 optionId 键面保留（always_session 应答承载）", () => {
+    const answer = generated("AskAnswer");
+    expect(answer).toContain("optionId");
+  });
+});

@@ -1,6 +1,6 @@
 //! 审批 AskPayload 构造与 suggest 上下文提取的纯逻辑单测（14 号票）。
 
-use crate::backend::ask::{AskPayload, DiffLineKind};
+use crate::backend::ask::{AskMode, AskPayload, DiffLineKind};
 use crate::backend::run_loop::PendingCall;
 use crate::storage::entries::{MessageEntry, MessageRole, WirePart};
 
@@ -17,13 +17,17 @@ fn pending(name: &str, args_json: &str) -> PendingCall {
 }
 
 /// write 工具的审批载荷：标题含路径、diff 全为新增行（新文件整体是增量）、
-/// 选项固定「允许（推荐）/ 拒绝」两项。
+/// 选项固定「允许（推荐）/ 拒绝」两项（write 非命令类，③ 开也不出
+/// always_session）。
 #[test]
 fn write_payload_new_file_all_add() {
-    let payload = build_approval_payload(&pending(
-        "write",
-        r#"{"path":"src/new.rs","content":"fn main() {}\n"}"#,
-    ));
+    let payload = build_approval_payload(
+        &pending(
+            "write",
+            r#"{"path":"src/new.rs","content":"fn main() {}\n"}"#,
+        ),
+        true,
+    );
     let AskPayload::Approval {
         title,
         diff,
@@ -53,10 +57,13 @@ fn write_payload_new_file_all_add() {
 /// edit 工具的审批载荷：旧文本逐行标删除、新文本逐行标新增，拼成一个替换块。
 #[test]
 fn edit_payload_replacement_hunk_del_add() {
-    let payload = build_approval_payload(&pending(
-        "edit",
-        r#"{"path":"a.txt","oldText":"旧一\n旧二","newText":"新一"}"#,
-    ));
+    let payload = build_approval_payload(
+        &pending(
+            "edit",
+            r#"{"path":"a.txt","oldText":"旧一\n旧二","newText":"新一"}"#,
+        ),
+        true,
+    );
     let AskPayload::Approval { diff, .. } = payload else {
         panic!("应为 Approval")
     };
@@ -69,7 +76,8 @@ fn edit_payload_replacement_hunk_del_add() {
     assert_eq!(diff.hunks[0].lines[2].text, "新一");
 }
 
-/// command 工具的审批载荷：命令行原文随载荷展示、围栏确认原因透传、不带 diff。
+/// command 工具的审批载荷：命令行原文随载荷展示、围栏确认原因透传、不带 diff；
+/// ③ 会话内记忆开启时选项含 always_session（23 号票），关闭时不出。
 #[test]
 fn command_payload_with_fence_reason() {
     let p = PendingCall {
@@ -83,8 +91,9 @@ fn command_payload_with_fence_reason() {
         diff,
         command,
         fence_reason,
+        options,
         ..
-    } = build_approval_payload(&p)
+    } = build_approval_payload(&p, true)
     else {
         panic!("应为 Approval")
     };
@@ -92,6 +101,17 @@ fn command_payload_with_fence_reason() {
     assert!(fence_reason.is_some(), "围栏 Confirm 原因随载荷展示");
     assert!(diff.is_none(), "命令不走 diff");
     assert!(title.contains("命令"));
+    // ③ 开：允许 / 始终允许（本会话）/ 拒绝 三项，always_session 非推荐项
+    assert_eq!(options.len(), 3, "命令类审批三选项（23 号票）");
+    assert_eq!(options[1].id, "always_session");
+    assert_eq!(options[1].mode, Some(AskMode::AlwaysSession));
+    assert_eq!(options[1].recommended, None, "非推荐项不参与自动确认");
+    // ③ 关：不出该选项（M1 两项口径不变）
+    let AskPayload::Approval { options, .. } = build_approval_payload(&p, false) else {
+        panic!("应为 Approval")
+    };
+    assert_eq!(options.len(), 2, "③ 关闭时保持允许/拒绝两项");
+    assert!(!options.iter().any(|o| o.id == "always_session"));
 }
 
 /// suggest 上下文提取优先取最后一条 assistant 的正文；没有 assistant 时

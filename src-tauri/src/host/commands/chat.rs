@@ -858,8 +858,14 @@ fn emit_queue_state(
 }
 
 /// 审批挂起 → AskPayload(kind=approval)：write=新文件全 add、edit=替换 hunk、
-/// command=命令行 + fenceReason（§3.2）。
-pub(crate) fn build_approval_payload(pending: &PendingCall) -> AskPayload {
+/// command=命令行 + fenceReason（§3.2）。`session_memory_enabled`（23 号票
+/// ③ 会话内记忆启用）为 true 且待批调用是命令类时，选项增「始终允许
+/// （本会话）」（mode=always_session）——选中后同签名命令本会话跨 run 免批
+/// （记忆在会话级审批记忆桶，不持久化）。
+pub(crate) fn build_approval_payload(
+    pending: &PendingCall,
+    session_memory_enabled: bool,
+) -> AskPayload {
     let args: serde_json::Value = serde_json::from_str(&pending.args_json).unwrap_or_default();
     // MCP 动态工具分支（08 号票，FR-08-04）：title 带 server 名与工具名
     // （票面逐字）；选项含「始终允许」（Q44 持久许可的授予入口；恢复循环
@@ -1011,34 +1017,45 @@ pub(crate) fn build_approval_payload(pending: &PendingCall) -> AskPayload {
         }
         _ => {}
     }
+    // 通用审批选项：允许（推荐，autoConfirm 超时选它）+ 拒绝；命令类审批
+    // 且 ③ 会话内记忆开启时插「始终允许（本会话）」（23 号票，FR-14-04）。
+    // 非推荐项——autoConfirm 只自动选 allow_once，会话级免批必须用户显式点。
+    let mut options = vec![AskOption {
+        id: "allow_once".to_owned(),
+        label: "允许".to_owned(),
+        recommended: Some(true),
+        mode: Some(AskMode::AllowOnce),
+    }];
+    if session_memory_enabled && pending.name == "command" {
+        options.push(AskOption {
+            id: "always_session".to_owned(),
+            label: "始终允许（本会话）".to_owned(),
+            recommended: None,
+            mode: Some(AskMode::AlwaysSession),
+        });
+    }
+    options.push(AskOption {
+        id: "deny".to_owned(),
+        label: "拒绝".to_owned(),
+        recommended: None,
+        mode: Some(AskMode::Deny),
+    });
     AskPayload::Approval {
         title,
         diff,
         command,
         fence_reason: pending.fence_reason.clone(),
         preview_html,
-        options: vec![
-            AskOption {
-                id: "allow_once".to_owned(),
-                label: "允许".to_owned(),
-                recommended: Some(true),
-                mode: Some(AskMode::AllowOnce),
-            },
-            AskOption {
-                id: "deny".to_owned(),
-                label: "拒绝".to_owned(),
-                recommended: None,
-                mode: Some(AskMode::Deny),
-            },
-        ],
+        options,
     }
 }
 
-/// 挂起等待的裁决（option_id 供 MCP「始终允许」的持久许可授予面，08 号票）。
+/// 挂起等待的裁决（option_id 供 MCP「始终允许」的持久许可授予面，08 号票；
+/// always_session 供会话级免批登记面，23 号票）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ApprovalResolution {
-    /// 批准（option_id：allow_once / always_allow / autoConfirm 的
-    /// recommended 项）。
+    /// 批准（option_id：allow_once / always_session / always_allow /
+    /// autoConfirm 的 recommended 项）。
     Allowed { option_id: String },
     /// 拒绝/取消。
     Denied,
@@ -1048,6 +1065,8 @@ pub(crate) enum ApprovalResolution {
 /// autoConfirm 超时（§5.4）。等待结束统一清槽 + ask:closed。
 /// 主 run 与子代理（10 号票）共用：取消令牌与询问槽由调用方注入
 /// （主 run = RunHandle.cancel/ask；子代理 = SubHandle.cancel/ask）。
+/// `session_memory_enabled`（23 号票 ③）：true 时命令类审批载荷增
+/// 「始终允许（本会话）」选项。
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn wait_approval_with(
     events: &Arc<dyn EventSink>,
@@ -1057,10 +1076,11 @@ pub(crate) async fn wait_approval_with(
     ask_slot: &Arc<AskSlotCell>,
     pending: &PendingCall,
     auto_confirm: bool,
+    session_memory_enabled: bool,
 ) -> ApprovalResolution {
     let (tx, rx) = tokio::sync::oneshot::channel::<AskAnswer>();
     let ask_id = uuid::Uuid::new_v4().to_string();
-    let payload = build_approval_payload(pending);
+    let payload = build_approval_payload(pending, session_memory_enabled);
     {
         let mut slot = ask_slot
             .lock()
@@ -1110,9 +1130,11 @@ pub(crate) async fn wait_approval_with(
     };
     let (resolution, answered) = match wait {
         Wait::Answer(Some(AskAnswer::Approval { option_id, .. })) => {
-            // allow_once 与 always_allow（MCP，08 号票）都放行本次；
-            // 其余选项按拒绝收场
-            let allowed = option_id == "allow_once" || option_id == "always_allow";
+            // allow_once / always_session（23 号票，本会话免批）/
+            // always_allow（MCP，08 号票）都放行本次；其余选项按拒绝收场
+            let allowed = option_id == "allow_once"
+                || option_id == "always_session"
+                || option_id == "always_allow";
             (
                 if allowed {
                     ApprovalResolution::Allowed { option_id }
@@ -2120,6 +2142,17 @@ pub async fn start_chat_core(
     });
     let model_name = model.name;
     let cancel = handle.cancel.clone();
+    // 会话内记忆启用（23 号票 ③）：命令类审批「始终允许（本会话）」选项
+    // 的展示开关；恢复循环按应答登记会话免批桶（句柄提前克隆进 run 任务）。
+    // 审批策略快照按 run 读取（save_config 后下一次 start_chat 应用）。
+    let approval_config = app
+        .config
+        .load()
+        .map(|c| c.approval.clone())
+        .unwrap_or_default();
+    let session_memory_enabled = approval_config.session_memory_enabled;
+    let approval_memory_for_task = app.approval_memory.clone();
+    let session_id_for_memory = session_id.clone();
     let executor: Arc<dyn crate::backend::run_loop::CancellableExecutor> = Arc::new(
         ToolsetExecutor::new(
             // 会话 roots（§6.2/§9.1，16 号票；C-8 收窄 21 号票）：项目会话=
@@ -2173,6 +2206,9 @@ pub async fn start_chat_core(
                         tier: run_config.tier,
                         model_id: run_config.model_id.clone(),
                         auto_confirm,
+                        // 23 号票 ③：子代理命令类审批同主 run 展示
+                        // 「始终允许（本会话）」，免批登记共用会话桶
+                        session_memory_enabled,
                     },
                 },
             )),
@@ -2190,6 +2226,9 @@ pub async fn start_chat_core(
     // 上下文（22 号票，§8.7 四象限）：roots 与项目主目录做 canonicalize
     // 后装配（词法与 canonical 同域比较的前提）；任一根 canonicalize
     // 失败则不装配——围栏退化为「有写目标即 Confirm」的保守面。
+    // 23 号票装配面：内部状态禁区判定（FR-05-08，数据目录根 + 项目主
+    // 目录两根）、会话级免批桶（always_session，主 run 与子代理同桶）、
+    // 审批策略快照（四开关 ①④ + 白名单条目，按 run 读取生效）。
     let gate = {
         let (gate_project_root, gate_data_root) =
             crate::host::commands::workspace::resolve_session_roots(app, &session_id);
@@ -2197,15 +2236,25 @@ pub async fn start_chat_core(
         let gate_ws = match (canonical(&gate_project_root), canonical(&gate_data_root)) {
             (Some(project), Some(data)) => Some(crate::backend::gate::GateWorkspace {
                 roots: vec![project.clone(), data],
-                base: project,
+                base: project.clone(),
             }),
             _ => None,
         };
-        let mut gate = ApprovalGate::new(run_config.tier, handle.plan.clone()).with_mcp(Arc::new(
-            crate::mcp::commands::McpGateAdapter {
+        let approval = approval_config.clone();
+        let mut gate = ApprovalGate::new(run_config.tier, handle.plan.clone())
+            .with_mcp(Arc::new(crate::mcp::commands::McpGateAdapter {
                 host: app.mcp.clone(),
-            },
-        ));
+            }))
+            .with_internal_guard(crate::safety::internal_state::InternalStateGuard::new(
+                &gate_data_root,
+                &gate_project_root,
+            ))
+            .with_session_memory(app.approval_memory.bucket(&session_id))
+            .with_policy(crate::backend::gate::ApprovalPolicy {
+                enabled: approval.enabled,
+                allowlist_enabled: approval.allowlist_enabled,
+                command_allowlist: approval.command_allowlist.clone(),
+            });
         if let Some(ws) = gate_ws {
             gate = gate.with_workspace(ws);
         }
@@ -2336,11 +2385,22 @@ pub async fn start_chat_core(
                         &handle.ask,
                         &pending,
                         auto_confirm,
+                        session_memory_enabled,
                     )
                     .await
                     {
                         ApprovalResolution::Allowed { option_id } => {
                             gate.approve(&pending.name, &pending.args_json);
+                            // 23 号票：always_session → 会话级免批桶登记
+                            //（同签名命令本会话跨 run 免批；新会话不延续，
+                            // Q41 恢复不复活——记忆不持久化）
+                            if option_id == "always_session" {
+                                approval_memory_for_task.remember(
+                                    &session_id_for_memory,
+                                    &pending.name,
+                                    &pending.args_json,
+                                );
+                            }
                             // MCP「始终允许」（Q44，08 号票）：写工具级许可表
                             // ——绑定服务器启动指纹 + 原始工具名 + 已确认输入
                             // schema 哈希三元组；新增工具/schema 变化不继承。

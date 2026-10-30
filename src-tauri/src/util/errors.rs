@@ -47,6 +47,11 @@ impl ToolError {
         Self::new("E_FENCE_BLOCKED", message)
     }
 
+    /// E_INTERNAL_STATE：试图写宿主内部状态（FR-05-08，§9.3，23 号票）。
+    pub fn internal_state(message: impl Into<String>) -> Self {
+        Self::new("E_INTERNAL_STATE", message)
+    }
+
     /// E_TOOL_BLOCKED：权限档排除（FR-05-01）。
     pub fn tool_blocked(message: impl Into<String>) -> Self {
         Self::new("E_TOOL_BLOCKED", message)
@@ -128,6 +133,10 @@ pub const E_COMMAND_TIMEOUT: &str = "E_COMMAND_TIMEOUT";
 pub const E_PLAN_STALE: &str = "E_PLAN_STALE";
 /// 命令围栏拦截（Block 档）。
 pub const E_FENCE_BLOCKED: &str = "E_FENCE_BLOCKED";
+/// 试图写宿主内部状态（FR-05-08，§9.3；23 号票实装禁区硬拒——write/edit
+/// 路径与 command 写目标命中 config/凭据/MCP 配置/索引/锁面等禁区，
+/// 任何权限档与白名单不豁免）。
+pub const E_INTERNAL_STATE: &str = "E_INTERNAL_STATE";
 /// 当前权限档排除了该工具。
 pub const E_TOOL_BLOCKED: &str = "E_TOOL_BLOCKED";
 /// 路径越界（FR-05-06，§9.1 safe_join 与 open_dir 白名单共用）。

@@ -159,13 +159,26 @@ pub struct ProxyConfig {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApprovalConfig {
-    /// 审批总开关（false 时不再弹出任何审批）。
+    /// 审批总开关（false 时不再弹出任何审批；黑名单/内部状态硬拦/计划门/
+    /// MCP 审批与信任询问不受影响，plan 档判定不变——23 号票字段级）。
     #[serde(default = "default_true")]
     pub enabled: bool,
     /// 自动确认（不打扰用户；危险命令围栏仍会硬拦）。
     #[serde(default)]
     pub auto_confirm: bool,
-    /// 命令白名单：命中即免审批直接放行。
+    /// ③ 会话内记忆启用（23 号票，FR-14-04）：true 时命令类审批展示
+    /// 「始终允许（本会话）」选项（AskPayload option mode=always_session），
+    /// 选中后同签名命令本会话跨 run 免批；false 不出该选项。默认开。
+    #[serde(default = "default_true")]
+    pub session_memory_enabled: bool,
+    /// ④ 命令白名单启用（23 号票，FR-14-04）：整体开关，false 时
+    /// commandAllowlist 不参与判定（条目保留不删）。默认开。
+    #[serde(default = "default_true")]
+    pub allowlist_enabled: bool,
+    /// 命令白名单：命中即免审批直接放行（23 号票字段级：词序列前缀匹配
+    /// ——条目 `git status` 匹配 `git status …` 不匹配 `git statusx`；
+    /// 围栏 Confirm 与矩阵 NeedsApproval 免除，黑名单 Block 永不豁免，
+    /// plan 档不豁免）。
     #[serde(default)]
     pub command_allowlist: Vec<String>,
 }
@@ -585,12 +598,15 @@ fn default_log_level() -> LogLevel {
     LogLevel::Info
 }
 
-// ApprovalConfig 的缺省值：审批开、不自动确认、白名单为空（最保守）。
+// ApprovalConfig 的缺省值：审批开、不自动确认、会话记忆与白名单启用、
+// 白名单为空（最保守；23 号票四开关缺省口径）。
 impl Default for ApprovalConfig {
     fn default() -> Self {
         Self {
             enabled: true,
             auto_confirm: false,
+            session_memory_enabled: true,
+            allowlist_enabled: true,
             command_allowlist: Vec::new(),
         }
     }

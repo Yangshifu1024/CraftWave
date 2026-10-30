@@ -5,7 +5,8 @@
  */
 export type ApprovalConfig = { 
 /**
- * 审批总开关（false 时不再弹出任何审批）。
+ * 审批总开关（false 时不再弹出任何审批；黑名单/内部状态硬拦/计划门/
+ * MCP 审批与信任询问不受影响，plan 档判定不变——23 号票字段级）。
  */
 enabled: boolean, 
 /**
@@ -13,6 +14,20 @@ enabled: boolean,
  */
 autoConfirm: boolean, 
 /**
- * 命令白名单：命中即免审批直接放行。
+ * ③ 会话内记忆启用（23 号票，FR-14-04）：true 时命令类审批展示
+ * 「始终允许（本会话）」选项（AskPayload option mode=always_session），
+ * 选中后同签名命令本会话跨 run 免批；false 不出该选项。默认开。
+ */
+sessionMemoryEnabled: boolean, 
+/**
+ * ④ 命令白名单启用（23 号票，FR-14-04）：整体开关，false 时
+ * commandAllowlist 不参与判定（条目保留不删）。默认开。
+ */
+allowlistEnabled: boolean, 
+/**
+ * 命令白名单：命中即免审批直接放行（23 号票字段级：词序列前缀匹配
+ * ——条目 `git status` 匹配 `git status …` 不匹配 `git statusx`；
+ * 围栏 Confirm 与矩阵 NeedsApproval 免除，黑名单 Block 永不豁免，
+ * plan 档不豁免）。
  */
 commandAllowlist: Array<string>, };

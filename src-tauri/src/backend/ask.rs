@@ -179,8 +179,9 @@ pub struct AskOption {
 pub enum AskMode {
     /// 仅本次放行。
     AllowOnce,
-    /// 本会话内总是放行（当前阶段不实装会话级记忆，命令白名单的接线为
-    /// 后续工单，协议字段先固定下来）。
+    /// 本会话内总是放行（23 号票实装：命令类审批且 approval.sessionMemoryEnabled
+    /// 开启时下发该选项；选中后宿主恢复循环登记会话级免批签名，同签名命令
+    /// 跨 run 免批——记忆进程内不持久化，新会话/备份恢复后须重新确认）。
     AlwaysSession,
     /// 拒绝。
     Deny,

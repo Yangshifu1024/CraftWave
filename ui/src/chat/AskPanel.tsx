@@ -2,7 +2,10 @@
  * AskPanel（§3.2 AskPayload 四形态，14 号票起 question/approval，08 号票
  * 增 mcpTrust，09 号票增 projectTrust）：
  * - question：逐题选项点选 + 自由文本输入 → resolveAsk(kind=question)；
- * - approval：diff 预览 / 命令行 + 围栏原因 → 允许/拒绝 → resolveAsk(kind=approval)；
+ * - approval：diff 预览 / 命令行 + 围栏原因 → 允许/拒绝 → resolveAsk(kind=approval，
+ *   optionId = allow_once/always_session/deny；23 号票起命令类审批增
+ *   「始终允许（本会话）」选项与「加入白名单」勾选——选项由后端按
+ *   approval.sessionMemoryEnabled 下发，勾选经 save_config 持久白名单)；
  * - mcpTrust：MCP 启动信任（TOFU）摘要 + 三选项 → resolveAsk(kind=approval，
  *   optionId = allow_once/remember/deny)。后端以 sessionId=""（应用级询问）
  *   发 ask:opened——不属任何会话桶，任意会话上下文都渲染（设置页连接触发）；
@@ -25,6 +28,19 @@ import { useSessionScope } from "@/chat/session-scope";
 import { resolveAsk, toIpcError } from "@/ipc/client";
 import type { AskPayload, DiffLine } from "@/ipc/types";
 import { useAskStore } from "@/stores/ask";
+import { useSettingsStore } from "@/stores/settings";
+
+/**
+ * 从审批命令文本提取白名单前缀（23 号票，§3.2 approval 注记的词序列前缀
+ * 语义）：按空白切词取前两词（单词命令取一词）——与后端 allowlist_hit 的
+ * 「首词+子命令」匹配口径一致（`git status --short` → `git status`）。
+ * 空文本返回 null（无法构成条目）。
+ */
+export function approvalCommandPrefix(command: string): string | null {
+  const words = command.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return null;
+  return words.slice(0, 2).join(" ");
+}
 
 /** 询问面板：本会话有未决 ask 时浮层渲染对应表单；会话桶为空时看应用级
  *  桶（sessionId=""，MCP 启动信任询问专用）。 */
@@ -173,7 +189,10 @@ function QuestionForm({
   );
 }
 
-/** 审批表单：命令行与 diff 预览 + 允许/拒绝按钮（点击即提交所选选项）。 */
+/** 审批表单：命令行与 diff 预览 + 允许/拒绝按钮（点击即提交所选选项）。
+ *  命令类审批（载荷含 always_session 选项 = 后端 ③ 开）增「加入白名单」
+ *  勾选（23 号票，④ 开才展示）：勾选后点允许类选项，先把命令前缀经
+ *  save_config 追加进 commandAllowlist 持久化，再提交应答。 */
 function ApprovalForm({
   sessionId,
   askId,
@@ -187,8 +206,24 @@ function ApprovalForm({
   // 「查看预览」展开态（FR-12-04，14 号票）：默认收起——展开才挂载沙箱
   // iframe（防闪烁、防未经查看的脚本执行，与 render_html 卡同口径）。
   const [previewOpen, setPreviewOpen] = useState(false);
+  // 「加入白名单」勾选态（23 号票）
+  const [addToList, setAddToList] = useState(false);
+  // 白名单配置面（④ 整体开关）：settings store 全局状态
+  const allowlistEnabled = useSettingsStore((s) => s.config?.approval.allowlistEnabled ?? false);
+  const appendToAllowlist = useSettingsStore((s) => s.appendToAllowlist);
+  // 载荷含 always_session 选项 = 后端判定为命令类审批（③ 开才下发）
+  const isCommandApproval = payload.options.some((o) => o.mode === "always_session");
+  const showAddToList = isCommandApproval && allowlistEnabled;
   const submit = (optionId: string) => {
     clearError();
+    // 勾选「加入白名单」且选项是放行类：先持久化白名单再应答（写入失败
+    // 不阻断审批——错误仅记控制台，应答照常提交）
+    if (addToList && showAddToList && optionId !== "deny" && payload.command) {
+      const prefix = approvalCommandPrefix(payload.command);
+      if (prefix) {
+        appendToAllowlist(prefix).catch((err) => console.error("[ask] 白名单写入失败", err));
+      }
+    }
     resolveAsk(askId, { kind: "approval", optionId }).catch(reportError);
   };
   return (
@@ -226,6 +261,20 @@ function ApprovalForm({
             </div>
           )}
         </div>
+      )}
+      {showAddToList && (
+        <label
+          data-testid="ask-add-allowlist"
+          className="flex cursor-pointer items-center gap-1.5 text-ui-sm text-[var(--muted-foreground)]"
+        >
+          <input
+            type="checkbox"
+            checked={addToList}
+            onChange={(e) => setAddToList(e.target.checked)}
+            className="accent-[var(--primary)]"
+          />
+          把命令前缀加入白名单（此后同前缀命令全局免审批）
+        </label>
       )}
       <div className="flex justify-end gap-2">
         {payload.options.map((opt) => (

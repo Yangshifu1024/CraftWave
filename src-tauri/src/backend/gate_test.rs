@@ -439,3 +439,394 @@ fn mcp_license_gate_matrix() {
         "动态段已清理"
     );
 }
+
+// ---- 23 号票：内部状态保护 + 审批记忆 + 命令白名单 + 审批四开关 ----
+
+use crate::backend::gate::{ApprovalMemory, ApprovalPolicy, allowlist_hit};
+use crate::safety::internal_state::InternalStateGuard;
+
+/// 造装配了禁区判定面 + 工作区上下文的审批门（生产同构：roots = 项目主
+/// 目录 + 数据根下 workspace/ 子目录，均 canonical 后传入；相对路径基准
+/// = 项目主目录）。返回门与两根的绝对路径供用例拼参数。
+fn guarded_gate(
+    tier: PermissionTier,
+) -> (
+    ApprovalGate,
+    std::path::PathBuf,
+    std::path::PathBuf,
+    tempfile::TempDir,
+) {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let data_root = dir.path().join("data");
+    let project_root = dir.path().join("project");
+    std::fs::create_dir_all(data_root.join("workspace")).expect("建 workspace");
+    std::fs::create_dir_all(&project_root).expect("建项目根");
+    let data = std::fs::canonicalize(&data_root).expect("data canonicalize");
+    let project = std::fs::canonicalize(&project_root).expect("project canonicalize");
+    let gate = ApprovalGate::new(tier, Arc::new(Mutex::new(None)))
+        .with_workspace(crate::backend::gate::GateWorkspace {
+            roots: vec![project.clone(), data.join("workspace")],
+            base: project.clone(),
+        })
+        .with_internal_guard(InternalStateGuard::new(&data, &project));
+    (gate, data, project, dir)
+}
+
+/// 断言判定为 E_INTERNAL_STATE 硬拦（禁区写入）。
+fn assert_internal_blocked(verdict: &GateVerdict, context: &str) {
+    let GateVerdict::Blocked { code, message } = verdict else {
+        panic!("{context} 应为 E_INTERNAL_STATE 硬拦：{verdict:?}")
+    };
+    assert_eq!(*code, "E_INTERNAL_STATE", "{context}");
+    assert!(
+        message.contains("内部状态"),
+        "硬拦信息应指明内部状态：{message}"
+    );
+}
+
+/// 篡改向量（票面验收①）：write 工具直写数据侧 config.json、命令重定向
+/// 覆盖全局 mcp.json、改 .segmeta.json（段元数据）、改项目侧
+/// .craftwave/project.json、写 sessions/ 会话存储——全部 E_INTERNAL_STATE，
+/// 且任何权限档都不豁免（含 full_access）。
+#[test]
+fn tamper_vectors_all_hard_blocked() {
+    for tier in [
+        PermissionTier::ConfirmEach,
+        PermissionTier::AutoEdit,
+        PermissionTier::FullAccess,
+    ] {
+        let (gate, data, project, _keep) = guarded_gate(tier);
+        // (工具名, 参数) 向量表：数据侧用绝对路径，项目侧混一条相对路径
+        //（相对基准 = 项目主目录，验证 cwd 基准展开面）
+        let vectors: Vec<(String, String)> = vec![
+            (
+                "write".into(),
+                serde_json::json!({
+                    "path": data.join("config.json").to_string_lossy(),
+                    "content": "{}"
+                })
+                .to_string(),
+            ),
+            (
+                "command".into(),
+                serde_json::json!({
+                    "command": format!("echo '{{}}' > {}", data.join("mcp.json").display())
+                })
+                .to_string(),
+            ),
+            (
+                "command".into(),
+                serde_json::json!({
+                    "command": format!(
+                        "echo x > {}",
+                        data.join("histories/s1/.segmeta.json").display()
+                    )
+                })
+                .to_string(),
+            ),
+            (
+                "command".into(),
+                r#"{"command":"echo x > .craftwave/project.json"}"#.to_owned(),
+            ),
+            (
+                "command".into(),
+                serde_json::json!({
+                    "command": format!("echo x > {}", data.join("sessions/s.json").display())
+                })
+                .to_string(),
+            ),
+        ];
+        for (name, args) in &vectors {
+            let verdict = gate.judge(name, args);
+            let ctx = format!("{name}@{tier:?} args={args}");
+            assert_internal_blocked(&verdict, &ctx);
+        }
+        let _ = project;
+    }
+}
+
+/// 篡改向量（symlink）：工作区内 symlink 指入禁区 → E_INTERNAL_STATE 硬拦
+///（词法在 roots 内、canonical 落点在禁区；fence 原判定 Confirm，禁区硬拒
+/// 优先于挂起）。
+#[cfg(unix)]
+#[test]
+fn symlink_into_internal_state_hard_blocked() {
+    let (gate, data, project, _keep) = guarded_gate(PermissionTier::FullAccess);
+    std::fs::write(data.join("config.json"), "{}").expect("写 config.json");
+    std::os::unix::fs::symlink(data.join("config.json"), project.join("out.json"))
+        .expect("建 symlink");
+    let verdict = gate.judge("command", &command_args("echo x > out.json"));
+    assert_internal_blocked(&verdict, "symlink 指入禁区");
+}
+
+/// 读不禁（C-8 已声明风险）：读命令即使目标是禁区文件，也不因内部状态
+/// 硬拒（落矩阵原有判定——confirm_each 挂起、full_access 放行）。
+#[test]
+fn read_paths_not_blocked_by_internal_state() {
+    let (gate_confirm, data, _project, _keep) = guarded_gate(PermissionTier::ConfirmEach);
+    let args = serde_json::json!({
+        "command": format!("cat {}", data.join("config.json").display())
+    })
+    .to_string();
+    let verdict = gate_confirm.judge("command", &args);
+    assert!(
+        !matches!(verdict, GateVerdict::Blocked { .. }),
+        "读不禁：{verdict:?}"
+    );
+    let (gate_full, data2, _project2, _keep2) = guarded_gate(PermissionTier::FullAccess);
+    assert!(matches!(
+        gate_full.judge(
+            "read",
+            &serde_json::json!({"path": data2.join("config.json").to_string_lossy()}).to_string()
+        ),
+        GateVerdict::Allow
+    ));
+}
+
+/// 既有 workspace 写不受禁区判定影响：工作区内写走原有判定
+///（confirm_each 矩阵挂起、full_access 放行），不被误拦。
+#[test]
+fn workspace_writes_unaffected() {
+    let (gate_confirm, _data, _project, _keep) = guarded_gate(PermissionTier::ConfirmEach);
+    assert!(matches!(
+        gate_confirm.judge("command", &command_args("echo hi > out.txt")),
+        GateVerdict::Suspend { .. }
+    ));
+    let (gate_full, _d, _p, _k) = guarded_gate(PermissionTier::FullAccess);
+    assert!(matches!(
+        gate_full.judge("command", &command_args("echo hi > out.txt")),
+        GateVerdict::Allow
+    ));
+}
+
+/// 未装配禁区判定面（with_internal_guard 缺省）不拦——headless 测试与
+/// 旧装配面零漂移（防线完整性由宿主装配保证，测试装配面显式覆盖）。
+#[test]
+fn internal_guard_not_assembled_no_block() {
+    let gate = ApprovalGate::new(PermissionTier::FullAccess, Arc::new(Mutex::new(None)));
+    assert!(matches!(
+        gate.judge(
+            "write",
+            r#"{"path":"/Users/x/.craftwave/config.json","content":"{}"}"#
+        ),
+        GateVerdict::Allow
+    ));
+}
+
+/// 目标含未解析变量（Opaque）不做硬拒：值未知不猜，交围栏字面量掩码
+/// 保守 Confirm + 36 号票审计（挂起而非 E_INTERNAL_STATE，票面边界）。
+#[test]
+fn opaque_target_falls_back_to_fence_confirm() {
+    let (gate, _d, _p, _k) = guarded_gate(PermissionTier::FullAccess);
+    let verdict = gate.judge(
+        "command",
+        &command_args("echo x > $HOME/.craftwave/config.json"),
+    );
+    match &verdict {
+        GateVerdict::Suspend { fence_reason } => {
+            let reason = fence_reason.as_ref().expect("Opaque 目标应有围栏原因");
+            assert!(reason.contains("未解析变量"), "字面量掩码原因：{reason}");
+        }
+        other => panic!("Opaque 目标应保守挂起：{other:?}"),
+    }
+}
+
+/// 审批记忆（票面验收②）：always_session 登记后同签名跨 run 免批
+///（新 ApprovalGate 挂同一会话桶）；其他会话不延续；forget 与 clear_all
+/// 生效（Q41：删除/恢复后须重新确认）。
+#[test]
+fn always_session_memory_cross_run() {
+    let memory = ApprovalMemory::new();
+    let session = "sess-1";
+    let args = command_args("npm install");
+    // 第一个 run：confirm_each 档挂起 → 用户选 always_session → 登记
+    let gate1 = ApprovalGate::new(PermissionTier::ConfirmEach, Arc::new(Mutex::new(None)))
+        .with_session_memory(memory.bucket(session));
+    assert!(matches!(
+        gate1.judge("command", &args),
+        GateVerdict::Suspend { .. }
+    ));
+    memory.remember(session, "command", &args);
+    // 第二个 run（新门实例）：同签名免批
+    let gate2 = ApprovalGate::new(PermissionTier::ConfirmEach, Arc::new(Mutex::new(None)))
+        .with_session_memory(memory.bucket(session));
+    assert!(
+        matches!(gate2.judge("command", &args), GateVerdict::Allow),
+        "always_session 后同命令跨 run 免批"
+    );
+    // 不同签名不连带放行
+    let other = command_args("npm test");
+    assert!(matches!(
+        gate2.judge("command", &other),
+        GateVerdict::Suspend { .. }
+    ));
+    // 新会话不延续
+    assert!(matches!(
+        ApprovalGate::new(PermissionTier::ConfirmEach, Arc::new(Mutex::new(None)))
+            .with_session_memory(memory.bucket("sess-2"))
+            .judge("command", &args),
+        GateVerdict::Suspend { .. }
+    ));
+    // 会话删除随清（forget）
+    memory.forget(session);
+    assert_eq!(memory.len_of(session), 0, "forget 后桶空");
+    assert!(matches!(
+        ApprovalGate::new(PermissionTier::ConfirmEach, Arc::new(Mutex::new(None)))
+            .with_session_memory(memory.bucket(session))
+            .judge("command", &args),
+        GateVerdict::Suspend { .. }
+    ));
+    // Q41 接线面：恢复备份清全部（33 号票恢复流程调用 clear_all）
+    memory.remember(session, "command", &args);
+    memory.clear_all();
+    assert_eq!(memory.len_of(session), 0);
+}
+
+/// 记忆句柄与登记写入口同源：bucket 取出的句柄在 remember 之后即时可见。
+#[test]
+fn session_bucket_shares_with_memory() {
+    let memory = ApprovalMemory::new();
+    let bucket = memory.bucket("s");
+    memory.remember("s", "write", r#"{"path":"a"}"#);
+    assert!(bucket.contains("write", r#"{"path":"a"}"#));
+    assert!(!bucket.contains("write", r#"{"path":"b"}"#));
+}
+
+/// 命令白名单词序列前缀匹配表（23 号票字段级语义）。
+#[test]
+fn allowlist_word_prefix_table() {
+    let cases: Vec<(&str, &str, bool)> = vec![
+        ("git status --short", "git status", true),  // 前缀命中
+        ("git status", "git status", true),          // 全等命中
+        ("git statusx", "git status", false),        // 词边界：statusx 不匹配
+        ("git st", "git status", false),             // 子命令前缀不算命中
+        ("cd a && git status", "git status", false), // 复合命令整串切词不命中
+        ("git status", "", false),                   // 空条目不命中
+        ("npm run build", "npm run", true),          // 首词+子命令
+        ("NPM run build", "npm run", false),         // 大小写敏感（保守）
+        ("cargo test --lib", "cargo test", true),
+    ];
+    for (command, entry, expect) in cases {
+        assert_eq!(
+            allowlist_hit(command, entry),
+            expect,
+            "command={command:?} entry={entry:?}"
+        );
+    }
+}
+
+/// 白名单消费（票面验收③）：命中免除围栏 Confirm 与矩阵 NeedsApproval
+///（confirm_each 档直放）；黑名单 Block 永不豁免；④ 关闭不豁免；plan 档
+/// 不豁免（档位只读铁律）。
+#[test]
+fn command_allowlist_consumption() {
+    let policy_hit = ApprovalPolicy {
+        enabled: true,
+        allowlist_enabled: true,
+        command_allowlist: vec!["npm install".to_owned()],
+    };
+    // 命中：围栏写信号 Confirm 免除 + 矩阵 NeedsApproval 免除 → 放行
+    let gate = ApprovalGate::new(PermissionTier::ConfirmEach, Arc::new(Mutex::new(None)))
+        .with_policy(policy_hit.clone());
+    assert!(matches!(
+        gate.judge("command", &command_args("npm install")),
+        GateVerdict::Allow
+    ));
+    assert!(
+        matches!(
+            gate.judge("command", &command_args("npm install --save-dev")),
+            GateVerdict::Allow
+        ),
+        "前缀命中（多出的参数不改命中）"
+    );
+    assert!(
+        matches!(
+            gate.judge("command", &command_args("npm ci")),
+            GateVerdict::Suspend { .. }
+        ),
+        "未命中条目的命令仍挂起"
+    );
+    // 黑名单永不豁免：条目命中但命令是灾难级
+    let gate_evil = ApprovalGate::new(PermissionTier::FullAccess, Arc::new(Mutex::new(None)))
+        .with_policy(ApprovalPolicy {
+            enabled: true,
+            allowlist_enabled: true,
+            command_allowlist: vec!["rm -rf /tmp/x".to_owned()],
+        });
+    let verdict = gate_evil.judge("command", &command_args("rm -rf /tmp/x"));
+    let GateVerdict::Blocked { code, .. } = &verdict else {
+        panic!("黑名单应硬拦（白名单不豁免）：{verdict:?}")
+    };
+    assert_eq!(*code, "E_FENCE_BLOCKED");
+    // ④ 关闭：条目在但不参与判定
+    let gate_disabled = ApprovalGate::new(PermissionTier::ConfirmEach, Arc::new(Mutex::new(None)))
+        .with_policy(ApprovalPolicy {
+            allowlist_enabled: false,
+            ..policy_hit.clone()
+        });
+    assert!(matches!(
+        gate_disabled.judge("command", &command_args("npm install")),
+        GateVerdict::Suspend { .. }
+    ));
+    // plan 档不豁免：档位只读铁律——白名单命中也保持围栏规则 2 的
+    // Confirm 挂起（「不在 plan 档只读白名单内」），不放行
+    let gate_plan =
+        ApprovalGate::new(PermissionTier::Plan, Arc::new(Mutex::new(None))).with_policy(policy_hit);
+    let verdict = gate_plan.judge("command", &command_args("npm install"));
+    let GateVerdict::Suspend { fence_reason } = &verdict else {
+        panic!("plan 档应保持围栏挂起（白名单不豁免）：{verdict:?}")
+    };
+    let reason = fence_reason.as_ref().expect("plan 档挂起带原因");
+    assert!(reason.contains("plan 档只读白名单"), "原因：{reason}");
+}
+
+/// 审批总开关（票面验收④①）：关闭后 confirm_each 档不再弹审批（矩阵
+/// NeedsApproval 与围栏 Confirm 直接放行）；黑名单/内部状态/plan 档不变。
+#[test]
+fn approval_switch_enabled_false_auto_allows() {
+    let policy_off = ApprovalPolicy {
+        enabled: false,
+        allowlist_enabled: false,
+        command_allowlist: Vec::new(),
+    };
+    let gate = ApprovalGate::new(PermissionTier::ConfirmEach, Arc::new(Mutex::new(None)))
+        .with_policy(policy_off.clone());
+    // 矩阵挂起面（write@confirm_each）→ 放行
+    assert!(matches!(
+        gate.judge("write", r#"{"path":"a.txt","content":"x"}"#),
+        GateVerdict::Allow
+    ));
+    // 围栏 Confirm 面（写信号命令）→ 放行
+    assert!(matches!(
+        gate.judge("command", &command_args("echo hi > out.txt")),
+        GateVerdict::Allow
+    ));
+    // 黑名单仍硬拦
+    let verdict = gate.judge("command", &command_args("sudo rm x"));
+    let GateVerdict::Blocked { code, .. } = &verdict else {
+        panic!("黑名单应硬拦（总开关不豁免）：{verdict:?}")
+    };
+    assert_eq!(*code, "E_FENCE_BLOCKED");
+    // plan 档判定不变（总开关不解锁计划档：围栏规则 2 的 Confirm 保留）
+    let gate_plan =
+        ApprovalGate::new(PermissionTier::Plan, Arc::new(Mutex::new(None))).with_policy(policy_off);
+    assert!(
+        matches!(
+            gate_plan.judge("command", &command_args("echo hi > out.txt")),
+            GateVerdict::Suspend { .. }
+        ),
+        "plan 档围栏 Confirm 保留（档位语义，不因总开关放行）"
+    );
+    // 内部状态硬拒不受总开关影响
+    let (gate_zone, data, _project, _keep) = guarded_gate(PermissionTier::ConfirmEach);
+    let gate_zone = gate_zone.with_policy(ApprovalPolicy {
+        enabled: false,
+        allowlist_enabled: true,
+        command_allowlist: vec![],
+    });
+    let args = serde_json::json!({
+        "command": format!("echo x > {}", data.join("config.json").display())
+    })
+    .to_string();
+    assert_internal_blocked(&gate_zone.judge("command", &args), "禁区命中@总开关关");
+}

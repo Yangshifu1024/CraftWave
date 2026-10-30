@@ -93,6 +93,11 @@ pub struct AppState {
     /// 用量账本（20 号票，§7.7）：日/模型聚合 + run/会话四口径明细 +
     /// stats_cache 查询缓存三面的聚合句柄（落账与查询编排见 `usage` 模块）。
     pub ledger: usage::UsageLedger,
+    /// 会话级审批记忆（23 号票，§3.2 always_session 升域）：全部活跃会话
+    /// 的「始终允许（本会话）」签名桶。进程内单例、不持久化——应用退出
+    /// 即清、会话删除随清（`forget`）、备份恢复经 `clear_all` 失效（Q41，
+    /// 恢复流程接线由 33 号票负责）。
+    pub approval_memory: crate::backend::gate::ApprovalMemory,
 }
 
 impl AppState {
@@ -137,6 +142,7 @@ impl AppState {
             )),
             http,
             ledger: usage::UsageLedger::new(&data_dir),
+            approval_memory: crate::backend::gate::ApprovalMemory::new(),
         }
     }
 
@@ -187,6 +193,7 @@ impl AppState {
             subs: self.subs.clone(),
             http: self.http.clone(),
             ledger: self.ledger.clone(),
+            approval_memory: self.approval_memory.clone(),
         }
     }
 

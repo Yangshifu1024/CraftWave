@@ -1035,7 +1035,10 @@ function NetworkSearchPage({
   );
 }
 
-/** 安全与审批页：审批开关 + 自动放行 + 命令白名单（只读展示） */
+/** 安全与审批页：审批四开关（FR-14-04，23 号票字段级）+ 命令白名单管理。
+ *  四开关：① 审批总开关 ② 自动放行等待 ③ 会话内记忆（「始终允许（本会话）」
+ *  选项展示）④ 命令白名单启用。白名单条目 = 命令前缀（词序列前缀匹配），
+ *  手填增删。 */
 function SecurityPage() {
   const config = useSettingsStore((s) => s.config);
   const patchConfig = useSettingsStore((s) => s.patchConfig);
@@ -1048,7 +1051,10 @@ function SecurityPage() {
   return (
     <div>
       <SettingsSection title="审批策略">
-        <SettingsRow title="启用操作审批" description="写入文件、执行命令等敏感操作先询问再执行。">
+        <SettingsRow
+          title="启用操作审批"
+          description="写入文件、执行命令等敏感操作先询问再执行；关闭后不再弹出审批，但灾难级命令与内部状态保护仍然生效。"
+        >
           <Switch
             aria-label="启用操作审批"
             checked={approval.enabled}
@@ -1062,41 +1068,128 @@ function SecurityPage() {
             onCheckedChange={(v) => patchApproval({ autoConfirm: v })}
           />
         </SettingsRow>
+        <SettingsRow
+          title="会话内记忆"
+          description="命令类审批提供「始终允许（本会话）」选项，选中后同一命令本会话不再重复询问；新会话恢复审批，记忆不跨会话保留。"
+        >
+          <Switch
+            aria-label="会话内记忆"
+            checked={approval.sessionMemoryEnabled}
+            onCheckedChange={(v) => patchApproval({ sessionMemoryEnabled: v })}
+          />
+        </SettingsRow>
+        <SettingsRow
+          title="命令白名单"
+          description="整体开关：关闭后下方白名单条目暂不生效（条目保留），命中的命令也不再免审批。"
+        >
+          <Switch
+            aria-label="命令白名单"
+            checked={approval.allowlistEnabled}
+            onCheckedChange={(v) => patchApproval({ allowlistEnabled: v })}
+          />
+        </SettingsRow>
       </SettingsSection>
-      <SettingsSection title="命令白名单">
-        {allowlist.length === 0 ? (
-          <p className="py-10 text-center text-ui-base text-[var(--muted-foreground)]">
-            还没有「始终允许」的命令；审批时勾选「始终允许本项目」会出现在这里。
-          </p>
-        ) : (
-          <div className="py-3">
-            {allowlist.map((entry, index) => {
-              const sep = entry.indexOf("");
-              const command = sep >= 0 ? entry.slice(sep + 1) : entry;
-              return (
-                <div
-                  key={entry}
-                  className="flex items-start justify-between gap-4 border-t border-[var(--border)] py-3 first:border-t-0 first:pt-0"
-                >
-                  <code className="min-w-0 flex-1 font-mono text-ui-sm break-all text-[var(--foreground)]">
-                    {command.trim() || "（无效条目）"}
-                  </code>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() =>
-                      patchApproval({ commandAllowlist: allowlist.filter((_, i) => i !== index) })
-                    }
-                  >
-                    删除
-                  </Button>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </SettingsSection>
+      <AllowlistSection
+        allowlist={allowlist}
+        onChange={(next) => patchApproval({ commandAllowlist: next })}
+      />
     </div>
+  );
+}
+
+/** 白名单条目的词边界校验（23 号票：与后端 allowlist_hit 的切词口径一致）：
+ *  返回 null = 合法；返回字符串 = 人话拒绝原因。 */
+function validateAllowlistEntry(entry: string): string | null {
+  const trimmed = entry.trim();
+  if (trimmed === "") return "条目不能为空";
+  if (/[|;&><()`$]/.test(trimmed)) {
+    return "条目不能包含管道/分隔符/重定向等 shell 符号（| & ; > < ( ) ` $）——含这些符号的命令无法作为前缀命中";
+  }
+  return null;
+}
+
+/** 命令白名单管理区：手填命令前缀增删（词边界校验提示）+ 条目列表删除。 */
+function AllowlistSection({
+  allowlist,
+  onChange,
+}: {
+  allowlist: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const [draft, setDraft] = useState("");
+  const [hint, setHint] = useState<string | null>(null);
+  const add = () => {
+    const error = validateAllowlistEntry(draft);
+    if (error !== null) {
+      setHint(error);
+      return;
+    }
+    const entry = draft.trim();
+    if (allowlist.includes(entry)) {
+      setHint("该条目已在白名单中");
+      return;
+    }
+    onChange([...allowlist, entry]);
+    setDraft("");
+    setHint(null);
+  };
+  return (
+    <SettingsSection title="命令白名单条目">
+      <div className="flex items-start gap-2 pb-2">
+        <input
+          type="text"
+          data-testid="allowlist-input"
+          value={draft}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            setHint(null);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              add();
+            }
+          }}
+          placeholder="命令前缀，如 git status"
+          aria-label="命令白名单条目"
+          className="min-w-0 flex-1 rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1 font-mono text-ui-sm text-[var(--foreground)]"
+        />
+        <Button variant="outline" size="sm" data-testid="allowlist-add" onClick={add}>
+          添加
+        </Button>
+      </div>
+      {hint !== null && (
+        <p data-testid="allowlist-hint" className="pb-2 text-ui-sm text-[var(--warning)]">
+          {hint}
+        </p>
+      )}
+      {allowlist.length === 0 ? (
+        <p className="py-10 text-center text-ui-base text-[var(--muted-foreground)]">
+          白名单为空；审批弹窗勾选「加入白名单」或在此手填命令前缀，命中的命令全局免审批。
+        </p>
+      ) : (
+        <div className="py-3">
+          {/* key 用条目本身：添加入口（含勾选追加）已拒绝重复条目，内容即唯一键 */}
+          {allowlist.map((entry, index) => (
+            <div
+              key={entry}
+              className="flex items-start justify-between gap-4 border-t border-[var(--border)] py-3 first:border-t-0 first:pt-0"
+            >
+              <code className="min-w-0 flex-1 font-mono text-ui-sm break-all text-[var(--foreground)]">
+                {entry}
+              </code>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => onChange(allowlist.filter((_, i) => i !== index))}
+              >
+                删除
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+    </SettingsSection>
   );
 }
 

@@ -212,6 +212,7 @@ fn ctx_with_frames(session_id: &str, parent_run_id: &str) -> (SubagentContext, S
             tier: crate::safety::tier::PermissionTier::AutoEdit,
             model_id: Some("model-1".to_owned()),
             auto_confirm: false,
+            session_memory_enabled: false,
         },
         frames,
     )

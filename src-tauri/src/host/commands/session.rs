@@ -99,6 +99,9 @@ pub fn delete_session_core(
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .remove(session_id);
+    // 会话级审批记忆随删（23 号票，Q41：记忆不跨会话生命周期——删除后
+    // 重建的同 id 会话须重新审批）
+    app.approval_memory.forget(session_id);
     Ok(())
 }
 

@@ -103,6 +103,9 @@ pub(crate) struct SubagentContext {
     pub tier: PermissionTier,
     pub model_id: Option<String>,
     pub auto_confirm: bool,
+    /// 23 号票 ③ 会话内记忆启用：true 时命令类审批载荷增「始终允许
+    /// （本会话）」选项；免批登记与主 run 共用会话桶。
+    pub session_memory_enabled: bool,
 }
 
 /// 委派执行器（host 装配）：[`SubagentSpawner`] 的生产实现。
@@ -852,6 +855,9 @@ async fn run_subagent(
         Some(l) => (PathBuf::from(&l.worktree_root), workspace_root.clone()),
         None => (project_root.clone(), workspace_root.clone()),
     };
+    // 审批门装配用副本（roots 本体移入执行器 ToolsContext）
+    let gate_project = roots_project.clone();
+    let gate_data = roots_data.clone();
     let allowed: Vec<String> = roles::role_tool_specs(role, ctx.tier)
         .iter()
         .map(|spec| spec.name.clone())
@@ -909,7 +915,41 @@ async fn run_subagent(
             })),
         }),
     );
-    let gate = Arc::new(ApprovalGate::new(ctx.tier, sub_plan));
+    // 审批门（23 号票装配面）：与主 run 同口径——内部状态禁区判定
+    //（FR-05-08，子代理写根 + 数据目录根）、会话级免批桶（always_session
+    // 与主 run 共用会话桶）、审批策略快照（四开关 ①④ + 白名单条目）。
+    // 无 MCP 视图（子代理不装配动态段，§5.9）。围栏工作区上下文同主 run
+    // 口径装配（roots/base canonical 后传入；失败退化为有写目标即 Confirm）。
+    let gate = {
+        let canonical = |p: &std::path::Path| std::fs::canonicalize(p).ok();
+        let gate_ws = match (canonical(&gate_project), canonical(&gate_data)) {
+            (Some(project), Some(data)) => Some(crate::backend::gate::GateWorkspace {
+                roots: vec![project, data],
+                base: PathBuf::from(&project_root),
+            }),
+            _ => None,
+        };
+        let approval = app
+            .config
+            .load()
+            .map(|c| c.approval.clone())
+            .unwrap_or_default();
+        let mut gate = ApprovalGate::new(ctx.tier, sub_plan)
+            .with_internal_guard(crate::safety::internal_state::InternalStateGuard::new(
+                &data_root,
+                &project_root,
+            ))
+            .with_session_memory(app.approval_memory.bucket(&ctx.session_id))
+            .with_policy(crate::backend::gate::ApprovalPolicy {
+                enabled: approval.enabled,
+                allowlist_enabled: approval.allowlist_enabled,
+                command_allowlist: approval.command_allowlist.clone(),
+            });
+        if let Some(ws) = gate_ws {
+            gate = gate.with_workspace(ws);
+        }
+        Arc::new(gate)
+    };
     // 子 run 实际执行模型（20 号票落账归属；子 run 无每拍刷新源，恒定）
     let model_identity = (resolved.id.clone(), resolved.name.clone());
     let mut sink = SubRunSink {
@@ -973,11 +1013,21 @@ async fn run_subagent(
                     &handle.ask,
                     &pending,
                     ctx.auto_confirm,
+                    ctx.session_memory_enabled,
                 )
                 .await
                 {
-                    ApprovalResolution::Allowed { .. } => {
+                    ApprovalResolution::Allowed { option_id } => {
                         gate.approve(&pending.name, &pending.args_json);
+                        // 23 号票：always_session → 会话级免批桶登记
+                        //（与主 run 共用会话桶，跨 run 生效、不持久化）
+                        if option_id == "always_session" {
+                            app.approval_memory.remember(
+                                &ctx.session_id,
+                                &pending.name,
+                                &pending.args_json,
+                            );
+                        }
                         match crate::backend::run_loop::resume_run(&run_json) {
                             Ok(resumed) => {
                                 run = resumed;

@@ -37,7 +37,13 @@ vi.mock("@/ipc/client", async (importOriginal) => {
 const BASE_CONFIG: AppConfig = {
   schemaVersion: 2,
   providers: [],
-  approval: { enabled: true, autoConfirm: false, commandAllowlist: [] },
+  approval: {
+    enabled: true,
+    autoConfirm: false,
+    sessionMemoryEnabled: true,
+    allowlistEnabled: true,
+    commandAllowlist: [],
+  },
   ui: { language: "zh-CN", theme: "system" },
   log: { level: "info" },
   notifications: { enabled: true, interventionOnly: false },
@@ -417,5 +423,66 @@ describe("网络搜索（13 号票，C-12 三通道配置面）", () => {
       expect(screen.getByTestId("tavily-test-result").textContent).toContain("401");
     });
     unmount();
+  });
+});
+
+describe("安全与审批页（23 号票：四开关 + 白名单管理）", () => {
+  /** 切到安全与审批页。 */
+  async function openSecurityPage() {
+    render(<SettingsPage onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByRole("tab", { name: "安全与审批" })).toBeTruthy());
+    fireEvent.click(screen.getByRole("tab", { name: "安全与审批" }));
+    await waitFor(() => expect(screen.getByText("审批策略")).toBeTruthy());
+  }
+
+  it("渲染审批四开关（FR-14-04 字段级）", async () => {
+    await openSecurityPage();
+    expect(screen.getByLabelText("启用操作审批")).toBeTruthy();
+    expect(screen.getByLabelText("自动放行等待")).toBeTruthy();
+    expect(screen.getByLabelText("会话内记忆")).toBeTruthy();
+    expect(screen.getByLabelText("命令白名单")).toBeTruthy();
+  });
+
+  it("四开关逐项可切换并写入草稿", async () => {
+    await openSecurityPage();
+    fireEvent.click(screen.getByLabelText("会话内记忆"));
+    fireEvent.click(screen.getByLabelText("命令白名单"));
+    const draft = useSettingsStore.getState().config?.approval;
+    expect(draft?.sessionMemoryEnabled).toBe(false);
+    expect(draft?.allowlistEnabled).toBe(false);
+    expect(draft?.enabled).toBe(true);
+  });
+
+  it("白名单手填添加与删除", async () => {
+    await openSecurityPage();
+    const input = screen.getByTestId("allowlist-input");
+    fireEvent.change(input, { target: { value: "git status" } });
+    fireEvent.click(screen.getByTestId("allowlist-add"));
+    let list = useSettingsStore.getState().config?.approval.commandAllowlist ?? [];
+    expect(list).toEqual(["git status"]);
+    // 再加一条并删除第一条
+    fireEvent.change(input, { target: { value: "cargo test" } });
+    fireEvent.click(screen.getByTestId("allowlist-add"));
+    list = useSettingsStore.getState().config?.approval.commandAllowlist ?? [];
+    expect(list).toEqual(["git status", "cargo test"]);
+    fireEvent.click(screen.getAllByText("删除")[0]);
+    list = useSettingsStore.getState().config?.approval.commandAllowlist ?? [];
+    expect(list).toEqual(["cargo test"]);
+  });
+
+  it("白名单词边界校验提示：空条目与含 shell 符号条目拒绝", async () => {
+    await openSecurityPage();
+    const input = screen.getByTestId("allowlist-input");
+    // 空条目
+    fireEvent.click(screen.getByTestId("allowlist-add"));
+    expect(screen.getByTestId("allowlist-hint").textContent).toContain("不能为空");
+    // 含管道/分隔符
+    fireEvent.change(input, { target: { value: "cat a | grep b" } });
+    fireEvent.click(screen.getByTestId("allowlist-add"));
+    expect(screen.getByTestId("allowlist-hint").textContent).toContain("无法作为前缀命中");
+    // 合法条目后提示消失
+    fireEvent.change(input, { target: { value: "git status" } });
+    fireEvent.click(screen.getByTestId("allowlist-add"));
+    expect(screen.queryByTestId("allowlist-hint")).toBeNull();
   });
 });

@@ -8,23 +8,40 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AskPayload } from "@/ipc/types";
 import { useAskStore } from "@/stores/ask";
-import { AskPanel } from "./AskPanel";
+import { DEFAULT_CONFIG, useSettingsStore } from "@/stores/settings";
+import { AskPanel, approvalCommandPrefix } from "./AskPanel";
 import { SessionScopeContext } from "./session-scope";
 
-/** resolveAsk 的 mock：记录面板提交的载荷（真实 IPC 被 vi.mock 替换）。 */
+/** resolveAsk / saveConfig 的 mock：记录面板提交的载荷与白名单写入
+ *  （真实 IPC 被 vi.mock 替换；appendToAllowlist 内部走 saveConfig）。 */
 const resolveAskMock = vi.fn<(askId: string, answer: unknown) => Promise<void>>();
+const saveConfigMock = vi.fn<(config: unknown) => Promise<unknown>>();
 vi.mock("@/ipc/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/ipc/client")>();
   return {
     ...actual,
     resolveAsk: (askId: string, answer: unknown) => resolveAskMock(askId, answer),
+    saveConfig: (config: unknown) => saveConfigMock(config),
   };
 });
 
 beforeEach(() => {
   resolveAskMock.mockReset();
   resolveAskMock.mockResolvedValue(undefined);
+  saveConfigMock.mockReset();
+  saveConfigMock.mockImplementation(async (config: unknown) => config);
   useAskStore.setState({ bySession: {}, hints: {} });
+  // 设置 store 复位：默认带审批四开关（白名单开启），载荷为空表
+  useSettingsStore.setState({
+    config: {
+      ...DEFAULT_CONFIG,
+      approval: { ...DEFAULT_CONFIG.approval, commandAllowlist: [] },
+    },
+    baseline: null,
+    loading: false,
+    saving: false,
+    error: null,
+  });
 });
 afterEach(cleanup);
 
@@ -208,5 +225,99 @@ describe("AskPanel：mcpTrust 形态（08 号票）", () => {
     fireEvent.click(screen.getByTestId("ask-option-deny"));
     await waitFor(() => expect(useAskStore.getState().bySession[""]).toBeUndefined());
     expect(screen.queryByTestId("ask-panel")).toBeNull();
+  });
+});
+
+describe("23 号票：审批记忆与白名单（ApprovalForm 增量）", () => {
+  it("approvalCommandPrefix：词序列前缀提取表（与后端 allowlist_hit 同口径）", () => {
+    const cases: [string, string | null][] = [
+      ["git status --short", "git status"],
+      ["git status", "git status"],
+      ["  npm   run build  ", "npm run"],
+      ["ls", "ls"],
+      ["   ", null],
+    ];
+    for (const [command, expect_] of cases) {
+      expect(approvalCommandPrefix(command), `command=${command}`).toBe(expect_);
+    }
+  });
+
+  /** 命令类审批载荷样例（③ 开：后端下发 always_session 选项）。 */
+  const commandApprovalPayload: AskPayload = {
+    kind: "approval",
+    title: "执行命令",
+    command: "git status --short",
+    options: [
+      { id: "allow_once", label: "允许", recommended: true, mode: "allow_once" },
+      { id: "always_session", label: "始终允许（本会话）", mode: "always_session" },
+      { id: "deny", label: "拒绝", mode: "deny" },
+    ],
+  };
+
+  it("命令类审批（③ 开）渲染「加入白名单」勾选；未勾选直接允许不写白名单", async () => {
+    openPanel(commandApprovalPayload);
+    renderPanel();
+    expect(screen.getByTestId("ask-add-allowlist")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("ask-option-allow_once"));
+    await waitFor(() => expect(resolveAskMock).toHaveBeenCalled());
+    expect(saveConfigMock).not.toHaveBeenCalled();
+  });
+
+  it("勾选「加入白名单」后点允许 → 白名单持久（前缀条目）+ 应答照常", async () => {
+    openPanel(commandApprovalPayload);
+    renderPanel();
+    fireEvent.click(screen.getByTestId("ask-add-allowlist").querySelector("input")!);
+    fireEvent.click(screen.getByTestId("ask-option-allow_once"));
+    await waitFor(() => expect(saveConfigMock).toHaveBeenCalled());
+    const saved = saveConfigMock.mock.calls[0][0] as { approval: { commandAllowlist: string[] } };
+    expect(saved.approval.commandAllowlist).toEqual(["git status"]);
+    expect(resolveAskMock).toHaveBeenCalledWith("ask-1", {
+      kind: "approval",
+      optionId: "allow_once",
+    });
+  });
+
+  it("③ 关（载荷无 always_session 选项）不出勾选框", () => {
+    openPanel(approvalPayload);
+    renderPanel();
+    expect(screen.queryByTestId("ask-add-allowlist")).toBeNull();
+  });
+
+  it("④ 关（allowlistEnabled=false）命令类审批也不出勾选框", () => {
+    useSettingsStore.setState((s) => ({
+      config: s.config
+        ? { ...s.config, approval: { ...s.config.approval, allowlistEnabled: false } }
+        : s.config,
+    }));
+    openPanel({
+      kind: "approval",
+      title: "执行命令",
+      command: "git status",
+      options: [
+        { id: "allow_once", label: "允许", recommended: true, mode: "allow_once" },
+        { id: "always_session", label: "始终允许（本会话）", mode: "always_session" },
+        { id: "deny", label: "拒绝", mode: "deny" },
+      ],
+    });
+    renderPanel();
+    expect(screen.queryByTestId("ask-add-allowlist")).toBeNull();
+  });
+
+  it("拒绝时勾选不写白名单", async () => {
+    openPanel({
+      kind: "approval",
+      title: "执行命令",
+      command: "git status",
+      options: [
+        { id: "allow_once", label: "允许", recommended: true, mode: "allow_once" },
+        { id: "always_session", label: "始终允许（本会话）", mode: "always_session" },
+        { id: "deny", label: "拒绝", mode: "deny" },
+      ],
+    });
+    renderPanel();
+    fireEvent.click(screen.getByTestId("ask-add-allowlist").querySelector("input")!);
+    fireEvent.click(screen.getByTestId("ask-option-deny"));
+    await waitFor(() => expect(resolveAskMock).toHaveBeenCalled());
+    expect(saveConfigMock).not.toHaveBeenCalled();
   });
 });
