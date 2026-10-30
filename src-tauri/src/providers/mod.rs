@@ -15,6 +15,7 @@
 pub mod http;
 pub mod presets;
 pub mod probe;
+pub mod quota;
 pub mod reasoning;
 pub mod service;
 pub mod types;

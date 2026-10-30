@@ -120,6 +120,12 @@ use host::commands::stats::{
     SessionUsageArgs, SessionUsageResult, StatsTokenArgs, StatsTokenResult, session_usage,
     stats_token,
 };
+// 配额快照命令（21 号票，§3.3 #53）：QuotaSnapshot 是 Vec<_> 元素（非名义
+// 根，经 quota_snapshots 返回），导出需显式补根（ipc_manifest_test）
+#[allow(unused_imports)]
+use host::commands::quota::quota_snapshots;
+#[allow(unused_imports)]
+use providers::quota::QuotaSnapshot;
 #[allow(unused_imports)]
 use providers::types::{AppConfig, ProviderConfig};
 #[allow(unused_imports)]
@@ -279,6 +285,8 @@ ipc_commands! {
     // 用量统计（20 号票，§3.3 #52/#59k）
     host::commands::stats::stats_token => args: StatsTokenArgs, ret: StatsTokenResult;
     host::commands::stats::session_usage => args: SessionUsageArgs, ret: SessionUsageResult;
+    // 配额快照（21 号票，§3.3 #53）
+    host::commands::quota::quota_snapshots => args: (), ret: Vec<QuotaSnapshot>;
     #[cfg(debug_assertions)]
     mock_chat::mock_chat_run => args: (), ret: ();
     select_dir => args: (), ret: Option<String>;

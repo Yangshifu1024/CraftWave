@@ -14,6 +14,7 @@
 import { useEffect, useState } from "react";
 import { CompactButton } from "@/chat/CompactionUI";
 import { type PlanItem, usePlanStateStore } from "@/chat/plan-state";
+import { QuotaPanel } from "@/chat/QuotaPanel";
 import { useRunMetricsStore, useSessionMetrics } from "@/chat/run-metrics";
 import { useSessionScope } from "@/chat/session-scope";
 import { compactTokens, DailyBars, ModelBars } from "@/chat/usage-charts";
@@ -74,21 +75,24 @@ const EMPTY_PLAN: PlanItem[] = [];
 /** 空子代理列表快照（同上：防 selector 引用抖动）。 */
 const EMPTY_SUBS: SubagentItem[] = [];
 
-/** 右栏面板本体：tab（用量 | 子代理）+ 各 tab 内容。宽度受控
+/** 右栏面板本体：tab（用量 | 配额 | 子代理）+ 各 tab 内容。宽度受控
  *  （拖宽手柄，min=初始宽 max=半屏）；开合动画走外层宽度过渡，内层定宽
  *  防内容回流；收起后 inert 挡键盘焦点（面板常驻挂载）。 */
 export function Inspector({
   width,
   open,
   animate,
+  onOpenSettings,
 }: {
   width: number;
   open: boolean;
   animate: boolean;
+  /** 「去设置」跳转（21 号票配额卡 no_key 行）：打开设置页供应商页。 */
+  onOpenSettings: () => void;
 }) {
   const sessionId = useSessionScope();
   // tab 态（内存态：重载回「用量」缺省页）
-  const [tab, setTab] = useState<"usage" | "subagents">("usage");
+  const [tab, setTab] = useState<"usage" | "quota" | "subagents">("usage");
   const subs = useSubagentsStore((s) => s.bySession[sessionId] ?? EMPTY_SUBS);
   // 运行中有子代理时自动切到子代理页（盯着它干活；用户可手动切回）
   const runningCount = subs.filter((s) => s.state === "running").length;
@@ -130,6 +134,18 @@ export function Inspector({
           </button>
           <button
             type="button"
+            data-testid="inspector-tab-quota"
+            className={`rounded-md px-2 py-1 ${
+              tab === "quota"
+                ? "font-medium text-[var(--foreground)]"
+                : "text-[var(--muted-foreground)]"
+            }`}
+            onClick={() => setTab("quota")}
+          >
+            配额
+          </button>
+          <button
+            type="button"
             data-testid="inspector-tab-subagents"
             className={`rounded-md px-2 py-1 ${
               tab === "subagents"
@@ -143,6 +159,8 @@ export function Inspector({
         </div>
         {tab === "usage" ? (
           <UsagePanel sessionId={sessionId} />
+        ) : tab === "quota" ? (
+          <QuotaPanel sessionId={sessionId} onOpenSettings={onOpenSettings} />
         ) : (
           <SubagentsPanel sessionId={sessionId} />
         )}

@@ -119,6 +119,11 @@ export * from "./generated/ProviderPreset";
 export * from "./generated/ProxyConfig";
 export * from "./generated/ProxyMode";
 export * from "./generated/QueuedImageAttachment";
+// 配额快照（21 号票，§3.3 #53）
+export * from "./generated/QuotaData";
+export * from "./generated/QuotaEntry";
+export * from "./generated/QuotaSnapshot";
+export * from "./generated/QuotaStatus";
 export * from "./generated/ReadImageBlobArgs";
 export * from "./generated/ReadImageBlobResult";
 export * from "./generated/ReadRange";

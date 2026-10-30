@@ -190,9 +190,15 @@ export function SessionWorkspace() {
             />
           )}
           {/* Inspector 只依赖会话域（scope/metrics/plan store），提升到
-              工作区挂载以便拖宽手柄同层排布；随 activeId 取数即随 Tab 切换 */}
+              工作区挂载以便拖宽手柄同层排布；随 activeId 取数即随 Tab 切换。
+              onOpenSettings：配额卡 no_key 行「去设置」（21 号票）。 */}
           <SessionScopeContext.Provider value={activeId}>
-            <Inspector width={rightWidth} open={inspectorOpen} animate={!resizing} />
+            <Inspector
+              width={rightWidth}
+              open={inspectorOpen}
+              animate={!resizing}
+              onOpenSettings={() => setSettingsPage("providers")}
+            />
           </SessionScopeContext.Provider>
         </>
       )}

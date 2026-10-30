@@ -8,6 +8,8 @@ pub mod config;
 // 图片附件承载命令（17 号票，§3.3 #59h/#59i）
 pub mod image;
 pub mod project;
+// 配额快照命令（21 号票，§3.3 #53）
+pub mod quota;
 // HTML 沙箱预览注册命令（14 号票，§3.3 #59g）
 pub mod preview;
 pub mod provider;

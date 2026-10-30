@@ -45,6 +45,7 @@ import type {
   PreviewRegisterResult,
   ProjectMeta,
   ProviderConfig,
+  QuotaSnapshot,
   ReadImageBlobArgs,
   ReadImageBlobResult,
   ReadWorkspaceResult,
@@ -144,6 +145,8 @@ export const COMMANDS = {
   // 用量统计两命令（20 号票，§3.3 #52/#59k）
   statsToken: "stats_token",
   sessionUsage: "session_usage",
+  // 配额快照（21 号票，§3.3 #53）
+  quotaSnapshots: "quota_snapshots",
   // 网络搜索连通测试（13 号票，§3.3 #59f）
   searchTest: "search_test",
   // 供应商连接测试（19 号票，§3.3 #32）
@@ -417,6 +420,14 @@ export function statsToken(args: StatsTokenArgs = {}): Promise<StatsTokenResult>
  *  runMetrics.sessionUsage；旧数据无明细时 legacyTotalTokens 带标量回落。 */
 export function sessionUsage(sessionId: string): Promise<SessionUsageResult> {
   return invoke<SessionUsageResult>(COMMANDS.sessionUsage, { sessionId });
+}
+
+// ---- 配额快照（§3.3 #53，21 号票）----
+
+/** §3.3 #53：全部供应商的额度快照（六态行，后端并发实时拉取 + quota.json
+ *  离线兜底面）。Inspector 配额页数据源（FR-02-15）。 */
+export function quotaSnapshots(): Promise<QuotaSnapshot[]> {
+  return invoke<QuotaSnapshot[]>(COMMANDS.quotaSnapshots, {});
 }
 
 /** 把 invoke 失败抛出的错误归一为 §3.1 统一错误负载（{code, message, detail?}）。
