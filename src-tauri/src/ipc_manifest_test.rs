@@ -336,7 +336,8 @@ fn export_ipc_manifest_and_cross_lang_fixture() {
     // + 04 号票压缩三键（run:compacting/compacted/compact_failed）
     // + 06 号票三键（run:start / run:inject / run:queue）+ 08 号票 mcp:status
     // + 10 号票子代理六键（sub:spawn/step/report/usage/done/error）
-    assert_eq!(manifest["events"].as_array().unwrap().len(), 23);
+    // + 27 号票 session:title（自动起名，§3.5 P0 键位收口）
+    assert_eq!(manifest["events"].as_array().unwrap().len(), 24);
     // 08 号票：注册表分「静态段 + 动态段」两断言——静态段钉死（14 号票起
     // 17 个：+batch_read/glob/calculate/render_html，§8.3 M2 表小工具包
     // 四行）；动态段（MCP）运行时可变，manifest 落盘时为当前快照

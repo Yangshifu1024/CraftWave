@@ -71,6 +71,10 @@ export interface SessionsStore {
   closeTab: (sessionId: string) => void;
   /** 会话标题/计数的就地更新（run 期间 index 推进后由调用方刷新）。 */
   patchTab: (meta: SessionMeta) => void;
+  /** 自动起名的标题就地更新（27 号票 session:title 事件驱动）：tabs 内
+   *  对应快照与左栏缓存列表同改；会话不在当前 tabs（后台项目会话）时
+   *  只更新缓存列表，不强行开 Tab。 */
+  applyTitle: (sessionId: string, title: string) => void;
   /** 运行指示桥（SessionTab 内写）。 */
   setRunning: (sessionId: string, running: boolean) => void;
   /** 右栏开合切换（FR-13-01）。 */
@@ -219,6 +223,15 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 
   patchTab: (meta) => {
     set((s) => ({ tabs: s.tabs.map((t) => (t.id === meta.id ? meta : t)) }));
+  },
+
+  applyTitle: (sessionId, title) => {
+    // tabs 与左栏缓存列表同改（SessionMeta 快照的 title 字段；排序不动——
+    // updatedAt 由后端刷新，下次 refresh 恢复后端权威序）
+    set((s) => ({
+      tabs: s.tabs.map((t) => (t.id === sessionId ? { ...t, title } : t)),
+      sessions: s.sessions.map((m) => (m.id === sessionId ? { ...m, title } : m)),
+    }));
   },
 
   setRunning: (sessionId, running) => {

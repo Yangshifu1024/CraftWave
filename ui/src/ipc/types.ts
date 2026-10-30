@@ -376,3 +376,11 @@ export type SubErrorEvent = {
   code?: string;
   message?: string;
 };
+
+/** session:title 事件载荷（27 号票，§3.5 P0 键）：自动起名完成——meta 行 +
+ *  index 双写落盘之后发出；失败静默兜底的标题同样经本事件带出（只有
+ *  「无标题可落」才不发）。前端据以就地更新左栏列表与卡头标题。 */
+export type SessionTitleEvent = {
+  sessionId: string;
+  title: string;
+};

@@ -11,7 +11,9 @@
  * - run:queue → sessions store 队列态（06 号票：队列条增删/暂停态/取消
  *   返还草稿，后端 queue.json 为投递权威）；
  * - run:start → 非运行态收到即后端自动投递的新 run，经 attach 观察态接入
- *   续流（06 号票，§5.5/§5.8）。
+ *   续流（06 号票，§5.5/§5.8）；
+ * - session:title → sessions store 标题就地更新（27 号票：自动起名落盘后
+ *   事件驱动，左栏列表与卡头随 store 即时刷新）。
  *
  * listen 依赖可注入（测试）。
  */
@@ -35,6 +37,7 @@ import type {
   RunQueueEvent,
   RunStartEvent,
   RunSuggestionsEvent,
+  SessionTitleEvent,
   StoredCompactionEntry,
   SubDoneEvent,
   SubErrorEvent,
@@ -182,6 +185,12 @@ export function useBackendEvents(deps: EventBridgeDeps = defaultEventBridgeDeps)
       }),
       deps.listen(EVENT_KEYS.subError, (p: SubErrorEvent) => {
         subError(p);
+      }),
+      // ---- 自动起名（27 号票，§3.5 P0 键）----
+      deps.listen(EVENT_KEYS.sessionTitle, (p: SessionTitleEvent) => {
+        // 标题就地更新：tabs 快照 + 左栏缓存列表同改（会话不在 tabs 的
+        // 后台项目会话只更新缓存列表，不强行开 Tab——store 内分支）
+        useSessionsStore.getState().applyTitle(p.sessionId, p.title);
       }),
     ];
     return () => {

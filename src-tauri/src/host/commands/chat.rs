@@ -1350,6 +1350,200 @@ fn spawn_suggest<W, T>(
     });
 }
 
+// ---- 自动起名（FR-01-09，27 号票；C-9 后台零工具小调用，suggest 同模式）----
+
+/// 标题生成的调用超时（票面口径 10s；超时 → 首条消息截断兜底，不重试不提示）。
+pub(crate) const TITLE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// 标题生成调用的回复上限（票面口径 max_tokens 32——防模型失控长输出）。
+pub(crate) const TITLE_MAX_TOKENS: u64 = 32;
+
+/// 标题最大字符数（PRD「超时兜底截断 ≤30 字符」口径；生成结果同限归一，
+/// 模型无视 ≤20 字要求时兜住长度）。
+pub(crate) const TITLE_MAX_CHARS: usize = 30;
+
+/// 进入 prompt 的首条消息文本上限（票面口径：超长截 2000 字符）。
+const TITLE_PROMPT_INPUT_CHARS: usize = 2000;
+
+/// 触发判定（票面三态表）：仅当 index 标题仍是 create_session 默认值且
+/// 树内恰好只有这一条 user 消息时自动起名。三个不触发面由此一并覆盖——
+/// 用户改名过（title 非默认）、非首条消息（user 计数 > 1，含首条后编辑
+/// 重发产生的兄弟分支节点）、重启后继续旧会话（重启不重生成由判定天然
+/// 保证，无需额外标记位）。
+pub(crate) fn title_should_trigger(meta_title: Option<&str>, user_message_count: usize) -> bool {
+    meta_title == Some(crate::host::commands::session::DEFAULT_SESSION_TITLE)
+        && user_message_count == 1
+}
+
+/// 标题归一（生成结果与兜底共用）：trim → 取第一个非空行 → 超
+/// [`TITLE_MAX_CHARS`] 字符截断（按字符取，多字节安全）→ 再 trim。
+/// 兜底输入 = 首条消息全文（`lines()` 天然完成"首行截断 + 换行/前后
+/// 空白归一"，PRD 原文口径）。
+pub(crate) fn normalize_title(raw: &str) -> String {
+    let line = raw
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
+    let truncated: String = line.chars().take(TITLE_MAX_CHARS).collect();
+    truncated.trim().to_owned()
+}
+
+/// 标题生成 prompt（全文回写设计文档 §6.3 注，27 号票）：输入 = 首条 user
+/// 消息文本，超长截 [`TITLE_PROMPT_INPUT_CHARS`] 字符；要求输出 ≤20 字
+/// 标题、无引号无前缀。
+pub(crate) fn title_prompt(first_user_text: &str) -> String {
+    let clipped: String = first_user_text
+        .chars()
+        .take(TITLE_PROMPT_INPUT_CHARS)
+        .collect();
+    format!(
+        "根据用户的这条消息，给这个 AI 助手会话起一个简短标题。要求：不超过 20 个字；\
+         直接输出标题本身，不要引号、不要任何前缀或解释。消息内容：{clipped}"
+    )
+}
+
+/// 首条 user 消息的正文文本（Text parts 顺序拼接；纯图片等无正文场景
+/// 返回空串，调用方据此放弃起名）。
+pub(crate) fn first_user_text(messages: &[MessageEntry]) -> String {
+    messages
+        .iter()
+        .find(|m| m.role == MessageRole::User)
+        .map(|m| {
+            m.parts
+                .iter()
+                .filter_map(|p| match p {
+                    crate::storage::WirePart::Text { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<String>()
+        })
+        .unwrap_or_default()
+}
+
+/// 后台标题任务（FR-01-09，27 号票；spawn 模式复制 [`spawn_suggest`] 先例
+/// ——run 落盘链外独立任务、失败静默、用量计入会话）：
+///
+/// ① 锁内复判一（并发防护，票面）：进入任务即查 index——标题已非默认
+///    （用户抢先改名 / 并发任务已写）直接放弃；
+/// ② 生成：[`TurnDriver::complete_once_capped`]（零工具、max_tokens 32）+
+///    10s 超时；成功 → 归一后采用；超时/失败/空文本 → 兜底 = 首条消息
+///    首行截断（PRD 原文口径）。成功调用已返回的 usage 照常记账（Q39：
+///    已知用量不因后续路径丢弃；无 usage 不伪造，不能承诺失败免费）——
+///    kind=aux、runId=`{runId}:title`、runs 计数不增（Q40），
+///    tokens:update 照发（按当时本地日期落账，Q39 由 ledger 承担）；
+/// ③ 锁内复判二（先写者为准）：落盘前再查一次 index——已被并发任务写入
+///    则放弃（极端窗口下后写者可能覆盖，同值无害口径，票面 Answer）；
+/// ④ 落盘双写：meta 行（会话锁，`update_session_title`）→ index mutate
+///    （title + updatedAt；锁序 session → index，§7.4）；
+/// ⑤ `session:title` 事件（§3.5 键位 M0 定死）——严格在落盘之后发。
+///
+/// 全程失败静默（C-9）：不报错、不提示、不重试；落盘失败不发事件
+/// （事件承诺"已落盘"）。重启恢复遵守 Q37 四口径记录（明细面已落账）。
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn spawn_title_task<W, T>(
+    driver: Arc<TurnDriver<W, T>>,
+    store: Arc<crate::storage::SessionStore>,
+    events: Arc<dyn EventSink>,
+    session_usage: Arc<Mutex<HashMap<String, UsageTotal>>>,
+    ledger: crate::host::usage::UsageLedger,
+    session_id: String,
+    run_id: String,
+    first_user_text: String,
+    model: (String, String),
+    timeout: Duration,
+) where
+    W: rig::wire::Wire<Op = rig::operation::Completion>,
+    T: rig::driver::Transport<W>,
+{
+    tokio::spawn(async move {
+        let default_title = crate::host::commands::session::DEFAULT_SESSION_TITLE;
+        // index 标题仍为默认值的原子复判（SessionIndex 内部互斥保证读一致）
+        let still_default = || {
+            store
+                .index()
+                .get(&session_id)
+                .map(|m| m.title == default_title)
+                .unwrap_or(false)
+        };
+        // ① 复判一：已非默认（改名 / 并发已写）→ 放弃
+        if !still_default() {
+            return;
+        }
+        // ② 生成（超时兜底；usage 记账与标题取舍两段独立——已知用量不丢）
+        let prompt = title_prompt(&first_user_text);
+        let title = match tokio::time::timeout(
+            timeout,
+            driver.complete_once_capped(&prompt, TITLE_MAX_TOKENS),
+        )
+        .await
+        {
+            Ok(Ok((text, usage))) => {
+                let delta = crate::backend::turn::usage_total(&usage);
+                if delta != UsageTotal::default() {
+                    ledger.record(
+                        &session_id,
+                        &format!("{run_id}:title"),
+                        crate::host::usage::run_kind::AUX,
+                        &model.0,
+                        &model.1,
+                        delta,
+                        false,
+                    );
+                    let total = {
+                        let mut map = session_usage
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        let total = map.entry(session_id.clone()).or_default();
+                        total.accumulate(&delta);
+                        *total
+                    };
+                    let mut payload =
+                        serde_json::json!({ "sessionId": session_id, "usage": total });
+                    if !model.0.is_empty() {
+                        payload["modelId"] = serde_json::json!(model.0);
+                    }
+                    events.emit(keys::TOKENS_UPDATE, payload);
+                }
+                let generated = normalize_title(&text);
+                if generated.is_empty() {
+                    normalize_title(&first_user_text) // 空回复视为失败走兜底
+                } else {
+                    generated
+                }
+            }
+            // 超时 / 调用失败：无 usage 不伪造，标题走静默兜底（C-9）
+            _ => normalize_title(&first_user_text),
+        };
+        if title.is_empty() {
+            return; // 无标题可落（首条消息全空白等极端面），静默放弃
+        }
+        // ③ 复判二：先写者为准
+        if !still_default() {
+            return;
+        }
+        // ④ 落盘双写（meta 行先行——事件承诺"已落盘"；index 失败仅记日志，
+        //    下次 canonical 落盘 upsert 时以 prior 补齐，尽力而为面）
+        if store.update_session_title(&session_id, &title).is_err() {
+            return;
+        }
+        if let Err(e) = store.index().mutate(&session_id, |m| {
+            m.title = title.clone();
+            m.updated_at = now_ms();
+        }) {
+            #[cfg(debug_assertions)]
+            eprintln!("[craftwave] 标题 index 更新失败（{session_id}）：{e:?}");
+            #[cfg(not(debug_assertions))]
+            let _ = e;
+        }
+        // ⑤ 事件（严格在落盘之后）
+        events.emit(
+            keys::SESSION_TITLE,
+            serde_json::json!({ "sessionId": session_id, "title": title }),
+        );
+    });
+}
+
 /// 会话消息尾文本（suggest 上下文）：最后一条 assistant 的文本（缺省取
 /// 最后一条 user）。
 pub(crate) fn context_tail(messages: &[MessageEntry]) -> String {
@@ -2381,6 +2575,53 @@ pub async fn start_chat_core(
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone(),
     ));
+    // 自动起名（FR-01-09，27 号票）：user 消息落盘后判定——index 标题仍为
+    // 默认 && 树内仅此一条 user 消息（改名/非首条/重启续聊三不触发，重启
+    // 不重生成由判定天然保证）。命中 spawn 后台标题任务（零工具小调用，
+    // 独立于 run 生命周期；失败静默，票面 C-9 口径）。放在 run 副本表创建
+    // 之后 spawn——标题与 run/suggest 共用同一份会话累计快照，tokens:update
+    // 全量校正在同一累计域内收敛（跨表双源会造成事件快照互相覆盖）。
+    {
+        let meta_title = app.store.index().get(&session_id).map(|m| m.title);
+        let user_count = app
+            .store
+            .load_session_tree(&session_id)
+            .map(|tree| {
+                tree.messages
+                    .iter()
+                    .filter(|m| m.role == MessageRole::User)
+                    .count()
+            })
+            .unwrap_or(0);
+        let first_text = first_user_text(&messages);
+        if title_should_trigger(meta_title.as_deref(), user_count) && !first_text.trim().is_empty()
+        {
+            // 模型 = 压缩摘要专用模型配置共用（04 号票已落 `compaction.
+            // modelId` 则复用，票面 Answer 口径）；未配/解析失败回退会话
+            // 激活模型（上面 ① 已解析成功的同源，起名不因摘要配置漂移跳过）。
+            let title_resolved = app
+                .config
+                .load()
+                .ok()
+                .and_then(|c| c.compaction.model_id.clone())
+                .and_then(|id| resolve_model(app, Some(&id)).ok())
+                .or_else(|| resolve_model(app, initial_model_id.as_deref()).ok());
+            if let Some(resolved) = title_resolved {
+                spawn_title_task(
+                    Arc::new(TurnDriver::new(resolved.driver, RunSpec::new(), Vec::new())),
+                    app.store.clone(),
+                    app.events.clone(),
+                    session_usage.clone(),
+                    app.ledger.clone(),
+                    session_id.clone(),
+                    run_id.clone(),
+                    first_text,
+                    (resolved.id, resolved.name),
+                    TITLE_TIMEOUT,
+                );
+            }
+        }
+    }
     let runs_for_task = runs.clone();
     let suggest_tail = context_tail(&messages);
     // 模型停滞看门狗超时（§3.2 watchdog 组/§5.7，37 号票）：按 run 装配驱动时

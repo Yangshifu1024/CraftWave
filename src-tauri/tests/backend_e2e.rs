@@ -3046,6 +3046,173 @@ mod command_face {
             "read 未执行"
         );
     }
+
+    // ---- 自动起名全链（27 号票，FR-01-09：start_chat_core 触发判定 → 后台标题任务） ----
+
+    use common::mock_openai::NONSTREAM_TEXT;
+
+    /// 默认标题的 index 条目（模拟 create_session 产物——真实链路前端
+    /// 发消息前必先 create_session，index 必有默认标题条目）。
+    fn seed_default_title(app: &AppState, session_id: &str) {
+        app.store
+            .index()
+            .upsert(craftwave_lib::storage::SessionMeta {
+                id: session_id.to_owned(),
+                project_id: None,
+                title: "新会话".to_owned(),
+                created_at: 1,
+                updated_at: 1,
+                revision: 0,
+                message_count: 0,
+                total_tokens: 0,
+                authorized_external_dirs: Vec::new(),
+            })
+            .expect("seed index");
+    }
+
+    /// 全链：新会话首条消息 run 完成后自动得名——session:title 事件 +
+    /// index/meta 双写（事件时点已落盘）+ C-9 计量（`:title` aux 明细 +
+    /// tokens:update 照发）。
+    #[tokio::test]
+    async fn auto_title_full_chain_first_message() {
+        let mock = MockOpenAI::start().await;
+        let (app, events) = app_fixture_with_events(&mock);
+        seed_default_title(&app, "sess-auto-title");
+        let runs = RunManager::new();
+        let sink = SharedSink::default();
+
+        craftwave_lib::host::commands::chat::start_chat_core(
+            &app,
+            &runs,
+            "sess-auto-title".to_owned(),
+            vec![user_entry("帮我读配置文件")],
+            run_config(),
+            Box::new(sink.clone()),
+            false,
+        )
+        .await
+        .expect("start_chat_core 应成功");
+        let ended = wait_ended(&sink, Duration::from_secs(10)).await;
+        assert!(matches!(
+            ended,
+            ChatFrame::RunEnded {
+                reason: EndReason::Done,
+                ..
+            }
+        ));
+
+        // 标题 = mock 非流式回复文本（归一后）
+        let title = wait_event(&events, "session:title", Duration::from_secs(10)).await;
+        assert_eq!(title["sessionId"], "sess-auto-title");
+        assert_eq!(title["title"], NONSTREAM_TEXT);
+
+        // 事件顺序锚：事件已到 ⇒ 落盘已完成（index + meta 行双写一致）
+        let meta = app
+            .store
+            .index()
+            .get("sess-auto-title")
+            .expect("index 应有会话");
+        assert_eq!(meta.title, NONSTREAM_TEXT);
+        let raw = std::fs::read_to_string(
+            app.store
+                .root()
+                .join("histories")
+                .join("sess-auto-title")
+                .join("0001.jsonl"),
+        )
+        .expect("史册文件应存在");
+        assert!(
+            raw.lines()
+                .rev()
+                .any(|l| l.contains("\"kind\":\"meta\"") && l.contains(NONSTREAM_TEXT)),
+            "meta 行应带新标题"
+        );
+
+        // C-9 计量：run 两拍（240/96）+ suggest（120/48）+ 标题（120/48）
+        // = 480/192；明细面有 `:title` aux 条目
+        wait_event(&events, "run:suggestions", Duration::from_secs(10)).await;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let tokens = events.payloads_of("tokens:update");
+            let Some(last) = tokens.last() else {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+                continue;
+            };
+            if last["usage"]["input"] == 480 {
+                assert_eq!(last["usage"]["output"], 192, "{last}");
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "tokens:update 未达 480/192；已收 {tokens:?}；session:title {} 个",
+                events.payloads_of("session:title").len()
+            );
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        let detail = app.ledger.detail.load("sess-auto-title");
+        // runId 后缀键 = `{runId}:title`（run-1 为真实 uuid run id）；明细
+        // 以 kind=aux + 输入计量存在为判据
+        assert!(
+            detail.runs.values().any(|r| r.kind == "aux"
+                && r.by_model
+                    .values()
+                    .any(|m| m.input == 120 && m.output == 48)),
+            "标题辅助调用应有 aux 明细：{detail:?}"
+        );
+    }
+
+    /// 非首条消息不再起名：第二次 start_chat（模拟重启续聊/连发第二问）
+    /// 不重新生成标题——标题保留第一次的生成值，无第二个 session:title。
+    #[tokio::test]
+    async fn auto_title_not_regenerated_on_second_message() {
+        let mock = MockOpenAI::start().await;
+        let (app, events) = app_fixture_with_events(&mock);
+        seed_default_title(&app, "sess-title-once");
+        let runs = RunManager::new();
+        let sink = SharedSink::default();
+
+        craftwave_lib::host::commands::chat::start_chat_core(
+            &app,
+            &runs,
+            "sess-title-once".to_owned(),
+            vec![user_entry("第一个问题")],
+            run_config(),
+            Box::new(sink.clone()),
+            false,
+        )
+        .await
+        .expect("第一次 start 应成功");
+        wait_ended(&sink, Duration::from_secs(10)).await;
+        let first = wait_event(&events, "session:title", Duration::from_secs(10)).await;
+        assert_eq!(first["title"], NONSTREAM_TEXT);
+        let title_count_after_first = events.payloads_of("session:title").len();
+
+        // 第二条消息：标题已非默认 → 判定不触发（重启续聊同面）
+        craftwave_lib::host::commands::chat::start_chat_core(
+            &app,
+            &runs,
+            "sess-title-once".to_owned(),
+            vec![user_entry("第二个问题")],
+            run_config(),
+            Box::new(sink.clone()),
+            false,
+        )
+        .await
+        .expect("第二次 start 应成功");
+        wait_ended(&sink, Duration::from_secs(10)).await;
+        wait_event(&events, "run:suggestions", Duration::from_secs(10)).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(
+            events.payloads_of("session:title").len(),
+            title_count_after_first,
+            "第二次消息不应再起名"
+        );
+        assert_eq!(
+            app.store.index().get("sess-title-once").unwrap().title,
+            NONSTREAM_TEXT,
+            "标题保留不被覆盖"
+        );
+    }
 }
 
 // —— 8. 并行工具批（07 号票，机制层）：混合读写源序 + 并发取消收齐 ——

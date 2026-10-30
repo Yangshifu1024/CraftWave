@@ -9,8 +9,9 @@ import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useBackendEvents } from "@/chat/event-bridge";
 import { useRunMetricsStore } from "@/chat/run-metrics";
-import type { AskOpenedEvent, AskPayload, TokensUpdateEvent } from "@/ipc/types";
+import type { AskOpenedEvent, AskPayload, SessionTitleEvent, TokensUpdateEvent } from "@/ipc/types";
 import { matchGhost, useAskStore } from "@/stores/ask";
+import { useSessionsStore } from "@/stores/sessions";
 
 /** 最小可用的审批载荷样例（字段值本身不参与断言）。 */
 const approval: AskPayload = {
@@ -24,6 +25,7 @@ afterEach(() => {
   cleanup();
   useAskStore.setState({ bySession: {}, hints: {} });
   useRunMetricsStore.setState(useRunMetricsStore.getInitialState());
+  useSessionsStore.setState({ tabs: [], sessions: [] });
 });
 
 describe("ask store（按会话分桶）", () => {
@@ -81,7 +83,7 @@ describe("useBackendEvents（事件分发，按 sessionId 入桶）", () => {
       }),
     };
     renderHook(() => useBackendEvents(deps));
-    await vi.waitFor(() => expect(handlers.size).toBe(17));
+    await vi.waitFor(() => expect(handlers.size).toBe(18));
 
     // ask:opened → ask store（按 sessionId 分桶）
     const opened: AskOpenedEvent = {
@@ -114,13 +116,35 @@ describe("useBackendEvents（事件分发，按 sessionId 入桶）", () => {
     act(() => handlers.get("tokens:update")?.(tokens));
     expect(useRunMetricsStore.getState().bySession.s?.sessionUsage).toEqual(tokens.usage);
 
+    // session:title（27 号票）→ sessions store 标题就地更新（tabs + 列表）
+    const metaOf = (id: string, title: string) => ({
+      id,
+      title,
+      createdAt: 0,
+      updatedAt: 0,
+      revision: 0,
+      messageCount: 1,
+      totalTokens: 0,
+      authorizedExternalDirs: [],
+    });
+    useSessionsStore.setState({
+      tabs: [metaOf("s", "新会话"), metaOf("s2", "别的会话")],
+      sessions: [metaOf("s", "新会话"), metaOf("s2", "别的会话")],
+    });
+    const title: SessionTitleEvent = { sessionId: "s", title: "自动起的标题" };
+    act(() => handlers.get("session:title")?.(title));
+    expect(useSessionsStore.getState().tabs.find((t) => t.id === "s")?.title).toBe("自动起的标题");
+    expect(useSessionsStore.getState().sessions.find((m) => m.id === "s")?.title).toBe(
+      "自动起的标题",
+    );
+
     // ask:closed → 按 askId 全桶定位清除
     act(() => handlers.get("ask:closed")?.({ askId: "a9", answered: true }));
     expect(useAskStore.getState().bySession.s).toBeUndefined();
   });
 
   it("卸载时取消全部订阅", async () => {
-    const unlistens = Array.from({ length: 17 }, () => vi.fn());
+    const unlistens = Array.from({ length: 18 }, () => vi.fn());
     let i = 0;
     const deps = {
       listen: vi.fn(async () => {
@@ -130,7 +154,7 @@ describe("useBackendEvents（事件分发，按 sessionId 入桶）", () => {
       }),
     };
     const { unmount } = renderHook(() => useBackendEvents(deps));
-    await vi.waitFor(() => expect(deps.listen).toHaveBeenCalledTimes(17));
+    await vi.waitFor(() => expect(deps.listen).toHaveBeenCalledTimes(18));
     unmount();
     // cleanup 里 unlisten.then(fn => fn()) 是微任务，等待其落地
     await vi.waitFor(() => {

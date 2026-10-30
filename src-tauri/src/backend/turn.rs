@@ -256,6 +256,28 @@ where
     /// 静默处理。
     pub async fn complete_once(&self, prompt: &str) -> Result<(String, Usage), PromptError> {
         let request = CompletionRequest::new(prompt.to_owned());
+        self.complete_request(request).await
+    }
+
+    /// 一次性非流式小调用（带回复上限）：标题生成等只需极短回复的后台
+    /// 小调用把 `max_tokens` 压到个位数级别（27 号票：标题 32），避免模型
+    /// 失控长输出烧钱。其余语义与 [`Self::complete_once`] 完全一致。
+    pub async fn complete_once_capped(
+        &self,
+        prompt: &str,
+        max_tokens: u64,
+    ) -> Result<(String, Usage), PromptError> {
+        let mut request = CompletionRequest::new(prompt.to_owned());
+        request.max_tokens = Some(max_tokens);
+        self.complete_request(request).await
+    }
+
+    /// complete_once / complete_once_capped 的共享执行体：请求发出 → 拼接
+    /// 文本响应 → 返回（文本, usage）。
+    async fn complete_request(
+        &self,
+        request: CompletionRequest,
+    ) -> Result<(String, Usage), PromptError> {
         let model = self
             .model
             .lock()

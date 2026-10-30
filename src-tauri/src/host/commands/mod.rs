@@ -66,11 +66,12 @@ pub const FRAMES: &[&str] = &[
 ];
 
 /// 事件键（§3.5 P0 子集 + 【M2】压缩三键 + 06 号票队列键 + 08 号票
-/// mcp:status + 10 号票子代理六键）：14 号票实装 5 键（ask 协议 / plan /
-/// suggest / 会话用量）；17 号票补 run 终态三键与 notify/app 退出两键；
-/// 04 号票补压缩生命周期三键；06 号票补 run:start / run:inject /
-/// run:queue 三键；08 号票补 mcp:status；10 号票补 sub:* 六键；其余键
-/// （run:retry / tool:* / session:title / menu:action）随对应票填充。
+/// mcp:status + 10 号票子代理六键 + 27 号票 session:title）：14 号票实装
+/// 5 键（ask 协议 / plan / suggest / 会话用量）；17 号票补 run 终态三键与
+/// notify/app 退出两键；04 号票补压缩生命周期三键；06 号票补 run:start /
+/// run:inject / run:queue 三键；08 号票补 mcp:status；10 号票补 sub:*
+/// 六键；27 号票补 session:title；其余键（run:retry / tool:* / menu:action）
+/// 随对应票填充。
 pub const EVENTS: &[&str] = &[
     "ask:opened",
     "ask:closed",
@@ -95,4 +96,5 @@ pub const EVENTS: &[&str] = &[
     "sub:usage",
     "sub:done",
     "sub:error",
+    "session:title",
 ];

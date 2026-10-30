@@ -70,7 +70,7 @@ describe("useBackendEvents 压缩三键（04 号票）", () => {
       reloadCompactions: reload,
     };
     renderHook(() => useBackendEvents(deps));
-    await vi.waitFor(() => expect(handlers.size).toBe(17));
+    await vi.waitFor(() => expect(handlers.size).toBe(18));
 
     // compacting → 指示条 phase
     act(() => handlers.get("run:compacting")?.({ sessionId: "s" }));
@@ -107,7 +107,7 @@ describe("useBackendEvents 压缩三键（04 号票）", () => {
       useCompactionStore.getState().setPhase("s", "compacting");
     });
     renderHook(() => useBackendEvents(deps));
-    await vi.waitFor(() => expect(handlers.size).toBe(17));
+    await vi.waitFor(() => expect(handlers.size).toBe(18));
     act(() =>
       handlers.get("run:compacted")?.({ sessionId: "s", tokensBefore: 900, tokensAfter: 300 }),
     );

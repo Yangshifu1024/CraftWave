@@ -380,6 +380,36 @@ impl SessionStore {
         Ok((latest, count))
     }
 
+    /// 会话标题落盘（§6.1 meta 行 `title?` 字段 + §7.3「自动标题落盘」行，
+    /// 27 号票）：会话锁内向段尾追加一条 meta 行（`title=Some(新标题)`、
+    /// `activeLeafId` 沿用当前活动叶、revision+1）。追加式「最新赢」——旧
+    /// meta 行不动，读取以最后一条 meta 为准（与 save/append_canonical 的
+    /// revision 链同源，前端下次 save 用 load 回的新 revision 无冲突）。
+    /// index 侧的 title/updatedAt 更新由调用方随后经 `index().mutate` 完成
+    /// （锁序 session → index，§7.4：本方法持会话锁返回后调用方才碰 index）。
+    /// 返回推进后的 revision。
+    pub fn update_session_title(&self, session_id: &str, title: &str) -> Result<u64, StorageError> {
+        validate_session_id(session_id)?;
+        if title.trim().is_empty() {
+            return Err(StorageError::InvalidArg("会话标题不能为空".into()));
+        }
+        let mutex = self.locks.get(session_id);
+        let _guard = mutex
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut log = SessionLog::open(self.histories_dir().join(session_id))
+            .map_err(|e| StorageError::Io(e.to_string()))?;
+        let revision = log.revision().unwrap_or(0) + 1;
+        let meta = StoredEntry::Meta(MetaEntry {
+            active_leaf_id: latest_active_leaf(&log),
+            title: Some(title.to_owned()),
+            revision,
+        });
+        log.append(&[meta])
+            .map_err(|e| StorageError::Io(e.to_string()))?;
+        Ok(revision)
+    }
+
     /// 数据根（§7.1；边车等同级布局的基准）。
     pub fn root(&self) -> &std::path::Path {
         &self.root

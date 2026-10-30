@@ -183,7 +183,8 @@ export const COMMANDS = {
 
 /**
  * 本文件已接线的事件键注册表（§3.5：14 号票 5 键 + 17 号票 5 键 + 04 号票
- * 压缩三键 + 06 号票 run:start/run:inject/run:queue 三键）。
+ * 压缩三键 + 06 号票 run:start/run:inject/run:queue 三键 + 08 号票
+ * mcp:status + 10 号票 sub:* 六键 + 27 号票 session:title）。
  * 事件是后端主动推送给前端的通知（与命令"前端调后端"方向相反），键名按
  * "域名:动作"命名（如 ask:opened = 询问面板被打开）。
  */
@@ -212,6 +213,8 @@ export const EVENT_KEYS = {
   subUsage: "sub:usage",
   subDone: "sub:done",
   subError: "sub:error",
+  // 自动起名完成（27 号票，§3.5 P0 键：左栏列表与卡头标题就地更新）
+  sessionTitle: "session:title",
 } as const;
 
 /**

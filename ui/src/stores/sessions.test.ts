@@ -176,3 +176,31 @@ describe("Tab 操作", () => {
     expect(useSessionsStore.getState().tabs[0]?.title).toBe("新名");
   });
 });
+
+describe("applyTitle（27 号票 session:title 事件面）", () => {
+  it("tabs 与左栏缓存列表同改（标题就地更新，其余字段与排序不动）", () => {
+    const opened = meta("s1", undefined, "新会话");
+    useSessionsStore.setState({
+      tabs: [opened, meta("s2", undefined, "另一会话")],
+      sessions: [opened, meta("s2", undefined, "另一会话")],
+    });
+    useSessionsStore.getState().applyTitle("s1", "自动起的标题");
+    const state = useSessionsStore.getState();
+    expect(state.tabs.map((t) => t.title)).toEqual(["自动起的标题", "另一会话"]);
+    expect(state.tabs[0]?.messageCount).toBe(opened.messageCount);
+    expect(state.sessions.map((m) => m.title)).toEqual(["自动起的标题", "另一会话"]);
+  });
+
+  it("会话不在 tabs（后台项目会话）→ 只更新缓存列表，不强行开 Tab", () => {
+    useSessionsStore.setState({
+      tabs: [meta("s2", "p1", "项目会话")],
+      sessions: [meta("s1", "p1", "新会话"), meta("s2", "p1", "项目会话")],
+      activeId: "s2",
+    });
+    useSessionsStore.getState().applyTitle("s1", "后台起名");
+    const state = useSessionsStore.getState();
+    expect(state.tabs.map((t) => t.id)).toEqual(["s2"]);
+    expect(state.activeId).toBe("s2");
+    expect(state.sessions.find((m) => m.id === "s1")?.title).toBe("后台起名");
+  });
+});

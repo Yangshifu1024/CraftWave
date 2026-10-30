@@ -319,9 +319,10 @@ describe("§12.3 manifest 双向扫描", () => {
   });
 
   it("manifest.events 覆盖 §3.5 实装键且与 EVENT_KEYS 一致", () => {
-    // 事件清单双保险：manifest 恰好 23 键（14/17 号票 10 键 + 04 号票压缩
+    // 事件清单双保险：manifest 恰好 24 键（14/17 号票 10 键 + 04 号票压缩
     // 三键 + 06 号票 run:start/run:inject/run:queue 三键 + 08 号票
-    // mcp:status + 10 号票 sub:* 六键），且与前端 EVENT_KEYS 注册表完全一致
+    // mcp:status + 10 号票 sub:* 六键 + 27 号票 session:title），
+    // 且与前端 EVENT_KEYS 注册表完全一致
     expect(manifest.events).toEqual([
       "ask:opened",
       "ask:closed",
@@ -346,6 +347,7 @@ describe("§12.3 manifest 双向扫描", () => {
       "sub:usage",
       "sub:done",
       "sub:error",
+      "session:title",
     ]);
     expect(Object.values(EVENT_KEYS).sort()).toEqual([...manifest.events].sort());
   });
@@ -522,6 +524,14 @@ describe("§12.3 manifest 双向扫描", () => {
     ]) {
       expect(Object.values(EVENT_KEYS)).toContain(key);
     }
+  });
+
+  it("自动起名事件（27 号票，§3.5 P0 键 session:title）在两侧接线且无新命令", () => {
+    // 键位 M0 定死、27 号票填充：EVENT_KEYS 已注册（与 manifest 一致性由
+    // 上方 events 断言把守，这里防误删）
+    expect(Object.values(EVENT_KEYS)).toContain("session:title");
+    // 本票零新增命令（导出为纯前端序列化；起名为后台任务无命令面）
+    expect(Object.values(COMMANDS)).not.toContain("session_title");
   });
 
   it("帧重放与热重连三命令（05 号票，§3.3 #20/#57/#59c）在两侧接线", () => {

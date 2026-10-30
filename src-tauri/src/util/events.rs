@@ -67,6 +67,10 @@ pub mod keys {
     pub const SUB_DONE: &str = "sub:done";
     /// 子代理异常终态（10 号票：payload { sessionId, runId, subId, code, message }）。
     pub const SUB_ERROR: &str = "sub:error";
+    /// 自动标题生成完成（§3.5 P0 键，27 号票实装：payload
+    /// { sessionId, title }；时机 = meta 行 + index 双写落盘之后，C-9 失败
+    /// 静默——超时/失败走兜底标题也发本事件，只有"无标题可落"才不发）。
+    pub const SESSION_TITLE: &str = "session:title";
 }
 
 /// 事件发射抽象：`emit(key, payload)`，payload 为已序列化 JSON。

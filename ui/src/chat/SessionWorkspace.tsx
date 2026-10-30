@@ -36,6 +36,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AskPanel } from "@/chat/AskPanel";
 import { useCompactionStore } from "@/chat/compaction-store";
 import { useBackendEvents } from "@/chat/event-bridge";
+import { exportSession } from "@/chat/export";
 import { useFollowUpStore } from "@/chat/followup-store";
 import { Inspector } from "@/chat/Inspector";
 import { ReconnectOverlay } from "@/chat/ReconnectOverlay";
@@ -441,6 +442,30 @@ function Sidebar({
       : menu.kind === "session"
         ? [
             { label: "重命名", onSelect: () => setRenamingId(menu.id) },
+            // 导出（27 号票，FR-01-12）：左栏会话行 context-menu 下载入口
+            //（纯前端序列化；失败 console 记录，不打断列表交互）
+            {
+              label: "导出 Markdown",
+              onSelect: () => {
+                const meta = sessions.find((m) => m.id === menu.id);
+                if (meta) {
+                  void exportSession(meta, "markdown").catch((err) =>
+                    console.error("[export] 导出 Markdown 失败", err),
+                  );
+                }
+              },
+            },
+            {
+              label: "导出 JSONL",
+              onSelect: () => {
+                const meta = sessions.find((m) => m.id === menu.id);
+                if (meta) {
+                  void exportSession(meta, "jsonl").catch((err) =>
+                    console.error("[export] 导出 JSONL 失败", err),
+                  );
+                }
+              },
+            },
             { separator: true },
             {
               label: "删除会话",
