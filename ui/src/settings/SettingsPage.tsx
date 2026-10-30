@@ -1099,6 +1099,17 @@ function SecurityPage() {
             onCheckedChange={(v) => patchApproval({ requirePlan: v })}
           />
         </SettingsRow>
+        <SettingsRow
+          title="允许 AI 执行 stage/commit"
+          description="默认关闭：AI 不能 git add/commit/merge/rebase（版本历史只能由你推动）。开启后 stage/commit 经审批可执行，merge/rebase 仍然禁止；git push 无论何时都需要确认，强推永远被拦截。"
+        >
+          <Switch
+            aria-label="允许 AI 执行 stage/commit"
+            data-testid="git-allow-stage-commit-switch"
+            checked={approval.gitAllowStageCommit}
+            onCheckedChange={(v) => patchApproval({ gitAllowStageCommit: v })}
+          />
+        </SettingsRow>
       </SettingsSection>
       <AllowlistSection
         allowlist={allowlist}

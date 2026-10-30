@@ -18,10 +18,19 @@
 //!    roots（含已授权目录）外路径 → 挂起「始终允许该目录」询问（授权目标
 //!    属整体放行禁区 → E_INVALID_ARG 硬拦）；置于签名放行之前——恢复重放
 //!    时授权已并入判定集，签名放行语义不变；
+//! 0.6. **git 写策略 Block（26 号票，FR-11-03）**：`git add`/`stage`/
+//!    `commit` 在 §3.2 `gitAllowStageCommit` 关（默认）时、`git merge`/
+//!    `git rebase` 任何配置下、`git push --force` 任何配置下 →
+//!    E_FENCE_BLOCKED 硬拦；先于签名放行（策略铁律不因历史签名复活）；
 //! 1. 已批准签名：本 run 内同"工具名 + 参数 JSON"的调用此前已批准，或该
 //!    签名在本会话「始终允许」桶内（23 号票 always_session 升域，跨 run
 //!    生效）→ 放行（挂起恢复后主循环会原样重放挂起批，按签名放行避免
 //!    再次挂起死循环）；
+//!
+//! 步骤 1.5 **git 写策略 Confirm（26 号票）**：`git push` 恒挂起确认（任何
+//! 配置不豁免）；开关放开后的 add/stage/commit 挂围栏卡（白名单/总开关豁免
+//! 口径与围栏一致）——置于签名放行之后（恢复重放按签名放行）。
+//!
 //! 2. 围栏（command 专属）：Block → E_FENCE_BLOCKED 硬拦（任何档位不豁
 //!    免，白名单也不豁免黑名单）先于一切挂起；Confirm → 记为待决——例外
 //!    两条：命令命中 commandAllowlist 且非 plan 档时免除（23 号票白名单
@@ -87,6 +96,13 @@ pub struct ApprovalPolicy {
     /// 缺省 false）：true 且无已批准计划时 FileWrite/Network 直接
     /// E_PLAN_REQUIRED 硬拦（不挂起）。缺省关保证既有装配零行为漂移。
     pub require_plan: bool,
+    /// git 写策略白名单（26 号票 FR-11-03，§3.2 approval.gitAllowStageCommit
+    /// 缺省 false）：false = `git add`/`git stage`/`git commit` 经策略层
+    /// E_FENCE_BLOCKED 硬拦（默认 AI 禁止），`git merge`/`git rebase` 恒禁；
+    /// true = add/stage/commit 降为围栏 Confirm（审批放行后可执行）。
+    /// `git push` 恒 Confirm（任何配置不豁免）；push --force 恒 Block。
+    /// 缺省关 = 默认配置下 AI 不能 commit（FR-11-03 原文口径）。
+    pub git_allow_stage_commit: bool,
 }
 
 impl Default for ApprovalPolicy {
@@ -96,7 +112,86 @@ impl Default for ApprovalPolicy {
             allowlist_enabled: false,
             command_allowlist: Vec::new(),
             require_plan: false,
+            git_allow_stage_commit: false,
         }
+    }
+}
+
+/// git 写策略的判定结论（26 号票，FR-11-03 + §8.7 git 分类表细化）：
+/// 以 22 号票 AST 分类面（`git_classify`）为判定输入，按子命令细分成
+/// 「恒禁 / 默认禁 / 恒确认 / 开关后确认」四类结论。
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum GitPolicyHit {
+    /// 不触发策略（非 git 命令 / git 只读子命令）。
+    None,
+    /// 策略硬禁（E_FENCE_BLOCKED 硬拦）：默认开关关时的 add/stage/commit，
+    /// 任何开关下的 merge/rebase（spec 定案「merge/rebase 仍禁」），以及
+    /// push --force（黑名单先行 Block，此处双保险——绕过黑名单正则形态
+    /// 也不漏）。先于签名放行判定：策略铁律不因历史签名复活。
+    Block(String),
+    /// 恒需确认（push）：任何配置不豁免——白名单、审批总开关都不放行；
+    /// 置于签名放行之后判定（挂起恢复重放按签名放行，否则恢复死循环）。
+    ConfirmAlways(String),
+    /// 开关放开后的需确认（add/stage/commit）：按普通围栏 Confirm 豁免
+    /// 口径（白名单命中或审批总开关关闭且非 plan 档可放行）。
+    ConfirmExemptible(String),
+}
+
+/// 单段 argv 的 git 策略归类（子命令细分；非 git 段返回 None）。
+/// 22 号票 `git_classify` 只回答三分（ReadOnly/Write/Destructive），本票
+/// 在其上按子命令字面细分——只认明确清单，未登记子命令维持既有面
+/// （AST 写目标判定 + 矩阵），不做额外策略（宁窄勿宽，防误伤）。
+/// `allow_stage_commit` = §3.2 approval.gitAllowStageCommit 快照。
+fn git_subcommand_policy(argv: &[String], allow_stage_commit: bool) -> Option<GitPolicyHit> {
+    let head = argv.first().map(|s| {
+        std::path::Path::new(s)
+            .file_name()
+            .and_then(|f| f.to_str())
+            .unwrap_or(s)
+    });
+    if head != Some("git") {
+        return None;
+    }
+    let sub = argv
+        .get(1)
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_default();
+    // 破坏性（push --force / -f / --force-with-lease）：黑名单正则已先行
+    // Block，策略层再拦一道双保险。
+    if sub == "push"
+        && argv[2..]
+            .iter()
+            .any(|a| a.starts_with("--force") || *a == "-f")
+    {
+        return Some(GitPolicyHit::Block(
+            "git push --force 恒禁：强推会改写远端历史，任何配置不豁免".to_owned(),
+        ));
+    }
+    match sub.as_str() {
+        // 恒禁：merge/rebase 在任何配置下都不放开（spec 定案「merge/rebase
+        // 仍禁」——历史改写类操作只能由用户本人执行）。
+        "merge" | "rebase" => Some(GitPolicyHit::Block(
+            "默认 AI 禁止 git merge/rebase（版本历史只能由你推动；此限制不随配置放开）".to_owned(),
+        )),
+        // 默认禁、开关开后降为确认：提交与暂存（FR-11-03）。
+        "commit" | "add" | "stage" => {
+            if allow_stage_commit {
+                Some(GitPolicyHit::ConfirmExemptible(format!(
+                    "git {sub} 需要确认：提交/暂存将写入版本历史（已在设置中放开）"
+                )))
+            } else {
+                Some(GitPolicyHit::Block(format!(
+                    "默认 AI 禁止 git {sub}（版本历史只能由你推动；可在设置开启\
+                     「允许 AI 执行 stage/commit」后经审批执行）"
+                )))
+            }
+        }
+        // 恒需确认：push（非 force）——「push 永远确认」，任何配置不豁免。
+        "push" => Some(GitPolicyHit::ConfirmAlways(
+            "git push 永远需要确认：推送影响远端仓库，请核对目标分支".to_owned(),
+        )),
+        // 只读类与其余子命令不触发策略（只读面走既有围栏/矩阵）。
+        _ => None,
     }
 }
 
@@ -838,6 +933,40 @@ impl ApprovalGate {
         }
         None
     }
+
+    /// git 写策略判定（26 号票，FR-11-03）：command 的每段（复合命令按
+    /// AST 分段）独立归类，取最严结论——Block > ConfirmAlways >
+    /// ConfirmExemptible。AST 解析成功按段 argv 判定；解析失败时词法兜底
+    /// （粗切段 + 空白切词取首词/子命令——防「解析失败 + 审批总开关豁免」
+    /// 组合漏拦默认禁面；引号内控制符误切的假段 head 非 git，无害）。
+    fn git_policy_hit(&self, command: &str) -> GitPolicyHit {
+        let allow = self.policy.git_allow_stage_commit;
+        let mut strictest = GitPolicyHit::None;
+        match ast::parse_command(ast::Shell::host_default(), command) {
+            ast::ParsedCommand::Ok { argvs, .. } => {
+                for argv in &argvs {
+                    if let Some(hit) = git_subcommand_policy(argv, allow) {
+                        strictest = strictest_of(strictest, hit);
+                    }
+                }
+            }
+            // 解析失败：词法兜底只判「段首词是 git + 子命令字面」的明确
+            // 形态——宁可对粗切段多拦一次 Confirm/Block，不漏默认禁面。
+            ast::ParsedCommand::Failed => {
+                for segment in command.split(['&', '|', ';']) {
+                    let words: Vec<String> =
+                        segment.split_whitespace().map(str::to_owned).collect();
+                    // 词法兜底不识别 `git -C x commit` 形态（子命令非紧邻
+                    // 首词）——漏拦面由围栏 fail-closed Confirm 兜住，此
+                    // 处只兜明确形态。
+                    if let Some(hit) = git_subcommand_policy(&words, allow) {
+                        strictest = strictest_of(strictest, hit);
+                    }
+                }
+            }
+        }
+        strictest
+    }
 }
 
 /// 词法绝对化：绝对路径原样；相对路径基于给定基准展开（command 的 cwd
@@ -856,6 +985,19 @@ fn lexical_abs(literal: &str, base: &Path) -> PathBuf {
 /// 归一，保证基线条目与写目标在同一比较域。归一失败（畸形）返回 None。
 fn resolve_scope_path(raw: &str, base: &Path) -> Option<PathBuf> {
     canonicalize_best_effort(&lexical_abs(raw, base)).ok()
+}
+
+/// 两个 git 策略结论取更严者（Block > ConfirmAlways > ConfirmExemptible）。
+fn strictest_of(a: GitPolicyHit, b: GitPolicyHit) -> GitPolicyHit {
+    fn rank(hit: &GitPolicyHit) -> u8 {
+        match hit {
+            GitPolicyHit::None => 0,
+            GitPolicyHit::ConfirmExemptible(_) => 1,
+            GitPolicyHit::ConfirmAlways(_) => 2,
+            GitPolicyHit::Block(_) => 3,
+        }
+    }
+    if rank(&a) >= rank(&b) { a } else { b }
 }
 
 /// 审批门策略实现：按文件头列出的顺序判定（首个命中即出结论）。
@@ -894,6 +1036,21 @@ impl ToolGate for ApprovalGate {
                 plan_scope: None,
             };
         }
+        // (0.6) git 写策略 Block（26 号票，FR-11-03）：默认开关关时的
+        // add/stage/commit 与任何开关下的 merge/rebase、push --force →
+        // E_FENCE_BLOCKED 硬拦。先于签名放行：策略铁律不因历史签名复活
+        // （开关切换后残留的会话免批签名不放行策略禁面——与黑名单同位阶）。
+        let git_policy = if name == "command" {
+            Self::command_of(args_json).map(|c| self.git_policy_hit(&c))
+        } else {
+            None
+        };
+        if let Some(GitPolicyHit::Block(reason)) = &git_policy {
+            return GateVerdict::Blocked {
+                code: E_FENCE_BLOCKED,
+                message: reason.clone(),
+            };
+        }
         let Some(spec) = spec else {
             // 未知工具：放行给 executor 回喂 E_INVALID_ARG（不在这里拦截）
             return GateVerdict::Allow;
@@ -915,6 +1072,30 @@ impl ToolGate for ApprovalGate {
         // 白名单判定一次（围栏 Confirm 与矩阵 NeedsApproval 两处消费）
         let whitelisted = name == "command"
             && Self::command_of(args_json).is_some_and(|c| self.command_whitelisted(&c));
+        // (1.5) git 写策略 Confirm（26 号票）：push 恒确认不可豁免（白名单
+        // 与审批总开关都不放行——「push 永远确认」）；开关放开后的
+        // add/stage/commit 按围栏 Confirm 豁免口径（白名单命中或总开关
+        // 关闭且非 plan 档）。置于签名放行之后：挂起恢复的重放调用按签名
+        // 放行（否则批准过的 push 在恢复时再次挂起，死循环）。
+        match git_policy {
+            Some(GitPolicyHit::ConfirmAlways(reason)) => {
+                return GateVerdict::Suspend {
+                    fence_reason: Some(reason),
+                    external_dir: None,
+                    plan_scope: None,
+                };
+            }
+            Some(GitPolicyHit::ConfirmExemptible(reason))
+                if !(self.exemptions_apply() && (whitelisted || !self.policy.enabled)) =>
+            {
+                return GateVerdict::Suspend {
+                    fence_reason: Some(reason),
+                    external_dir: None,
+                    plan_scope: None,
+                };
+            }
+            _ => {}
+        }
         // (2) 围栏（command 专属，§5.4 ③；22 号票起 AST 写目标分析）：
         // Block 硬拦（灾难级铁律，先于一切挂起）；Confirm → 记为待决——
         // 25 号票范围门命中时优先弹范围卡（一次交互覆盖本次调用的全部

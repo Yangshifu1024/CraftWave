@@ -28,6 +28,12 @@ import type {
   DeleteProviderArgs,
   ExternalRootsResult,
   GetSessionPrefsResult,
+  GitDiffArgs,
+  GitDiffResult,
+  GitLogArgs,
+  GitLogResult,
+  GitStatusArgs,
+  GitStatusResult,
   InjectRunMessageArgs,
   InjectRunMessageResult,
   IpcError,
@@ -159,6 +165,10 @@ export const COMMANDS = {
   sessionUsage: "session_usage",
   // 配额快照（21 号票，§3.3 #53）
   quotaSnapshots: "quota_snapshots",
+  // git 只读三命令（26 号票，§3.3 #37–#39）
+  gitStatus: "git_status",
+  gitDiff: "git_diff",
+  gitRecentLog: "git_recent_log",
   // 网络搜索连通测试（13 号票，§3.3 #59f）
   searchTest: "search_test",
   // 供应商连接测试（19 号票，§3.3 #32）
@@ -440,6 +450,25 @@ export function sessionUsage(sessionId: string): Promise<SessionUsageResult> {
  *  离线兜底面）。Inspector 配额页数据源（FR-02-15）。 */
 export function quotaSnapshots(): Promise<QuotaSnapshot[]> {
   return invoke<QuotaSnapshot[]>(COMMANDS.quotaSnapshots, {});
+}
+
+// ---- git 只读查询（§3.3 #37–#39，26 号票）----
+
+/** §3.3 #37：git_status 工作区状态 + user info（变更面板文件列表数据源）。
+ *  非 git 仓库返回 isRepo=false 空结果（前端空态，不报错）。 */
+export function gitStatus(args: GitStatusArgs): Promise<GitStatusResult> {
+  return invoke<GitStatusResult>(COMMANDS.gitStatus, { args });
+}
+
+/** §3.3 #38：git_diff 工作区 vs HEAD 聚合差异（staged 本票不支持，参数
+ *  忽略——传与不传返回同一聚合视图）。 */
+export function gitDiff(args: GitDiffArgs): Promise<GitDiffResult> {
+  return invoke<GitDiffResult>(COMMANDS.gitDiff, { args });
+}
+
+/** §3.3 #39：git_recent_log 最近提交（limit 缺省 20）。 */
+export function gitRecentLog(args: GitLogArgs): Promise<GitLogResult> {
+  return invoke<GitLogResult>(COMMANDS.gitRecentLog, { args });
 }
 
 /** 把 invoke 失败抛出的错误归一为 §3.1 统一错误负载（{code, message, detail?}）。

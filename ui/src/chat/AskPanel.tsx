@@ -28,10 +28,11 @@
 
 import { CircleAlert, Eye, FolderOpen, ShieldCheck } from "lucide-react";
 import { useState } from "react";
+import { DiffView } from "@/chat/DiffView";
 import { HtmlPreview } from "@/chat/HtmlPreview";
 import { useSessionScope } from "@/chat/session-scope";
 import { resolveAsk, toIpcError } from "@/ipc/client";
-import type { AskPayload, DiffLine } from "@/ipc/types";
+import type { AskPayload } from "@/ipc/types";
 import { useAskStore } from "@/stores/ask";
 import { useSettingsStore } from "@/stores/settings";
 
@@ -259,7 +260,7 @@ function ApprovalForm({
           计划外路径：{payload.planScope}
         </p>
       )}
-      {payload.diff && <DiffView diff={payload.diff} />}
+      {payload.diff && <DiffView diff={payload.diff} testId="ask-diff" />}
       {/* HTML 产出预览入口（14 号票）：载荷附带 previewHtml（write/edit 目标
           为 .html/.htm 时由宿主构造）才显示，render_html 同款沙箱渲染 */}
       {payload.previewHtml && (
@@ -519,41 +520,5 @@ function ExternalDirForm({
   );
 }
 
-/** diff 行配色：新增绿底、删除红底、上下文行弱化。 */
-const diffLineClass: Record<DiffLine["kind"], string> = {
-  add: "bg-emerald-950/60 text-emerald-300",
-  del: "bg-red-950/60 text-red-300",
-  ctx: "text-[var(--muted-foreground)]",
-};
-
-/** diff 预览：文件名标题 + 按 hunk（差异块）分组的增删行列表。 */
-function DiffView({
-  diff,
-}: {
-  diff: { path: string; hunks: { header: string; lines: DiffLine[] }[] };
-}) {
-  return (
-    <div data-testid="ask-diff" className="rounded border border-[var(--border)]">
-      <p className="border-b border-[var(--border)] px-2 py-1 font-mono text-ui-sm text-[var(--foreground)]">
-        {diff.path}
-      </p>
-      <div className="max-h-64 overflow-auto">
-        {diff.hunks.map((hunk) => (
-          <div key={hunk.header}>
-            <p className="px-2 py-0.5 font-mono text-ui-sm text-[var(--muted-foreground)]">
-              {hunk.header}
-            </p>
-            {hunk.lines.map((line) => (
-              <pre
-                key={`${line.kind}:${line.text}`}
-                className={`px-2 font-mono text-ui-sm ${diffLineClass[line.kind]}`}
-              >
-                {line.kind === "add" ? "+" : line.kind === "del" ? "−" : " "} {line.text}
-              </pre>
-            ))}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
+/** diff 行配色与预览渲染已抽为公共组件 DiffView（26 号票，FR-11-02）：
+ *  审批卡与变更面板共用同一套渲染（见 DiffView.tsx）。 */

@@ -188,6 +188,17 @@ pub struct ApprovalConfig {
     /// 回填 false（零迁移）。
     #[serde(default)]
     pub require_plan: bool,
+    /// git 写策略白名单（FR-11-03，§8.7 git 分类表，26 号票实装）：false
+    /// （缺省，serde default 回填旧配置零迁移）= AI 默认禁止 stage/commit
+    /// ——`git add`/`git stage`/`git commit` 经审批门策略层 E_FENCE_BLOCKED
+    /// 硬拦，`git merge`/`git rebase` 恒禁（开关不豁免）；true = add/stage/
+    /// commit 降为围栏 Confirm（审批放行后可执行，merge/rebase 仍禁）。
+    /// `git push` 恒 Confirm（「push 永远确认」，任何配置不豁免）；
+    /// `git push --force` 恒 Block（黑名单既有 + 策略层双保险）。设置页
+    /// 安全页「允许 AI 执行 stage/commit」开关承载。应用受控 worktree
+    /// 管理（10 号票 agent/worktree.rs）不消费本开关——分开授权。
+    #[serde(default)]
+    pub git_allow_stage_commit: bool,
 }
 
 /// 界面主题。
@@ -617,6 +628,7 @@ impl Default for ApprovalConfig {
             allowlist_enabled: true,
             command_allowlist: Vec::new(),
             require_plan: false,
+            git_allow_stage_commit: false,
         }
     }
 }

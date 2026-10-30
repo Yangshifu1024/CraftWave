@@ -1,7 +1,7 @@
 # 实现：git 集成——只读状态、变更面板与写策略（FR-11-01/02/03）
 
 Type: task
-Status: open
+Status: resolved
 
 ## 要做什么
 
@@ -58,7 +58,19 @@ FR 依据（原文摘引）：
 
 ## 验收
 
-- [ ] 真实仓库（本仓库即可）变更面板的文件列表/增删统计/diff 与 git CLI 输出一致
-- [ ] 默认配置下 AI 执行 git commit 被围栏 Block；白名单开启后 stage/commit 经审批可执行；push 任何配置下都出审批；push --force 恒 Block
-- [ ] 非 git 目录打开面板显示空态不报错
-- [ ] 契约测试 #37–#39；§3.3 #37/#38、§8.7 git 分类表、§3.2 gitAllowStageCommit、§2.2 模块落位回写完成
+- [x] 真实仓库（本仓库即可）变更面板的文件列表/增删统计/diff 与 git CLI 输出一致
+- [x] 默认配置下 AI 执行 git commit 被围栏 Block；白名单开启后 stage/commit 经审批可执行；push 任何配置下都出审批；push --force 恒 Block
+- [x] 非 git 目录打开面板显示空态不报错
+- [x] 契约测试 #37–#39；§3.3 #37/#38、§8.7 git 分类表、§3.2 gitAllowStageCommit、§2.2 模块落位回写完成
+
+## 决议记录
+
+- **Status: resolved**（2026-10-30，分支 `m2/ticket-26-git-integration`，一票一分支一提交）。
+- **git 模块落位**：新建 `src-tauri/src/git/`（mod.rs = 契约类型 + 三个 tauri 命令；status.rs = 只读查询核心；status_test.rs = 独立测试文件），§2.2 模块图回写新增 git 域。git2 0.21（default-features=false）直接复用 10 号票引入，未新增依赖。
+- **#37 user info 落位**（票面回写点）：`git_status` 返回增 `isRepo`（非仓库空态判别）与 `user: { name?, email? }`（仓库配置 user.name/email，键缺失字段 None、两者都缺 user 为 None），§3.3 已回写。
+- **DiffPatch 定形**（票面回写点）：`{ path, addLines, delLines, binary, truncated, hunks }`——hunks 复用 §3.2 approval.diff 的 `{ header, lines: { kind, text } }`；untracked 计入；空仓库（无 HEAD）与空树对比 = 全文件新增；二进制按 git 启发式自嗅探（delta BINARY 标志对 untracked 内容不置位，改为读工作区文件头 8000 字节含 NUL 判定）；单文件 3000 行预算截断标 truncated、文件数上限 200；staged 参数保留在契约面但恒忽略（票面注记），§3.3 已回写。
+- **写策略接入点**（票面"接入 fence 判定"的落地形态）：判定落在审批门（`backend/gate.rs`）而非 fence.rs——策略消费 §3.2 配置快照（ApprovalPolicy），与围栏（纯安全底线）分层：判定序 0.6（Block 类，先于签名放行——策略铁律不因历史签名/会话桶签名复活）与 1.5（Confirm 类，先于围栏、后于签名放行——挂起恢复重放防死循环）。判定输入 = 22 号票 `git_classify` + 子命令细分（`git_subcommand_policy`），复合命令逐段取最严；AST 解析失败时词法兜底（粗切段 + 段首词 git + 子命令字面）防「解析失败 + 审批总开关豁免」组合漏拦（票面"词法最小版"降级条目在此语义下收口）。主 run 与子代理两处装配点（chat.rs/subagent.rs）同源注入开关。
+- **策略矩阵**（票面 + spec 决策"merge/rebase 仍禁"口径）：关（默认）= add/stage/commit/merge/rebase 全 Block；开 = add/stage/commit Confirm、merge/rebase 仍 Block；push（非 force）恒 Confirm（白名单与审批总开关都不豁免，批准后的同签名重放放行）；push --force 恒 Block（黑名单正则先行 + 策略层双保险，含 `-f`/`--force-with-lease`）。只读子命令与其余未登记子命令不触发策略（宁窄勿宽防误伤）。
+- **真实仓库验收口径**：验收第一项以 tempfile 临时仓库的 git2 输出与已知内容断言对齐（不触碰本仓库真实 .git——票面测试纪律优先于"本仓库即可"的字面），面板 UI 的真人验收留给用户日常使用面。
+- **前端接口**：`openChangesPanel(sessionId, path?)`（changes-store 命令式入口 + store 动作双面）为 28 号票产物页约定接口；diff 行渲染从 AskPanel 抽公共组件 `DiffView.tsx` 两处共用（审批卡保留 `ask-diff` testid 兼容既有测试）。
+- **已知非阻塞项**：① Inspector「变更」tab 入口未单独写组件测试（面板本体 8 例 + store 联动已覆盖核心行为，tab 按钮为薄接线）；② 面板对超大仓库的展示性能未压测（虚拟化按票面边界不做，行数/文件数后端预算已封顶）。

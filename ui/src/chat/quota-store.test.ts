@@ -58,6 +58,7 @@ function baseConfig(): AppConfig {
       allowlistEnabled: true,
       commandAllowlist: [],
       requirePlan: false,
+      gitAllowStageCommit: false,
     },
     ui: { language: "zh-CN", theme: "system" },
     log: { level: "info" },

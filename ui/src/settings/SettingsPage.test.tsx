@@ -44,6 +44,7 @@ const BASE_CONFIG: AppConfig = {
     allowlistEnabled: true,
     commandAllowlist: [],
     requirePlan: false,
+    gitAllowStageCommit: false,
   },
   ui: { language: "zh-CN", theme: "system" },
   log: { level: "info" },
@@ -454,6 +455,17 @@ describe("安全与审批页（23 号票：四开关 + 白名单管理）", () =
     fireEvent.click(toggle);
     const draft = useSettingsStore.getState().config?.approval;
     expect(draft?.requirePlan).toBe(true);
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("git 写策略开关（26 号票 FR-11-03）：默认关、可切换写入草稿", async () => {
+    await openSecurityPage();
+    const toggle = screen.getByTestId("git-allow-stage-commit-switch");
+    // 默认关：AI 默认禁止 stage/commit（版本历史只能由用户推动）
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    fireEvent.click(toggle);
+    const draft = useSettingsStore.getState().config?.approval;
+    expect(draft?.gitAllowStageCommit).toBe(true);
     expect(toggle.getAttribute("aria-checked")).toBe("true");
   });
 

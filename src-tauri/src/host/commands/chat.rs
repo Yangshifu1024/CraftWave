@@ -2367,6 +2367,7 @@ pub async fn start_chat_core(
                 allowlist_enabled: approval.allowlist_enabled,
                 command_allowlist: approval.command_allowlist.clone(),
                 require_plan: approval.require_plan,
+                git_allow_stage_commit: approval.git_allow_stage_commit,
             });
         if let Some(ws) = gate_ws {
             gate = gate.with_workspace(ws);

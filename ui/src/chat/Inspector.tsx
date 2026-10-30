@@ -12,7 +12,9 @@
  */
 
 import { useEffect, useState } from "react";
+import { ChangesPanel } from "@/chat/ChangesPanel";
 import { CompactButton } from "@/chat/CompactionUI";
+import { useChangesStore } from "@/chat/changes-store";
 import { ExternalGrantsPanel } from "@/chat/ExternalGrants";
 import { EMPTY_PLAN_STATE, type PlanItem, usePlanStateStore } from "@/chat/plan-state";
 import { QuotaPanel } from "@/chat/QuotaPanel";
@@ -26,7 +28,7 @@ import {
   useUsageStats,
   useUsageStatsStore,
 } from "@/chat/usage-stats";
-import { approvePlan, getConfig, loadSubagentHistory, sessionUsage } from "@/ipc/client";
+import { approvePlan, getConfig, gitStatus, loadSubagentHistory, sessionUsage } from "@/ipc/client";
 import type { MessageEntry, ProviderConfig } from "@/ipc/types";
 import {
   markHistoryLoading,
@@ -87,8 +89,9 @@ export function Inspector({
   onOpenSettings: () => void;
 }) {
   const sessionId = useSessionScope();
-  // tab 态（内存态：重载回「用量」缺省页）
-  const [tab, setTab] = useState<"usage" | "quota" | "subagents" | "grants">("usage");
+  // tab 态（内存态：重载回「用量」缺省页）；「变更」tab（26 号票）= 打开
+  // 宽弹窗的入口（§10.7 变更面板为 Dialog 形态，tab 只承载入口按钮）。
+  const [tab, setTab] = useState<"usage" | "quota" | "subagents" | "grants" | "changes">("usage");
   const subs = useSubagentsStore((s) => s.bySession[sessionId] ?? EMPTY_SUBS);
   // 运行中有子代理时自动切到子代理页（盯着它干活；用户可手动切回）
   const runningCount = subs.filter((s) => s.state === "running").length;
@@ -164,6 +167,18 @@ export function Inspector({
           >
             授权
           </button>
+          <button
+            type="button"
+            data-testid="inspector-tab-changes"
+            className={`rounded-md px-2 py-1 ${
+              tab === "changes"
+                ? "font-medium text-[var(--foreground)]"
+                : "text-[var(--muted-foreground)]"
+            }`}
+            onClick={() => setTab("changes")}
+          >
+            变更
+          </button>
         </div>
         {tab === "usage" ? (
           <UsagePanel sessionId={sessionId} />
@@ -171,11 +186,66 @@ export function Inspector({
           <QuotaPanel sessionId={sessionId} onOpenSettings={onOpenSettings} />
         ) : tab === "grants" ? (
           <ExternalGrantsPanel />
+        ) : tab === "changes" ? (
+          <ChangesEntryPanel sessionId={sessionId} />
         ) : (
           <SubagentsPanel sessionId={sessionId} />
         )}
+        {/* 变更面板（26 号票，FR-11-02）：宽弹窗单例挂载——tab 入口与
+            openChangesPanel 联动（28 号票产物页）都经 changes-store 驱动 */}
+        <ChangesPanel />
       </div>
     </aside>
+  );
+}
+
+/** 「变更」tab 内容（26 号票）：打开宽弹窗的入口按钮 + 当前变更文件数
+ *  摘要（轻量拉取 #37 一次，不随 tab 切换轮询）。 */
+function ChangesEntryPanel({ sessionId }: { sessionId: string }) {
+  const openPanel = useChangesStore((s) => s.openPanel);
+  const open = useChangesStore((s) => s.open);
+  const [fileCount, setFileCount] = useState<number | null>(null);
+  const [isRepo, setIsRepo] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    void gitStatus({ sessionId })
+      .then((result) => {
+        if (cancelled) return;
+        setIsRepo(result.isRepo);
+        setFileCount(result.files.length);
+      })
+      .catch(() => {
+        if (!cancelled) setFileCount(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId]);
+  return (
+    <div className="p-3 text-ui-sm text-[var(--muted-foreground)]">
+      {!isRepo ? (
+        <p data-testid="changes-entry-empty">当前项目不是 git 仓库。</p>
+      ) : (
+        <div className="space-y-2">
+          <p>
+            {fileCount === null
+              ? "正在读取 git 状态…"
+              : fileCount === 0
+                ? "工作区干净，没有未提交的变更。"
+                : `工作区有 ${fileCount} 个未提交变更。`}
+          </p>
+          <button
+            type="button"
+            data-testid="changes-open-button"
+            onClick={() => openPanel(sessionId)}
+            disabled={open}
+            className="rounded-full border border-[var(--border)] px-3 py-1 text-ui-sm text-[var(--foreground)] hover:border-[var(--primary)] disabled:opacity-40"
+          >
+            打开变更面板
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 

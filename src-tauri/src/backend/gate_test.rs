@@ -740,6 +740,7 @@ fn command_allowlist_consumption() {
         allowlist_enabled: true,
         command_allowlist: vec!["npm install".to_owned()],
         require_plan: false,
+        git_allow_stage_commit: false,
     };
     // 命中：围栏写信号 Confirm 免除 + 矩阵 NeedsApproval 免除 → 放行
     let gate = ApprovalGate::new(PermissionTier::ConfirmEach, Arc::new(Mutex::new(None)))
@@ -769,6 +770,7 @@ fn command_allowlist_consumption() {
             allowlist_enabled: true,
             command_allowlist: vec!["rm -rf /tmp/x".to_owned()],
             require_plan: false,
+            git_allow_stage_commit: false,
         });
     let verdict = gate_evil.judge("command", &command_args("rm -rf /tmp/x"));
     let GateVerdict::Blocked { code, .. } = &verdict else {
@@ -806,6 +808,7 @@ fn approval_switch_enabled_false_auto_allows() {
         allowlist_enabled: false,
         command_allowlist: Vec::new(),
         require_plan: false,
+        git_allow_stage_commit: false,
     };
     let gate = ApprovalGate::new(PermissionTier::ConfirmEach, Arc::new(Mutex::new(None)))
         .with_policy(policy_off.clone());
@@ -842,6 +845,7 @@ fn approval_switch_enabled_false_auto_allows() {
         allowlist_enabled: true,
         command_allowlist: vec![],
         require_plan: false,
+        git_allow_stage_commit: false,
     });
     let args = serde_json::json!({
         "command": format!("echo x > {}", data.join("config.json").display())
@@ -1435,5 +1439,229 @@ fn plan_hard_gate_default_off_and_on() {
     assert!(
         matches!(verdict, GateVerdict::Allow),
         "只读不受硬门：{verdict:?}"
+    );
+}
+
+// ---- git 写策略矩阵（26 号票，FR-11-03 / §8.7 git 分类表细化）----
+//
+// 票面验收口径逐项钉住：默认关 commit Block / 开后 stage+commit Confirm /
+// push 任何配置恒 Confirm / push --force 恒 Block / merge-rebase 恒禁 /
+// 只读子命令任何配置不触发策略。
+
+/// 造带 git 策略开关的审批门（full_access 档：矩阵面不拦，隔离出策略面）。
+fn git_gate(git_allow: bool, enabled: bool) -> ApprovalGate {
+    ApprovalGate::new(PermissionTier::FullAccess, Arc::new(Mutex::new(None))).with_policy(
+        crate::backend::gate::ApprovalPolicy {
+            enabled,
+            allowlist_enabled: false,
+            command_allowlist: Vec::new(),
+            require_plan: false,
+            git_allow_stage_commit: git_allow,
+        },
+    )
+}
+
+/// 断言判定为 E_FENCE_BLOCKED 硬拦。
+fn assert_blocked(verdict: &GateVerdict, why: &str) {
+    let GateVerdict::Blocked { code, .. } = verdict else {
+        panic!("{why}：应硬拦，实际 {verdict:?}")
+    };
+    assert_eq!(*code, "E_FENCE_BLOCKED", "{why}：错误码应为围栏 Block");
+}
+
+#[test]
+fn git_policy_default_blocks_stage_commit() {
+    // 默认关（缺省构造 = 策略关）：add/stage/commit 全部硬拦
+    for cmd in ["git add .", "git stage -A", "git commit -m msg"] {
+        let gate = git_gate(false, true);
+        assert_blocked(&gate.judge("command", &command_args(cmd)), cmd);
+    }
+    // 缺省构造（未显式 with_policy）同样默认禁——安全缺省口径
+    let gate = ApprovalGate::new(PermissionTier::FullAccess, Arc::new(Mutex::new(None)));
+    assert_blocked(
+        &gate.judge("command", &command_args("git commit")),
+        "缺省构造",
+    );
+}
+
+#[test]
+fn git_policy_enabled_confirms_stage_commit() {
+    // 开关开后：add/stage/commit 降为挂起审批（fenceReason 带原因）
+    for cmd in ["git add .", "git commit -m msg"] {
+        let gate = git_gate(true, true);
+        let GateVerdict::Suspend { fence_reason, .. } = gate.judge("command", &command_args(cmd))
+        else {
+            panic!("{cmd}：开关开后应挂起审批");
+        };
+        assert!(fence_reason.is_some(), "{cmd}：挂起应带原因");
+    }
+    // 开后仍受审批总开关豁免（普通围栏 Confirm 口径）：总开关关 → 放行
+    let gate = git_gate(true, false);
+    assert!(
+        matches!(
+            gate.judge("command", &command_args("git commit")),
+            GateVerdict::Allow
+        ),
+        "开关开 + 总开关关（用户自担）→ 放行"
+    );
+}
+
+#[test]
+fn git_policy_merge_rebase_always_blocked() {
+    // merge/rebase 恒禁：默认关与开关开后都硬拦（spec 定案「仍禁」）
+    for allow in [false, true] {
+        for cmd in ["git merge main", "git rebase main"] {
+            let gate = git_gate(allow, true);
+            assert_blocked(&gate.judge("command", &command_args(cmd)), cmd);
+        }
+    }
+    // 总开关关闭也不豁免恒禁面（策略铁律位阶同黑名单）
+    let gate = git_gate(true, false);
+    assert_blocked(
+        &gate.judge("command", &command_args("git merge")),
+        "总开关关不豁免",
+    );
+}
+
+#[test]
+fn git_policy_push_always_confirmed() {
+    // push（非 force）恒挂起：开关关 / 开 / 总开关关三种配置都确认
+    for allow in [false, true] {
+        let gate = git_gate(allow, true);
+        let GateVerdict::Suspend { fence_reason, .. } =
+            gate.judge("command", &command_args("git push origin main"))
+        else {
+            panic!("push 应恒确认（开关 {allow}）");
+        };
+        assert!(fence_reason.is_some(), "push 挂起带原因");
+    }
+    // 总开关关闭（不再弹审批）也不豁免 push 确认
+    let gate = git_gate(true, false);
+    assert!(
+        matches!(
+            gate.judge("command", &command_args("git push")),
+            GateVerdict::Suspend { .. }
+        ),
+        "总开关关不豁免 push 确认"
+    );
+    // 已批准签名放行（挂起恢复重放语义）：批准过的 push 同签名重放不再挂起
+    let gate = git_gate(true, true);
+    let args = command_args("git push");
+    gate.approve("command", &args);
+    assert!(
+        matches!(gate.judge("command", &args), GateVerdict::Allow),
+        "批准过的 push 重放放行（否则恢复死循环）"
+    );
+}
+
+#[test]
+fn git_policy_force_push_always_blocked() {
+    // push --force 恒 Block：黑名单正则先行 + 策略层双保险（开关状态无关）
+    for allow in [false, true] {
+        for cmd in [
+            "git push --force origin main",
+            "git push -f",
+            "git push --force-with-lease",
+        ] {
+            let gate = git_gate(allow, true);
+            assert_blocked(&gate.judge("command", &command_args(cmd)), cmd);
+        }
+    }
+}
+
+#[test]
+fn git_policy_readonly_never_trips() {
+    // 只读子命令任何配置不触发策略（走既有围栏/矩阵面）
+    for allow in [false, true] {
+        for cmd in [
+            "git status",
+            "git diff",
+            "git log --oneline",
+            "git show HEAD",
+        ] {
+            let gate = git_gate(allow, true);
+            assert!(
+                matches!(
+                    gate.judge("command", &command_args(cmd)),
+                    GateVerdict::Allow
+                ),
+                "{cmd}：只读应放行（开关 {allow}）"
+            );
+        }
+    }
+    // 非 git 命令不触发策略（echo 走既有面）
+    let gate = git_gate(false, true);
+    assert!(
+        matches!(
+            gate.judge("command", &command_args("echo hello")),
+            GateVerdict::Allow
+        ),
+        "非 git 命令不触发策略"
+    );
+}
+
+#[test]
+fn git_policy_compound_takes_strictest() {
+    // 复合命令逐段取最严：默认关 add+commit 硬拦；开后挂起一次审批覆盖
+    let gate = git_gate(false, true);
+    assert_blocked(
+        &gate.judge("command", &command_args("git add . && git commit -m x")),
+        "复合默认关",
+    );
+    let gate = git_gate(true, true);
+    assert!(
+        matches!(
+            gate.judge("command", &command_args("git add . && git commit -m x")),
+            GateVerdict::Suspend { .. }
+        ),
+        "复合开关开后挂起"
+    );
+    // 只读段 + 禁段混合 → 仍拦（最严优先）
+    let gate = git_gate(false, true);
+    assert_blocked(
+        &gate.judge("command", &command_args("git status && git push --force")),
+        "只读+禁段混合",
+    );
+}
+
+#[test]
+fn git_policy_block_not_revived_by_session_signature() {
+    // 策略 Block 先于会话级签名放行：开关切换后残留的「始终允许（本会话）」
+    // 签名不放行禁面（Block 类判定在 (0.6) 先于 (1) 签名放行——与黑名单
+    // 同位阶，会话桶命中不豁免）。
+    let memory = crate::backend::gate::ApprovalMemory::new();
+    let bucket = memory.bucket("s1");
+    memory.remember("s1", "command", &command_args("git commit -m x"));
+    let gate = ApprovalGate::new(PermissionTier::FullAccess, Arc::new(Mutex::new(None)))
+        .with_session_memory(bucket)
+        .with_policy(crate::backend::gate::ApprovalPolicy {
+            enabled: true,
+            allowlist_enabled: false,
+            command_allowlist: Vec::new(),
+            require_plan: false,
+            git_allow_stage_commit: false,
+        });
+    assert_blocked(
+        &gate.judge("command", &command_args("git commit -m x")),
+        "会话签名不复活策略禁面",
+    );
+    // 对照：策略开关开时同签名正常放行（行为随配置切换）
+    let bucket = memory.bucket("s2");
+    memory.remember("s2", "command", &command_args("git commit -m x"));
+    let gate = ApprovalGate::new(PermissionTier::FullAccess, Arc::new(Mutex::new(None)))
+        .with_session_memory(bucket)
+        .with_policy(crate::backend::gate::ApprovalPolicy {
+            enabled: true,
+            allowlist_enabled: false,
+            command_allowlist: Vec::new(),
+            require_plan: false,
+            git_allow_stage_commit: true,
+        });
+    assert!(
+        matches!(
+            gate.judge("command", &command_args("git commit -m x")),
+            GateVerdict::Allow
+        ),
+        "开关开时会话签名放行"
     );
 }

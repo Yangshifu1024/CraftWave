@@ -633,6 +633,65 @@ describe("§12.3 manifest 双向扫描", () => {
     };
     expect(usage.legacyTotalTokens).toBe(777);
   });
+
+  it("git 只读三命令（26 号票，§3.3 #37–#39）在两侧接线且契约字段级一致", () => {
+    const find = (name: string) => {
+      const command = manifest.commands.find((c) => c.name === name);
+      expect(command, `manifest 缺命令 ${name}`).toBeDefined();
+      return command!;
+    };
+    // #37 git_status：状态 + user info + isRepo（非仓库空态区分）
+    expect(find("git_status")).toMatchObject({
+      args_type: "GitStatusArgs",
+      ret_type: "GitStatusResult",
+    });
+    // #38 git_diff：聚合补丁集（staged 参数保留但忽略）
+    expect(find("git_diff")).toMatchObject({
+      args_type: "GitDiffArgs",
+      ret_type: "GitDiffResult",
+    });
+    // #39 git_recent_log：最近提交
+    expect(find("git_recent_log")).toMatchObject({
+      args_type: "GitLogArgs",
+      ret_type: "GitLogResult",
+    });
+    // 双向：client.ts 已接线（禁止只注册不使用）
+    for (const name of ["git_status", "git_diff", "git_recent_log"]) {
+      expect(Object.values(COMMANDS), `${name} 应在 client.ts 接线`).toContain(name);
+    }
+    // 生成物字段级（§3.3 #37/#38 回写形态）
+    const statusFile: import("./generated/GitStatusFile").GitStatusFile = {
+      path: "a.ts",
+      status: "M",
+    };
+    expect(statusFile.status).toBe("M");
+    const status: import("./generated/GitStatusResult").GitStatusResult = {
+      isRepo: true,
+      files: [statusFile],
+      user: { name: "tester", email: "tester@test" },
+    };
+    expect(status.isRepo).toBe(true);
+    const patch: import("./generated/DiffPatch").DiffPatch = {
+      path: "a.ts",
+      addLines: 1,
+      delLines: 2,
+      binary: false,
+      truncated: false,
+      hunks: [{ header: "@@ -1,2 +1,2 @@", lines: [{ kind: "add", text: "x" }] }],
+    };
+    expect(patch.hunks[0]!.lines[0]!.kind).toBe("add");
+    const log: import("./generated/GitLogResult").GitLogResult = {
+      isRepo: true,
+      commits: [{ sha: "a".repeat(40), summary: "init", time: 0 }],
+    };
+    expect(log.commits[0]!.sha).toHaveLength(40);
+    // 写策略开关（FR-11-03）：ApprovalConfig 生成物带 gitAllowStageCommit
+    const approvalConfig = readFileSync(
+      resolve(import.meta.dirname, "./generated/ApprovalConfig.ts"),
+      "utf8",
+    );
+    expect(approvalConfig).toContain("gitAllowStageCommit");
+  });
 });
 
 // ---- 跨语言 fixture 期望值：与 src-tauri/src/ipc_manifest_test.rs 的 fixture_entries() 逐字段一致 ----

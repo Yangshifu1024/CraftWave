@@ -22,6 +22,9 @@ use tauri_plugin_decoration::WebviewWindowExt;
 // 业务模块声明（划分依据见本文件头部说明）
 pub mod agent;
 pub mod backend;
+// git 集成域（26 号票，§2.2 域清单新增）：只读状态/差异/历史查询（面板
+// 数据面）；git 写策略在 safety（分类表）与 backend（审批门开关），不在此域
+pub mod git;
 pub mod host;
 // knowledge 知识域（09 号票，§2.2 域清单）：技能系统与技能命令
 pub mod knowledge;
@@ -125,6 +128,12 @@ use host::commands::stats::{
 // 根，经 quota_snapshots 返回），导出需显式补根（ipc_manifest_test）
 #[allow(unused_imports)]
 use host::commands::quota::quota_snapshots;
+// git 三命令（26 号票，§3.3 #37–#39）
+#[allow(unused_imports)]
+use git::{
+    GitDiffArgs, GitDiffResult, GitLogArgs, GitLogResult, GitStatusArgs, GitStatusResult, git_diff,
+    git_recent_log, git_status,
+};
 #[allow(unused_imports)]
 use providers::quota::QuotaSnapshot;
 #[allow(unused_imports)]
@@ -293,6 +302,10 @@ ipc_commands! {
     host::commands::stats::session_usage => args: SessionUsageArgs, ret: SessionUsageResult;
     // 配额快照（21 号票，§3.3 #53）
     host::commands::quota::quota_snapshots => args: (), ret: Vec<QuotaSnapshot>;
+    // git 只读三命令（26 号票，§3.3 #37–#39）
+    git::git_status => args: GitStatusArgs, ret: GitStatusResult;
+    git::git_diff => args: GitDiffArgs, ret: GitDiffResult;
+    git::git_recent_log => args: GitLogArgs, ret: GitLogResult;
     #[cfg(debug_assertions)]
     mock_chat::mock_chat_run => args: (), ret: ();
     select_dir => args: (), ret: Option<String>;
