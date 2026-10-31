@@ -4,7 +4,7 @@
  * 带图待发条目的附件引用（「带图消息不入 steer，进 followUp」）：
  * 图片字节已由前端经 `attach_image` 落入会话 imgblob，入队只携带
  * 引用——`blobHash`（内容寻址）与 `mimeType`（png/jpeg/gif/webp 白名单）；
- * 投递时由 [`deliver 侧`](crate::host::commands::chat) 展开为 WirePart::Image。
+ * 投递时由 壳侧 chat 命令 展开为 WirePart::Image。
  */
 export type QueuedImageAttachment = { 
 /**
