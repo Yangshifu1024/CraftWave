@@ -15,22 +15,26 @@ import type { MessageEntry, StoredEntry, StoredMessageEntry } from "./types";
  * 共同约定，两侧各自产出一份描述，测试比对两侧必须完全一致——谁改了接口
  * 没同步另一侧，这里就变红。
  *
- * 四个测试面：
- * 1. manifest 扫描（manifest：清单文件 ipc-manifest.json，Rust 侧 cargo test
- *    产出，罗列后端全部命令/帧/事件/工具）：client.ts（唯一 invoke 出口）注册
- *    的命令名全集（COMMANDS 注册表 + 直接 invoke 字面量）必须 ⊆
- *    manifest.commands，且各切片命令在 client.ts 全部接线（双向都不许缺）；
- * 2. 键面卫生：ui/src 全源码不得出现绕过唯一出口的未知 invoke 字面量；
- * 3. 覆盖度：manifest.frames 覆盖 §3.4 P0 全集 9 帧；manifest.tools/toolSpecs
- *    覆盖工具注册表 8 工具且与 toolkit 参数表逐字同源（§10.3，14 号票）；
- *    manifest.events 覆盖 §3.5 实装键且与 EVENT_KEYS 一致；
+ * 测试面（原逐命令用例已按域合并为表驱动/剧本，覆盖语义不减）：
+ * 1. manifest 双向扫描：client.ts（唯一 invoke 出口）注册的命令名全集
+ *    （COMMANDS 注册表 + 直接 invoke 字面量）⊆ manifest.commands，且各切片
+ *    命令在 client.ts 全部接线（双向都不许缺）；键面卫生：ui/src 全源码
+ *    不得出现绕过唯一出口的未知 invoke 字面量；
+ * 2. 命令契约类型名：全部命令（storage/provider/chat、MCP、技能、外部授权、
+ *    子代理、git、用量、产物/日志/更新器等）的 args_type/ret_type 与文档锚点
+ *    逐条一致，且逐条在 client.ts 接线；
+ * 3. 覆盖度：manifest.frames 覆盖 §3.4 P0 全集 9 帧 + M2 压缩/摘要/子代理/
+ *    审计帧；manifest.tools/toolSpecs 覆盖工具注册表 17 工具且与 toolkit
+ *    参数表逐字同源（§10.3，14 号票）；manifest.events 覆盖 §3.5 实装键
+ *    且与 EVENT_KEYS 一致；
  * 4. 跨语言 fixture（fixture：测试用的固定样例数据文件）：cargo test 产出的
  *    session-tree-fixture.jsonl（Rust serde 序列化落盘字节，即 storage 分段
- *    JSONL 行格式）——TS 镜像期望值逐条目比对 + 树还原校验；
+ *    JSONL 行格式）——TS 镜像期望值逐条目比对 + 树还原 + 往返等价校验；
  * 5. 契约生成物（02 号票，C-2 定案）：payload 类型单一来源 = ts-rs 生成物
  *    ui/src/ipc/generated/（Rust ipc_manifest_test 统一导出、进 git）——
  *    manifest 名义类型 ↔ 生成文件正向一致 + 生成文件 ↔ types.ts 再导出面
- *    反向一致（类型删除后遗留的孤儿生成物在这里红）。
+ *    反向一致（类型删除后遗留的孤儿生成物在这里红）+ 关键生成物键面与
+ *    字段级形状（信任/审计/审批/计划门/用量/git/更新器）。
  *
  * 两个产物文件由 `cargo test`（src-tauri/）生成；CI 顺序 = cargo test → vitest
  * （§12.3），缺文件即红（契约不齐不允许静默跳过）。
@@ -88,22 +92,26 @@ function scannedClientCommandNames(): string[] {
   return [...names];
 }
 
-/** 本测试直接扫描的源文件（client.ts 为唯一 invoke 出口）。 */
+/** manifest 里查一条命令（缺失即红）。 */
+function findCommand(name: string) {
+  const command = manifest.commands.find((c) => c.name === name);
+  expect(command, `manifest 缺命令 ${name}`).toBeDefined();
+  return command!;
+}
 
 /** S5 spike 的前端取消桥接为注入式原型；cancel_run 已随核心链路票正式注册。 */
 const SPIKE_ONLY_INVOKES = new Set<string>([]);
 
-describe("§12.3 manifest 双向扫描", () => {
-  it("client.ts 注册的命令名全部存在于 manifest.commands", () => {
-    // 前端用到的每个命令，Rust 清单都必须注册（防止前端调一个后端不存在的命令）
+describe("§12.3 manifest 双向扫描与键面卫生", () => {
+  it("client.ts 注册命令 ⊆ manifest.commands；切片命令反向全部接线；全源码无未知 invoke 字面量", () => {
+    // 正向：前端用到的每个命令，Rust 清单都必须注册（防止前端调一个后端不存在的命令）
     const commands = new Set(manifest.commands.map((c) => c.name));
-    for (const name of scannedClientCommandNames()) {
+    const wired = new Set(scannedClientCommandNames());
+    for (const name of wired) {
       expect(commands, `命令 ${name} 未在 manifest 中注册`).toContain(name);
     }
-  });
-
-  it("storage/provider/chat 切片命令在 client.ts 全部接线（双向）", () => {
-    const wired = new Set(scannedClientCommandNames());
+    // 反向：storage/provider/chat/核心链路/ask/偏好/退出确认/通知/连接测试等切片
+    // 命令在 client.ts 全部接线（禁止只注册不使用）
     for (const name of [
       "save_session_tree",
       "load_session_tree",
@@ -133,104 +141,8 @@ describe("§12.3 manifest 双向扫描", () => {
         name,
       );
     }
-  });
-
-  it("两切片命令的契约类型名与文档锚点一致", () => {
-    // 不止命令名要对上：参数/返回值两侧的类型名也必须一致（防止只改了形状没改名）
-    const find = (name: string) => {
-      const command = manifest.commands.find((c) => c.name === name);
-      expect(command, `manifest 缺命令 ${name}`).toBeDefined();
-      return command!;
-    };
-    expect(find("save_session_tree")).toMatchObject({
-      args_type: "SaveSessionTreeArgs",
-      ret_type: "SaveSessionTreeResult",
-    });
-    expect(find("load_session_tree")).toMatchObject({
-      args_type: "LoadSessionTreeArgs",
-      ret_type: "SessionTreeData",
-    });
-    expect(find("get_config")).toMatchObject({ args_type: "()", ret_type: "AppConfig" });
-    expect(find("save_config")).toMatchObject({
-      args_type: "SaveConfigArgs",
-      ret_type: "AppConfig",
-    });
-    expect(find("save_provider")).toMatchObject({
-      args_type: "SaveProviderArgs",
-      ret_type: "ProviderConfig",
-    });
-    expect(find("delete_provider")).toMatchObject({
-      args_type: "DeleteProviderArgs",
-      ret_type: "()",
-    });
-    // 数据目录入口（03 号票，§3.3 #3）
-    expect(find("open_dir")).toMatchObject({
-      args_type: "OpenDirArgs",
-      ret_type: "()",
-    });
-    // 核心链路两命令（13 号票，§3.3 #18/#19）
-    expect(find("start_chat")).toMatchObject({
-      args_type: "StartChatArgs",
-      ret_type: "StartChatResult",
-    });
-    expect(find("cancel_run")).toMatchObject({
-      args_type: "CancelRunArgs",
-      ret_type: "bool",
-    });
-    // steer/followUp 队列三命令（06 号票，§3.3 #21/#59d/#59e）
-    expect(find("inject_run_message")).toMatchObject({
-      args_type: "InjectRunMessageArgs",
-      ret_type: "InjectRunMessageResult",
-    });
-    expect(find("resume_followup_queue")).toMatchObject({
-      args_type: "ResumeFollowupQueueArgs",
-      ret_type: "ResumeFollowupQueueResult",
-    });
-    expect(find("remove_followup")).toMatchObject({
-      args_type: "RemoveFollowupArgs",
-      ret_type: "RemoveFollowupResult",
-    });
-    // ask/计划门命令（14 号票，§3.3 #22/#26c）
-    expect(find("resolve_ask")).toMatchObject({
-      args_type: "ResolveAskArgs",
-      ret_type: "()",
-    });
-    expect(find("approve_plan")).toMatchObject({
-      args_type: "ApprovePlanArgs",
-      ret_type: "()",
-    });
-    // 会话偏好两命令（18 号票，§3.3 #24/#25）
-    expect(find("get_session_prefs")).toMatchObject({
-      args_type: "SessionPrefsArgs",
-      ret_type: "GetSessionPrefsResult",
-    });
-    expect(find("set_session_prefs")).toMatchObject({
-      args_type: "SetSessionPrefsArgs",
-      ret_type: "()",
-    });
-    // 退出确认与通知引导（17/19 号票，§9.6）
-    expect(find("resolve_exit_request")).toMatchObject({
-      args_type: "ResolveExitRequestArgs",
-      ret_type: "()",
-    });
-    expect(find("notification_permission_status")).toMatchObject({
-      args_type: "()",
-      ret_type: "NotificationPermissionStatus",
-    });
-    expect(find("open_notification_settings")).toMatchObject({
-      args_type: "()",
-      ret_type: "()",
-    });
-    // 供应商连接测试（19 号票，§3.3 #32）
-    expect(find("test_provider")).toMatchObject({
-      args_type: "TestProviderArgs",
-      ret_type: "TestProviderResult",
-    });
-  });
-
-  it("ui/src 全源码无绕过唯一出口的未知 invoke 字面量", () => {
-    // 递归扫描 ui/src 所有 ts/tsx 源码里的 invoke("…") 字面量：
-    // 出现 manifest 未登记的命令名即违规（绕过了唯一出口的约束）
+    // 键面卫生：递归扫描 ui/src 所有 ts/tsx 源码里的 invoke("…") 字面量，
+    // 出现 manifest 未登记的命令名即违规（绕过唯一出口的约束）
     const manifestNames = new Set(manifest.commands.map((c) => c.name));
     const offenders: string[] = [];
     const walk = (dir: string) => {
@@ -252,8 +164,126 @@ describe("§12.3 manifest 双向扫描", () => {
     walk(uiSrcDir);
     expect(offenders, `未知 invoke 命令：\n${offenders.join("\n")}`).toEqual([]);
   });
+});
 
-  it("manifest.frames 覆盖 §3.4 P0 全集 9 帧 + M2 压缩帧/摘要帧/子代理 4 帧 + 审计帧", () => {
+/** 全部命令的契约类型名（与文档锚点一致，票号随行注释）。
+ *  [命令名, { args_type, ret_type }]——每个条目同时做「manifest 契约类型名一致」
+ *  与「client.ts 已接线（双向）」两断言。 */
+const COMMAND_CONTRACTS: [string, { args_type: string; ret_type: string }][] = [
+  // storage/provider/chat 切片（15 号票 §6.3 / 03 号票 §3.3 #3 / 13 号票 §3.3 #18/#19）
+  ["save_session_tree", { args_type: "SaveSessionTreeArgs", ret_type: "SaveSessionTreeResult" }],
+  ["load_session_tree", { args_type: "LoadSessionTreeArgs", ret_type: "SessionTreeData" }],
+  ["get_config", { args_type: "()", ret_type: "AppConfig" }],
+  ["save_config", { args_type: "SaveConfigArgs", ret_type: "AppConfig" }],
+  ["save_provider", { args_type: "SaveProviderArgs", ret_type: "ProviderConfig" }],
+  ["delete_provider", { args_type: "DeleteProviderArgs", ret_type: "()" }],
+  ["open_dir", { args_type: "OpenDirArgs", ret_type: "()" }],
+  ["start_chat", { args_type: "StartChatArgs", ret_type: "StartChatResult" }],
+  ["cancel_run", { args_type: "CancelRunArgs", ret_type: "bool" }],
+  // steer/followUp 队列三命令（06 号票，§3.3 #21/#59d/#59e）
+  ["inject_run_message", { args_type: "InjectRunMessageArgs", ret_type: "InjectRunMessageResult" }],
+  [
+    "resume_followup_queue",
+    { args_type: "ResumeFollowupQueueArgs", ret_type: "ResumeFollowupQueueResult" },
+  ],
+  ["remove_followup", { args_type: "RemoveFollowupArgs", ret_type: "RemoveFollowupResult" }],
+  // ask/计划门命令（14 号票，§3.3 #22/#26c）
+  ["resolve_ask", { args_type: "ResolveAskArgs", ret_type: "()" }],
+  ["approve_plan", { args_type: "ApprovePlanArgs", ret_type: "()" }],
+  // 手动压缩（04 号票，§3.3 #59b）
+  ["compact_session", { args_type: "CompactSessionArgs", ret_type: "CompactSessionResult" }],
+  // 会话偏好两命令（18 号票，§3.3 #24/#25）
+  ["get_session_prefs", { args_type: "SessionPrefsArgs", ret_type: "GetSessionPrefsResult" }],
+  ["set_session_prefs", { args_type: "SetSessionPrefsArgs", ret_type: "()" }],
+  // 退出确认与通知引导（17/19 号票，§9.6）
+  ["resolve_exit_request", { args_type: "ResolveExitRequestArgs", ret_type: "()" }],
+  ["notification_permission_status", { args_type: "()", ret_type: "NotificationPermissionStatus" }],
+  ["open_notification_settings", { args_type: "()", ret_type: "()" }],
+  // 供应商连接测试（19 号票，§3.3 #32）
+  ["test_provider", { args_type: "TestProviderArgs", ret_type: "TestProviderResult" }],
+  // MCP 八命令（08 号票，§3.3 #40–47）：#40 双作用域配置读取、#41 整份保存、
+  // #42–44 连接（触发 TOFU）/断开/重连、#45 草稿试连（总预算 60s 不进池）、
+  // #46 TOFU 决策（remember/revoke）、#47 连接池状态快照
+  ["mcp_list_config", { args_type: "McpListConfigArgs", ret_type: "McpListConfigResult" }],
+  ["mcp_save_config", { args_type: "McpSaveConfigArgs", ret_type: "()" }],
+  ["mcp_connect", { args_type: "McpServerRefArgs", ret_type: "()" }],
+  ["mcp_disconnect", { args_type: "McpServerRefArgs", ret_type: "()" }],
+  ["mcp_reconnect", { args_type: "McpServerRefArgs", ret_type: "()" }],
+  ["mcp_test", { args_type: "McpTestArgs", ret_type: "McpTestResult" }],
+  ["mcp_set_launch_trust", { args_type: "McpSetLaunchTrustArgs", ret_type: "()" }],
+  ["mcp_snapshot", { args_type: "McpSnapshotArgs", ret_type: "McpSnapshotResult" }],
+  // 技能四命令（09 号票，§3.3 #48–51）：#48 多来源合并清单（元素非名义根）、
+  // #49 启停切换、#50 重扫全部来源、#51 正文预览
+  ["skill_list", { args_type: "()", ret_type: "Vec<SkillListEntry>" }],
+  ["skill_toggle", { args_type: "SkillToggleArgs", ret_type: "()" }],
+  ["skill_reload", { args_type: "()", ret_type: "()" }],
+  ["skill_inspect", { args_type: "SkillInspectArgs", ret_type: "SkillInspectResult" }],
+  // 外部目录授权（24 号票，§3.3 #33/#34 + Inspector 撤销补充面）
+  [
+    "check_external_path",
+    { args_type: "CheckExternalPathArgs", ret_type: "CheckExternalPathResult" },
+  ],
+  ["allow_external_dir", { args_type: "AllowExternalDirArgs", ret_type: "ExternalRootsResult" }],
+  ["revoke_external_dir", { args_type: "RevokeExternalDirArgs", ret_type: "ExternalRootsResult" }],
+  // 技能信任撤销（24 号票，§9.8 撤销 UI 落盘面）
+  ["skill_revoke_trust", { args_type: "SkillRevokeTrustArgs", ret_type: "()" }],
+  // 子代理两命令（10 号票，§3.3 #58/#59）：#58 级联取消、#59 历史回看
+  ["stop_subagent", { args_type: "StopSubagentArgs", ret_type: "()" }],
+  [
+    "load_subagent_history",
+    { args_type: "LoadSubagentHistoryArgs", ret_type: "Vec<MessageEntry>" },
+  ],
+  // 帧重放与热重连三命令（05 号票，§3.3 #20/#57/#59c）：幂等空重放、
+  // 无活跃 run → null（Option）、无未决 ask → null（Option）
+  ["attach_run", { args_type: "AttachRunArgs", ret_type: "AttachRunResult" }],
+  [
+    "session_run_snapshot",
+    { args_type: "SessionRunSnapshotArgs", ret_type: "Option<RunSnapshot>" },
+  ],
+  [
+    "session_pending_ask",
+    { args_type: "SessionPendingAskArgs", ret_type: "Option<SessionPendingAsk>" },
+  ],
+  // 用量统计两命令（20 号票，§3.3 #52/#59k）
+  ["stats_token", { args_type: "StatsTokenArgs", ret_type: "StatsTokenResult" }],
+  ["session_usage", { args_type: "SessionUsageArgs", ret_type: "SessionUsageResult" }],
+  // git 只读三命令（26 号票，§3.3 #37–#39）
+  ["git_status", { args_type: "GitStatusArgs", ret_type: "GitStatusResult" }],
+  ["git_diff", { args_type: "GitDiffArgs", ret_type: "GitDiffResult" }],
+  ["git_recent_log", { args_type: "GitLogArgs", ret_type: "GitLogResult" }],
+  // 产物面板与编辑器（28 号票，§3.3 #59l/#35/#36）+ 会话日志三命令（32 号票 #54–56）
+  ["list_artifacts", { args_type: "ListArtifactsArgs", ret_type: "ListArtifactsResult" }],
+  ["list_editors", { args_type: "()", ret_type: "Vec<EditorEntry>" }],
+  ["open_in_editor", { args_type: "OpenInEditorArgs", ret_type: "()" }],
+  ["read_session_log", { args_type: "ReadSessionLogArgs", ret_type: "ReadSessionLogResult" }],
+  ["list_log_files", { args_type: "()", ret_type: "Vec<String>" }],
+  ["open_logs_dir", { args_type: "()", ret_type: "()" }],
+  // 33 号票三命令（§3.3 #59m/#59n/#59o：更新器状态门/安装门/主动暂停）
+  ["update_status", { args_type: "()", ret_type: "UpdateStatusResult" }],
+  ["update_precheck", { args_type: "()", ret_type: "UpdatePrecheckResult" }],
+  [
+    "pause_followup_queue",
+    { args_type: "PauseFollowupQueueArgs", ret_type: "PauseFollowupQueueResult" },
+  ],
+];
+
+describe("命令契约类型名（表驱动扫描全部命令）", () => {
+  it("每条命令的 args_type/ret_type 与文档锚点一致，且在 client.ts 接线（双向）；session:title 无新命令", () => {
+    for (const [name, types] of COMMAND_CONTRACTS) {
+      // 不止命令名要对上：参数/返回值两侧的类型名也必须一致（防止只改了形状没改名）
+      expect(findCommand(name)).toMatchObject(types);
+      // 双向：client.ts 已接线（禁止只注册不使用）
+      expect(Object.values(COMMANDS), `${name} 应在 client.ts 接线`).toContain(name);
+    }
+    // 自动起名（27 号票，§3.5 P0 键 session:title）：本票零新增命令
+    //（导出为纯前端序列化；起名为后台任务无命令面）
+    expect(Object.values(EVENT_KEYS)).toContain("session:title");
+    expect(Object.values(COMMANDS)).not.toContain("session_title");
+  });
+});
+
+describe("覆盖度：帧/工具/事件（§3.4/§8.3/§3.5）", () => {
+  it("manifest.frames 16 帧恰好、tools 17 工具恰好、toolSpecs 与 toolkit 逐字同源（双向）、events 与 EVENT_KEYS 一致", () => {
     // 帧清单必须恰好是 P0 全集 9 帧 + 04 号票 compactDone + 05 号票
     // runSnapshot + 10 号票子代理 4 帧（subStarted/subFrame/subReport/
     // subDone）+ 36 号票 toolAudit（灰区命令审计五态）：一个不能少
@@ -279,9 +309,9 @@ describe("§12.3 manifest 双向扫描", () => {
     ]) {
       expect(manifest.frames).toContain(frame);
     }
-  });
 
-  it("manifest.tools 覆盖工具注册表 17 工具（§8.3 M1 模型可见子集 + 09 skill + 10 subagent + 12 web 两工具 + 13 web_search + 14 小工具包四件）", () => {
+    // 工具清单（§8.3 M1 模型可见子集 + 09 skill + 10 subagent + 12 web 两工具
+    // + 13 web_search + 14 小工具包四件）
     expect(manifest.tools).toEqual([
       "read",
       "write",
@@ -301,10 +331,9 @@ describe("§12.3 manifest 双向扫描", () => {
       "calculate",
       "render_html",
     ]);
-  });
 
-  it("toolkit 参数表与 manifest.toolSpecs 逐字同源（§10.3 镜像声明）", () => {
-    // Rust 工具参数 schema 与前端 toolkit 声明必须逐字一致（模型卡渲染依赖它）
+    // Rust 工具参数 schema 与前端 toolkit 声明必须逐字一致（模型卡渲染依赖它），
+    // 且双向：toolkit 声明不超出注册表
     expect(manifest.toolSpecs).toHaveLength(17);
     for (const spec of manifest.toolSpecs) {
       const local = (CW_TOOL_PARAMETERS as Record<string, unknown>)[spec.name];
@@ -313,14 +342,11 @@ describe("§12.3 manifest 双向扫描", () => {
         spec.paramsSchema,
       );
     }
-    // 双向：toolkit 声明不超出注册表
-    const manifestNames = new Set(manifest.toolSpecs.map((s) => s.name));
+    const specNames = new Set(manifest.toolSpecs.map((s) => s.name));
     for (const name of Object.keys(CW_TOOL_PARAMETERS)) {
-      expect(manifestNames, `toolkit 多出未注册工具 ${name}`).toContain(name);
+      expect(specNames, `toolkit 多出未注册工具 ${name}`).toContain(name);
     }
-  });
 
-  it("manifest.events 覆盖 §3.5 实装键且与 EVENT_KEYS 一致", () => {
     // 事件清单双保险：manifest 恰好 24 键（14/17 号票 10 键 + 04 号票压缩
     // 三键 + 06 号票 run:start/run:inject/run:queue 三键 + 08 号票
     // mcp:status + 10 号票 sub:* 六键 + 27 号票 session:title），
@@ -352,512 +378,6 @@ describe("§12.3 manifest 双向扫描", () => {
       "session:title",
     ]);
     expect(Object.values(EVENT_KEYS).sort()).toEqual([...manifest.events].sort());
-  });
-
-  it("手动压缩命令（04 号票，§3.3 #59b）在两侧接线", () => {
-    const command = manifest.commands.find((c) => c.name === "compact_session");
-    expect(command).toMatchObject({
-      args_type: "CompactSessionArgs",
-      ret_type: "CompactSessionResult",
-    });
-    // 双向：client.ts 已接线（禁止只注册不使用）
-    expect(Object.values(COMMANDS)).toContain("compact_session");
-  });
-
-  it("MCP 八命令（08 号票，§3.3 #40–47）在两侧接线且契约类型名一致", () => {
-    const find = (name: string) => {
-      const command = manifest.commands.find((c) => c.name === name);
-      expect(command, `manifest 缺命令 ${name}`).toBeDefined();
-      return command!;
-    };
-    // #40 双作用域配置读取（空参名义类型注册，返回 { global, project,
-    // projectAvailable }）
-    expect(find("mcp_list_config")).toMatchObject({
-      args_type: "McpListConfigArgs",
-      ret_type: "McpListConfigResult",
-    });
-    // #41 整份保存一个作用域（未知字段随 flatten round-trip 不丢）
-    expect(find("mcp_save_config")).toMatchObject({
-      args_type: "McpSaveConfigArgs",
-      ret_type: "()",
-    });
-    // #42–44 连接（触发 TOFU）/断开/重连
-    expect(find("mcp_connect")).toMatchObject({ args_type: "McpServerRefArgs", ret_type: "()" });
-    expect(find("mcp_disconnect")).toMatchObject({
-      args_type: "McpServerRefArgs",
-      ret_type: "()",
-    });
-    expect(find("mcp_reconnect")).toMatchObject({
-      args_type: "McpServerRefArgs",
-      ret_type: "()",
-    });
-    // #45 草稿试连（总预算 60s，不进池）
-    expect(find("mcp_test")).toMatchObject({ args_type: "McpTestArgs", ret_type: "McpTestResult" });
-    // #46 TOFU 决策（remember/revoke，落 trust/mcp.json）
-    expect(find("mcp_set_launch_trust")).toMatchObject({
-      args_type: "McpSetLaunchTrustArgs",
-      ret_type: "()",
-    });
-    // #47 连接池状态快照（空参名义类型注册）
-    expect(find("mcp_snapshot")).toMatchObject({
-      args_type: "McpSnapshotArgs",
-      ret_type: "McpSnapshotResult",
-    });
-    // 双向：client.ts 已接线（禁止只注册不使用）
-    for (const name of [
-      "mcp_list_config",
-      "mcp_save_config",
-      "mcp_connect",
-      "mcp_disconnect",
-      "mcp_reconnect",
-      "mcp_test",
-      "mcp_set_launch_trust",
-      "mcp_snapshot",
-    ]) {
-      expect(Object.values(COMMANDS), `${name} 应在 client.ts 接线`).toContain(name);
-    }
-    // mcp:status 事件（§3.5 M2 键）已在 EVENT_KEYS 注册（与 manifest 一致性
-    // 由上方 events 断言把守，这里防误删）
-    expect(Object.values(EVENT_KEYS)).toContain("mcp:status");
-  });
-
-  it("技能四命令（09 号票，§3.3 #48–51）在两侧接线且契约类型名一致", () => {
-    const find = (name: string) => {
-      const command = manifest.commands.find((c) => c.name === name);
-      expect(command, `manifest 缺命令 ${name}`).toBeDefined();
-      return command!;
-    };
-    // #48 多来源合并清单（返回数组，元素 SkillListEntry 非名义根）
-    expect(find("skill_list")).toMatchObject({ args_type: "()", ret_type: "Vec<SkillListEntry>" });
-    // #49 启停切换（FR-14-04 禁用技能，skills-state.json 持久化）
-    expect(find("skill_toggle")).toMatchObject({ args_type: "SkillToggleArgs", ret_type: "()" });
-    // #50 重扫全部来源（Q20：活跃 run 快照不受影响）
-    expect(find("skill_reload")).toMatchObject({ args_type: "()", ret_type: "()" });
-    // #51 正文预览（SKILL.md 剥离 frontmatter，只读不进上下文）
-    expect(find("skill_inspect")).toMatchObject({
-      args_type: "SkillInspectArgs",
-      ret_type: "SkillInspectResult",
-    });
-    // 双向：client.ts 已接线（禁止只注册不使用）
-    for (const name of ["skill_list", "skill_toggle", "skill_reload", "skill_inspect"]) {
-      expect(Object.values(COMMANDS), `${name} 应在 client.ts 接线`).toContain(name);
-    }
-  });
-
-  it("外部目录授权两命令（24 号票，§3.3 #33/#34）在两侧接线且契约类型名一致", () => {
-    const find = (name: string) => {
-      const command = manifest.commands.find((c) => c.name === name);
-      expect(command, `manifest 缺命令 ${name}`).toBeDefined();
-      return command!;
-    };
-    // #33 外部目录预检（FR-05-12）
-    expect(find("check_external_path")).toMatchObject({
-      args_type: "CheckExternalPathArgs",
-      ret_type: "CheckExternalPathResult",
-    });
-    // #34 「始终允许」授权并入会话 roots
-    expect(find("allow_external_dir")).toMatchObject({
-      args_type: "AllowExternalDirArgs",
-      ret_type: "ExternalRootsResult",
-    });
-    // 撤销补充面（Inspector 已授权列表的移除按钮）
-    expect(find("revoke_external_dir")).toMatchObject({
-      args_type: "RevokeExternalDirArgs",
-      ret_type: "ExternalRootsResult",
-    });
-    // 双向：client.ts 已接线（禁止只注册不使用）
-    for (const name of ["check_external_path", "allow_external_dir", "revoke_external_dir"]) {
-      expect(Object.values(COMMANDS), `${name} 应在 client.ts 接线`).toContain(name);
-    }
-  });
-
-  it("信任面契约（24 号票）：skill_revoke_trust 接线 + SessionMeta 授权字段 + AskPayload externalDir/projectTrust 形态", () => {
-    // 技能信任撤销命令（§9.8 撤销 UI 落盘面）
-    const revoke = manifest.commands.find((c) => c.name === "skill_revoke_trust");
-    expect(revoke, "manifest 缺命令 skill_revoke_trust").toBeDefined();
-    expect(revoke).toMatchObject({ args_type: "SkillRevokeTrustArgs", ret_type: "()" });
-    expect(Object.values(COMMANDS)).toContain("skill_revoke_trust");
-    // SessionMeta 生成物含授权字段（§9.9 会话 roots 快照持久化字段）
-    const sessionMeta = readFileSync(
-      resolve(import.meta.dirname, "generated/SessionMeta.ts"),
-      "utf8",
-    );
-    expect(sessionMeta).toContain("authorizedExternalDirs");
-    // AskPayload 生成物含 externalDir 形态（路径 + 选项）与 projectTrust 的
-    // allow_session 键面（§3.2 口径，24 号票统一：allow_once → allow_session）
-    const askPayload = readFileSync(
-      resolve(import.meta.dirname, "generated/AskPayload.ts"),
-      "utf8",
-    );
-    expect(askPayload).toContain('"kind": "externalDir"');
-    expect(askPayload).toContain("allow_session");
-  });
-
-  it("子代理两命令（10 号票，§3.3 #58/#59）在两侧接线且契约类型名一致", () => {
-    const find = (name: string) => {
-      const command = manifest.commands.find((c) => c.name === name);
-      expect(command, `manifest 缺命令 ${name}`).toBeDefined();
-      return command!;
-    };
-    // #58 级联取消（stop_subagent：令牌置位即返回）
-    expect(find("stop_subagent")).toMatchObject({
-      args_type: "StopSubagentArgs",
-      ret_type: "()",
-    });
-    // #59 历史回看（load_subagent_history 返回 WireMessage 序列，元素
-    // MessageEntry 非名义根）
-    expect(find("load_subagent_history")).toMatchObject({
-      args_type: "LoadSubagentHistoryArgs",
-      ret_type: "Vec<MessageEntry>",
-    });
-    // 双向：client.ts 已接线（禁止只注册不使用）
-    for (const name of ["stop_subagent", "load_subagent_history"]) {
-      expect(Object.values(COMMANDS), `${name} 应在 client.ts 接线`).toContain(name);
-    }
-    // sub:* 六事件已在 EVENT_KEYS 注册（与 manifest 一致性由上方 events
-    // 断言把守，这里防误删）
-    for (const key of [
-      "sub:spawn",
-      "sub:step",
-      "sub:report",
-      "sub:usage",
-      "sub:done",
-      "sub:error",
-    ]) {
-      expect(Object.values(EVENT_KEYS)).toContain(key);
-    }
-  });
-
-  it("自动起名事件（27 号票，§3.5 P0 键 session:title）在两侧接线且无新命令", () => {
-    // 键位 M0 定死、27 号票填充：EVENT_KEYS 已注册（与 manifest 一致性由
-    // 上方 events 断言把守，这里防误删）
-    expect(Object.values(EVENT_KEYS)).toContain("session:title");
-    // 本票零新增命令（导出为纯前端序列化；起名为后台任务无命令面）
-    expect(Object.values(COMMANDS)).not.toContain("session_title");
-  });
-
-  it("帧重放与热重连三命令（05 号票，§3.3 #20/#57/#59c）在两侧接线", () => {
-    const find = (name: string) => {
-      const command = manifest.commands.find((c) => c.name === name);
-      expect(command, `manifest 缺命令 ${name}`).toBeDefined();
-      return command!;
-    };
-    // attach_run（#57）：帧重放重连，幂等空重放语义
-    expect(find("attach_run")).toMatchObject({
-      args_type: "AttachRunArgs",
-      ret_type: "AttachRunResult",
-    });
-    // session_run_snapshot（#20）：对账快照，无活跃 run → null（Option）
-    expect(find("session_run_snapshot")).toMatchObject({
-      args_type: "SessionRunSnapshotArgs",
-      ret_type: "Option<RunSnapshot>",
-    });
-    // session_pending_ask（#59c）：待审批恢复查询，无未决 ask → null（Option）
-    expect(find("session_pending_ask")).toMatchObject({
-      args_type: "SessionPendingAskArgs",
-      ret_type: "Option<SessionPendingAsk>",
-    });
-    // 双向：client.ts 已接线（禁止只注册不使用）
-    for (const name of ["attach_run", "session_run_snapshot", "session_pending_ask"]) {
-      expect(Object.values(COMMANDS), `${name} 应在 client.ts 接线`).toContain(name);
-    }
-  });
-
-  it("runSnapshot 摘要帧（05 号票，§3.4）与 RunSnapshot 类型生成物同源", async () => {
-    // 帧面 runSnapshot 的负载对齐 §3.2 RunSnapshot（chat/frames.ts 消费面）
-    type ChatFrame = import("./generated/ChatFrame").ChatFrame;
-    type RunSnapshotFrame = Extract<ChatFrame, { type: "runSnapshot" }>;
-    const sample: RunSnapshotFrame = {
-      type: "runSnapshot",
-      status: "running",
-      runId: "r1",
-      startedAt: 1,
-      turn: 1,
-      toolCount: 0,
-      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      lastSeq: 0,
-    };
-    expect(sample.status).toBe("running");
-    // RunSnapshot 契约类型（命令返回 Option<RunSnapshot>，生成物已再导出）
-    const snapshot: import("./generated/RunSnapshot").RunSnapshot = {
-      status: "running",
-      runId: "r1",
-      startedAt: 1,
-      turn: 1,
-      toolCount: 0,
-      usage: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 },
-      lastSeq: 0,
-    };
-    expect(snapshot.lastSeq).toBe(0);
-  });
-
-  it("用量统计两命令（20 号票，§3.3 #52/#59k）在两侧接线且元素字段级一致", () => {
-    const find = (name: string) => {
-      const command = manifest.commands.find((c) => c.name === name);
-      expect(command, `manifest 缺命令 ${name}`).toBeDefined();
-      return command!;
-    };
-    // #52 stats_token：按日/按模型聚合（FR-02-13）
-    expect(find("stats_token")).toMatchObject({
-      args_type: "StatsTokenArgs",
-      ret_type: "StatsTokenResult",
-    });
-    // #59k session_usage：会话累计四口径查询（Q37 恢复读面）
-    expect(find("session_usage")).toMatchObject({
-      args_type: "SessionUsageArgs",
-      ret_type: "SessionUsageResult",
-    });
-    // 双向：client.ts 已接线（禁止只注册不使用）
-    for (const name of ["stats_token", "session_usage"]) {
-      expect(Object.values(COMMANDS), `${name} 应在 client.ts 接线`).toContain(name);
-    }
-    // 元素字段级（§3.3 #52 回写形态）：byDay/byModel/total 与生成物同构
-    const day: import("./generated/DayUsage").DayUsage = {
-      day: "2026-10-30",
-      input: 1,
-      output: 2,
-      cacheRead: 3,
-      cacheWrite: 4,
-      total: 10,
-    };
-    const model: import("./generated/ModelUsage").ModelUsage = {
-      modelId: "m1",
-      modelName: "gpt-4o",
-      input: 1,
-      output: 2,
-      cacheRead: 3,
-      cacheWrite: 4,
-      total: 10,
-      runs: 2,
-    };
-    const result: import("./generated/StatsTokenResult").StatsTokenResult = {
-      byDay: [day],
-      byModel: [model],
-      total: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, total: 10, runs: 2 },
-    };
-    expect(result.byDay[0]!.day).toBe("2026-10-30");
-    expect(result.byModel[0]!.runs).toBe(2);
-    // #59k 返回：legacyTotalTokens 可选（旧数据标量回落，Q37 不伪造拆分）
-    const usage: import("./generated/SessionUsageResult").SessionUsageResult = {
-      sessionId: "s1",
-      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      legacyTotalTokens: 777,
-    };
-    expect(usage.legacyTotalTokens).toBe(777);
-  });
-
-  it("git 只读三命令（26 号票，§3.3 #37–#39）在两侧接线且契约字段级一致", () => {
-    const find = (name: string) => {
-      const command = manifest.commands.find((c) => c.name === name);
-      expect(command, `manifest 缺命令 ${name}`).toBeDefined();
-      return command!;
-    };
-    // #37 git_status：状态 + user info + isRepo（非仓库空态区分）
-    expect(find("git_status")).toMatchObject({
-      args_type: "GitStatusArgs",
-      ret_type: "GitStatusResult",
-    });
-    // #38 git_diff：聚合补丁集（staged 参数保留但忽略）
-    expect(find("git_diff")).toMatchObject({
-      args_type: "GitDiffArgs",
-      ret_type: "GitDiffResult",
-    });
-    // #39 git_recent_log：最近提交
-    expect(find("git_recent_log")).toMatchObject({
-      args_type: "GitLogArgs",
-      ret_type: "GitLogResult",
-    });
-    // 双向：client.ts 已接线（禁止只注册不使用）
-    for (const name of ["git_status", "git_diff", "git_recent_log"]) {
-      expect(Object.values(COMMANDS), `${name} 应在 client.ts 接线`).toContain(name);
-    }
-    // 生成物字段级（§3.3 #37/#38 回写形态）
-    const statusFile: import("./generated/GitStatusFile").GitStatusFile = {
-      path: "a.ts",
-      status: "M",
-    };
-    expect(statusFile.status).toBe("M");
-    const status: import("./generated/GitStatusResult").GitStatusResult = {
-      isRepo: true,
-      files: [statusFile],
-      user: { name: "tester", email: "tester@test" },
-    };
-    expect(status.isRepo).toBe(true);
-    const patch: import("./generated/DiffPatch").DiffPatch = {
-      path: "a.ts",
-      addLines: 1,
-      delLines: 2,
-      binary: false,
-      truncated: false,
-      hunks: [{ header: "@@ -1,2 +1,2 @@", lines: [{ kind: "add", text: "x" }] }],
-    };
-    expect(patch.hunks[0]!.lines[0]!.kind).toBe("add");
-    const log: import("./generated/GitLogResult").GitLogResult = {
-      isRepo: true,
-      commits: [{ sha: "a".repeat(40), summary: "init", time: 0 }],
-    };
-    expect(log.commits[0]!.sha).toHaveLength(40);
-    // 写策略开关（FR-11-03）：ApprovalConfig 生成物带 gitAllowStageCommit
-    const approvalConfig = readFileSync(
-      resolve(import.meta.dirname, "./generated/ApprovalConfig.ts"),
-      "utf8",
-    );
-    expect(approvalConfig).toContain("gitAllowStageCommit");
-  });
-
-  it("灰区命令审计（36 号票，§3.4/§3.2/§3.2 agent 组）在帧/载荷/配置三面接线且字段级一致", () => {
-    // toolAudit 帧（§3.4 五态）在 ChatFrame 生成物（type 判别 + state/reason）
-    const chatFrame = readFileSync(
-      resolve(import.meta.dirname, "./generated/ChatFrame.ts"),
-      "utf8",
-    );
-    expect(chatFrame).toContain('"toolAudit"');
-    expect(chatFrame).toContain("AuditState");
-    // 审计五态生成物（running/allow/block/ask/manual）
-    const auditState = readFileSync(
-      resolve(import.meta.dirname, "./generated/AuditState.ts"),
-      "utf8",
-    );
-    for (const state of ["running", "allow", "block", "ask", "manual"]) {
-      expect(auditState).toContain(`"${state}"`);
-    }
-    // AskPayload 生成物带 audit 注记（ask/manual 两态 + reason）
-    const askPayload = readFileSync(
-      resolve(import.meta.dirname, "./generated/AskPayload.ts"),
-      "utf8",
-    );
-    expect(askPayload).toContain("audit?: AuditNote");
-    // 审计专用模型配置（§3.2 agent.commandAudit.modelId）
-    const agentConfig = readFileSync(
-      resolve(import.meta.dirname, "./generated/AgentConfig.ts"),
-      "utf8",
-    );
-    expect(agentConfig).toContain("commandAudit");
-    const auditConfig = readFileSync(
-      resolve(import.meta.dirname, "./generated/CommandAuditConfig.ts"),
-      "utf8",
-    );
-    expect(auditConfig).toContain("modelId");
-  });
-
-  it("产物面板与编辑器打开（28 号票，§3.3 #59l/#35/#36）在两侧接线且契约字段级一致", () => {
-    const find = (name: string) => {
-      const command = manifest.commands.find((c) => c.name === name);
-      expect(command, `manifest 缺命令 ${name}`).toBeDefined();
-      return command!;
-    };
-    // #59l list_artifacts：产物清单（exists 探测就地完成）
-    expect(find("list_artifacts")).toMatchObject({
-      args_type: "ListArtifactsArgs",
-      ret_type: "ListArtifactsResult",
-    });
-    // #35 list_editors：编辑器探测
-    expect(find("list_editors")).toMatchObject({
-      args_type: "()",
-      ret_type: "Vec<EditorEntry>",
-    });
-    // #36 open_in_editor：编辑器打开（path + line?）
-    expect(find("open_in_editor")).toMatchObject({
-      args_type: "OpenInEditorArgs",
-      ret_type: "()",
-    });
-    // #54 read_session_log：会话日志尾部（tail 缺省 500/上限 5000，32 号票）
-    expect(find("read_session_log")).toMatchObject({
-      args_type: "ReadSessionLogArgs",
-      ret_type: "ReadSessionLogResult",
-    });
-    // #55 list_log_files：日志文件相对名清单（app.log* + sessions/*）
-    expect(find("list_log_files")).toMatchObject({
-      args_type: "()",
-      ret_type: "Vec<String>",
-    });
-    // #56 open_logs_dir：系统打开日志目录（固定 ~/.craftwave/logs）
-    expect(find("open_logs_dir")).toMatchObject({
-      args_type: "()",
-      ret_type: "()",
-    });
-    // 双向：client.ts 已接线（禁止只注册不使用）
-    for (const name of ["list_artifacts", "list_editors", "open_in_editor"]) {
-      expect(Object.values(COMMANDS), `${name} 应在 client.ts 接线`).toContain(name);
-    }
-    // 32 号票三命令接线
-    for (const name of ["read_session_log", "list_log_files", "open_logs_dir"]) {
-      expect(Object.values(COMMANDS), `${name} 应在 client.ts 接线`).toContain(name);
-    }
-    // #54 生成物字段级（tail 可缺省 = Option；lines 必有）
-    const logArgs: import("./generated/ReadSessionLogArgs").ReadSessionLogArgs = {
-      sessionId: "s1",
-    };
-    expect(logArgs.sessionId).toBe("s1");
-    const logResult: import("./generated/ReadSessionLogResult").ReadSessionLogResult = {
-      lines: ['{"ts":"2026-10-30T00:00:00Z","level":"info","kind":"run","msg":"run 开始"}'],
-    };
-    expect(logResult.lines).toHaveLength(1);
-    // 生成物字段级（§3.3 #59l/#35 回写形态：ArtifactRow 四字段 + EditorEntry 两字段）
-    const row: import("./generated/ArtifactRow").ArtifactRow = {
-      path: "/proj/a.txt",
-      runCount: 2,
-      lastSeenAt: 1760000000000,
-      exists: true,
-    };
-    expect(row.runCount).toBe(2);
-    expect(row.exists).toBe(true);
-    const result: import("./generated/ListArtifactsResult").ListArtifactsResult = {
-      artifacts: [row],
-    };
-    expect(result.artifacts).toHaveLength(1);
-    const editor: import("./generated/EditorEntry").EditorEntry = {
-      name: "VS Code",
-      path: "/usr/local/bin/code",
-    };
-    expect(editor.name).toBe("VS Code");
-    // 33 号票三命令（§3.3 #59m/#59n/#59o：更新器状态门/安装门/主动暂停）
-    expect(find("update_status")).toMatchObject({
-      args_type: "()",
-      ret_type: "UpdateStatusResult",
-    });
-    expect(find("update_precheck")).toMatchObject({
-      args_type: "()",
-      ret_type: "UpdatePrecheckResult",
-    });
-    expect(find("pause_followup_queue")).toMatchObject({
-      args_type: "PauseFollowupQueueArgs",
-      ret_type: "PauseFollowupQueueResult",
-    });
-    for (const name of ["update_status", "update_precheck", "pause_followup_queue"]) {
-      expect(Object.values(COMMANDS), `${name} 应在 client.ts 接线`).toContain(name);
-    }
-    // #59m/#59n 生成物字段级（UpdateStatusResult 禁用门两字段 +
-    // UpdatePrecheckResult 安装门六字段）
-    const status: import("./generated/UpdateStatusResult").UpdateStatusResult = {
-      pubkeyConfigured: false,
-      endpoints: ["https://github.com/o/r/releases/latest/download/latest.json"],
-    };
-    expect(status.pubkeyConfigured).toBe(false);
-    const precheck: import("./generated/UpdatePrecheckResult").UpdatePrecheckResult = {
-      blocked: true,
-      reasons: ["有 1 个会话的任务正在运行（或等待审批），安装重启会中断运行"],
-      runningCount: 1,
-      pendingAskCount: 0,
-      runningQueueCount: 0,
-      pausedQueueCount: 0,
-    };
-    expect(precheck.blocked).toBe(true);
-    expect(precheck.reasons).toHaveLength(1);
-    // #59o 生成物字段级（PauseFollowupQueueResult 快照两字段）
-    const paused: import("./generated/PauseFollowupQueueResult").PauseFollowupQueueResult = {
-      size: 2,
-      paused: true,
-    };
-    expect(paused.size).toBe(2);
-    expect(paused.paused).toBe(true);
-    // §3.2 update 配置域生成物字段级（enabled 缺省 true / intervalHours 缺省 24）
-    const update: import("./generated/UpdateConfig").UpdateConfig = {
-      enabled: true,
-      intervalHours: 24,
-    };
-    expect(update.enabled).toBe(true);
-    expect(update.intervalHours).toBe(24);
   });
 });
 
@@ -971,12 +491,21 @@ const EXPECTED_ENTRIES: StoredEntry[] = [
 describe("§6.1 跨语言 fixture roundtrip（Rust serde 落盘 ↔ TS 镜像）", () => {
   const fixtureText = readArtifact("session-tree-fixture.jsonl");
 
-  it("Rust 落盘字节解析后与 TS 镜像期望逐条目一致（含 status 对象/可选字段省略）", () => {
+  it("Rust 落盘字节解析后与 TS 镜像逐条目一致（含 status 对象/可选字段省略）；保存载荷 = 存储条目剥离 kind（TS→Rust 方向）", () => {
     expect(parseSessionJsonl(fixtureText)).toStrictEqual(EXPECTED_ENTRIES);
+    // 反方向校验：save 载荷的 messages 恰好是存储条目去掉 kind 判别字段后的形态
+    const messages = EXPECTED_ENTRIES.filter((e) => e.kind === "message");
+    const payload: MessageEntry[] = messages.map((entry) => {
+      const { kind: _kind, ...rest } = entry;
+      return rest;
+    });
+    expect(payload).toHaveLength(7);
+    expect(payload.every((m) => !("kind" in m))).toBe(true);
   });
 
-  it("fixture 还原为 assistant-ui 树：结构/activeLeaf/status/toolCall 合并全部正确", () => {
-    const repo = entriesToExported(parseSessionJsonl(fixtureText));
+  it("树还原 + 往返等价（15 号票防漂移锚点）+ compaction 不投影（§6.3）+ runMarker 的 wire 面等价", () => {
+    const entries = parseSessionJsonl(fixtureText);
+    const repo = entriesToExported(entries);
 
     // 树结构（C-4：headId=activeLeaf，parentId null=根；导出序父先子后）。
     // compaction 条目被跳过（§6.3 定稿：不投影为树节点）——7 条 message
@@ -1001,7 +530,6 @@ describe("§6.1 跨语言 fixture roundtrip（Rust serde 落盘 ↔ TS 镜像）
     expect(parentOf("a3")).toBe("u2");
     // runMarker 链尾：a3 → marker（canonical 收口行，前端 custom 载荷保真）
     expect(parentOf("run-2:marker")).toBe("a3");
-
     // 历史兄弟分支：a2/a3 同父
     expect(parentOf("a2")).toBe(parentOf("a3"));
 
@@ -1030,10 +558,8 @@ describe("§6.1 跨语言 fixture roundtrip（Rust serde 落盘 ↔ TS 镜像）
       result: "# CraftWave\n第一版说明。",
       isError: false,
     });
-  });
 
-  it("compaction 条目不进树、行可读回（§6.3 不投影定稿的 roundtrip 面）", () => {
-    const entries = parseSessionJsonl(fixtureText);
+    // compaction 条目可读回（上方 toStrictEqual 已含）、树还原后无 compaction 节点
     const compactions = entries.filter(
       (e): e is Extract<StoredEntry, { kind: "compaction" }> => e.kind === "compaction",
     );
@@ -1044,40 +570,18 @@ describe("§6.1 跨语言 fixture roundtrip（Rust serde 落盘 ↔ TS 镜像）
       summary: "早期对话摘要",
       tokensBefore: 9000,
     });
-    // 树还原后无 compaction 节点（save 载荷与史册无冲突，无 E_SESSION_REV 面）
-    const repo = entriesToExported(entries);
     expect(repo.messages.map((m) => m.message.id)).not.toContain("manual:compact:1");
-  });
 
-  it("保存载荷形状：messages = 存储条目剥离 kind 后的 MessageEntry（TS→Rust 方向）", () => {
-    // 反方向校验：save 载荷的 messages 恰好是存储条目去掉 kind 判别字段后的形态
-    const messages = EXPECTED_ENTRIES.filter((e) => e.kind === "message");
-    const payload: MessageEntry[] = messages.map((entry) => {
-      const { kind: _kind, ...rest } = entry;
-      return rest;
-    });
-    expect(payload).toHaveLength(7);
-    expect(payload.every((m) => !("kind" in m))).toBe(true);
-  });
-
-  it("往返等价（15 号票防漂移锚点）：条目 → 树还原 → messageToEntry 导出逐字段一致", () => {
-    // Rust canonical 条目经前端 import（entryToMessageLike + assistant-ui 规范化）
-    // 再导出（messageToEntry）必须与原条目逐字段等价——不等价即 save 全树同步时
-    // 同 id 内容漂移 → E_SESSION_REV（保存失败级故障，本断言是唯一自动防线）
-    const entries = parseSessionJsonl(fixtureText);
-    const repo = entriesToExported(entries);
+    // 往返等价（15 号票防漂移锚点）：Rust canonical 条目经前端 import 再导出
+    // 必须与原条目逐字段等价——不等价即 save 全树同步时同 id 内容漂移 →
+    // E_SESSION_REV（保存失败级故障，本断言是唯一自动防线）
     const original = entries.filter((e): e is StoredMessageEntry => e.kind === "message");
     const round = repo.messages.map((m) => messageToEntry(m.message, m.parentId));
     expect(round).toStrictEqual(original);
-  });
 
-  it("runMarker 节点的 wire 面等价：树上 system 空消息 → toWire 还原 RunMarker part", () => {
     // 活动路径含 marker 节点时（收养后继续对话），toWire 不得把它变空 parts 条目
-    const entries = parseSessionJsonl(fixtureText);
-    const repo = entriesToExported(entries);
     const wire = toWire(repo.messages.map((m) => m.message));
-    const markerWire = wire.find((m) => m.id === "run-2:marker");
-    expect(markerWire).toMatchObject({
+    expect(wire.find((m) => m.id === "run-2:marker")).toMatchObject({
       id: "run-2:marker",
       role: "system",
       parts: [
@@ -1120,12 +624,12 @@ describe("§12.3 契约生成物：ts-rs generated/ ↔ manifest ↔ types.ts �
     return [...source.matchAll(/export \* from "\.\/generated\/(.+?)";/g)].map((m) => m[1]!);
   }
 
-  it("manifest 每条名义 args_type/ret_type 在 generated/ 有同名导出（防生成物缺失）", () => {
+  it("manifest 每条名义 args_type/ret_type 在 generated/ 有同名导出；generated/ 与 types.ts 再导出面双向一致", () => {
+    // 正向：名义类型必须有同名生成文件（防生成物缺失）；()、bool、Vec<_>、
+    // Option<_>、HashMap<_,_> 等非名义类型无独立生成文件；Value（serde_json
+    // ::Value 短名）的形状由 serde_json/JsonValue.ts 承载（与 Rust 侧同口径）
     const files = new Set(listGenerated());
     for (const command of manifest.commands) {
-      // 名义类型 = 单个标识符；()、bool、Vec<_>、Option<_>、HashMap<_,_> 等
-      // 非名义类型无独立生成文件；Value（serde_json::Value 短名）的形状由
-      // serde_json/JsonValue.ts 承载。与 Rust 侧 ipc_manifest_test 同口径。
       for (const ty of [command.args_type, command.ret_type]) {
         const trimmed = ty.trim();
         const nominal =
@@ -1141,10 +645,8 @@ describe("§12.3 契约生成物：ts-rs generated/ ↔ manifest ↔ types.ts �
         }
       }
     }
-  });
-
-  it("generated/ 与 types.ts 再导出面双向一致（孤儿生成物/漏再导出即红）", () => {
-    const files = new Set(listGenerated());
+    // 反向：每个生成文件都被 types.ts 再导出（孤儿生成物即红），且再导出
+    // 不指向不存在的文件
     const exported = new Set(reExportedNames());
     expect(exported.size, "types.ts 应逐文件再导出生成物").toBeGreaterThan(0);
     for (const file of files) {
@@ -1160,42 +662,204 @@ describe("§12.3 契约生成物：ts-rs generated/ ↔ manifest ↔ types.ts �
   });
 });
 
-describe("23 号票：审批记忆与白名单契约面", () => {
-  /** 读生成物文本（断言字段级键面）。 */
-  function generated(name: string): string {
-    return readFileSync(resolve(import.meta.dirname, "./generated", `${name}.ts`), "utf8");
-  }
+/** 读生成物文本（断言字段级键面）。 */
+function generated(name: string): string {
+  return readFileSync(resolve(import.meta.dirname, "./generated", `${name}.ts`), "utf8");
+}
 
-  it("ApprovalConfig 生成物含审批四开关与白名单五字段（FR-14-04 字段级）", () => {
-    const source = generated("ApprovalConfig");
+describe("生成物键面与字段级形状（信任/审计/审批/计划门/用量/git/更新器）", () => {
+  it("生成物键面：信任面（24 号票）+ 审计四面（36 号票）+ 审批/白名单/计划门/选项（23/25 号票）", () => {
+    // 信任面（24 号票）：SessionMeta 生成物含授权字段（§9.9 会话 roots 快照
+    // 持久化字段）；AskPayload 含 externalDir 形态（路径 + 选项）与 projectTrust
+    // 的 allow_session 键面（§3.2 口径，24 号票统一：allow_once → allow_session）
+    expect(generated("SessionMeta")).toContain("authorizedExternalDirs");
+    const askPayload = generated("AskPayload");
+    expect(askPayload).toContain('"kind": "externalDir"');
+    expect(askPayload).toContain("allow_session");
+    // 灰区命令审计（36 号票）：toolAudit 帧（type 判别 + state/reason）在
+    // ChatFrame 生成物；审计五态（running/allow/block/ask/manual）；
+    // AskPayload 带 audit 注记（ask/manual 两态 + reason）；审计专用模型配置
+    const chatFrame = generated("ChatFrame");
+    expect(chatFrame).toContain('"toolAudit"');
+    expect(chatFrame).toContain("AuditState");
+    const auditState = generated("AuditState");
+    for (const state of ["running", "allow", "block", "ask", "manual"]) {
+      expect(auditState).toContain(`"${state}"`);
+    }
+    expect(askPayload).toContain("audit?: AuditNote");
+    expect(generated("AgentConfig")).toContain("commandAudit");
+    expect(generated("CommandAuditConfig")).toContain("modelId");
+    // 审批记忆/白名单/计划门（23/25 号票，FR-14-04/§8.6）：ApprovalConfig 七字段
+    //（四开关 + 白名单 + 计划硬门 requirePlan + git 写策略 gitAllowStageCommit）
+    const approvalConfig = generated("ApprovalConfig");
     for (const field of [
       "enabled",
       "autoConfirm",
       "sessionMemoryEnabled",
       "allowlistEnabled",
       "commandAllowlist",
+      "requirePlan",
+      "gitAllowStageCommit",
     ]) {
-      expect(source.includes(field), `ApprovalConfig 缺字段 ${field}`).toBe(true);
+      expect(approvalConfig.includes(field), `ApprovalConfig 缺字段 ${field}`).toBe(true);
     }
-  });
-
-  it("计划门契约（25 号票，§8.6）：requirePlan 开关 + AskPayload planScope 键面", () => {
-    // 严格计划硬门开关（approval.requirePlan，默认关）
-    expect(generated("ApprovalConfig")).toContain("requirePlan");
     // 范围门询问载荷（approval.planScope = 计划外写路径）
-    expect(generated("AskPayload")).toContain("planScope");
-  });
-
-  it("approval 选项 mode 键面含 always_session（§3.2 AskMode/AskOption 生成物）", () => {
+    expect(askPayload).toContain("planScope");
+    // approval 选项 mode 键面（§3.2 AskMode/AskOption 生成物）
     expect(generated("AskMode")).toContain('"allow_once" | "always_session" | "deny"');
     const askOption = generated("AskOption");
     for (const field of ["id", "label", "recommended", "mode"]) {
       expect(askOption.includes(field), `AskOption 缺字段 ${field}`).toBe(true);
     }
+    // AskAnswer.approval 的 optionId 键面保留（always_session 应答承载）
+    expect(generated("AskAnswer")).toContain("optionId");
   });
 
-  it("AskAnswer.approval 的 optionId 键面保留（always_session 应答承载）", () => {
-    const answer = generated("AskAnswer");
-    expect(answer).toContain("optionId");
+  it("生成物字段级类型面（runSnapshot/用量/git/产物/日志/更新器/队列暂停）：TS 实例化编译期守形 + 代表字段断言", () => {
+    // runSnapshot 摘要帧（05 号票，§3.4）负载对齐 §3.2 RunSnapshot（chat/frames.ts 消费面）
+    type ChatFrame = import("./generated/ChatFrame").ChatFrame;
+    type RunSnapshotFrame = Extract<ChatFrame, { type: "runSnapshot" }>;
+    const sample: RunSnapshotFrame = {
+      type: "runSnapshot",
+      status: "running",
+      runId: "r1",
+      startedAt: 1,
+      turn: 1,
+      toolCount: 0,
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      lastSeq: 0,
+    };
+    expect(sample.status).toBe("running");
+    // RunSnapshot 契约类型（命令返回 Option<RunSnapshot>，生成物已再导出）
+    const snapshot: import("./generated/RunSnapshot").RunSnapshot = {
+      status: "running",
+      runId: "r1",
+      startedAt: 1,
+      turn: 1,
+      toolCount: 0,
+      usage: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 },
+      lastSeq: 0,
+    };
+    expect(snapshot.lastSeq).toBe(0);
+
+    // 用量统计（20 号票，§3.3 #52/#59k）：byDay/byModel/total 与生成物同构；
+    // legacyTotalTokens 可选（旧数据标量回落，Q37 不伪造拆分）
+    const day: import("./generated/DayUsage").DayUsage = {
+      day: "2026-10-30",
+      input: 1,
+      output: 2,
+      cacheRead: 3,
+      cacheWrite: 4,
+      total: 10,
+    };
+    const model: import("./generated/ModelUsage").ModelUsage = {
+      modelId: "m1",
+      modelName: "gpt-4o",
+      input: 1,
+      output: 2,
+      cacheRead: 3,
+      cacheWrite: 4,
+      total: 10,
+      runs: 2,
+    };
+    const statsResult: import("./generated/StatsTokenResult").StatsTokenResult = {
+      byDay: [day],
+      byModel: [model],
+      total: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, total: 10, runs: 2 },
+    };
+    expect(statsResult.byDay[0]!.day).toBe("2026-10-30");
+    expect(statsResult.byModel[0]!.runs).toBe(2);
+    const usageResult: import("./generated/SessionUsageResult").SessionUsageResult = {
+      sessionId: "s1",
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      legacyTotalTokens: 777,
+    };
+    expect(usageResult.legacyTotalTokens).toBe(777);
+
+    // git 只读三命令（26 号票，§3.3 #37/#38）：生成物字段级回写形态
+    const statusFile: import("./generated/GitStatusFile").GitStatusFile = {
+      path: "a.ts",
+      status: "M",
+    };
+    expect(statusFile.status).toBe("M");
+    const status: import("./generated/GitStatusResult").GitStatusResult = {
+      isRepo: true,
+      files: [statusFile],
+      user: { name: "tester", email: "tester@test" },
+    };
+    expect(status.isRepo).toBe(true);
+    const patch: import("./generated/DiffPatch").DiffPatch = {
+      path: "a.ts",
+      addLines: 1,
+      delLines: 2,
+      binary: false,
+      truncated: false,
+      hunks: [{ header: "@@ -1,2 +1,2 @@", lines: [{ kind: "add", text: "x" }] }],
+    };
+    expect(patch.hunks[0]!.lines[0]!.kind).toBe("add");
+    const log: import("./generated/GitLogResult").GitLogResult = {
+      isRepo: true,
+      commits: [{ sha: "a".repeat(40), summary: "init", time: 0 }],
+    };
+    expect(log.commits[0]!.sha).toHaveLength(40);
+
+    // 会话日志（32 号票 #54）：tail 可缺省 = Option；lines 必有
+    const logArgs: import("./generated/ReadSessionLogArgs").ReadSessionLogArgs = {
+      sessionId: "s1",
+    };
+    expect(logArgs.sessionId).toBe("s1");
+    const logResult: import("./generated/ReadSessionLogResult").ReadSessionLogResult = {
+      lines: ['{"ts":"2026-10-30T00:00:00Z","level":"info","kind":"run","msg":"run 开始"}'],
+    };
+    expect(logResult.lines).toHaveLength(1);
+
+    // 产物面板与编辑器（28 号票，§3.3 #59l/#35）：ArtifactRow 四字段 + EditorEntry 两字段
+    const row: import("./generated/ArtifactRow").ArtifactRow = {
+      path: "/proj/a.txt",
+      runCount: 2,
+      lastSeenAt: 1760000000000,
+      exists: true,
+    };
+    expect(row.runCount).toBe(2);
+    expect(row.exists).toBe(true);
+    const artifactsResult: import("./generated/ListArtifactsResult").ListArtifactsResult = {
+      artifacts: [row],
+    };
+    expect(artifactsResult.artifacts).toHaveLength(1);
+    const editor: import("./generated/EditorEntry").EditorEntry = {
+      name: "VS Code",
+      path: "/usr/local/bin/code",
+    };
+    expect(editor.name).toBe("VS Code");
+
+    // 33 号票（§3.3 #59m/#59n/#59o）：更新器禁用门两字段 + 安装门六字段 + 队列快照两字段
+    const updateStatus: import("./generated/UpdateStatusResult").UpdateStatusResult = {
+      pubkeyConfigured: false,
+      endpoints: ["https://github.com/o/r/releases/latest/download/latest.json"],
+    };
+    expect(updateStatus.pubkeyConfigured).toBe(false);
+    const precheck: import("./generated/UpdatePrecheckResult").UpdatePrecheckResult = {
+      blocked: true,
+      reasons: ["有 1 个会话的任务正在运行（或等待审批），安装重启会中断运行"],
+      runningCount: 1,
+      pendingAskCount: 0,
+      runningQueueCount: 0,
+      pausedQueueCount: 0,
+    };
+    expect(precheck.blocked).toBe(true);
+    expect(precheck.reasons).toHaveLength(1);
+    const paused: import("./generated/PauseFollowupQueueResult").PauseFollowupQueueResult = {
+      size: 2,
+      paused: true,
+    };
+    expect(paused.size).toBe(2);
+    expect(paused.paused).toBe(true);
+    // §3.2 update 配置域（enabled 缺省 true / intervalHours 缺省 24）
+    const update: import("./generated/UpdateConfig").UpdateConfig = {
+      enabled: true,
+      intervalHours: 24,
+    };
+    expect(update.enabled).toBe(true);
+    expect(update.intervalHours).toBe(24);
   });
 });

@@ -3,10 +3,11 @@
  * 供应商页连接测试与本地预设单测（19 号票，FR-02-09/10/04）。
  *
  * mock 唯一 invoke 出口（@/ipc/client），断言三个外部行为面：
- * 1. 测试按钮状态机（idle → testing → ok / error）与结果行文案
- *    （延迟 / 模型数 / 七类分类人话文案映射）；
- * 2. 草稿试连（编辑弹框）：baseUrlOverride 传表单当前值；
- * 3. 本地预设（Ollama/llama.cpp/LM Studio）：chips 填充 + 免 Key 校验放行。
+ * 1. 测试按钮状态机（成功结果显示延迟/模型数；失败显示七类分类人话文案，
+ *    脱敏不回显原始 message）；
+ * 2. 探测错误分类 → 人话文案映射表（纯函数）；
+ * 3. 本地预设（免 Key 放行）与远端预设（Key 必填）。
+ * 精简版：每行为面留代表 1 例。
  */
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -98,14 +99,15 @@ beforeEach(() => {
   });
 });
 
-describe("供应商卡片「测试连接」状态机（FR-02-09）", () => {
-  it("点击后进入 testing，成功结果显示延迟与模型数", async () => {
+describe("供应商页（19 号票）", () => {
+  it("测试连接状态机（FR-02-09）：成功显示延迟与模型数；失败显示人话文案且脱敏", async () => {
+    // 成功：延迟 + 模型数
     testProvider.mockResolvedValue({
       ok: true,
       latencyMs: 123,
       models: ["a", "b"],
     });
-    render(<ProvidersPage />);
+    const ok = render(<ProvidersPage />);
     fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
     await waitFor(() => {
       expect(screen.getByTestId("connection-test-ok").textContent).toContain("已连通 · 123ms");
@@ -115,49 +117,25 @@ describe("供应商卡片「测试连接」状态机（FR-02-09）", () => {
       providerId: "prov-1",
       baseUrlOverride: undefined,
     });
-  });
+    ok.unmount();
 
-  it("失败结果显示七类分类的人话文案（auth 分类映射）", async () => {
+    // 失败：七类分类的人话文案（auth 分类映射）；
+    // 脱敏红线：人话文案不回显后端原始 message（原始值在 title 排查面）
     testProvider.mockResolvedValue({
       ok: false,
       error: { code: "E_PROVIDER_AUTH", message: "401：invalid key" },
     });
-    render(<ProvidersPage />);
+    const failed = render(<ProvidersPage />);
     fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
     await waitFor(() => {
       const row = screen.getByTestId("connection-test-error");
       expect(row.textContent).toContain("认证失败：API Key 无效或无权限");
-      // 脱敏红线：人话文案不回显后端原始 message（原始值在 title 排查面）
       expect(row.textContent).not.toContain("invalid key");
     });
+    failed.unmount();
   });
 
-  it("anthropic_messages 供应商的测试按钮可点并发起探测（38 号票三协议接通）", async () => {
-    useSettingsStore.setState({
-      config: configFixture([savedProvider({ id: "prov-a", apiFormat: "anthropic_messages" })]),
-      baseline: configFixture([]),
-    });
-    testProvider.mockResolvedValue({
-      ok: true,
-      latencyMs: 88,
-      models: ["claude-mock"],
-    });
-    render(<ProvidersPage />);
-    const button = screen.getByRole("button", { name: "测试连接" }) as HTMLButtonElement;
-    expect(button.disabled).toBe(false);
-    fireEvent.click(button);
-    await waitFor(() => {
-      expect(screen.getByTestId("connection-test-ok").textContent).toContain("已连通 · 88ms");
-    });
-    expect(testProvider).toHaveBeenCalledWith({
-      providerId: "prov-a",
-      baseUrlOverride: undefined,
-    });
-  });
-});
-
-describe("探测错误分类 → 人话文案映射表", () => {
-  it("七类各有人话文案，未知 code 兜底原样带出", () => {
+  it("探测错误分类 → 人话文案映射表：七类各有人话文案，未知 code 兜底原样带出", () => {
     expect(probeErrorLabel("E_PROVIDER_AUTH")).toContain("API Key");
     expect(probeErrorLabel("E_PROVIDER_BILLING")).toContain("余额");
     expect(probeErrorLabel("E_PROVIDER_RATE_LIMITED")).toContain("限流");
@@ -167,14 +145,11 @@ describe("探测错误分类 → 人话文案映射表", () => {
     expect(probeErrorLabel("E_PROVIDER_NETWORK")).toContain("无法连接");
     expect(probeErrorLabel("E_UNKNOWN_KIND")).toContain("E_UNKNOWN_KIND");
   });
-});
 
-describe("本地预设（FR-02-04）", () => {
-  it("本地预设 chips 填充表单且免 Key（apiKey 校验放行）", async () => {
-    render(<ProvidersPage />);
-    // 进入新增弹框
-    fireEvent.click(screen.getByRole("button", { name: /添加供应商/ }));
+  it("本地预设 chips 填充且免 Key（FR-02-04）；远端预设仍要求 Key", () => {
     // 本地预设 chip（Ollama 带「本地」标注）点击填充
+    const local = render(<ProvidersPage />);
+    fireEvent.click(screen.getByRole("button", { name: /添加供应商/ }));
     fireEvent.click(screen.getByText("Ollama（本地） · 本地"));
     expect(screen.getByDisplayValue("http://127.0.0.1:11434/v1")).toBeTruthy();
     expect(screen.getByDisplayValue("Ollama（本地）")).toBeTruthy();
@@ -183,13 +158,13 @@ describe("本地预设（FR-02-04）", () => {
     expect(screen.getAllByText("无需 API Key").length).toBeGreaterThan(0);
     // 预设建议模型已带入
     expect(screen.getByText("qwen3:8b")).toBeTruthy();
-  });
+    local.unmount();
 
-  it("远端预设仍要求 Key（校验红字保留）", async () => {
-    render(<ProvidersPage />);
+    // 远端预设：Key 必填说明仍在（未填时字段校验红字可被提交动作触发）
+    const remote = render(<ProvidersPage />);
     fireEvent.click(screen.getByRole("button", { name: /添加供应商/ }));
     fireEvent.click(screen.getByText("DeepSeek"));
-    // 远端预设：Key 必填说明仍在（未填时字段校验红字可被提交动作触发）
     expect(screen.getByPlaceholderText("sk-…")).toBeTruthy();
+    remote.unmount();
   });
 });

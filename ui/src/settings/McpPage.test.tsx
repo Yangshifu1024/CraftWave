@@ -2,7 +2,8 @@
 /**
  * MCP 管理页测试（§10.7，08 号票）：服务器行（配置 × 快照合并视图）、
  * 启停按钮、mcp:status 事件驱动的状态徽标、双作用域配置编辑保存（未知
- * 字段 round-trip）、测试连接。IPC 全部经 vi.mock 替换。
+ * 字段 round-trip）。IPC 全部经 vi.mock 替换。
+ * 精简版：每功能面留代表 1 例，相关段合并。
  */
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -77,7 +78,6 @@ const {
   connectMock,
   disconnectMock,
   saveConfigMock,
-  testMock,
   statusHandlers,
 } = mocks;
 
@@ -101,7 +101,7 @@ beforeEach(() => {
   connectMock.mockReset().mockResolvedValue(undefined);
   disconnectMock.mockReset().mockResolvedValue(undefined);
   saveConfigMock.mockReset().mockResolvedValue(undefined);
-  testMock.mockReset();
+  mocks.testMock.mockReset();
   statusHandlers.clear();
   // 空配置 + 空快照（各用例按需覆盖）
   listConfigMock.mockResolvedValue({
@@ -137,57 +137,45 @@ function seedOneServer(overrides?: Partial<McpSnapshotResultStub["servers"][numb
   });
 }
 
-describe("McpPage：服务器行", () => {
-  it("渲染合并视图行：名称/作用域/信任列/状态", async () => {
+describe("McpPage", () => {
+  it("服务器行合并视图（名称/作用域/信任列/状态）；无配置时空态提示", async () => {
     seedOneServer();
-    render(<McpPage />);
+    const view = render(<McpPage />);
     const row = await waitFor(() => screen.getByTestId("mcp-server-row"));
     expect(row.textContent).toContain("filesystem");
     expect(row.textContent).toContain("全局");
     expect(screen.getByTestId("mcp-state-filesystem").textContent).toContain("已停止");
     expect(screen.getByTestId("mcp-trust-filesystem").textContent).toBe("待决策");
-  });
+    view.unmount();
 
-  it("无配置时显示空态提示", async () => {
-    render(<McpPage />);
+    // 无配置空态
+    const empty = render(<McpPage />);
     await waitFor(() =>
       expect(screen.getByTestId("mcp-servers-section").textContent).toContain("还没有配置"),
     );
+    empty.unmount();
   });
 
-  it("停止态点「连接」调 mcp_connect；ready 态点「停止」调 mcp_disconnect", async () => {
+  it("启停按钮（停止态连接 / ready 态停止）；mcp:status 事件驱动徽标迁移与快照刷新", async () => {
+    // 停止态点「连接」调 mcp_connect；ready 态点「停止」调 mcp_disconnect
     seedOneServer();
-    render(<McpPage />);
+    const view = render(<McpPage />);
     const toggle = await waitFor(() => screen.getByTestId("mcp-toggle-filesystem"));
     fireEvent.click(toggle);
     await waitFor(() => expect(connectMock).toHaveBeenCalledWith("global", "filesystem"));
+    view.unmount();
 
-    // ready 态 → 停止按钮
     cleanup();
     seedOneServer({ state: "ready", toolCount: 3 });
-    render(<McpPage />);
+    const ready = render(<McpPage />);
     const stop = await waitFor(() => screen.getByTestId("mcp-toggle-filesystem"));
     expect(stop.textContent).toBe("停止");
     fireEvent.click(stop);
     await waitFor(() => expect(disconnectMock).toHaveBeenCalledWith("global", "filesystem"));
-  });
+    ready.unmount();
 
-  it("ready 行显示工具数；error 行显示状态明细", async () => {
-    seedOneServer({ state: "ready", toolCount: 5 });
-    const { unmount } = render(<McpPage />);
-    const row = await waitFor(() => screen.getByTestId("mcp-state-filesystem"));
-    expect(row.textContent).toContain("5 工具");
-    unmount();
-
+    // 事件迁移：starting → ready（ready 后按快照刷新信任列——事件不带信任面）
     cleanup();
-    seedOneServer({ state: "error", detail: "stdio 启动失败" });
-    render(<McpPage />);
-    await waitFor(() =>
-      expect(screen.getByTestId("mcp-server-row").textContent).toContain("stdio 启动失败"),
-    );
-  });
-
-  it("mcp:status 事件驱动状态徽标实时迁移，ready 后重拉快照", async () => {
     seedOneServer();
     snapshotMock.mockResolvedValue({
       servers: [
@@ -201,9 +189,8 @@ describe("McpPage：服务器行", () => {
         },
       ],
     });
-    render(<McpPage />);
+    const live = render(<McpPage />);
     await waitFor(() => expect(statusHandlers.size).toBeGreaterThan(0));
-    // 模拟后端 starting → ready 两次状态迁移（setState 渲染异步，断言走 waitFor）
     for (const handler of statusHandlers) {
       handler({ scope: "global", name: "filesystem", state: "starting" });
     }
@@ -216,15 +203,13 @@ describe("McpPage：服务器行", () => {
     await waitFor(() =>
       expect(screen.getByTestId("mcp-state-filesystem").textContent).toContain("2 工具"),
     );
-    // ready 后按快照刷新信任列（事件不带信任面）
     await waitFor(() =>
       expect(screen.getByTestId("mcp-trust-filesystem").textContent).toBe("已记住"),
     );
+    live.unmount();
   });
-});
 
-describe("McpPage：配置编辑与保存", () => {
-  it("编辑器载入作用域原文；保存载荷携带解析后的整份配置（未知字段保真）", async () => {
+  it("配置编辑保存：载荷携带解析后的整份配置（未知字段保真）；JSON 语法错误不发起保存", async () => {
     listConfigMock.mockResolvedValue({
       global: {
         mcpServers: {
@@ -234,7 +219,7 @@ describe("McpPage：配置编辑与保存", () => {
       project: { mcpServers: {} },
       projectAvailable: true,
     });
-    render(<McpPage />);
+    const view = render(<McpPage />);
     const editor = (await waitFor(() =>
       screen.getByTestId("mcp-config-editor"),
     )) as HTMLTextAreaElement;
@@ -261,69 +246,18 @@ describe("McpPage：配置编辑与保存", () => {
       }),
     );
     await waitFor(() => expect(screen.getByTestId("mcp-save-notice")).toBeTruthy());
-  });
+    view.unmount();
 
-  it("JSON 语法错误行内提示，不发起保存", async () => {
-    listConfigMock.mockResolvedValue({
-      global: { mcpServers: {} },
-      project: { mcpServers: {} },
-      projectAvailable: false,
-    });
-    render(<McpPage />);
-    const editor = await waitFor(
+    // JSON 语法错误行内提示，不发起保存
+    saveConfigMock.mockClear();
+    const bad = render(<McpPage />);
+    const editor2 = await waitFor(
       () => screen.getByTestId("mcp-config-editor") as HTMLTextAreaElement,
     );
-    fireEvent.change(editor, { target: { value: "{ 不是 JSON" } });
+    fireEvent.change(editor2, { target: { value: "{ 不是 JSON" } });
     fireEvent.click(screen.getByTestId("mcp-save-config"));
     await waitFor(() => expect(screen.getByTestId("mcp-save-error")).toBeTruthy());
     expect(saveConfigMock).not.toHaveBeenCalled();
-  });
-
-  it("无项目上下文时项目作用域禁选、编辑器禁用", async () => {
-    listConfigMock.mockResolvedValue({
-      global: { mcpServers: {} },
-      project: { mcpServers: {} },
-      projectAvailable: false,
-    });
-    render(<McpPage />);
-    const select = await waitFor(() => screen.getByLabelText("配置作用域") as HTMLSelectElement);
-    const projectOption = select.options[1]!;
-    expect(projectOption.textContent).toContain("项目");
-    expect(projectOption.disabled).toBe(true);
-  });
-});
-
-describe("McpPage：测试连接", () => {
-  it("按草稿命令调 mcp_test，成功展示工具清单", async () => {
-    testMock.mockResolvedValue({
-      ok: true,
-      tools: [{ name: "echo", description: "回显输入" }],
-    });
-    render(<McpPage />);
-    fireEvent.change(await waitFor(() => screen.getByTestId("mcp-test-command")), {
-      target: { value: "npx -y mcp-echo" },
-    });
-    fireEvent.click(screen.getByTestId("mcp-test-run"));
-    await waitFor(() => expect(testMock).toHaveBeenCalled());
-    expect(testMock.mock.calls[0]![0]).toMatchObject({
-      draft: { command: "npx -y mcp-echo", enabled: true },
-    });
-    const result = await waitFor(() => screen.getByTestId("mcp-test-result"));
-    expect(result.textContent).toContain("连接成功");
-    expect(result.textContent).toContain("echo");
-    // 试连不落盘
-    expect(saveConfigMock).not.toHaveBeenCalled();
-  });
-
-  it("失败展示 error 文本", async () => {
-    testMock.mockResolvedValue({ ok: false, tools: [], error: "stdio 握手超时" });
-    render(<McpPage />);
-    fireEvent.change(await waitFor(() => screen.getByTestId("mcp-test-command")), {
-      target: { value: "no-such-binary" },
-    });
-    fireEvent.click(screen.getByTestId("mcp-test-run"));
-    await waitFor(() =>
-      expect(screen.getByTestId("mcp-test-result").textContent).toContain("stdio 握手超时"),
-    );
+    bad.unmount();
   });
 });

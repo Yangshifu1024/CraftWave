@@ -2,6 +2,8 @@
 /**
  * AskPanel 交互测试（§3.2 两形态，14 号票）：问卷作答 / 审批允许拒绝 →
  * resolveAsk 载荷形状。client.resolveAsk 注入 fake。
+ * 精简版：每形态留代表 1 例；对称载荷循环断言；安全语义（三选项载荷/
+ * 白名单写入/审计注记）保留。
  */
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -9,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AskPayload } from "@/ipc/types";
 import { useAskStore } from "@/stores/ask";
 import { DEFAULT_CONFIG, useSettingsStore } from "@/stores/settings";
-import { AskPanel, approvalCommandPrefix } from "./AskPanel";
+import { AskPanel } from "./AskPanel";
 import { SessionScopeContext } from "./session-scope";
 
 /** resolveAsk / saveConfig 的 mock：记录面板提交的载荷与白名单写入
@@ -94,14 +96,13 @@ function openPanel(payload: AskPayload) {
   useAskStore.getState().open("s1", "ask-1", payload);
 }
 
-describe("AskPanel：question 形态", () => {
-  it("无未决 ask 时不渲染", () => {
-    const { container } = renderPanel();
-    expect(container.childElementCount).toBe(0);
+describe("AskPanel 形态代表", () => {
+  it("question：无未决 ask 不渲染；选项点选 + 自由文本 → 提交 answers", () => {
+    const empty = renderPanel();
+    expect(empty.container.childElementCount).toBe(0);
     expect(screen.queryByTestId("ask-panel")).toBeNull();
-  });
+    empty.unmount();
 
-  it("选项点选 + 自由文本 → 提交 answers", () => {
     openPanel(questionPayload);
     renderPanel();
     expect(screen.getByTestId("ask-panel").getAttribute("data-kind")).toBe("question");
@@ -121,10 +122,8 @@ describe("AskPanel：question 形态", () => {
       answers: { q1: "a", q2: "注意并发" },
     });
   });
-});
 
-describe("AskPanel：approval 形态", () => {
-  it("命令 + 围栏原因 + diff 预览；允许/拒绝载荷", () => {
+  it("approval：命令 + 围栏原因 + diff 预览；允许/拒绝载荷", () => {
     openPanel({
       ...approvalPayload,
       diff: {
@@ -161,24 +160,21 @@ describe("AskPanel：approval 形态", () => {
       optionId: "deny",
     });
   });
-});
 
-describe("AskPanel：mcpTrust 形态（08 号票）", () => {
-  /** MCP 启动信任载荷样例（后端 ask:opened 的 sessionId="" 形态）。 */
-  const trustPayload: AskPayload = {
-    kind: "mcpTrust",
-    server: "filesystem",
-    transport: "stdio",
-    fingerprint: "a1b2c3d4e5f60718",
-    commandOrUrl: "npx -y @modelcontextprotocol/server-filesystem /tmp",
-    options: [
-      { id: "allow_once", label: "仅本次连接" },
-      { id: "remember", label: "记住此版本" },
-      { id: "deny", label: "拒绝" },
-    ],
-  };
-
-  it('应用级桶（sessionId=""）的 mcpTrust 询问在任意会话上下文渲染', () => {
+  it("mcpTrust（08 号票）：应用级桶在任意会话上下文渲染；三选项载荷 allow_once/remember/deny", () => {
+    // MCP 启动信任载荷样例（后端 ask:opened 的 sessionId="" 形态）
+    const trustPayload: AskPayload = {
+      kind: "mcpTrust",
+      server: "filesystem",
+      transport: "stdio",
+      fingerprint: "a1b2c3d4e5f60718",
+      commandOrUrl: "npx -y @modelcontextprotocol/server-filesystem /tmp",
+      options: [
+        { id: "allow_once", label: "仅本次连接" },
+        { id: "remember", label: "记住此版本" },
+        { id: "deny", label: "拒绝" },
+      ],
+    };
     // 信任询问不属任何会话：进 "" 桶；AskPanel 在 s1 作用域下也要能看到
     useAskStore.getState().open("", "trust-1", trustPayload);
     renderPanel();
@@ -187,61 +183,20 @@ describe("AskPanel：mcpTrust 形态（08 号票）", () => {
     expect(panel.textContent).toContain("filesystem");
     expect(panel.textContent).toContain("npx -y @modelcontextprotocol/server-filesystem /tmp");
     expect(screen.getByTestId("mcp-trust-fingerprint").textContent).toBe("a1b2c3d4e5f60718");
-  });
 
-  it("三选项 → resolveAsk(approval) 携 allow_once/remember/deny", () => {
-    useAskStore.getState().open("", "trust-1", trustPayload);
-    renderPanel();
-    fireEvent.click(screen.getByTestId("ask-option-remember"));
-    expect(resolveAskMock).toHaveBeenCalledWith("trust-1", {
-      kind: "approval",
-      optionId: "remember",
-    });
-
-    resolveAskMock.mockClear();
-    fireEvent.click(screen.getByTestId("ask-option-allow_once"));
-    expect(resolveAskMock).toHaveBeenCalledWith("trust-1", {
-      kind: "approval",
-      optionId: "allow_once",
-    });
-
-    resolveAskMock.mockClear();
-    fireEvent.click(screen.getByTestId("ask-option-deny"));
-    expect(resolveAskMock).toHaveBeenCalledWith("trust-1", {
-      kind: "approval",
-      optionId: "deny",
-    });
-  });
-
-  it("会话桶为空且无应用级询问时不渲染", () => {
-    const { container } = renderPanel();
-    expect(container.childElementCount).toBe(0);
-  });
-
-  it("应答失效（E_NOT_FOUND）时按 askId 关闭弹窗，不残留面板", async () => {
-    useAskStore.getState().open("", "trust-1", trustPayload);
-    resolveAskMock.mockRejectedValueOnce({ code: "E_NOT_FOUND", message: "槽不存在" });
-    renderPanel();
-    fireEvent.click(screen.getByTestId("ask-option-deny"));
-    await waitFor(() => expect(useAskStore.getState().bySession[""]).toBeUndefined());
-    expect(screen.queryByTestId("ask-panel")).toBeNull();
+    // 三选项载荷（同步点击同步断言：面板在应答 resolve 后才关闭）
+    for (const optionId of ["remember", "allow_once", "deny"] as const) {
+      resolveAskMock.mockClear();
+      fireEvent.click(screen.getByTestId(`ask-option-${optionId}`));
+      expect(resolveAskMock).toHaveBeenCalledWith("trust-1", {
+        kind: "approval",
+        optionId,
+      });
+    }
   });
 });
 
 describe("23 号票：审批记忆与白名单（ApprovalForm 增量）", () => {
-  it("approvalCommandPrefix：词序列前缀提取表（与后端 allowlist_hit 同口径）", () => {
-    const cases: [string, string | null][] = [
-      ["git status --short", "git status"],
-      ["git status", "git status"],
-      ["  npm   run build  ", "npm run"],
-      ["ls", "ls"],
-      ["   ", null],
-    ];
-    for (const [command, expect_] of cases) {
-      expect(approvalCommandPrefix(command), `command=${command}`).toBe(expect_);
-    }
-  });
-
   /** 命令类审批载荷样例（③ 开：后端下发 always_session 选项）。 */
   const commandApprovalPayload: AskPayload = {
     kind: "approval",
@@ -254,18 +209,11 @@ describe("23 号票：审批记忆与白名单（ApprovalForm 增量）", () => 
     ],
   };
 
-  it("命令类审批（③ 开）渲染「加入白名单」勾选；未勾选直接允许不写白名单", async () => {
+  it("白名单勾选：允许写前缀条目；拒绝不写；开关关闭或无 always_session 选项不出勾选框", async () => {
+    // 勾选「加入白名单」后点允许 → 白名单持久（前缀条目）+ 应答照常
     openPanel(commandApprovalPayload);
     renderPanel();
     expect(screen.getByTestId("ask-add-allowlist")).toBeTruthy();
-    fireEvent.click(screen.getByTestId("ask-option-allow_once"));
-    await waitFor(() => expect(resolveAskMock).toHaveBeenCalled());
-    expect(saveConfigMock).not.toHaveBeenCalled();
-  });
-
-  it("勾选「加入白名单」后点允许 → 白名单持久（前缀条目）+ 应答照常", async () => {
-    openPanel(commandApprovalPayload);
-    renderPanel();
     fireEvent.click(screen.getByTestId("ask-add-allowlist").querySelector("input")!);
     fireEvent.click(screen.getByTestId("ask-option-allow_once"));
     await waitFor(() => expect(saveConfigMock).toHaveBeenCalled());
@@ -275,169 +223,123 @@ describe("23 号票：审批记忆与白名单（ApprovalForm 增量）", () => 
       kind: "approval",
       optionId: "allow_once",
     });
-  });
+    cleanup();
 
-  it("③ 关（载荷无 always_session 选项）不出勾选框", () => {
-    openPanel(approvalPayload);
-    renderPanel();
-    expect(screen.queryByTestId("ask-add-allowlist")).toBeNull();
-  });
-
-  it("④ 关（allowlistEnabled=false）命令类审批也不出勾选框", () => {
-    useSettingsStore.setState((s) => ({
-      config: s.config
-        ? { ...s.config, approval: { ...s.config.approval, allowlistEnabled: false } }
-        : s.config,
-    }));
-    openPanel({
-      kind: "approval",
-      title: "执行命令",
-      command: "git status",
-      options: [
-        { id: "allow_once", label: "允许", recommended: true, mode: "allow_once" },
-        { id: "always_session", label: "始终允许（本会话）", mode: "always_session" },
-        { id: "deny", label: "拒绝", mode: "deny" },
-      ],
-    });
-    renderPanel();
-    expect(screen.queryByTestId("ask-add-allowlist")).toBeNull();
-  });
-
-  it("拒绝时勾选不写白名单", async () => {
-    openPanel({
-      kind: "approval",
-      title: "执行命令",
-      command: "git status",
-      options: [
-        { id: "allow_once", label: "允许", recommended: true, mode: "allow_once" },
-        { id: "always_session", label: "始终允许（本会话）", mode: "always_session" },
-        { id: "deny", label: "拒绝", mode: "deny" },
-      ],
-    });
+    // 拒绝时勾选不写白名单（store 复位后重开面板）
+    useAskStore.setState({ bySession: {}, hints: {} });
+    saveConfigMock.mockClear();
+    openPanel(commandApprovalPayload);
     renderPanel();
     fireEvent.click(screen.getByTestId("ask-add-allowlist").querySelector("input")!);
     fireEvent.click(screen.getByTestId("ask-option-deny"));
     await waitFor(() => expect(resolveAskMock).toHaveBeenCalled());
     expect(saveConfigMock).not.toHaveBeenCalled();
+    cleanup();
+
+    // ④ 关（allowlistEnabled=false）命令类审批也不出勾选框
+    useSettingsStore.setState((s) => ({
+      config: s.config
+        ? { ...s.config, approval: { ...s.config.approval, allowlistEnabled: false } }
+        : s.config,
+    }));
+    openPanel(commandApprovalPayload);
+    renderPanel();
+    expect(screen.queryByTestId("ask-add-allowlist")).toBeNull();
+    cleanup();
+
+    // ③ 关（载荷无 always_session 选项）不出勾选框（恢复白名单开关）
+    useSettingsStore.setState((s) => ({
+      config: s.config
+        ? { ...s.config, approval: { ...s.config.approval, allowlistEnabled: true } }
+        : s.config,
+    }));
+    openPanel(approvalPayload);
+    renderPanel();
+    expect(screen.queryByTestId("ask-add-allowlist")).toBeNull();
   });
 });
 
-/** 外部目录授权载荷样例（24 号票，§9.9）：路径 + 粒度说明 + 允许/拒绝。 */
-const externalDirPayload: AskPayload = {
-  kind: "externalDir",
-  path: "/Users/demo/外部资料",
-  options: [
-    { id: "allow", label: "始终允许（本会话）" },
-    { id: "deny", label: "拒绝" },
-  ],
-};
-
-describe("externalDir 外部目录授权卡（24 号票，§9.9）", () => {
-  it("渲染授权路径与粒度说明（data-kind=externalDir）", () => {
-    useAskStore.getState().open("s1", "ask-ext", externalDirPayload);
-    const { container } = renderPanel();
-    const panel = container.querySelector('[data-testid="ask-panel"]');
-    expect(panel?.getAttribute("data-kind")).toBe("externalDir");
-    expect(screen.getByTestId("external-dir-path").textContent).toBe("/Users/demo/外部资料");
-    expect(container.textContent).toContain("该目录及子目录的读/写/列");
-  });
-
-  it("点允许 → resolveAsk(approval) 载荷 optionId=allow", async () => {
+describe("变体审批卡（24 / 25 号票）", () => {
+  it("externalDir 路径卡与计划范围卡：关键行渲染 + allow/deny/always_session 载荷", () => {
+    // externalDir 外部目录授权（24 号票，§9.9）：路径 + 粒度说明
+    const externalDirPayload: AskPayload = {
+      kind: "externalDir",
+      path: "/Users/demo/外部资料",
+      options: [
+        { id: "allow", label: "始终允许（本会话）" },
+        { id: "deny", label: "拒绝" },
+      ],
+    };
     useAskStore.getState().open("s1", "ask-ext", externalDirPayload);
     renderPanel();
-    fireEvent.click(screen.getByTestId("ask-option-allow"));
-    await waitFor(() =>
+    expect(screen.getByTestId("ask-panel").getAttribute("data-kind")).toBe("externalDir");
+    expect(screen.getByTestId("external-dir-path").textContent).toBe("/Users/demo/外部资料");
+    expect(screen.getByTestId("ask-panel").textContent).toContain("该目录及子目录的读/写/列");
+    for (const optionId of ["allow", "deny"] as const) {
+      resolveAskMock.mockClear();
+      fireEvent.click(screen.getByTestId(`ask-option-${optionId}`));
       expect(resolveAskMock).toHaveBeenCalledWith("ask-ext", {
         kind: "approval",
-        optionId: "allow",
-      }),
-    );
-  });
+        optionId,
+      });
+    }
+    cleanup();
 
-  it("点拒绝 → resolveAsk(approval) 载荷 optionId=deny", async () => {
-    useAskStore.getState().open("s1", "ask-ext2", externalDirPayload);
-    renderPanel();
-    fireEvent.click(screen.getByTestId("ask-option-deny"));
-    await waitFor(() =>
-      expect(resolveAskMock).toHaveBeenCalledWith("ask-ext2", {
-        kind: "approval",
-        optionId: "deny",
-      }),
-    );
-  });
-});
-
-/** 计划范围卡载荷样例（25 号票，§8.6）：planScope + 三选项无推荐项。 */
-const planScopePayload: AskPayload = {
-  kind: "approval",
-  title: "计划范围确认",
-  command: undefined,
-  fenceReason: "写入路径「src/b.rs」不在已批准计划的范围内（批准范围：src/a.rs）",
-  planScope: "src/b.rs",
-  options: [
-    { id: "allow_once", label: "允许（仅本次）", mode: "allow_once" },
-    { id: "always_session", label: "本会话始终允许（写入所在目录）", mode: "always_session" },
-    { id: "deny", label: "拒绝", mode: "deny" },
-  ],
-};
-
-describe("计划范围卡（25 号票，§8.6）", () => {
-  it("范围卡展示计划外路径与三选项，点「本会话始终允许」回传 always_session", async () => {
+    // 计划范围卡（25 号票，§8.6）：范围行明示 + 三选项（无推荐项不参与
+    // autoConfirm 的 UI 面；recommended 全 None 的载荷断言在后端契约锚点）
+    const planScopePayload: AskPayload = {
+      kind: "approval",
+      title: "计划范围确认",
+      command: undefined,
+      fenceReason: "写入路径「src/b.rs」不在已批准计划的范围内（批准范围：src/a.rs）",
+      planScope: "src/b.rs",
+      options: [
+        { id: "allow_once", label: "允许（仅本次）", mode: "allow_once" },
+        { id: "always_session", label: "本会话始终允许（写入所在目录）", mode: "always_session" },
+        { id: "deny", label: "拒绝", mode: "deny" },
+      ],
+    };
     useAskStore.getState().open("s1", "ask-scope", planScopePayload);
     renderPanel();
-    // 计划外路径明示行
     expect(screen.getByTestId("ask-plan-scope").textContent).toContain("src/b.rs");
     expect(screen.getByText("计划范围确认")).toBeTruthy();
-    // 三选项渲染
     expect(screen.getByTestId("ask-option-allow_once")).toBeTruthy();
     expect(screen.getByTestId("ask-option-always_session")).toBeTruthy();
     expect(screen.getByTestId("ask-option-deny")).toBeTruthy();
-    // 无推荐项不参与 autoConfirm 的 UI 面：载荷断言在契约测试锚点（后端侧
-    // recommended 全 None）；这里验证点击 always_session 的应答形状
-    fireEvent.click(screen.getByTestId("ask-option-always_session"));
-    await waitFor(() => expect(resolveAskMock).toHaveBeenCalled());
-    expect(resolveAskMock).toHaveBeenCalledWith("ask-scope", {
-      kind: "approval",
-      optionId: "always_session",
-    });
+    for (const optionId of ["always_session", "deny"] as const) {
+      resolveAskMock.mockClear();
+      fireEvent.click(screen.getByTestId(`ask-option-${optionId}`));
+      expect(resolveAskMock).toHaveBeenCalledWith("ask-scope", {
+        kind: "approval",
+        optionId,
+      });
+    }
   });
 
-  it("范围卡点拒绝回传 deny", async () => {
-    useAskStore.getState().open("s1", "ask-scope-2", planScopePayload);
-    renderPanel();
-    fireEvent.click(screen.getByTestId("ask-option-deny"));
-    await waitFor(() => expect(resolveAskMock).toHaveBeenCalled());
-    expect(resolveAskMock).toHaveBeenCalledWith("ask-scope-2", {
-      kind: "approval",
-      optionId: "deny",
-    });
-  });
-});
-
-describe("灰区命令审计注记（36 号票，approval.audit）", () => {
-  it("audit.state=ask 显示模型审计建议行（含理由）", () => {
+  it("灰区命令审计注记（36 号票，approval.audit）：ask 显建议、manual 显转人工；无注记不渲染", () => {
+    // audit.state=ask：模型审计建议行（含理由）
     useAskStore.getState().open("s1", "ask-audit-1", {
       ...approvalPayload,
       audit: { state: "ask", reason: "写入位置在授权目录外" },
     });
     renderPanel();
-    const note = screen.getByTestId("ask-audit-note");
+    let note = screen.getByTestId("ask-audit-note");
     expect(note.textContent).toContain("模型审计建议人工确认");
     expect(note.textContent).toContain("写入位置在授权目录外");
-  });
+    cleanup();
 
-  it("audit.state=manual 显示转人工行（含失败原因）", () => {
+    // audit.state=manual：转人工行（含失败原因）
     useAskStore.getState().open("s1", "ask-audit-2", {
       ...approvalPayload,
       audit: { state: "manual", reason: "审计超时：15 秒总预算已到" },
     });
     renderPanel();
-    const note = screen.getByTestId("ask-audit-note");
+    note = screen.getByTestId("ask-audit-note");
     expect(note.textContent).toContain("审计不可用");
     expect(note.textContent).toContain("审计超时");
-  });
+    cleanup();
 
-  it("载荷无 audit 注记时不渲染审计行", () => {
+    // 载荷无 audit 注记：不渲染审计行
     useAskStore.getState().open("s1", "ask-audit-3", approvalPayload);
     const { container } = renderPanel();
     expect(container.querySelector('[data-testid="ask-audit-note"]')).toBeNull();

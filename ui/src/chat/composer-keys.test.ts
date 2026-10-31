@@ -1,5 +1,5 @@
 // composer-keys 纯逻辑测试（17 号票：@ 触发检测与插入；09 号票：/ 技能触发
-// 检测、技能插入形态与清单过滤、@ 与 / 首字符互斥）。
+// 检测、技能插入形态与清单过滤；10 号票：$ 角色触发符；28 号票：@ 引号路径）。
 import { describe, expect, it } from "vitest";
 import {
   detectDollarQuery,
@@ -16,228 +16,130 @@ import {
   insertSkillInvocation,
 } from "./composer-keys";
 
-describe("detectAtQuery（@ 路径触发检测，§10.6 光标锚定）", () => {
-  it("光标前未闭合的 @ 返回插入位与查询词", () => {
+describe("触发符检测（@ / $ 同构光标锚定；28 号票引号路径升级）", () => {
+  it("@ 检测：未闭合触发、间隔空白终止、取最近触发位、引号路径回扫", () => {
+    // 光标前未闭合的 @ 返回插入位与查询词（§10.6 光标锚定）
     const text = "看一下 @src/ma";
     expect(detectAtQuery(text, text.length)).toEqual({ at: 4, query: "src/ma" });
-  });
-
-  it("@ 与光标间隔空白 → 非触发态", () => {
-    const text = "看看 @src 之后";
-    expect(detectAtQuery(text, text.length)).toBeNull();
-  });
-
-  it("无 @ 或光标在 @ 前 → null", () => {
+    // @ 与光标间隔空白 → 非触发态
+    expect(detectAtQuery("看看 @src 之后", 9)).toBeNull();
+    // 无 @ 或光标在 @ 前 → null
     expect(detectAtQuery("普通文本", 4)).toBeNull();
     expect(detectAtQuery("@src", 0)).toBeNull();
+    // 多个触发位时取最近的 @
+    expect(detectAtQuery("@a 起 @b", 7)).toEqual({ at: 5, query: "b" });
+
+    // ---- 28 号票引号路径：未闭合引号回扫 ----
+    // 引号内空白不终止触发（`@"a b/c` 输入中）
+    expect(detectAtQuery('看 @"a b/c', 10)).toEqual({ at: 2, query: '"a b/c' });
+    // 闭合引号即止：完整引用形态后不再触发
+    expect(detectAtQuery('看 @"a b/c.txt"', 15)).toBeNull();
+    // 完整引用后的后续输入照常触发
+    expect(detectAtQuery('看 @"a b/c.txt" 然后 @', 21)).toEqual({ at: 18, query: "" });
+    // 引号内的 @ 不嵌套触发（`@"a@b/c.txt"` 光标在闭合引号后）
+    expect(detectAtQuery('看 @"a@b/c.txt"', 15)).toBeNull();
+    // 引号内空白判定对多行文本同样成立（换行在引号内不终止）
+    expect(detectAtQuery('@"a\nb/c', 7)).toEqual({ at: 0, query: '"a\nb/c' });
+    // 引号外空白照常终止（普通路径输入不受引号升级影响）
+    expect(detectAtQuery("看看 @src 之后", 9)).toBeNull();
+    // 光标落在引用中间（未闭合段内）保持触发
+    expect(detectAtQuery('看 @"a b/c.txt" 尾部', 7)).toEqual({ at: 2, query: '"a b' });
   });
 
-  it("取最近的 @（多个触发位时）", () => {
-    const text = "@a 起 @b";
-    expect(detectAtQuery(text, text.length)).toEqual({ at: 5, query: "b" });
-  });
-});
-
-describe("detectSlashQuery（/ 技能触发检测，09 号票 FR-01-17 技能半边）", () => {
-  it("行首 / 返回插入位与查询词", () => {
-    const text = "/hel";
-    expect(detectSlashQuery(text, text.length)).toEqual({ at: 0, query: "hel" });
-  });
-
-  it("空白后的 / 同样触发", () => {
-    const text = "请用 /dem";
-    expect(detectSlashQuery(text, text.length)).toEqual({ at: 3, query: "dem" });
-  });
-
-  it("句中斜杠（路径文本）不触发——前一字符非空白", () => {
+  it("/ 与 $ 检测：行首与空白后触发、句中斜杠与 cost$ 不触发、三符互斥（更近触发符优先）", () => {
+    // / 的正常触发形态（09 号票 FR-01-17）
+    expect(detectSlashQuery("/hel", 4)).toEqual({ at: 0, query: "hel" });
+    expect(detectSlashQuery("请用 /dem", 9)).toEqual({ at: 3, query: "dem" });
+    // 句中斜杠（路径文本）不触发——前一字符非空白
     expect(detectSlashQuery("读 src/main.rs 的第", 11)).toBeNull();
-  });
-
-  it("/ 与光标间隔空白 → 非触发态", () => {
+    // / 与光标间隔空白 → 非触发态；刚敲下 / 返回空查询词
     expect(detectSlashQuery("/hel 之后", 8)).toBeNull();
-  });
-
-  it("更近的 @ 触发归 @ 菜单（首字符互斥，@ 胜出）", () => {
-    const text = "用 /he 看 @a";
-    // 光标往回先遇到 @（更近的触发符），/ 不抢菜单
-    expect(detectSlashQuery(text, text.length)).toBeNull();
-    expect(detectAtQuery(text, text.length)).toEqual({ at: 8, query: "a" });
-  });
-
-  it("/ 在 @ 之后仍归 /（更近触发符优先）", () => {
-    const text = "@a 结束 /he";
-    expect(detectSlashQuery(text, text.length)).toEqual({ at: 6, query: "he" });
-    // / 与光标之间无空白，@ 检测判定非触发态
-    expect(detectAtQuery(text, text.length)).toBeNull();
-  });
-
-  it("空查询（刚敲下 /）返回空查询词", () => {
     expect(detectSlashQuery("/", 1)).toEqual({ at: 0, query: "" });
-  });
-});
 
-describe("insertSkillInvocation（技能选中插入，票面定案展开为明确指令文本）", () => {
-  it("把 /查询 替换为明确指令并衔接用户后续输入", () => {
-    const text = "/hel 帮我入门";
-    // 光标在查询结束处（下标 4，空格前）——后续输入原样保留
-    expect(insertSkillInvocation(text, 0, 4, "hello")).toBe(
-      "请用 skill 工具加载技能 hello 并按其指引行动 帮我入门",
-    );
-  });
-
-  it("无后续输入时以空格收尾", () => {
-    expect(insertSkillInvocation("/demo", 0, 5, "demo")).toBe(
-      "请用 skill 工具加载技能 demo 并按其指引行动 ",
-    );
-  });
-});
-
-describe("filterSkills（/ 菜单清单过滤）", () => {
-  const skills: SkillListEntry[] = [
-    {
-      name: "hello-craftwave",
-      source: "builtin",
-      enabled: true,
-      description: "入门示例",
-      trustStatus: "pending",
-    },
-    {
-      name: "pdf-toolkit",
-      source: "global",
-      enabled: true,
-      description: "PDF 处理",
-      trustStatus: "pending",
-    },
-    {
-      name: "demo-hello",
-      source: "project",
-      enabled: true,
-      description: "演示",
-      trustStatus: "pending",
-    },
-  ];
-
-  it("空查询返回全部（保持清单序）", () => {
-    expect(filterSkills(skills, "")).toHaveLength(3);
-  });
-
-  it("前缀命中排前、包含命中排后（大小写不敏感）", () => {
-    const hits = filterSkills(skills, "HEL");
-    expect(hits.map((s) => s.name)).toEqual(["hello-craftwave", "demo-hello"]);
-  });
-
-  it("无命中返回空表", () => {
-    expect(filterSkills(skills, "missing")).toEqual([]);
-  });
-});
-
-describe("insertAtCompletion（补全项插入）", () => {
-  it("替换查询词为完整路径并留尾空格", () => {
-    const text = "读 @src/ma";
-    expect(insertAtCompletion(text, 2, text.length, "src/main.rs")).toBe("读 @src/main.rs ");
-  });
-});
-
-// ---- $ 角色触发符（FR-07-02，10 号票）----
-
-describe("detectDollarQuery（$ 菜单触发检测，与 @ / 同构光标锚定）", () => {
-  it("行首 $ 触发：返回插入位与查询词", () => {
+    // $ 的正常触发形态（FR-07-02，10 号票，与 @ / 同构）
     expect(detectDollarQuery("$ex", 3)).toEqual({ at: 0, query: "ex" });
-  });
-
-  it("空白后的 $ 触发（句子中段点名）", () => {
-    const text = "帮我看看 $";
-    expect(detectDollarQuery(text, text.length)).toEqual({ at: 5, query: "" });
-  });
-
-  it("非空白后的 $ 不触发（排除 cost$100 误触）", () => {
+    expect(detectDollarQuery("帮我看看 $", 10)).toEqual({ at: 5, query: "" });
+    // 非空白后的 $ 不触发（排除 cost$100 误触）；间隔空白非触发态
     expect(detectDollarQuery("cost$100", 8)).toBeNull();
-  });
-
-  it("$ 与光标间隔空白 → 非触发态", () => {
     expect(detectDollarQuery("$ex plore", 9)).toBeNull();
-  });
 
-  it("更近的 @ / / 触发归各自菜单（三符互斥）", () => {
+    // 三符互斥：更近的触发符优先
+    const atNear = "用 /he 看 @a";
+    expect(detectSlashQuery(atNear, atNear.length)).toBeNull();
+    expect(detectAtQuery(atNear, atNear.length)).toEqual({ at: 8, query: "a" });
+    const slashNear = "@a 结束 /he";
+    // / 与光标之间无空白，@ 检测判定非触发态
+    expect(detectSlashQuery(slashNear, slashNear.length)).toEqual({ at: 6, query: "he" });
+    expect(detectAtQuery(slashNear, slashNear.length)).toBeNull();
+    // 更近的 @ / / 触发归各自菜单，$ 不抢
     expect(detectDollarQuery("@src/", 6)).toBeNull();
     expect(detectDollarQuery("$a @b", 5)).toBeNull();
   });
-});
 
-describe("filterRoles（$ 菜单角色过滤）", () => {
-  it("空查询返回全部 7 角色（保持清单序）", () => {
-    expect(filterRoles(SUBAGENT_ROLES, "")).toHaveLength(7);
-  });
+  it("插入形态：/ 技能展开为指令、@ 路径补全（空格路径引号包裹）、$ 角色替换", () => {
+    // / 技能选中插入：票面定案展开为明确指令文本，衔接用户后续输入
+    // （光标在查询结束处——后续输入原样保留）
+    expect(insertSkillInvocation("/hel 帮我入门", 0, 4, "hello")).toBe(
+      "请用 skill 工具加载技能 hello 并按其指引行动 帮我入门",
+    );
+    // 无后续输入时以空格收尾
+    expect(insertSkillInvocation("/demo", 0, 5, "demo")).toBe(
+      "请用 skill 工具加载技能 demo 并按其指引行动 ",
+    );
 
-  it("前缀命中排前、包含命中排后（大小写不敏感）", () => {
-    const hits = filterRoles(SUBAGENT_ROLES, "DEV");
-    expect(hits.map((r) => r.name)).toEqual(["frontend-dev", "backend-dev"]);
-  });
-});
+    // @ 补全：替换查询词为完整路径并留尾空格
+    const text = "读 @src/ma";
+    expect(insertAtCompletion(text, 2, text.length, "src/main.rs")).toBe("读 @src/main.rs ");
+    // 28 号票：路径含空格 → 插入 @"path" 引号形态；无空格 → 维持裸路径
+    expect(insertAtCompletion("看 @", 2, 3, "a b/c.txt")).toBe('看 @"a b/c.txt" ');
+    expect(insertAtCompletion("看 @", 2, 3, "src/main.rs")).toBe("看 @src/main.rs ");
+    // 替换范围含查询中已敲出的开引号（`@"a b` 选中 c.txt → 完整形态）
+    expect(insertAtCompletion('看 @"a b', 2, 7, "a b/c.txt")).toBe('看 @"a b/c.txt" ');
 
-describe("insertDollarInvocation（$ 角色插入）", () => {
-  it("替换查询词为 $角色名 + 尾空格，保留后续输入", () => {
+    // $ 角色插入：替换查询词为 $角色名 + 尾空格，保留后续输入
     expect(insertDollarInvocation("$ex 帮我找入口", 0, 3, "explore")).toBe("$explore 帮我找入口");
-  });
-
-  it("后续文本以空白开头时剥掉首段空白（避免双空格）", () => {
+    // 后续文本以空白开头时剥掉首段空白（避免双空格）
     expect(insertDollarInvocation("$reviewer   审查一下", 0, 9, "reviewer")).toBe(
       "$reviewer 审查一下",
     );
   });
-});
 
-// ---- 28 号票：@ 引号路径（detectAtQuery 未闭合引号回扫 / insertAtCompletion
-// 空格路径引号包裹 / 引号内搜索词剥引号）----
-
-describe("detectAtQuery（28 号票引号路径升级）", () => {
-  it('未闭合引号内的空白不终止触发（`@"a b/c` 输入中）', () => {
-    const text = '看 @"a b/c';
-    expect(detectAtQuery(text, text.length)).toEqual({ at: 2, query: '"a b/c' });
-  });
-
-  it('闭合引号即止：完整引用形态 `@"a b/c.txt"` 后不再触发', () => {
-    const text = '看 @"a b/c.txt"';
-    expect(detectAtQuery(text, text.length)).toBeNull();
-  });
-
-  it("完整引用后的后续输入照常触发", () => {
-    const text = '看 @"a b/c.txt" 然后 @';
-    expect(detectAtQuery(text, text.length)).toEqual({ at: 18, query: "" });
-  });
-
-  it('引号内的 @ 不嵌套触发（`@"a@b/c.txt"` 光标在闭合引号后）', () => {
-    const text = '看 @"a@b/c.txt"';
-    expect(detectAtQuery(text, text.length)).toBeNull();
-  });
-
-  it("引号内空白判定对多行文本同样成立（换行在引号内不终止）", () => {
-    const text = '@"a\nb/c';
-    expect(detectAtQuery(text, text.length)).toEqual({ at: 0, query: '"a\nb/c' });
-  });
-
-  it("引号外空白照常终止（普通路径输入不受引号升级影响）", () => {
-    expect(detectAtQuery("看看 @src 之后", 9)).toBeNull();
-  });
-
-  it("光标落在引用中间（未闭合段内）保持触发", () => {
-    const text = '看 @"a b/c.txt" 尾部';
-    // 光标移到 b 后（下标 7：0看 1空 2@ 3" 4a 5空 6b）
-    expect(detectAtQuery(text, 7)).toEqual({ at: 2, query: '"a b' });
-  });
-});
-
-describe("insertAtCompletion（28 号票空格路径引号包裹）", () => {
-  it('路径含空格 → 插入 @"path" 引号形态', () => {
-    expect(insertAtCompletion("看 @", 2, 3, "a b/c.txt")).toBe('看 @"a b/c.txt" ');
-  });
-
-  it("路径无空格 → 维持裸路径", () => {
-    expect(insertAtCompletion("看 @", 2, 3, "src/main.rs")).toBe("看 @src/main.rs ");
-  });
-
-  it('替换范围含查询中已敲出的开引号（`@"a b` 选中 c.txt → 完整形态）', () => {
-    const text = '看 @"a b';
-    expect(insertAtCompletion(text, 2, text.length, "a b/c.txt")).toBe('看 @"a b/c.txt" ');
+  it("清单过滤（filterSkills / filterRoles）：前缀命中排前、包含命中排后（大小写不敏感）", () => {
+    const skills: SkillListEntry[] = [
+      {
+        name: "hello-craftwave",
+        source: "builtin",
+        enabled: true,
+        description: "入门示例",
+        trustStatus: "pending",
+      },
+      {
+        name: "pdf-toolkit",
+        source: "global",
+        enabled: true,
+        description: "PDF 处理",
+        trustStatus: "pending",
+      },
+      {
+        name: "demo-hello",
+        source: "project",
+        enabled: true,
+        description: "演示",
+        trustStatus: "pending",
+      },
+    ];
+    // 空查询返回全部（保持清单序）；无命中返回空表
+    expect(filterSkills(skills, "")).toHaveLength(3);
+    expect(filterSkills(skills, "missing")).toEqual([]);
+    expect(filterSkills(skills, "HEL").map((s) => s.name)).toEqual([
+      "hello-craftwave",
+      "demo-hello",
+    ]);
+    // $ 角色：空查询返回全部 7 角色（保持清单序）
+    expect(filterRoles(SUBAGENT_ROLES, "")).toHaveLength(7);
+    expect(filterRoles(SUBAGENT_ROLES, "DEV").map((r) => r.name)).toEqual([
+      "frontend-dev",
+      "backend-dev",
+    ]);
   });
 });

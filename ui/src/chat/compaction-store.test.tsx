@@ -1,9 +1,8 @@
 // @vitest-environment happy-dom
 /**
- * 压缩 store 与事件桥三键测试（FR-03-05，04 号票）：
- * 一部分测 compaction store 纯逻辑（分桶/投影/phase），一部分测
- * useBackendEvents 对 run:compacting / run:compacted / run:compact_failed
- * 三键的分发（参考 stores/ask.test.ts 的 fake listen 形态）。
+ * 压缩 store 与事件桥测试（FR-03-05，04 号票）：compaction store 纯逻辑
+ * （分桶/投影/phase）+ useBackendEvents 对 run:compacting / run:compacted /
+ * run:compact_failed 三键的分发（参考 stores/ask.test.ts 的 fake listen 形态）。
  */
 
 import { act, renderHook } from "@testing-library/react";
@@ -27,8 +26,23 @@ const compaction = (cut: string): StoredCompactionEntry => ({
   createdAt: 1,
 });
 
-describe("useCompactionStore（压缩状态分桶）", () => {
-  it("setCompactions / setPhase 各自写同会话桶互不覆盖", () => {
+/** fake listen：捕获各事件键的 handler（事件桥注册 18 个键）。 */
+function fakeListen() {
+  const handlers = new Map<string, (payload: unknown) => void>();
+  return {
+    handlers,
+    listen: vi.fn(async (key: string, handler: (payload: never) => void) => {
+      handlers.set(key, handler as unknown as (payload: unknown) => void);
+      return () => {
+        handlers.delete(key);
+      };
+    }),
+  };
+}
+
+describe("compaction（04 号票）", () => {
+  it("store 分桶（setCompactions/setPhase/forgetSession）+ 事件桥三键分发（指示条/Toast/收口刷新）+ 刷新失败保留旧投影", async () => {
+    // ---- useCompactionStore：setCompactions / setPhase 各自写同会话桶互不覆盖 ----
     act(() => {
       useCompactionStore.getState().setCompactions("s1", [compaction("a1")]);
       useCompactionStore.getState().setPhase("s1", "compacting");
@@ -40,46 +54,24 @@ describe("useCompactionStore（压缩状态分桶）", () => {
     });
     expect(useCompactionStore.getState().bySession.s2?.phase).toBeNull();
     expect(useCompactionStore.getState().bySession.s2?.compactions).toEqual([]);
-  });
 
-  it("forSession 删除后清桶；未删除会话不受影响", () => {
-    act(() => {
-      useCompactionStore.getState().setCompactions("s1", [compaction("a1")]);
-      useCompactionStore.getState().setCompactions("s2", []);
-    });
-    act(() => useCompactionStore.getState().forgetSession("s1"));
-    expect(useCompactionStore.getState().bySession.s1).toBeUndefined();
-    expect(useCompactionStore.getState().bySession.s2).toBeDefined();
-  });
-});
-
-describe("useBackendEvents 压缩三键（04 号票）", () => {
-  it("run:compacting/compacted/compact_failed 各达 compaction store", async () => {
-    const handlers = new Map<string, (payload: unknown) => void>();
+    // ---- useBackendEvents 压缩三键 ----
+    const first = fakeListen();
     const reload = vi.fn(async () => ({
       sessionId: "s",
       messages: [],
       compactions: [compaction("a2")],
       revision: 9,
     }));
-    const deps = {
-      listen: vi.fn(async (key: string, handler: (payload: never) => void) => {
-        handlers.set(key, handler as unknown as (payload: unknown) => void);
-        return () => {
-          handlers.delete(key);
-        };
-      }),
-      reloadCompactions: reload,
-    };
-    renderHook(() => useBackendEvents(deps));
-    await vi.waitFor(() => expect(handlers.size).toBe(18));
+    renderHook(() => useBackendEvents({ listen: first.listen, reloadCompactions: reload }));
+    await vi.waitFor(() => expect(first.handlers.size).toBe(18));
 
     // compacting → 指示条 phase
-    act(() => handlers.get("run:compacting")?.({ sessionId: "s" }));
+    act(() => first.handlers.get("run:compacting")?.({ sessionId: "s" }));
     expect(useCompactionStore.getState().bySession.s?.phase).toBe("compacting");
 
     // compact_failed → Toast 反馈（29 号票收敛）+ phase 复位（指示条撤除）
-    act(() => handlers.get("run:compact_failed")?.({ sessionId: "s" }));
+    act(() => first.handlers.get("run:compact_failed")?.({ sessionId: "s" }));
     expect(useCompactionStore.getState().bySession.s?.phase).toBeNull();
     const errorToast = useToastStore
       .getState()
@@ -88,38 +80,41 @@ describe("useBackendEvents 压缩三键（04 号票）", () => {
 
     // compacted → 收口 + 边界投影刷新（reloadCompactions 拉最新史册）
     act(() =>
-      handlers.get("run:compacted")?.({ sessionId: "s", tokensBefore: 900, tokensAfter: 300 }),
+      first.handlers.get("run:compacted")?.({
+        sessionId: "s",
+        tokensBefore: 900,
+        tokensAfter: 300,
+      }),
     );
     expect(useCompactionStore.getState().bySession.s?.phase).toBeNull();
     await vi.waitFor(() => expect(reload).toHaveBeenCalledWith("s"));
     expect(useCompactionStore.getState().bySession.s?.compactions).toEqual([compaction("a2")]);
-  });
 
-  it("compacted 收口时边界刷新失败：保留旧投影不炸", async () => {
-    const handlers = new Map<string, (payload: unknown) => void>();
-    const deps = {
-      listen: vi.fn(async (key: string, handler: (payload: never) => void) => {
-        handlers.set(key, handler as unknown as (payload: unknown) => void);
-        return () => {
-          handlers.delete(key);
-        };
+    // ---- compacted 收口时边界刷新失败：保留旧投影不炸 ----
+    const second = fakeListen();
+    renderHook(() =>
+      useBackendEvents({
+        listen: second.listen,
+        reloadCompactions: vi.fn(async () => {
+          throw new Error("ipc down");
+        }),
       }),
-      reloadCompactions: vi.fn(async () => {
-        throw new Error("ipc down");
-      }),
-    };
+    );
+    await vi.waitFor(() => expect(second.handlers.size).toBe(18));
     act(() => {
-      useCompactionStore.getState().setCompactions("s", [compaction("a1")]);
-      useCompactionStore.getState().setPhase("s", "compacting");
+      useCompactionStore.getState().setCompactions("s9", [compaction("a1")]);
+      useCompactionStore.getState().setPhase("s9", "compacting");
     });
-    renderHook(() => useBackendEvents(deps));
-    await vi.waitFor(() => expect(handlers.size).toBe(18));
     act(() =>
-      handlers.get("run:compacted")?.({ sessionId: "s", tokensBefore: 900, tokensAfter: 300 }),
+      second.handlers.get("run:compacted")?.({
+        sessionId: "s9",
+        tokensBefore: 900,
+        tokensAfter: 300,
+      }),
     );
     // phase 收口；投影保留旧值（下次会话进入时收养自愈）
-    expect(useCompactionStore.getState().bySession.s?.phase).toBeNull();
-    expect(useCompactionStore.getState().bySession.s?.compactions).toEqual([compaction("a1")]);
+    expect(useCompactionStore.getState().bySession.s9?.phase).toBeNull();
+    expect(useCompactionStore.getState().bySession.s9?.compactions).toEqual([compaction("a1")]);
     // 未处理的 rejection 不外溢（事件桥内已 catch）
     await new Promise((resolve) => setTimeout(resolve, 0));
   });

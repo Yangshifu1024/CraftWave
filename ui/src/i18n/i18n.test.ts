@@ -3,16 +3,15 @@
  * i18n 门禁测试（31 号票，§10.8「CI 检查 key 完整性」+ NFR-19 硬编码门禁）：
  *
  * 1. key 完整性：zh/en 两包深度键集合双向 diff 为空（编译期同构之外的第二道
- *    运行时防线——字典以 TS 对象承载，此测试防动态删除/拼接绕过类型检查）；
+ *    运行时防线——字典以 TS 对象承载，此测试防动态删除/拼接绕过类型检查），
+ *    且 zh 基准包无空文案；
  * 2. 硬编码回退扫描：用 TypeScript 编译器 AST 扫描 ui/src 非测试源码的
  *    字符串字面量 / JSX 文本 / 模板串静态段中的 CJK 字符——新增硬编码即红
  *    （NFR-19「新增文案不得硬编码」门禁）；豁免面见 ALLOWLIST（注释与
  *    正则天然不在 AST 字符串节点内，无需豁免）；
- * 3. 语言切换冒烟：setLang 后 t() 输出随语言变化（en 断言 / zh 回切）；
- * 4. 插值：{{var}} 替换与数字字符串化；
- * 5. 缺键回退链：en 缺键回 zh、双双缺键回 key 本身（不空白）；
- * 6. errors 映射：tError 对 §3.6 注册表抽样码给本地化文案，未知码回退
- *    原始 message。
+ * 3. 查词剧本：语言切换冒烟（setLang 后 t() 输出随语言变化）、{{var}} 插值、
+ *    缺键回退链（双双缺键回 key 本身不空白）、tError 对 §3.6 注册表抽样码
+ *    本地化 + 未知码回退原始 message。
  */
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -55,40 +54,6 @@ const ALL_DOMAINS = [
   onboardingDomain,
   errorsDomain,
 ];
-
-describe("i18n 语言包 key 完整性（§10.8 CI 门禁）", () => {
-  it("zh/en 两包深度键集合双向 diff 为空", () => {
-    const zhKeys = collectKeys(Object.fromEntries(ALL_DOMAINS.map((d) => [d.name, d.zh])));
-    const enKeys = collectKeys(Object.fromEntries(ALL_DOMAINS.map((d) => [d.name, d.en])));
-    const missingInEn = [...zhKeys].filter((k) => !enKeys.has(k));
-    const extraInEn = [...enKeys].filter((k) => !zhKeys.has(k));
-    expect(missingInEn, "en 包缺键").toEqual([]);
-    expect(extraInEn, "en 包多键").toEqual([]);
-  });
-
-  it("每个域的 en 包与 zh 包键集合同构（逐域报错便于定位）", () => {
-    for (const domain of ALL_DOMAINS) {
-      const zh = new Set(Object.keys(domain.zh));
-      const en = new Set(Object.keys(domain.en));
-      expect(
-        [...zh].filter((k) => !en.has(k)),
-        `${domain.name} 域 en 缺键`,
-      ).toEqual([]);
-      expect(
-        [...en].filter((k) => !zh.has(k)),
-        `${domain.name} 域 en 多键`,
-      ).toEqual([]);
-    }
-  });
-
-  it("zh 基准包无空文案", () => {
-    for (const domain of ALL_DOMAINS) {
-      for (const [key, text] of Object.entries(domain.zh)) {
-        expect(text.trim().length, `${domain.name}.${key} 为空文案`).toBeGreaterThan(0);
-      }
-    }
-  });
-});
 
 // ---- 2. 硬编码回退扫描（NFR-19 门禁）----
 
@@ -210,8 +175,33 @@ function extractStringTexts(source: ts.SourceFile): { text: string; line: number
   return out;
 }
 
-describe("硬编码中文回退扫描（NFR-19 门禁）", () => {
-  it("ui/src 非测试源码的字符串字面量与 JSX 文本无白名单外的 CJK", () => {
+describe("i18n 门禁（31 号票 §10.8 + NFR-19）", () => {
+  it("key 完整性：zh/en 两包深度键集合双向 diff 为空 + 逐域同构（便于定位）+ zh 基准包无空文案", () => {
+    const zhKeys = collectKeys(Object.fromEntries(ALL_DOMAINS.map((d) => [d.name, d.zh])));
+    const enKeys = collectKeys(Object.fromEntries(ALL_DOMAINS.map((d) => [d.name, d.en])));
+    const missingInEn = [...zhKeys].filter((k) => !enKeys.has(k));
+    const extraInEn = [...enKeys].filter((k) => !zhKeys.has(k));
+    expect(missingInEn, "en 包缺键").toEqual([]);
+    expect(extraInEn, "en 包多键").toEqual([]);
+    // 逐域报错便于定位
+    for (const domain of ALL_DOMAINS) {
+      const zh = new Set(Object.keys(domain.zh));
+      const en = new Set(Object.keys(domain.en));
+      expect(
+        [...zh].filter((k) => !en.has(k)),
+        `${domain.name} 域 en 缺键`,
+      ).toEqual([]);
+      expect(
+        [...en].filter((k) => !zh.has(k)),
+        `${domain.name} 域 en 多键`,
+      ).toEqual([]);
+      for (const [key, text] of Object.entries(domain.zh)) {
+        expect(text.trim().length, `${domain.name}.${key} 为空文案`).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("硬编码中文回退扫描：ui/src 非测试源码的字符串字面量与 JSX 文本无白名单外的 CJK（NFR-19 门禁）", () => {
     const files = collectSourceFiles(SRC_ROOT).filter(
       (f) => !f.startsWith("i18n/") && f !== "i18n.ts",
     );
@@ -237,49 +227,32 @@ describe("硬编码中文回退扫描（NFR-19 门禁）", () => {
       `发现白名单外的硬编码中文（NFR-19：所有 UI 文案经 i18n 字典）：\n${violations.join("\n")}`,
     ).toEqual([]);
   });
-});
 
-// ---- 3–6. 切换冒烟 / 插值 / 回退 / errors ----
-
-describe("t() 查词与语言切换", () => {
-  it("切换 en-US 后 t() 输出英文，切回 zh-CN 恢复（冒烟）", () => {
+  it("t()/tError 查词剧本：语言切换冒烟、{{var}} 插值、缺键回退 key 本身、tError 注册表抽样与未知码回退", () => {
+    // 切换冒烟：zh 基准 → en → 切回 zh 恢复
     setLang("zh-CN");
     expect(t("workspace.settings")).toBe("设置");
+    // 插值：{{var}} 替换与数字字符串化
+    expect(t("workspace.newSessionInProject", { name: "demo" })).toBe("在项目 demo 下新建会话");
+    expect(t("inspector.compactedDivider", { count: 3 })).toBe("已压缩早期上下文（3 次）");
+
     setLang("en-US");
     expect(getLang()).toBe<Lang>("en-US");
     expect(t("workspace.settings")).toBe("Settings");
-    setLang("zh-CN");
-    expect(t("workspace.settings")).toBe("设置");
-  });
-
-  it("{{var}} 插值与多变量替换", () => {
-    setLang("zh-CN");
-    expect(t("workspace.newSessionInProject", { name: "demo" })).toBe("在项目 demo 下新建会话");
-    expect(t("inspector.compactedDivider", { count: 3 })).toBe("已压缩早期上下文（3 次）");
-  });
-
-  it("缺键回退链：en 缺键回 zh 基准；双缺回 key 本身（不空白）", () => {
-    setLang("en-US");
-    // 两包同构，正常 key 不触发回退；用不存在于 en 的键模拟（直接查 core 私面
-    // 不可行——以「未知 key」验证回退形态）
-    expect(t("workspace.settings")).toBe("Settings");
-    expect(t("nonexistent.key.for.test")).toBe("nonexistent.key.for.test");
-    setLang("zh-CN");
-    expect(t("nonexistent.key.for.test")).toBe("nonexistent.key.for.test");
-  });
-});
-
-describe("tError 错误码映射（§3.6 错误面口径）", () => {
-  it("抽样注册表错误码给出本地化文案", () => {
-    setLang("zh-CN");
-    expect(tError("E_SESSION_RUNNING", "session busy")).toBe("会话正在运行中");
-    expect(tError("E_PROVIDER_AUTH", "auth failed")).toBe("鉴权失败：请检查 API Key");
-    setLang("en-US");
+    // tError 抽样注册表错误码给本地化文案
     expect(tError("E_SESSION_RUNNING", "session busy")).toBe("Session is already running");
     setLang("zh-CN");
-  });
+    expect(t("workspace.settings")).toBe("设置");
+    expect(tError("E_SESSION_RUNNING", "session busy")).toBe("会话正在运行中");
+    expect(tError("E_PROVIDER_AUTH", "auth failed")).toBe("鉴权失败：请检查 API Key");
 
-  it("未知错误码回退原始 message（不空白）", () => {
+    // 缺键回退链：双双缺键回 key 本身（不空白，两种语言同口径）
+    expect(t("nonexistent.key.for.test")).toBe("nonexistent.key.for.test");
+    setLang("en-US");
+    expect(t("nonexistent.key.for.test")).toBe("nonexistent.key.for.test");
+    setLang("zh-CN");
+
+    // 未知错误码回退原始 message（不空白；空串原样）
     expect(tError("E_FUTURE_CODE", "raw backend message")).toBe("raw backend message");
     expect(tError("E_FUTURE_CODE", "")).toBe("");
   });

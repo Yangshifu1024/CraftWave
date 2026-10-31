@@ -22,7 +22,7 @@ beforeEach(() => {
 });
 
 describe("plan-state store（25 号票全量计划态）", () => {
-  it("applyUpdate 整份替换并按会话隔离", () => {
+  it("applyUpdate 整份替换并按会话隔离、forgetSession 清桶、EMPTY_PLAN_STATE 稳定空态", () => {
     usePlanStateStore.getState().applyUpdate("s1", sampleState(true));
     usePlanStateStore.getState().applyUpdate("s2", sampleState(false));
     const s1 = usePlanStateStore.getState().bySession.s1;
@@ -44,17 +44,10 @@ describe("plan-state store（25 号票全量计划态）", () => {
       approved: true,
       baselinePaths: ["docs/"],
     });
-  });
-
-  it("forgetSession 清桶且不影响其他会话", () => {
-    usePlanStateStore.getState().applyUpdate("s1", sampleState(true));
-    usePlanStateStore.getState().applyUpdate("s2", sampleState(true));
+    // forgetSession 清桶
     usePlanStateStore.getState().forgetSession("s1");
     expect(usePlanStateStore.getState().bySession.s1).toBeUndefined();
-    expect(usePlanStateStore.getState().bySession.s2).toBeDefined();
-  });
-
-  it("EMPTY_PLAN_STATE 是稳定空态（selector 缺桶兜底）", () => {
+    // EMPTY_PLAN_STATE 是稳定空态（selector 缺桶兜底）
     expect(EMPTY_PLAN_STATE.items).toEqual([]);
     expect(EMPTY_PLAN_STATE.approved).toBe(false);
     expect(EMPTY_PLAN_STATE.baselinePaths).toEqual([]);

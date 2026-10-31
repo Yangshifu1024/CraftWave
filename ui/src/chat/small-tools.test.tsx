@@ -102,8 +102,19 @@ function expandCard() {
   fireEvent.click(screen.getByTestId("tool-card-c1").querySelector("button") as HTMLButtonElement);
 }
 
-describe("四张工具卡", () => {
-  it("batch_read：文件数徽标 + 逐文件成功/失败/截断列表 + 内容折叠", async () => {
+/** 向 ask store 放入一个未决审批（模拟 ask:opened）。 */
+function openApproval(payload: AskPayload) {
+  useAskStore.getState().open("s1", "ask-1", payload);
+}
+
+const baseOptions = [
+  { id: "allow_once", label: "允许", recommended: true, mode: "allow_once" as const },
+  { id: "deny", label: "拒绝", mode: "deny" as const },
+];
+
+describe("small-tools（14 号票）", () => {
+  it("四张工具卡：batch_read 徽标与逐文件列表、glob 命中计数与上限、calculate 结果行、render_html 折叠预览", async () => {
+    // ---- batch_read：文件数徽标 + 逐文件成功/失败/截断列表 + 内容折叠 ----
     sidecarData("c1", {
       files: [
         { path: "a.txt", ok: true, content: "a1\n", truncated: false, nextOffset: null },
@@ -124,11 +135,10 @@ describe("四张工具卡", () => {
         result={{ ok: true, summary: "批量读取" }}
       />,
     );
-    // 徽标 = 文件数
+    // 徽标 = 文件数；摘要行：首个文件 + 计数
     expect(screen.getByTestId("batch-read-count").textContent).toBe("3");
-    // 摘要行：首个文件 + 计数
-    const card = screen.getByTestId("tool-card-c1");
-    expect(card.textContent).toContain("等 3 个文件");
+    const batchCard = screen.getByTestId("tool-card-c1");
+    expect(batchCard.textContent).toContain("等 3 个文件");
     expandCard();
     // 逐文件状态（终态异步拉边车）
     await waitFor(() => {
@@ -137,10 +147,11 @@ describe("四张工具卡", () => {
     const list = screen.getByTestId("batch-read-files").textContent!;
     expect(list).toContain("文件不存在：missing.txt");
     expect(list).toContain("续读 offset 1748");
-    expect(card.textContent).toContain("1 个文件内容截断");
-  });
+    expect(batchCard.textContent).toContain("1 个文件内容截断");
+    cleanup();
+    toolCardExpandedMemory.clear();
 
-  it("glob：命中计数 + 路径列表（上限展示 100 条）", async () => {
+    // ---- glob：命中计数 + 路径列表（上限展示 100 条）----
     const paths = Array.from({ length: 130 }, (_, i) => ({ path: `gen/f${i}.rs`, kind: "file" }));
     sidecarData("c1", { count: 130, truncated: true, paths });
     render(
@@ -153,15 +164,16 @@ describe("四张工具卡", () => {
     await waitFor(() => {
       expect(screen.getByTestId("glob-paths").childElementCount).toBeGreaterThan(0);
     });
-    const card = screen.getByTestId("tool-card-c1");
-    expect(card.textContent).toContain("130 项命中");
-    expect(card.textContent).toContain("上限 500 截断");
+    const globCard = screen.getByTestId("tool-card-c1");
+    expect(globCard.textContent).toContain("130 项命中");
+    expect(globCard.textContent).toContain("上限 500 截断");
     // 上限展示 100 条 + 余量提示
     expect(screen.getByTestId("glob-paths").childElementCount).toBe(101);
-    expect(card.textContent).toContain("其余 30 项");
-  });
+    expect(globCard.textContent).toContain("其余 30 项");
+    cleanup();
+    toolCardExpandedMemory.clear();
 
-  it("calculate：表达式摘要 + 结果 monospace 单行", async () => {
+    // ---- calculate：表达式摘要 + 结果 monospace 单行 ----
     sidecarData("c1", {
       expression: "0.1 + 0.2",
       result: 0.30000000000000004,
@@ -177,9 +189,10 @@ describe("四张工具卡", () => {
     await waitFor(() => {
       expect(screen.getByTestId("calculate-result").textContent).toBe("= 0.30000000000000004");
     });
-  });
+    cleanup();
+    toolCardExpandedMemory.clear();
 
-  it("render_html：字符数徽标 + 预览默认折叠，展开才注册并挂载沙箱 iframe", async () => {
+    // ---- render_html：字符数徽标 + 预览默认折叠，展开才注册并挂载沙箱 iframe ----
     const html = "<!DOCTYPE html><p>你好预览</p>";
     render(
       <RenderHtmlCard
@@ -199,53 +212,40 @@ describe("四张工具卡", () => {
       expect(document.querySelector("iframe")).not.toBeNull();
     });
     expect(registerPreview).toHaveBeenCalledWith(html);
-    const frame = document.querySelector("iframe")!;
-    expect(frame.getAttribute("src")).toBe(`preview://localhost/tok-${html.length}`);
+    expect(document.querySelector("iframe")!.getAttribute("src")).toBe(
+      `preview://localhost/tok-${html.length}`,
+    );
   });
-});
 
-describe("HtmlPreview 沙箱逃逸向量（装配契约面）", () => {
-  it("sandbox 只带 allow-scripts：无 allow-same-origin / top-navigation / forms", async () => {
-    render(<HtmlPreview html="<p>escaped?</p>" />);
-    const frame = await screen.findByTestId("html-preview-frame");
+  it("HtmlPreview 沙箱契约（sandbox 只带 allow-scripts、注册失败错误行）+ AskPanel 审批卡「查看预览」入口（FR-12-04）", async () => {
+    // ---- 沙箱逃逸向量（装配契约面）：无 allow-same-origin / top-navigation / forms ----
     // 逃逸向量 ①（同源访问）：无 allow-same-origin → opaque origin，
     // 预览页脚本对 parent/top 的 DOM/存储访问被浏览器判定跨源拒绝。
     // 逃逸向量 ②（顶层导航）：无 allow-top-navigation → 主窗不可被劫持。
     // 逃逸向量 ③（表单/自动提交导航）：无 allow-forms。
+    render(<HtmlPreview html="<p>escaped?</p>" />);
+    const frame = await screen.findByTestId("html-preview-frame");
     expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
     const tokens = (frame.getAttribute("sandbox") ?? "").split(/\s+/);
     expect(tokens).not.toContain("allow-same-origin");
     expect(tokens).not.toContain("allow-top-navigation");
     expect(tokens).not.toContain("allow-forms");
     expect(tokens).not.toContain("allow-popups");
-    // 常量与属性一致（防线单一来源）
+    // 常量与属性一致（防线单一来源）；地址走预览协议（预览页 CSP 由协议响应自带）
     expect(PREVIEW_SANDBOX_TOKENS).toEqual(["allow-scripts"]);
-    // 地址走预览协议（预览页 CSP 由协议响应自带，不继承主窗 script-src）
     expect(frame.getAttribute("src")).toMatch(/^preview:\/\/localhost\//);
-  });
+    cleanup();
 
-  it("注册失败显示错误行，不渲染 iframe", async () => {
+    // ---- 注册失败显示错误行，不渲染 iframe ----
     registerPreview.mockRejectedValueOnce(new Error("HTML 超过 50000 字符上限"));
     render(<HtmlPreview html={"x".repeat(10)} />);
     await waitFor(() => {
       expect(screen.getByTestId("html-preview").textContent).toContain("预览注册失败");
     });
     expect(document.querySelector("iframe")).toBeNull();
-  });
-});
+    cleanup();
 
-describe("AskPanel 审批卡「查看预览」入口（FR-12-04）", () => {
-  /** 向 ask store 放入一个未决审批（模拟 ask:opened）。 */
-  function openApproval(payload: AskPayload) {
-    useAskStore.getState().open("s1", "ask-1", payload);
-  }
-
-  const baseOptions = [
-    { id: "allow_once", label: "允许", recommended: true, mode: "allow_once" as const },
-    { id: "deny", label: "拒绝", mode: "deny" as const },
-  ];
-
-  it("载荷附带 previewHtml 时显示入口，点击展开沙箱预览；点击允许提交应答", async () => {
+    // ---- 载荷附带 previewHtml 时显示入口，点击展开沙箱预览；点击允许提交应答 ----
     openApproval({
       kind: "approval",
       title: "写入新文件 index.html",
@@ -258,8 +258,7 @@ describe("AskPanel 审批卡「查看预览」入口（FR-12-04）", () => {
         <AskPanel />
       </SessionScopeContext.Provider>,
     );
-    const entry = screen.getByTestId("ask-preview");
-    expect(entry.textContent).toContain("查看预览");
+    expect(screen.getByTestId("ask-preview").textContent).toContain("查看预览");
     // 默认折叠：无 iframe
     expect(document.querySelector("iframe")).toBeNull();
     fireEvent.click(screen.getByTestId("ask-preview-toggle"));
@@ -274,9 +273,9 @@ describe("AskPanel 审批卡「查看预览」入口（FR-12-04）", () => {
         optionId: "allow_once",
       });
     });
-  });
+    cleanup();
 
-  it("无 previewHtml 的审批不显示预览入口", () => {
+    // ---- 无 previewHtml 的审批不显示预览入口 ----
     openApproval({
       kind: "approval",
       title: "写入新文件 main.rs",

@@ -36,49 +36,50 @@ afterEach(() => {
   discardPendingUpdate();
 });
 
-describe("shouldSilentCheck（静默检查间隔判定，表驱动）", () => {
-  const HOUR = 3_600_000;
-
-  it("enabled=false 恒不检查（NFR-11：不发起更新外联）", () => {
-    expect(shouldSilentCheck(1_000, 0, 24, false)).toBe(false);
-    expect(shouldSilentCheck(1_000, 0, 0, false)).toBe(false);
+describe("ipc/updater（33 号票）", () => {
+  it("shouldSilentCheck（静默检查间隔判定，表驱动）：enabled 门、从未检查、interval 边界与可调档、非正 interval 兜底", () => {
+    const HOUR = 3_600_000;
+    const cases: [
+      now: number,
+      last: number,
+      intervalHours: number,
+      enabled: boolean,
+      expected: boolean,
+    ][] = [
+      // enabled=false 恒不检查（NFR-11：不发起更新外联）
+      [1_000, 0, 24, false, false],
+      [1_000, 0, 0, false, false],
+      // 从未检查过（记账缺省 0/负数）→ 检查
+      [5_000, 0, 24, true, true],
+      [5_000, -1, 24, true, true],
+      // 距上次检查不足 intervalHours → 跳过；达到 → 检查
+      [1_000_000 + 24 * HOUR - 1, 1_000_000, 24, true, false],
+      [1_000_000 + 24 * HOUR, 1_000_000, 24, true, true],
+      // 间隔可调：1 小时档
+      [1_000_000 + HOUR, 1_000_000, 1, true, true],
+      [1_000_000 + HOUR - 1, 1_000_000, 1, true, false],
+      // intervalHours 非正（配置损坏兜底）→ 不检查
+      [10_000, 0, 0, true, false],
+      [10_000, 0, -5, true, false],
+    ];
+    for (const [now, last, intervalHours, enabled, expected] of cases) {
+      expect(shouldSilentCheck(now, last, intervalHours, enabled)).toBe(expected);
+    }
   });
 
-  it("从未检查过（记账缺省 0）→ 检查", () => {
-    expect(shouldSilentCheck(5_000, 0, 24, true)).toBe(true);
-    expect(shouldSilentCheck(5_000, -1, 24, true)).toBe(true);
-  });
-
-  it("距上次检查不足 intervalHours → 跳过；达到 → 检查", () => {
-    const last = 1_000_000;
-    expect(shouldSilentCheck(last + 24 * HOUR - 1, last, 24, true)).toBe(false);
-    expect(shouldSilentCheck(last + 24 * HOUR, last, 24, true)).toBe(true);
-    // 间隔可调：1 小时档
-    expect(shouldSilentCheck(last + HOUR, last, 1, true)).toBe(true);
-    expect(shouldSilentCheck(last + HOUR - 1, last, 1, true)).toBe(false);
-  });
-
-  it("intervalHours 非正（配置损坏兜底）→ 不检查", () => {
-    expect(shouldSilentCheck(10_000, 0, 0, true)).toBe(false);
-    expect(shouldSilentCheck(10_000, 0, -5, true)).toBe(false);
-  });
-});
-
-describe("checkForUpdate（三态收敛）", () => {
-  it("插件返回 null → upToDate", async () => {
+  it("checkForUpdate 三态收敛 + 暂存资源释放：null→upToDate、available 三字段、抛错→failed（Error 与非 Error 都 String 化不抛出）", async () => {
+    // 插件返回 null → upToDate
     checkMock.mockResolvedValue(null);
     await expect(checkForUpdate()).resolves.toEqual({ kind: "upToDate" });
-  });
 
-  it("插件返回更新 → available 三字段 + 资源暂存（discard 释放）", async () => {
-    const update = {
+    // 插件返回更新 → available 三字段 + 资源暂存（discard 释放，幂等）
+    checkMock.mockResolvedValue({
       version: "0.2.0",
       currentVersion: "0.1.0",
       body: "修复说明",
       close: closeMock,
       downloadAndInstall: downloadAndInstallMock,
-    };
-    checkMock.mockResolvedValue(update);
+    });
     await expect(checkForUpdate()).resolves.toEqual({
       kind: "available",
       version: "0.2.0",
@@ -87,35 +88,23 @@ describe("checkForUpdate（三态收敛）", () => {
     });
     expect(discardPendingUpdate()).toBeUndefined();
     expect(closeMock).toHaveBeenCalledTimes(1);
-    // 幂等：再次 discard 不再 close
     discardPendingUpdate();
     expect(closeMock).toHaveBeenCalledTimes(1);
-  });
 
-  it("插件抛错 → failed 带原始消息（不抛出）", async () => {
+    // 插件抛错 → failed 带原始消息（不抛出）；非 Error 抛出物 String 化
     checkMock.mockRejectedValue(new Error("updater 配置无效"));
     await expect(checkForUpdate()).resolves.toEqual({
       kind: "failed",
       message: "updater 配置无效",
     });
-  });
-
-  it("非 Error 抛出物 → failed 带 String 化消息", async () => {
     checkMock.mockRejectedValue("网络断开");
-    await expect(checkForUpdate()).resolves.toEqual({
-      kind: "failed",
-      message: "网络断开",
-    });
+    await expect(checkForUpdate()).resolves.toEqual({ kind: "failed", message: "网络断开" });
   });
-});
 
-describe("downloadAndInstallUpdate（进度回调链）", () => {
-  it("无暂存更新时拒绝（调用序错误）", async () => {
+  it("downloadAndInstallUpdate：无暂存更新时拒绝（调用序错误）；进度事件映射 Started/Progress/Finished → downloading/installing/done", async () => {
     await expect(downloadAndInstallUpdate()).rejects.toThrow("no update checked");
-  });
 
-  it("进度事件映射：Started/Progress/Finished → downloading/installing/done", async () => {
-    const update = {
+    checkMock.mockResolvedValue({
       version: "0.2.0",
       currentVersion: "0.1.0",
       close: closeMock,
@@ -124,8 +113,7 @@ describe("downloadAndInstallUpdate（进度回调链）", () => {
         onEvent({ event: "Progress", data: { chunkLength: 256 } });
         onEvent({ event: "Finished" });
       }),
-    };
-    checkMock.mockResolvedValue(update);
+    });
     await checkForUpdate();
     const progress: string[] = [];
     await downloadAndInstallUpdate((p) => progress.push(p.kind));
@@ -137,10 +125,8 @@ describe("downloadAndInstallUpdate（进度回调链）", () => {
       "done", // 完成收口
     ]);
   });
-});
 
-describe("relaunchForUpdate", () => {
-  it("转发 process 插件 relaunch", async () => {
+  it("relaunchForUpdate 转发 process 插件 relaunch", async () => {
     relaunchMock.mockResolvedValue(undefined);
     await relaunchForUpdate();
     expect(relaunchMock).toHaveBeenCalledTimes(1);

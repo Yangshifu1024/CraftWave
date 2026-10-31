@@ -2,6 +2,7 @@
 /**
  * Inspector「授权」页测试（24 号票，§9.9 撤销 UI 的会话面）：当前会话
  * 已授权外部目录列表渲染 + 移除授权（revokeExternalDir 载荷 + 刷新）。
+ * 精简版：列表/撤销/空态合并为代表例。
  */
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -54,18 +55,17 @@ function renderPanel() {
 }
 
 describe("ExternalGrantsPanel（24 号票，§9.9）", () => {
-  it("渲染当前会话已授权目录列表（每行一个目录 + 移除按钮）", () => {
-    const { container } = renderPanel();
-    const rows = container.querySelectorAll('[data-testid="external-grant-row"]');
-    expect(rows).toHaveLength(2);
-    expect(container.textContent).toContain("/Users/demo/外部资料");
-    expect(container.textContent).toContain("/data/共享");
-    expect(container.textContent).toContain("该目录及子目录的读/写/列");
-  });
-
-  it("点移除 → revokeExternalDir 载荷（sessionId, dir）+ 刷新回填权威列表", async () => {
+  it("授权列表渲染、移除授权载荷（sessionId, dir）+ 刷新、无授权空态", async () => {
+    // 每行一个目录 + 移除按钮 + 粒度说明
     useSessionsStore.setState({ refresh: refreshMock });
-    renderPanel();
+    const view = renderPanel();
+    const rows = view.container.querySelectorAll('[data-testid="external-grant-row"]');
+    expect(rows).toHaveLength(2);
+    expect(view.container.textContent).toContain("/Users/demo/外部资料");
+    expect(view.container.textContent).toContain("/data/共享");
+    expect(view.container.textContent).toContain("该目录及子目录的读/写/列");
+
+    // 移除授权 → revokeExternalDir 载荷 + 刷新回填权威列表
     fireEvent.click(screen.getByTestId("external-grant-revoke-/Users/demo/外部资料"));
     await waitFor(() =>
       expect(revokeMock).toHaveBeenCalledWith({
@@ -74,12 +74,13 @@ describe("ExternalGrantsPanel（24 号票，§9.9）", () => {
       }),
     );
     await waitFor(() => expect(refreshMock).toHaveBeenCalled());
-  });
+    view.unmount();
 
-  it("无授权时渲染空态说明（临时会话或未授权过）", () => {
+    // 无授权时渲染空态说明（临时会话或未授权过）
     useSessionsStore.setState({ sessions: [meta("s1", [])] });
-    const { container } = renderPanel();
+    const empty = renderPanel();
     expect(screen.getByTestId("external-grants-empty")).toBeDefined();
-    expect(container.querySelectorAll('[data-testid="external-grant-row"]')).toHaveLength(0);
+    expect(empty.container.querySelectorAll('[data-testid="external-grant-row"]')).toHaveLength(0);
+    empty.unmount();
   });
 });

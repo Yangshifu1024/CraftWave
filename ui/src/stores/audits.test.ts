@@ -19,7 +19,8 @@ beforeEach(() => {
 });
 
 describe("audits store：toolAudit 帧分发", () => {
-  it("running → allow 状态推进（同 callId 覆盖）", () => {
+  it("剧本：running→allow 同 callId 覆盖推进、五态全量写入、会话分桶隔离、非 toolAudit 帧忽略", () => {
+    // running → allow 状态推进（同 callId 覆盖）
     applyAuditFrame("s1", auditFrame("call_part_1_0", "running"));
     expect(auditOf(useAuditsStore.getState().bySession, "s1", "call_part_1_0")).toEqual({
       state: "running",
@@ -30,9 +31,8 @@ describe("audits store：toolAudit 帧分发", () => {
       state: "allow",
       reason: "常规构建",
     });
-  });
 
-  it("五态全量写入（ask/manual 随 reason）", () => {
+    // 五态全量写入（ask/manual 随 reason）
     for (const [state, reason] of [
       ["ask", "范围不明"],
       ["manual", "审计超时"],
@@ -44,9 +44,8 @@ describe("audits store：toolAudit 帧分发", () => {
         reason,
       });
     }
-  });
 
-  it("会话分桶隔离（同 callId 不同会话互不影响）", () => {
+    // 会话分桶隔离（同 callId 不同会话互不影响）
     applyAuditFrame("s1", auditFrame("call_part_1_0", "allow", "放行"));
     applyAuditFrame("s2", auditFrame("call_part_1_0", "block", "拒绝"));
     expect(auditOf(useAuditsStore.getState().bySession, "s1", "call_part_1_0")?.state).toBe(
@@ -55,9 +54,8 @@ describe("audits store：toolAudit 帧分发", () => {
     expect(auditOf(useAuditsStore.getState().bySession, "s2", "call_part_1_0")?.state).toBe(
       "block",
     );
-  });
 
-  it("非 toolAudit 帧忽略", () => {
+    // 非 toolAudit 帧忽略
     applyAuditFrame("s1", { type: "runStarted", runId: "r1", model: "m" });
     applyAuditFrame("s1", {
       type: "toolResult",
@@ -65,6 +63,6 @@ describe("audits store：toolAudit 帧分发", () => {
       ok: true,
       uiSummary: "ok",
     });
-    expect(useAuditsStore.getState().bySession.s1).toBeUndefined();
+    expect(auditOf(useAuditsStore.getState().bySession, "s1", "c1")).toBeUndefined();
   });
 });

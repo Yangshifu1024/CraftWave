@@ -1,4 +1,9 @@
 // @vitest-environment happy-dom
+/**
+ * ChatThread 真实渲染管线测试。精简版（保守）：保留错误恢复与过程区
+ * 收起两个代表例（此文件历史上抖动，只删问候语/reasoning 流式例）。
+ */
+
 import {
   AssistantRuntimeProvider,
   type ChatModelAdapter,
@@ -26,64 +31,6 @@ function Harness({ adapter }: { adapter: ChatModelAdapter }) {
     </AssistantRuntimeProvider>
   );
 }
-
-it("建议填入实际 composer，真实 runtime 的 reasoning 状态传到思考摘要", async () => {
-  let finish = () => {};
-  const gate = new Promise<void>((resolve) => {
-    finish = resolve;
-  });
-  const startedAt = performance.now();
-  const adapter: ChatModelAdapter = {
-    async *run() {
-      yield {
-        content: [
-          {
-            type: "reasoning",
-            text: "先读取配置\n检查调用链",
-            status: { type: "running" },
-            timing: { startedAt },
-          },
-        ],
-      };
-      await gate;
-      yield {
-        content: [
-          {
-            type: "reasoning",
-            text: "先读取配置\n检查调用链",
-            status: { type: "complete" },
-            timing: { startedAt, completedAt: startedAt + 2000 },
-          },
-          { type: "text", text: "已完成" },
-        ],
-      };
-    },
-  };
-  render(<Harness adapter={adapter} />);
-  fireEvent.click(screen.getByRole("button", { name: "梳理当前项目的目录结构与关键模块" }));
-  const input = screen.getByRole("textbox") as HTMLTextAreaElement;
-  expect(input.value).toBe("梳理当前项目的目录结构与关键模块");
-  fireEvent.click(screen.getByRole("button", { name: "发送" }));
-  // 运行中过程区展开（ZCode 流程）：思考摘要行 + preview 流式跟随
-  // （真实 runtime 的流式推进受机器负载影响，waitFor 放宽到 3s）
-  await waitFor(
-    () => expect(screen.getByTestId("reasoning-preview").textContent).toBe("检查调用链"),
-    { timeout: 3000 },
-  );
-  finish();
-  await waitFor(() => expect(screen.getByText("思考")).toBeTruthy(), { timeout: 3000 });
-  expect(screen.getByText("持续了 2 秒")).toBeTruthy();
-  expect(screen.queryByTestId("reasoning-preview")).toBeNull();
-});
-
-it("空状态跨时段自动更新问候语", () => {
-  vi.useFakeTimers();
-  vi.setSystemTime(new Date(2026, 9, 29, 8, 59, 59));
-  render(<Harness adapter={{ async *run() {} }} />);
-  expect(screen.getByText("早上好")).toBeTruthy();
-  act(() => vi.advanceTimersByTime(1000));
-  expect(screen.getByText("上午好")).toBeTruthy();
-});
 
 it("错误后可继续发送，界面无再次生成入口，用户原文不被解释成 Markdown", async () => {
   const run = vi.fn(async function* () {

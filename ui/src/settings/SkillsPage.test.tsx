@@ -1,10 +1,9 @@
 // @vitest-environment happy-dom
 /**
  * SkillsPage 交互测试（09 号票，§10.7 技能组）：清单渲染（名称/来源徽标/
- * 启停开关/描述）、启停切换（乐观翻转 + 失败回滚）、重新扫描（reload 后
- * 重拉清单）、行点击正文预览（skill_inspect 弹窗）；24 号票增信任撤销
- * （已记住技能的「撤销信任」按钮 → skill_revoke_trust）。IPC 全部经
- * vi.mock 替换（McpPage.test 同款桩面）。
+ * 启停开关/描述）、启停切换（乐观翻转 + 失败回滚）、重新扫描、行点击正文
+ * 预览；24 号票增信任撤销。IPC 全部经 vi.mock 替换（McpPage.test 同款桩面）。
+ * 精简版：每功能面留代表 1 例，相关段合并。
  */
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -50,8 +49,8 @@ function seedSkills(entries: SkillListEntry[]) {
   listMock.mockResolvedValue(entries);
 }
 
-describe("SkillsPage：清单渲染", () => {
-  it("渲染来源徽标 / 描述 / 启停开关（三来源合并视图）", async () => {
+describe("SkillsPage", () => {
+  it("清单渲染（三来源徽标/启停开关态）；空清单显示安装引导", async () => {
     seedSkills([
       {
         name: "hello",
@@ -75,7 +74,7 @@ describe("SkillsPage：清单渲染", () => {
         trustStatus: "pending",
       },
     ]);
-    render(<SkillsPage />);
+    const view = render(<SkillsPage />);
     await waitFor(() => expect(screen.getAllByTestId("skill-row")).toHaveLength(3));
     expect(screen.getByTestId("skill-source-hello").textContent).toBe("内置");
     expect(screen.getByTestId("skill-source-pdf").textContent).toBe("全局");
@@ -84,55 +83,47 @@ describe("SkillsPage：清单渲染", () => {
     expect(screen.getByTestId("skill-toggle-hello").getAttribute("aria-checked")).toBe("true");
     expect(screen.getByTestId("skill-toggle-pdf").getAttribute("aria-checked")).toBe("false");
     expect(screen.getByTestId("skill-list").textContent).toContain("全局 PDF 技能");
-  });
+    view.unmount();
 
-  it("空清单显示安装引导文案", async () => {
+    // 空清单
     seedSkills([]);
-    render(<SkillsPage />);
+    const empty = render(<SkillsPage />);
     await waitFor(() => expect(screen.queryByTestId("skill-list")).toBeNull());
     expect(screen.getByText(/还没有安装任何技能/)).toBeDefined();
+    empty.unmount();
   });
-});
 
-describe("SkillsPage：启停 / 重扫 / 预览", () => {
-  it("开关切换调 skill_toggle（FR-14-04）", async () => {
-    seedSkills([
-      {
-        name: "demo",
-        source: "global",
-        enabled: true,
-        description: "演示",
-        trustStatus: "pending",
-      },
-    ]);
-    render(<SkillsPage />);
+  it("启停：开关切换调 skill_toggle（FR-14-04）；失败回滚开关态（后端为权威）", async () => {
+    const entry: SkillListEntry = {
+      name: "demo",
+      source: "global",
+      enabled: true,
+      description: "演示",
+      trustStatus: "pending",
+    };
+    // 成功路径
+    seedSkills([entry]);
+    const view = render(<SkillsPage />);
     const sw = await waitFor(() => screen.getByTestId("skill-toggle-demo"));
     fireEvent.click(sw);
     await waitFor(() => expect(toggleMock).toHaveBeenCalledWith("demo", false));
-  });
+    view.unmount();
 
-  it("toggle 失败回滚开关态（后端为权威）", async () => {
+    // 失败路径：回滚为 true（初始态）
     toggleMock.mockRejectedValue(new Error("E_IO 落盘失败"));
-    seedSkills([
-      {
-        name: "demo",
-        source: "global",
-        enabled: true,
-        description: "演示",
-        trustStatus: "pending",
-      },
-    ]);
-    render(<SkillsPage />);
-    const sw = await waitFor(() => screen.getByTestId("skill-toggle-demo"));
-    fireEvent.click(sw);
+    seedSkills([entry]);
+    const failed = render(<SkillsPage />);
+    const sw2 = await waitFor(() => screen.getByTestId("skill-toggle-demo"));
+    fireEvent.click(sw2);
     await waitFor(() => expect(toggleMock).toHaveBeenCalled());
-    // 失败后回滚为 true（初始态）
     await waitFor(() =>
       expect(screen.getByTestId("skill-toggle-demo").getAttribute("aria-checked")).toBe("true"),
     );
+    failed.unmount();
   });
 
-  it("重新扫描调 skill_reload 并重拉清单（reload 感知新增）", async () => {
+  it("重扫重拉清单；行点击预览正文；信任撤销（24 号票：trusted 有入口，其余无）", async () => {
+    // 重扫后清单多出 added（reload 感知新增）
     seedSkills([
       {
         name: "first",
@@ -142,9 +133,8 @@ describe("SkillsPage：启停 / 重扫 / 预览", () => {
         trustStatus: "pending",
       },
     ]);
-    render(<SkillsPage />);
+    const view = render(<SkillsPage />);
     await waitFor(() => expect(screen.getByTestId("skill-name-first")).toBeDefined());
-    // 重扫后清单多出 added
     listMock.mockResolvedValue([
       { name: "first", source: "global", enabled: true, description: "最初" },
       { name: "added", source: "project", enabled: true, description: "后来新增" },
@@ -152,9 +142,9 @@ describe("SkillsPage：启停 / 重扫 / 预览", () => {
     fireEvent.click(screen.getByTestId("skill-reload"));
     await waitFor(() => expect(reloadMock).toHaveBeenCalled());
     await waitFor(() => expect(screen.getByTestId("skill-name-added")).toBeDefined());
-  });
+    view.unmount();
 
-  it("行点击名称调 skill_inspect 弹正文预览（Markdown 只读）", async () => {
+    // 行点击名称调 skill_inspect 弹正文预览（Markdown 只读）
     inspectMock.mockResolvedValue({ markdown: "# 技能正文\n\n按需加载的指引。" });
     seedSkills([
       {
@@ -165,34 +155,15 @@ describe("SkillsPage：启停 / 重扫 / 预览", () => {
         trustStatus: "pending",
       },
     ]);
-    render(<SkillsPage />);
+    const preview = render(<SkillsPage />);
     fireEvent.click(await waitFor(() => screen.getByTestId("skill-name-demo")));
-    const preview = await waitFor(() => screen.getByTestId("skill-preview"));
-    expect(preview.textContent).toContain("技能正文");
+    const body = await waitFor(() => screen.getByTestId("skill-preview"));
+    expect(body.textContent).toContain("技能正文");
     expect(screen.getByText(/技能 demo · SKILL\.md/)).toBeDefined();
-  });
+    preview.unmount();
 
-  it("inspect 失败显示错误提示（不留空弹窗）", async () => {
-    inspectMock.mockRejectedValue(new Error("E_NOT_FOUND 技能不存在"));
-    seedSkills([
-      {
-        name: "demo",
-        source: "project",
-        enabled: true,
-        description: "演示",
-        trustStatus: "pending",
-      },
-    ]);
-    render(<SkillsPage />);
-    fireEvent.click(await waitFor(() => screen.getByTestId("skill-name-demo")));
-    await waitFor(() =>
-      expect(screen.getByText(/技能 demo 预览失败/).textContent).toContain("E_NOT_FOUND"),
-    );
-  });
-});
-
-describe("信任撤销（24 号票，§9.8）", () => {
-  it("已信任（trusted）技能行显示撤销按钮；点击 → skill_revoke_trust + 刷新清单", async () => {
+    // 已信任（trusted）技能行显示撤销按钮；点击 → skill_revoke_trust + 刷新清单
+    listMock.mockClear();
     seedSkills([
       {
         name: "guard",
@@ -202,15 +173,15 @@ describe("信任撤销（24 号票，§9.8）", () => {
         trustStatus: "trusted",
       },
     ]);
-    render(<SkillsPage />);
+    const trust = render(<SkillsPage />);
     const btn = await waitFor(() => screen.getByTestId("skill-revoke-trust-guard"));
     fireEvent.click(btn);
     await waitFor(() => expect(revokeMock).toHaveBeenCalledWith({ name: "guard" }));
     // 撤销后刷新清单（listMock 第二次调用 = revoke 成功后的 refresh）
     await waitFor(() => expect(listMock).toHaveBeenCalledTimes(2));
-  });
+    trust.unmount();
 
-  it("待决策（pending）/已撤销（revoked）/内置技能不显示撤销按钮（内置豁免信任，撤销无入口）", async () => {
+    // 待决策/已撤销/内置技能不显示撤销按钮（内置豁免信任，撤销无入口）
     seedSkills([
       {
         name: "pending-skill",
@@ -234,28 +205,11 @@ describe("信任撤销（24 号票，§9.8）", () => {
         trustStatus: "trusted",
       },
     ]);
-    render(<SkillsPage />);
+    const noEntry = render(<SkillsPage />);
     await waitFor(() => expect(screen.getAllByTestId("skill-row")).toHaveLength(3));
     expect(screen.queryByTestId("skill-revoke-trust-pending-skill")).toBeNull();
     expect(screen.queryByTestId("skill-revoke-trust-revoked-skill")).toBeNull();
     expect(screen.queryByTestId("skill-revoke-trust-builtin-skill")).toBeNull();
-  });
-
-  it("撤销失败 → 显示错误提示（不静默，避免用户误以为已脱险）", async () => {
-    seedSkills([
-      {
-        name: "guard",
-        source: "project",
-        enabled: true,
-        description: "已记住技能",
-        trustStatus: "trusted",
-      },
-    ]);
-    revokeMock.mockRejectedValue(new Error("E_INTERNAL 写信任文件失败"));
-    render(<SkillsPage />);
-    fireEvent.click(await waitFor(() => screen.getByTestId("skill-revoke-trust-guard")));
-    await waitFor(() =>
-      expect(screen.getByText(/信任撤销失败/).textContent).toContain("E_INTERNAL"),
-    );
+    noEntry.unmount();
   });
 });

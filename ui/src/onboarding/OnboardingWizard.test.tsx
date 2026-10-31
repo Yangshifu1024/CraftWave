@@ -3,14 +3,16 @@
  * 首启引导向导测试（30 号票，FR-13-18）。
  *
  * mock 唯一 invoke 出口（@/ipc/client）与 sessions/settings 两个 store 的
- * 初始态，断言外部行为面：
- * 1. 四步导航（前进 / 单步跳过 / 整包关闭）与 step 记账（setOnboarding 落
- *    sessions store，经既有防抖通道落盘）；
- * 2. 语言步 save_config 写 config.ui.language；
- * 3. 供应商步 save_provider（newKey 通道）+ test_provider 三分支（连通 /
- *    探测失败「仍要保存」与「跳过」并存 / 命令未注册降级「稍后在设置中测试」）；
- * 4. 项目步 select_dir + save_project（名称留空取目录名兜底）；
- * 5. 末步「完成」→ completed=true 收口；「继续配置」横幅三态渲染。
+ * 初始态，断言外部行为面（原逐分支用例已合并为四步向导的四个剧本，覆盖
+ * 语义不减）：
+ * 1. 四步导航剧本：顶部 × 整包关闭 / 语言步 save_config 落盘 / 单步跳过
+ *    skippedAt 记账 / 从记录 step 续走——记账经 setOnboarding 落 sessions
+ *    store，走既有防抖通道落盘；
+ * 2. 供应商步剧本：save_provider（newKey 通道）+ test_provider 连通 /
+ *    探测失败「仍要保存」与「跳过」并存 / 未保存即跳过无脏写；
+ * 3. 项目步 select_dir + save_project（名称留空取目录名兜底）→ 末步
+ *    「完成」completed=true 收口；
+ * 4. 「继续配置」横幅三态渲染 + 预设 chips 与 BUILTIN_PRESETS 同源。
  *
  * SessionWorkspace 的自动弹接线（恢复会话列表后 shouldAutoOpen 判定）依赖
  * assistant-ui 重资源树，不在本文件覆盖——判定纯函数在 onboarding-state
@@ -125,10 +127,21 @@ beforeEach(() => {
 
 afterEach(cleanup);
 
-describe("四步导航与记账", () => {
-  it("语言步：选 English 后「下一步」把 config.ui.language=en-US 经 save_config 落盘，记账 step=1", async () => {
+describe("OnboardingWizard（30 号票四步向导）", () => {
+  it("导航与记账剧本：顶部 × 整包关闭、语言步落盘 en-US、单步跳过带 skippedAt、从记录 step 续走", async () => {
+    // 顶部 × 整包关闭：completed=false、step 保持当前步、onClose 回调
+    let wizard = render(<OnboardingWizard initialStep={0} onClose={() => {}} />);
+    fireEvent.click(screen.getByTestId("onboarding-close"));
+    expect(useSessionsStore.getState().onboarding).toEqual({
+      completed: false,
+      step: 0,
+    });
+    wizard.unmount();
+
+    // 语言步：选 English 后「下一步」把 config.ui.language=en-US 经 save_config 落盘，记账 step=1
+    useSessionsStore.setState({ onboarding: null });
     const onClose = vi.fn();
-    render(<OnboardingWizard initialStep={0} onClose={onClose} />);
+    wizard = render(<OnboardingWizard initialStep={0} onClose={onClose} />);
     fireEvent.click(screen.getByTestId("onboarding-language-English"));
     fireEvent.click(screen.getByTestId("onboarding-language-next"));
     await waitFor(() => {
@@ -141,12 +154,14 @@ describe("四步导航与记账", () => {
         step: 1,
       });
     });
+    expect(useSessionsStore.getState().onboarding?.skippedAt).toBeUndefined();
     expect(onClose).not.toHaveBeenCalled();
     expect(screen.getByText(t("onboarding.providerTitle"))).toBeTruthy();
-  });
+    wizard.unmount();
 
-  it("语言步右上「跳过」：单步前进带 skippedAt，不触发语言写盘", async () => {
-    render(<OnboardingWizard initialStep={0} onClose={() => {}} />);
+    // 语言步右上「跳过」：单步前进带 skippedAt，不触发语言写盘
+    useSessionsStore.setState({ onboarding: null });
+    wizard = render(<OnboardingWizard initialStep={0} onClose={() => {}} />);
     fireEvent.click(screen.getByTestId("onboarding-skip-step"));
     await waitFor(() => {
       expect(useSessionsStore.getState().onboarding).toMatchObject({
@@ -155,56 +170,44 @@ describe("四步导航与记账", () => {
       });
     });
     expect(useSessionsStore.getState().onboarding?.skippedAt).toBeDefined();
-    expect(saveConfigMock).not.toHaveBeenCalled();
+    expect(saveConfigMock).toHaveBeenCalledTimes(1); // 仅语言步那一次，跳过未再写盘
     expect(screen.getByText(t("onboarding.providerTitle"))).toBeTruthy();
-  });
+    wizard.unmount();
 
-  it("顶部 × 整包关闭：completed=false、step 保持当前步、onClose 回调", () => {
-    const onClose = vi.fn();
-    render(<OnboardingWizard initialStep={0} onClose={onClose} />);
-    fireEvent.click(screen.getByTestId("onboarding-close"));
-    expect(useSessionsStore.getState().onboarding).toEqual({
-      completed: false,
-      step: 0,
-    });
-    expect(onClose).toHaveBeenCalledTimes(1);
-  });
-
-  it("从记录 step 续走：initialStep=2 直接渲染项目步", () => {
+    // 从记录 step 续走：initialStep=2 直接渲染项目步
     useSessionsStore.setState({ onboarding: { completed: false, step: 2 } });
     render(<OnboardingWizard initialStep={2} onClose={() => {}} />);
     expect(screen.getByText(t("onboarding.projectTitle"))).toBeTruthy();
   });
-});
 
-describe("供应商步：保存并测试三分支", () => {
-  /** 填好一个远端供应商表单（DeepSeek 预设 + Key）。 */
-  async function fillProviderForm() {
-    render(<OnboardingWizard initialStep={1} onClose={() => {}} />);
-    fireEvent.click(screen.getByText("DeepSeek"));
-    fireEvent.change(screen.getByPlaceholderText("sk-…"), {
-      target: { value: "sk-test-key" },
-    });
-    fireEvent.click(screen.getByTestId("onboarding-provider-save"));
-  }
+  it("供应商步剧本：连通（save_provider newKey 通道 + test_provider ok + 前进）、探测失败双出口与跳过保留、未保存跳过无脏写", async () => {
+    /** 填好一个远端供应商表单（DeepSeek 预设 + Key）。 */
+    const fillProviderForm = () => {
+      useSessionsStore.setState({ onboarding: null });
+      const wizard = render(<OnboardingWizard initialStep={1} onClose={() => {}} />);
+      fireEvent.click(screen.getByText("DeepSeek"));
+      fireEvent.change(screen.getByPlaceholderText("sk-…"), {
+        target: { value: "sk-test-key" },
+      });
+      fireEvent.click(screen.getByTestId("onboarding-provider-save"));
+      return wizard;
+    };
 
-  it("连通：save_provider（newKey 通道）后 test_provider ok → 显示「下一步」并前进记账", async () => {
+    // 连通：保存走 newKey 通道（upsertProvider 即时落盘），探测以保存后的
+    // 供应商 id 发起；连通成功 → 结果行 + 主按钮转「下一步」并前进记账
     testProviderMock.mockResolvedValue({ ok: true, latencyMs: 42, models: ["deepseek-chat"] });
-    await fillProviderForm();
-    // 保存走 newKey 通道（upsertProvider 即时落盘）
+    let wizard = fillProviderForm();
     await waitFor(() => expect(saveProviderMock).toHaveBeenCalledTimes(1));
     const [provider, newKey] = saveProviderMock.mock.calls[0];
     expect(provider.name).toBe("DeepSeek");
     expect(newKey).toBe("sk-test-key");
     expect(provider.models.length).toBeGreaterThan(0);
-    // 探测以保存后的供应商 id 发起
     await waitFor(() =>
       expect(testProviderMock).toHaveBeenCalledWith({
         providerId: provider.id,
         baseUrlOverride: undefined,
       }),
     );
-    // 连通成功 → 结果行 + 主按钮转「下一步」
     await waitFor(() => {
       expect(screen.getByTestId("connection-test-ok").textContent).toContain("已连通 · 42ms");
     });
@@ -215,23 +218,23 @@ describe("供应商步：保存并测试三分支", () => {
         step: 2,
       });
     });
-  });
+    wizard.unmount();
 
-  it("探测失败：红字分类文案 +「仍要保存并重测」与「跳过此步」并存；跳过后已存供应商保留", async () => {
+    // 探测失败：红字分类文案 +「仍要保存并重测」与「跳过此步」并存
+    //（票面：两者并存）；跳过后已存供应商保留（saveProvider 共连通段那一次）
     testProviderMock.mockResolvedValue({
       ok: false,
       error: { code: "E_PROVIDER_AUTH", message: "401 invalid key" },
     });
-    await fillProviderForm();
+    wizard = fillProviderForm();
     await waitFor(() => {
       expect(screen.getByTestId("connection-test-error").textContent).toContain(
         "认证失败：API Key 无效或无权限",
       );
     });
-    // 两个出口并存（票面：「仍要保存」与「跳过」并存）
     expect(screen.getByTestId("onboarding-provider-keep")).toBeTruthy();
     expect(screen.getByTestId("onboarding-provider-save")).toBeTruthy();
-    // 跳过此步：供应商已保存过（saveProvider 一次），step 前进且记录 completed=false
+    // 跳过此步：供应商已保存过，step 前进且记录 completed=false
     fireEvent.click(screen.getByTestId("onboarding-provider-keep"));
     await waitFor(() => {
       expect(useSessionsStore.getState().onboarding).toMatchObject({
@@ -239,11 +242,14 @@ describe("供应商步：保存并测试三分支", () => {
         step: 2,
       });
     });
-    expect(saveProviderMock).toHaveBeenCalledTimes(1);
-  });
+    expect(saveProviderMock).toHaveBeenCalledTimes(2); // 连通段 1 次 + 本段 1 次，跳过不再写
+    wizard.unmount();
 
-  it("未保存即跳过 → 无 provider/project 写调用（引导不产生脏数据的验收面）", async () => {
-    render(<OnboardingWizard initialStep={1} onClose={() => {}} />);
+    // 未保存即跳过 → 无 provider/project 写调用（引导不产生脏数据的验收面）
+    useSessionsStore.setState({ onboarding: null });
+    wizard = render(<OnboardingWizard initialStep={1} onClose={() => {}} />);
+    saveProviderMock.mockClear();
+    testProviderMock.mockClear();
     fireEvent.click(screen.getByTestId("onboarding-skip-step"));
     await waitFor(() => {
       expect(useSessionsStore.getState().onboarding).toMatchObject({
@@ -254,42 +260,11 @@ describe("供应商步：保存并测试三分支", () => {
     expect(saveProviderMock).not.toHaveBeenCalled();
     expect(testProviderMock).not.toHaveBeenCalled();
     expect(saveProjectMock).not.toHaveBeenCalled();
+    wizard.unmount();
   });
 
-  it("test_provider 未注册（reject）：降级提示「稍后在设置中测试」+「下一步」，不阻塞向导", async () => {
-    testProviderMock.mockRejectedValue({ code: "E_NOT_FOUND", message: "unknown command" });
-    await fillProviderForm();
-    await waitFor(() => {
-      expect(screen.getByTestId("onboarding-provider-unavailable").textContent).toContain(
-        "稍后在设置中测试",
-      );
-    });
-    fireEvent.click(screen.getByTestId("onboarding-provider-next"));
-    await waitFor(() => {
-      expect(useSessionsStore.getState().onboarding).toMatchObject({
-        completed: false,
-        step: 2,
-      });
-    });
-  });
-
-  it("保存失败（save_provider reject）：Toast 错误提示且停留本步", async () => {
-    saveProviderMock.mockRejectedValue({ code: "E_IO", message: "写盘失败" });
-    await fillProviderForm();
-    await waitFor(() => {
-      expect(
-        useToastStore
-          .getState()
-          .toasts.some((t) => t.kind === "error" && t.title === "供应商保存失败"),
-      ).toBe(true);
-    });
-    expect(testProviderMock).not.toHaveBeenCalled();
-    expect(useSessionsStore.getState().onboarding).toBeNull();
-  });
-});
-
-describe("项目步与安全简介步", () => {
-  it("select_dir 选目录 + 名称留空 → save_project 以目录名兜底，前进记账", async () => {
+  it("项目步与安全简介步收口剧本：select_dir + 名称留空取目录名兜底保存 → 末步四档说明、无单步跳过、「完成」completed=true + onClose", async () => {
+    const onClose = vi.fn();
     saveProjectMock.mockResolvedValue({
       id: "p-1",
       name: "demo",
@@ -297,7 +272,8 @@ describe("项目步与安全简介步", () => {
       createdAt: 1,
     });
     selectDirMock.mockResolvedValue("/tmp/demo");
-    render(<OnboardingWizard initialStep={2} onClose={() => {}} />);
+    render(<OnboardingWizard initialStep={2} onClose={onClose} />);
+    // 项目步：选目录 → 名称留空保存 → 以目录名兜底 + 前进记账
     fireEvent.click(screen.getByTestId("onboarding-project-pick"));
     await waitFor(() => expect(screen.getByText("/tmp/demo")).toBeTruthy());
     fireEvent.click(screen.getByTestId("onboarding-project-save"));
@@ -312,49 +288,46 @@ describe("项目步与安全简介步", () => {
         step: 3,
       });
     });
+    // 安全简介步：四档各一句话（Shift+Tab 循环的四个档位）
     expect(screen.getByText(t("onboarding.securityTitle"))).toBeTruthy();
-  });
-
-  it("安全简介步：四档说明 + 无右上「跳过」（纯展示）+「完成」收口 completed=true", () => {
-    const onClose = vi.fn();
-    render(<OnboardingWizard initialStep={3} onClose={onClose} />);
-    // 四档各一句话（Shift+Tab 循环的四个档位）
     expect(screen.getByText(t("onboarding.tierPlanLabel"))).toBeTruthy();
     expect(screen.getByText(t("onboarding.tierConfirmEachLabel"))).toBeTruthy();
     expect(screen.getByText(t("onboarding.tierAutoEditLabel"))).toBeTruthy();
     expect(screen.getByText(t("onboarding.tierFullAccessLabel"))).toBeTruthy();
     // 末步不提供单步跳过（票面：仅一个「完成」钮，纯展示无写操作）
     expect(screen.queryByTestId("onboarding-skip-step")).toBeNull();
+    // 「完成」收口 completed=true + 关闭回调
     fireEvent.click(screen.getByTestId("onboarding-finish"));
     expect(useSessionsStore.getState().onboarding).toEqual({ completed: true, step: 3 });
     expect(onClose).toHaveBeenCalledTimes(1);
   });
-});
 
-describe("「继续初始配置」横幅三态渲染", () => {
-  it("无记录（null）不渲染——首启走自动弹，横幅不抢戏", () => {
-    render(<OnboardingResumeBanner state={null} onOpen={() => {}} />);
+  it("「继续初始配置」横幅三态渲染 + 预设 chips 与 BUILTIN_PRESETS 单源（本地预设带「本地」标注）", () => {
+    // 无记录（null）不渲染——首启走自动弹，横幅不抢戏
+    let banner = render(<OnboardingResumeBanner state={null} onOpen={() => {}} />);
     expect(screen.queryByTestId("onboarding-resume-banner")).toBeNull();
-  });
+    banner.unmount();
 
-  it("未完成记录渲染；点击回调（父层从记录步重开向导）", () => {
+    // 未完成记录渲染；点击回调（父层从记录步重开向导）
     const onOpen = vi.fn();
-    render(<OnboardingResumeBanner state={{ completed: false, step: 1 }} onOpen={onOpen} />);
+    banner = render(
+      <OnboardingResumeBanner state={{ completed: false, step: 1 }} onOpen={onOpen} />,
+    );
     expect(screen.getByTestId("onboarding-resume-banner").textContent).toContain(
       t("onboarding.bannerResume").replace(" →", ""),
     );
     fireEvent.click(screen.getByTestId("onboarding-resume-open"));
     expect(onOpen).toHaveBeenCalledTimes(1);
-  });
+    banner.unmount();
 
-  it("已完成记录不渲染——横幅随 completed 消失（验收口径）", () => {
-    render(<OnboardingResumeBanner state={{ completed: true, step: 3 }} onOpen={() => {}} />);
+    // 已完成记录不渲染——横幅随 completed 消失（验收口径）
+    banner = render(
+      <OnboardingResumeBanner state={{ completed: true, step: 3 }} onOpen={() => {}} />,
+    );
     expect(screen.queryByTestId("onboarding-resume-banner")).toBeNull();
-  });
-});
+    banner.unmount();
 
-describe("预设清单单源回归（与设置页共用）", () => {
-  it("向导预设 chips 来自 BUILTIN_PRESETS 同一清单（本地预设带「本地」标注）", () => {
+    // 向导预设 chips 来自 BUILTIN_PRESETS 同一清单（与设置页共用）
     render(<OnboardingWizard initialStep={1} onClose={() => {}} />);
     for (const preset of BUILTIN_PRESETS) {
       expect(

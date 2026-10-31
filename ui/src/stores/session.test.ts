@@ -55,87 +55,77 @@ afterEach(() => {
   useSessionPersistStore.setState(useSessionPersistStore.getInitialState());
 });
 
-describe("toSavePayload（运行态节点剔除与引用改写）", () => {
-  it("无运行态节点：线性链 parentId + activeLeaf=末条", () => {
+describe("session 持久化（15 号票，§6.3 双写协议）", () => {
+  it("toSavePayload 剧本：线性链 parentId、运行态节点剔除与 {runId}:marker 改写、新 user 挂 marker 等价", () => {
+    // 无运行态节点：线性链 parentId + activeLeaf=末条
     const nodes = new Map<string, string>();
-    const { messages, activeLeafId } = toSavePayload(
-      [msg("u1", "user", "你好"), msg("a1", "assistant", "答复")],
-      nodes,
-    );
-    expect(messages.map((m) => m.id)).toEqual(["u1", "a1"]);
-    expect(messages[0].parentId).toBeUndefined();
-    expect(messages[1].parentId).toBe("u1");
-    expect(activeLeafId).toBe("a1");
-  });
+    let saved = toSavePayload([msg("u1", "user", "你好"), msg("a1", "assistant", "答复")], nodes);
+    expect(saved.messages.map((m) => m.id)).toEqual(["u1", "a1"]);
+    expect(saved.messages[0].parentId).toBeUndefined();
+    expect(saved.messages[1].parentId).toBe("u1");
+    expect(saved.activeLeafId).toBe("a1");
 
-  it("运行态节点剔除：其子引用改写为 {runId}:marker，末条为运行态时 activeLeaf 派生", () => {
-    const nodes = new Map([["a-fe", "run-7"]]);
-    const { messages, activeLeafId } = toSavePayload(
+    // 运行态节点剔除：其子引用保持 canonical 父（u2 排在 a1 后 parentId=a1 不变）；
+    // 末条恰是被剔除的运行态节点时 activeLeaf 改写为 {runId}:marker
+    saved = toSavePayload(
       [
         msg("u1", "user", "你好"),
         msg("a1", "assistant", "历史答复（canonical 收养节点）"),
         msg("u2", "user", "继续"),
         msg("a-fe", "assistant", "本 app 运行态节点"),
       ],
-      nodes,
+      new Map([["a-fe", "run-7"]]),
     );
-    // a-fe 是运行态节点，被剔除；u2 排在 a1 之后，parentId 保持 a1 不变；
-    // 末条恰是被剔除的运行态节点，activeLeafId 改写为其 canonical 等价 marker
-    expect(messages.map((m) => m.id)).toEqual(["u1", "a1", "u2"]);
-    expect(messages[2].parentId).toBe("a1");
-    expect(activeLeafId).toBe("run-7:marker");
-  });
+    expect(saved.messages.map((m) => m.id)).toEqual(["u1", "a1", "u2"]);
+    expect(saved.messages[2].parentId).toBe("a1");
+    expect(saved.activeLeafId).toBe("run-7:marker");
 
-  it("运行态节点后有新 user：user 挂在 marker 等价上", () => {
-    const nodes = new Map([["a-fe", "run-7"]]);
-    const { messages, activeLeafId } = toSavePayload(
+    // 运行态节点后有新 user：user 挂在 marker 等价上
+    saved = toSavePayload(
       [msg("u1", "user", "你好"), msg("a-fe", "assistant", "x"), msg("u2", "user", "追问")],
-      nodes,
+      new Map([["a-fe", "run-7"]]),
     );
-    expect(messages.map((m) => m.id)).toEqual(["u1", "u2"]);
-    expect(messages[1].parentId).toBe("run-7:marker");
-    expect(activeLeafId).toBe("u2");
+    expect(saved.messages.map((m) => m.id)).toEqual(["u1", "u2"]);
+    expect(saved.messages[1].parentId).toBe("run-7:marker");
+    expect(saved.activeLeafId).toBe("u2");
   });
-});
 
-describe("syncTreeBeforeSend（E_SESSION_REV 自愈）", () => {
-  it("成功路径推进 revision", async () => {
-    const save = vi.mocked(client.saveSessionTree).mockResolvedValue({ revision: 3 });
+  it("syncTreeBeforeSend 剧本（E_SESSION_REV 自愈）：成功推进 revision、过期 load 校正重试一次、非 REV 上抛、首次可见补 refresh", async () => {
+    // 成功路径推进 revision（baseRevision 首次为 0）
+    vi.mocked(client.saveSessionTree).mockResolvedValue({ revision: 3 });
     await syncTreeBeforeSend("s1", [msg("u1", "user", "你好")]);
-    expect(save).toHaveBeenCalledWith(
+    expect(client.saveSessionTree).toHaveBeenCalledWith(
       expect.objectContaining({ sessionId: "s1", baseRevision: 0 }),
     );
     expect(useSessionPersistStore.getState().scopes.s1?.revision).toBe(3);
-  });
 
-  it("revision 过期 → load 校正后重试一次", async () => {
-    const save = vi
-      .mocked(client.saveSessionTree)
+    // revision 过期 → load 校正后重试一次（baseRevision 用校正值）
+    const savesBefore = vi.mocked(client.saveSessionTree).mock.calls.length;
+    vi.mocked(client.saveSessionTree)
       .mockRejectedValueOnce({ code: "E_SESSION_REV", message: "基线过期" })
       .mockResolvedValue({ revision: 9 });
-    const load = vi.mocked(client.loadSessionTree).mockResolvedValue({
+    vi.mocked(client.loadSessionTree).mockResolvedValue({
       sessionId: "s1",
       messages: [],
       compactions: [],
       revision: 8,
     });
     await syncTreeBeforeSend("s1", [msg("u1", "user", "你好")]);
-    expect(load).toHaveBeenCalledWith("s1");
-    expect(save).toHaveBeenCalledTimes(2);
-    expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ baseRevision: 8 }));
+    expect(client.loadSessionTree).toHaveBeenCalledWith("s1");
+    expect(client.saveSessionTree).toHaveBeenCalledTimes(savesBefore + 2);
+    expect(client.saveSessionTree).toHaveBeenLastCalledWith(
+      expect.objectContaining({ baseRevision: 8 }),
+    );
     expect(useSessionPersistStore.getState().scopes.s1?.revision).toBe(9);
-  });
 
-  it("非 REV 错误上抛（发送流程 catch 后继续）", async () => {
+    // 非 REV 错误上抛（发送流程 catch 后继续）
     vi.mocked(client.saveSessionTree).mockRejectedValue({ code: "E_STORAGE_IO", message: "盘满" });
     await expect(syncTreeBeforeSend("s1", [msg("u1", "user", "你好")])).rejects.toMatchObject({
       code: "E_STORAGE_IO",
     });
-  });
 
-  it("首次可见刷新：会话不在左栏列表时 save 成功后补 refresh；已在列表则不刷", async () => {
-    const listSessions = vi.mocked(client.listSessions);
-    // 会话已在列表（非空）：不再触发 refresh
+    // 首次可见刷新：会话已在左栏列表（非空）→ save 成功后不触发 refresh
+    vi.mocked(client.listSessions).mockClear();
     useSessionsStore.setState({
       sessions: [
         {
@@ -153,26 +143,21 @@ describe("syncTreeBeforeSend（E_SESSION_REV 自愈）", () => {
     });
     vi.mocked(client.saveSessionTree).mockResolvedValue({ revision: 3 });
     await syncTreeBeforeSend("s1", [msg("u1", "user", "你好")]);
-    expect(listSessions).not.toHaveBeenCalled();
+    expect(client.listSessions).not.toHaveBeenCalled();
 
-    // 空会话（列表无它）：save 成功 → refresh 让左栏即时出现
-    listSessions.mockClear();
+    // 空会话（列表无它）→ save 成功后 refresh 让左栏即时出现
     useSessionsStore.setState(useSessionsStore.getInitialState());
     await syncTreeBeforeSend("s1", [msg("u1", "user", "你好")]);
-    expect(listSessions).toHaveBeenCalledTimes(1);
+    expect(client.listSessions).toHaveBeenCalledTimes(1);
   });
-});
 
-describe("loadHistory", () => {
-  it("新会话（E_NOT_FOUND）返回 null", async () => {
+  it("loadHistory：新会话（E_NOT_FOUND）返回 null；成功返回 canonical 树并推进 revision", async () => {
     vi.mocked(client.loadSessionTree).mockRejectedValue({
       code: "E_NOT_FOUND",
       message: "会话不存在",
     });
     expect(await loadHistory("s1")).toBeNull();
-  });
 
-  it("成功返回 canonical 树并推进 revision", async () => {
     const tree: SessionTreeData = {
       sessionId: "s1",
       messages: [{ id: "u1", role: "user", parts: [], createdAt: 1 }] satisfies MessageEntry[],

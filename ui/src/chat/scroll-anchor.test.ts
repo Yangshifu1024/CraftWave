@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 /**
  * 滚动锚点测试（29 号票，FR-01-11 收口）：锚点纯几何（computeAnchor/
- * resolveScrollTop）表驱动、ui-state 载入清洗（sanitizeScrollAnchors）、
+ * resolveScrollTop）、ui-state 载入清洗（sanitizeScrollAnchors）、
  * DOM 落位（collectAnchorElements/applyAnchor——锚点失效回底部）。
  */
 
@@ -22,14 +22,15 @@ const ELEMENTS: AnchorElement[] = [
   { messageId: "m3", top: 1200 },
 ];
 
-describe("computeAnchor（记账几何）", () => {
-  it("表驱动：视口顶上方最后一条消息 + 相对偏移", () => {
+describe("scroll-anchor（29 号票）", () => {
+  it("纯几何与清洗：视口顶上方最后一条 + 相对偏移、恢复几何钳 0、ui-state 载入剔除形状不符", () => {
+    // ---- computeAnchor（记账几何）：表驱动口径 ----
     const cases: [number, string, number][] = [
       [0, "m1", 0], // 最顶
       [200, "m1", 200], // m1 区间内
       [500, "m2", 0], // 恰好压线 m2 顶
       [720, "m2", 220], // m2 区间内
-      [5000, "m3", 3800], // 超出内容底（ rubber-band 范围）：锚最后一条
+      [5000, "m3", 3800], // 超出内容底（rubber-band 范围）：锚最后一条
     ];
     for (const [scrollTop, leafId, offset] of cases) {
       expect(computeAnchor(ELEMENTS, scrollTop), `scrollTop=${scrollTop}`).toEqual({
@@ -37,29 +38,19 @@ describe("computeAnchor（记账几何）", () => {
         offset,
       });
     }
-  });
-
-  it("空消息序列返回 null（空会话不记账）", () => {
+    // 空消息序列返回 null（空会话不记账）
     expect(computeAnchor([], 100)).toBeNull();
-  });
-});
 
-describe("resolveScrollTop（恢复几何）", () => {
-  it("锚点命中 → 目标 scrollTop；越顶钳 0", () => {
+    // ---- resolveScrollTop（恢复几何）：锚点命中 → 目标 scrollTop；越顶钳 0 ----
     expect(resolveScrollTop(ELEMENTS, { leafId: "m2", offset: 220 })).toBe(720);
     expect(resolveScrollTop(ELEMENTS, { leafId: "m1", offset: 99999 })).toBe(99999);
     expect(resolveScrollTop([{ messageId: "m1", top: 500 }], { leafId: "m1", offset: -800 })).toBe(
       0,
     );
-  });
-
-  it("leafId 失效（消息已不存在）→ null（调用方回底部）", () => {
+    // leafId 失效（消息已不存在）→ null（调用方回底部）
     expect(resolveScrollTop(ELEMENTS, { leafId: "ghost", offset: 10 })).toBeNull();
-  });
-});
 
-describe("sanitizeScrollAnchors（ui-state 载入清洗）", () => {
-  it("表驱动：合法保留，形状不符剔除", () => {
+    // ---- sanitizeScrollAnchors（ui-state 载入清洗）：合法保留，形状不符剔除 ----
     expect(
       sanitizeScrollAnchors({
         s1: { leafId: "m1", offset: 12 },
@@ -73,21 +64,19 @@ describe("sanitizeScrollAnchors（ui-state 载入清洗）", () => {
     expect(sanitizeScrollAnchors(null)).toEqual({});
     expect(sanitizeScrollAnchors([1, 2])).toEqual({});
   });
-});
 
-describe("collectAnchorElements / applyAnchor（DOM 面，happy-dom）", () => {
-  /**
-   * 搭一个滚动容器：3 条 data-message-id 消息。happy-dom 无布局引擎
-   * （getBoundingClientRect 恒 0），给消息元素覆写 rect 方法模拟布局——
-   * 消息内容顶分别在视口坐标 100/600/1300（容器 rect 恒 0），据此验证
-   * collectAnchorElements 的换算公式（elRect.top - 容器 rect.top +
-   * scrollTop）与 applyAnchor 的落位/回落链路。
-   */
-  function mount(scrollTop: number): { container: HTMLElement; viewport: HTMLElement } {
+  it("DOM 面：采集换算 + 记账 + 落位 + 失效回底部全链（happy-dom）", () => {
+    /**
+     * 搭一个滚动容器：3 条 data-message-id 消息。happy-dom 无布局引擎
+     * （getBoundingClientRect 恒 0），给消息元素覆写 rect 方法模拟布局——
+     * 消息内容顶分别在视口坐标 100/600/1300（容器 rect 恒 0），据此验证
+     * collectAnchorElements 的换算公式（elRect.top - 容器 rect.top +
+     * scrollTop）与 applyAnchor 的落位/回落链路。
+     */
     document.body.innerHTML = "";
     const viewport = document.createElement("div");
     viewport.className = "cw-scroll-viewport";
-    viewport.scrollTop = scrollTop;
+    viewport.scrollTop = 300;
     const tops: Record<string, number> = { m1: 100, m2: 600, m3: 1300 };
     for (const id of ["m1", "m2", "m3"]) {
       const message = document.createElement("div");
@@ -99,27 +88,19 @@ describe("collectAnchorElements / applyAnchor（DOM 面，happy-dom）", () => {
     const container = document.createElement("div");
     container.appendChild(viewport);
     document.body.appendChild(container);
-    return { container, viewport };
-  }
 
-  it("采集换算 + 记账 + 落位 + 失效回底部全链", () => {
-    const { container, viewport } = mount(300);
+    // 采集换算：top = 消息 rect.top - 容器 rect.top + scrollTop：100-0+300=400 / 900 / 1600
     const elements = collectAnchorElements(viewport);
     expect(elements.map((e) => e.messageId)).toEqual(["m1", "m2", "m3"]);
-    // top = 消息 rect.top - 容器 rect.top + scrollTop：100-0+300=400 / 900 / 1600
     expect(elements.map((e) => e.top)).toEqual([400, 900, 1600]);
-    // 视口顶 300：全在第一条消息顶之下？400>300 → 锚第一条，offset 0
-    expect(computeAnchor(elements, viewport.scrollTop)).toEqual({
-      leafId: "m1",
-      offset: 0,
-    });
+    // 视口顶 300：400>300 → 锚第一条，offset 0
+    expect(computeAnchor(elements, viewport.scrollTop)).toEqual({ leafId: "m1", offset: 0 });
     // 落位：锚 m2 offset 50 → m2.top + offset = 950
     expect(applyAnchor(viewport, { leafId: "m2", offset: 50 })).toBe(true);
     expect(viewport.scrollTop).toBe(950);
-    // leafId 失效 → 回底部（scrollHeight）
+    // leafId 失效 → 回底部（scrollHeight）；无锚点 → 回底部
     expect(applyAnchor(viewport, { leafId: "ghost", offset: 0 })).toBe(false);
     expect(viewport.scrollTop).toBe(viewport.scrollHeight);
-    // 无锚点 → 回底部
     expect(applyAnchor(viewport, undefined)).toBe(false);
     expect(viewport.scrollTop).toBe(viewport.scrollHeight);
     void container;

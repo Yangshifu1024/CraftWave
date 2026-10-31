@@ -10,21 +10,17 @@ import { buildStressEntries, STRESS_MESSAGE_COUNT, STRESS_SESSION_ID } from "./s
  * 这些不变量守住「压测压的是真实管线」——数据形状漂移即红。
  */
 
-describe("buildStressEntries", () => {
+describe("buildStressEntries（34 号票压测源冒烟）", () => {
   const dataset = buildStressEntries();
 
-  it("默认生成 2000 条消息（PRD NFR-03 口径）", () => {
+  it("默认 2000 条单链线性：parentId 依次相接、meta.activeLeafId 指向链尾、覆盖四类渲染负载与压缩边界投影、可被收养管线还原", () => {
+    // ---- 默认生成 2000 条消息（PRD NFR-03 口径）----
     expect(STRESS_MESSAGE_COUNT).toBe(2000);
     expect(dataset.messageCount).toBe(2000);
-    const messages = dataset.entries.filter(
-      (e): e is StoredMessageEntry => e.kind === "message" && e.role !== "system",
-    );
-    expect(messages).toHaveLength(2000);
-  });
-
-  it("条目为单链线性：parentId 依次相接且 meta.activeLeafId 指向链尾", () => {
     const messages = dataset.entries.filter((e): e is StoredMessageEntry => e.kind === "message");
-    // 链头无父，其后每条消息的父都是前一条
+    expect(messages.filter((m) => m.role !== "system")).toHaveLength(2000);
+
+    // ---- 单链线性：链头无父，其后每条消息的父都是前一条 ----
     expect(messages[0].parentId).toBeUndefined();
     for (let i = 1; i < messages.length; i++) {
       expect(messages[i].parentId).toBe(messages[i - 1].id);
@@ -34,57 +30,46 @@ describe("buildStressEntries", () => {
     if (meta?.kind === "meta") {
       expect(meta.activeLeafId).toBe(messages[messages.length - 1].id);
     }
-  });
 
-  it("id 全局唯一（树还原的前提）", () => {
+    // ---- id 全局唯一（树还原的前提）----
     const ids = dataset.entries.map((e) => ("id" in e ? e.id : ""));
     expect(new Set(ids).size).toBe(ids.length);
-  });
 
-  it("每 100 条消息插一个 runMarker 系统条目（20 组分组面）", () => {
-    const markers = dataset.entries.filter(
-      (e): e is StoredMessageEntry => e.kind === "message" && e.role === "system",
-    );
+    // ---- 每 100 条消息插一个 runMarker 系统条目（20 组分组面，runId 彼此不同）----
+    const markers = messages.filter((m) => m.role === "system");
     expect(markers).toHaveLength(20);
     for (const marker of markers) {
       expect(marker.parts).toHaveLength(1);
       expect(marker.parts[0]).toMatchObject({ type: "runMarker" });
     }
-    // marker 的 runId 彼此不同（每个 run 一个分组）
     const runIds = markers.map((m) => (m.parts[0] as { type: "runMarker"; runId: string }).runId);
     expect(new Set(runIds).size).toBe(20);
-  });
 
-  it("assistant 消息覆盖长文本/工具卡/混合/短文本四种形态", () => {
-    const assistants = dataset.entries.filter(
-      (e): e is StoredMessageEntry => e.kind === "message" && e.role === "assistant",
-    );
-    const hasLongText = assistants.some((a) =>
-      a.parts.some((p) => p.type === "text" && p.text.length >= 400),
-    );
-    const hasToolCards = assistants.some(
-      (a) =>
-        a.parts.some((p) => p.type === "toolCall") && a.parts.some((p) => p.type === "toolResult"),
-    );
-    const hasReasoning = assistants.some((a) => a.parts.some((p) => p.type === "reasoning"));
-    const hasShort = assistants.some(
-      (a) => a.parts.length === 1 && a.parts[0].type === "text" && a.parts[0].text.length < 30,
-    );
-    expect(hasLongText).toBe(true);
-    expect(hasToolCards).toBe(true);
-    expect(hasReasoning).toBe(true);
-    expect(hasShort).toBe(true);
-    // 全部 assistant 消息状态收口为 complete（真实会话的历史形态）
+    // ---- assistant 消息覆盖长文本/工具卡/推理/短文本四种形态，状态收口 complete ----
+    const assistants = messages.filter((m) => m.role === "assistant");
+    expect(
+      assistants.some((a) => a.parts.some((p) => p.type === "text" && p.text.length >= 400)),
+    ).toBe(true);
+    expect(
+      assistants.some(
+        (a) =>
+          a.parts.some((p) => p.type === "toolCall") &&
+          a.parts.some((p) => p.type === "toolResult"),
+      ),
+    ).toBe(true);
+    expect(assistants.some((a) => a.parts.some((p) => p.type === "reasoning"))).toBe(true);
+    expect(
+      assistants.some(
+        (a) => a.parts.length === 1 && a.parts[0].type === "text" && a.parts[0].text.length < 30,
+      ),
+    ).toBe(true);
     for (const a of assistants) {
       expect(a.status).toEqual({ type: "complete", reason: "stop" });
     }
-  });
 
-  it("图片 part 出现在 user 消息上且只含引用不含本体", () => {
-    const users = dataset.entries.filter(
-      (e): e is StoredMessageEntry => e.kind === "message" && e.role === "user",
-    );
-    const imageParts = users.flatMap((u) => u.parts.filter((p) => p.type === "image"));
+    // ---- 图片 part 出现在 user 消息上且只含引用不含本体 ----
+    const users = messages.filter((m) => m.role === "user");
+    const imageParts = users.flatMap((usr) => usr.parts.filter((p) => p.type === "image"));
     expect(imageParts.length).toBeGreaterThanOrEqual(4);
     for (const part of imageParts) {
       if (part.type === "image") {
@@ -94,9 +79,8 @@ describe("buildStressEntries", () => {
         expect(JSON.stringify(part)).not.toContain("data:image");
       }
     }
-  });
 
-  it("压缩边界不进消息树，作为独立投影返回且锚点真实存在", () => {
+    // ---- 压缩边界不进消息树，作为独立投影返回且锚点真实存在 ----
     // entries 里没有 compaction 条目（§6.3：投影面承载）
     expect(dataset.entries.some((e) => e.kind === "compaction")).toBe(false);
     expect(dataset.compactions.length).toBeGreaterThanOrEqual(3);
@@ -105,22 +89,16 @@ describe("buildStressEntries", () => {
       expect(allIds.has(compaction.cutEntryId)).toBe(true);
       expect(compaction.tokensBefore).toBeGreaterThan(0);
     }
-  });
 
-  it("产物可被真实收养管线消费（entriesToExported 还原成功）", () => {
-    const exported = entriesToExported(dataset.entries);
+    // ---- 产物可被真实收养管线消费（entriesToExported 还原成功）----
     // 树能从链还原说明契约形状成立；进树条目 = 2000 消息 + 20 marker
     //（meta 只是 headId 来源，不进 messages）
-    expect(exported.messages.length).toBe(2020);
+    expect(entriesToExported(dataset.entries).messages.length).toBe(2020);
   });
 
-  it("虚拟 sessionId 不与真实会话冲突（仅前端内存态）", () => {
-    expect(STRESS_SESSION_ID).toBe("stress-perf");
-  });
-
-  it("自定义条数生效且非偶数被拒绝", () => {
+  it("自定义条数生效且非偶数被拒绝；虚拟 sessionId 不与真实会话冲突", () => {
     expect(() => buildStressEntries(11)).toThrow();
-    const small = buildStressEntries(20);
-    expect(small.messageCount).toBe(20);
+    expect(buildStressEntries(20).messageCount).toBe(20);
+    expect(STRESS_SESSION_ID).toBe("stress-perf");
   });
 });

@@ -70,15 +70,14 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("范围换算（本地日期口径）", () => {
-  it("localDay 与 shiftLocalDay 产生 YYYY-MM-DD 且跨月归一", () => {
+describe("usage-stats（20 号票）", () => {
+  it("纯函数面：本地日期换算、范围参数、增量修正（回退钳 0）、缓存命中率公式", () => {
+    // localDay 与 shiftLocalDay 产生 YYYY-MM-DD 且跨月归一
     expect(localDay(new Date(2026, 9, 30))).toBe("2026-10-30");
     expect(shiftLocalDay("2026-10-30", -6)).toBe("2026-10-24");
     expect(shiftLocalDay("2026-10-30", -29)).toBe("2026-10-01");
     expect(shiftLocalDay("2026-11-01", -1)).toBe("2026-10-31");
-  });
-
-  it("范围键 → range 参数（today/7d/30d/all）", () => {
+    // 范围键 → range 参数（today/7d/30d/all）
     const today = localDay();
     expect(rangeToArgs("today", today)).toEqual({ range: { from: today, to: today } });
     expect(rangeToArgs("7d", today)).toEqual({
@@ -88,61 +87,50 @@ describe("范围换算（本地日期口径）", () => {
       range: { from: shiftLocalDay(today, -29), to: today },
     });
     expect(rangeToArgs("all", today)).toEqual({}); // 全部保留期 = 缺省
-  });
-
-  it("usageDelta：新全量 − 旧全量，回退钳 0", () => {
+    // usageDelta：新全量 − 旧全量，异常回退（新值 < 旧值）不倒扣
     expect(usageDelta(u(100, 10, 20, 5), u(150, 12, 25, 5))).toEqual(u(50, 2, 5, 0));
-    // 异常回退（新值 < 旧值）不倒扣
     expect(usageDelta(u(100), u(50))).toEqual(u(0, 0, 0, 0));
+    // cacheHitRate：§10.5 公式（cacheRead/(input+cacheRead)）
+    expect(cacheHitRate({ input: 30, cacheRead: 70 })).toBeCloseTo(0.7);
+    expect(cacheHitRate({ input: 0, cacheRead: 0 })).toBeNull();
   });
-});
 
-describe("store：装载与范围切换", () => {
-  it("load 按当前范围拉取并把结果写入 store", async () => {
+  it("store 面：load 按范围拉取、setRange 切换重拉、失败记 error、本地增量修正与防抖重拉、restoreSessionUsage 三口径", async () => {
+    // ---- load 按当前范围拉取并把结果写入 store（缺省 7d = 本地日期闭区间）----
     mockStatsToken.mockResolvedValue(fixture());
     await useUsageStatsStore.getState().load();
     expect(useUsageStatsStore.getState().data?.total.total).toBe(190);
-    // 缺省范围 7d：range 参数 = 近 7 天（本地日期闭区间）
     const today = localDay();
     expect(mockStatsToken).toHaveBeenLastCalledWith({
       range: { from: shiftLocalDay(today, -6), to: today },
     });
-  });
 
-  it("setRange 切换即重拉对应范围（all = 缺省无 range）", async () => {
-    mockStatsToken.mockResolvedValue(fixture());
+    // ---- setRange 切换即重拉对应范围（all = 缺省无 range）；失败记录 error ----
     await useUsageStatsStore.getState().setRange("today");
-    const today = localDay();
     expect(mockStatsToken).toHaveBeenLastCalledWith({ range: { from: today, to: today } });
     expect(useUsageStatsStore.getState().range).toBe("today");
     await useUsageStatsStore.getState().setRange("all");
     expect(mockStatsToken).toHaveBeenLastCalledWith({});
-  });
-
-  it("加载失败记录 error（面板显示失败行）", async () => {
     mockStatsToken.mockRejectedValue(new Error("E_IO"));
     await useUsageStatsStore.getState().load();
     expect(useUsageStatsStore.getState().error).toBe("E_IO");
-  });
-});
 
-describe("store：tokens:update 本地增量修正", () => {
-  it("增量累进今日行/模型行/total，随后防抖重拉校正", async () => {
+    // ---- tokens:update 本地增量修正：累进今日行/模型行/total，随后防抖重拉校正 ----
     vi.useFakeTimers();
     mockStatsToken.mockResolvedValue(fixture());
+    mockStatsToken.mockClear();
     await useUsageStatsStore.getState().load();
+    expect(mockStatsToken).toHaveBeenCalledTimes(1);
     const before = useUsageStatsStore.getState().data!;
     // 本地今日 = fixture 里没有的日期（fixture 固定 10 月）→ 新建今日行
     useUsageStatsStore.getState().applyTokensDelta(u(30, 4, 1, 0), "m2");
     const after = useUsageStatsStore.getState().data!;
     expect(after.total.total).toBe(before.total.total + 35);
-    const todayRow = after.byDay.find((d) => d.day === localDay());
-    expect(todayRow?.input).toBe(30);
+    expect(after.byDay.find((d) => d.day === localDay())?.input).toBe(30);
     const m2 = after.byModel.find((m) => m.modelId === "m2");
     expect(m2?.total).toBe(35);
-    // 本地增量不计 runs（runs 由权威面回填）
+    // 本地增量不计 runs（runs 由权威面回填）；防抖重拉（权威校正）触发
     expect(m2?.runs).toBe(0);
-    // 防抖重拉（权威校正）触发
     await vi.advanceTimersByTimeAsync(600);
     expect(mockStatsToken).toHaveBeenCalledTimes(2);
     // 防抖：窗口内多事件只拉一次
@@ -150,20 +138,13 @@ describe("store：tokens:update 本地增量修正", () => {
     useUsageStatsStore.getState().applyTokensDelta(u(2), "m2");
     await vi.advanceTimersByTimeAsync(600);
     expect(mockStatsToken).toHaveBeenCalledTimes(3);
-  });
-
-  it("modelId 缺省（老载荷）也触发权威重拉", async () => {
-    vi.useFakeTimers();
-    mockStatsToken.mockResolvedValue(fixture());
-    await useUsageStatsStore.getState().load();
+    // modelId 缺省（老载荷）也触发权威重拉
     useUsageStatsStore.getState().applyTokensDelta(u(5), undefined);
     await vi.advanceTimersByTimeAsync(600);
-    expect(mockStatsToken).toHaveBeenCalledTimes(2);
-  });
-});
+    expect(mockStatsToken).toHaveBeenCalledTimes(4);
+    vi.useRealTimers();
 
-describe("Q37 旧数据标量回落与恢复", () => {
-  it("restoreSessionUsage：四口径回填 / legacy 入桶 / 失败静默", async () => {
+    // ---- Q37 旧数据标量回落与恢复：四口径回填 / legacy 入桶 / 失败静默 ----
     const applied: [string, UsageTotal][] = [];
     const apply = (id: string, usage: UsageTotal) => applied.push([id, usage]);
     // 正常明细：usage 回填
@@ -175,7 +156,6 @@ describe("Q37 旧数据标量回落与恢复", () => {
     restoreSessionUsage("s2", async () => ({ usage: u(0), legacyTotalTokens: 777 }), apply);
     await Promise.resolve();
     await Promise.resolve();
-    // 旧数据不回填四口径（标量入桶）
     expect(applied.length).toBe(1);
     expect(useUsageStatsStore.getState().legacyTotals.s2).toBe(777);
     // 失败静默
@@ -188,10 +168,5 @@ describe("Q37 旧数据标量回落与恢复", () => {
     );
     await Promise.resolve();
     expect(applied.length).toBe(1);
-  });
-
-  it("cacheHitRate：§10.5 公式（cacheRead/(input+cacheRead)）", () => {
-    expect(cacheHitRate({ input: 30, cacheRead: 70 })).toBeCloseTo(0.7);
-    expect(cacheHitRate({ input: 0, cacheRead: 0 })).toBeNull();
   });
 });

@@ -17,7 +17,8 @@ beforeEach(() => {
 });
 
 describe("useToastStore（顶部轻提示）", () => {
-  it("push 入队：成功/信息 3s、错误 6s 自动出队", () => {
+  it("剧本：push 入队、3s/6s 自动出队节奏、duration 覆盖与手动 dismiss、堆叠上限挤最老、被挤条目残留定时器不复活", () => {
+    // push 入队：成功/信息 3s、错误 6s 自动出队
     act(() => {
       pushToast("success", "已保存");
       pushToast("error", "保存失败", "E_IO: 磁盘满");
@@ -38,9 +39,8 @@ describe("useToastStore（顶部轻提示）", () => {
       vi.advanceTimersByTime(DEFAULT_DURATION_BY_KIND.error);
     });
     expect(useToastStore.getState().toasts).toEqual([]);
-  });
 
-  it("duration 可覆盖缺省时长；dismiss 手动出队", () => {
+    // duration 可覆盖缺省时长（缺省 6s 已过但自定义 60s 未到）；dismiss 手动出队
     let customId = -1;
     act(() => {
       customId = useToastStore.getState().push({
@@ -53,27 +53,25 @@ describe("useToastStore（顶部轻提示）", () => {
     act(() => {
       vi.advanceTimersByTime(10_000);
     });
-    // 缺省 6s 已过但自定义 60s 未到，仍在屏
     expect(useToastStore.getState().toasts).toHaveLength(1);
     act(() => {
       useToastStore.getState().dismiss(customId);
     });
     expect(useToastStore.getState().toasts).toEqual([]);
-  });
 
-  it(`堆叠上限 ${MAX_STACK} 条：超出挤掉最老的`, () => {
+    // 堆叠上限 MAX_STACK 条：超出挤掉最老的（最老两条被挤，保留最新 MAX_STACK 条）
+    useToastStore.setState({ toasts: [] });
     act(() => {
       for (let i = 0; i < MAX_STACK + 2; i += 1) {
         pushToast("info", `提示 ${i}`);
       }
     });
-    const titles = useToastStore.getState().toasts.map((t) => t.title);
-    expect(titles).toHaveLength(MAX_STACK);
-    // 最老的两条被挤掉，保留最新 3 条
-    expect(titles).toEqual(["提示 2", "提示 3", "提示 4"]);
-  });
+    expect(useToastStore.getState().toasts.map((t) => t.title)).toEqual(
+      Array.from({ length: MAX_STACK }, (_, i) => `提示 ${i + 2}`),
+    );
 
-  it("被挤掉条目的残留定时器到期不复活、不出错", () => {
+    // 被挤掉条目的残留定时器到期不复活、不出错（幽灵 dismiss 不炸在屏条目）
+    useToastStore.setState({ toasts: [] });
     act(() => {
       // 被挤条目给一个短时长：它的 timer 到期时条目已不在屏
       useToastStore.getState().push({ kind: "info", title: "会被挤掉", duration: 100 });
