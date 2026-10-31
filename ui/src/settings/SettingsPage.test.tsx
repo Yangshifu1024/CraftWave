@@ -7,9 +7,11 @@
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useHotkeyStore } from "@/hotkey";
 import type { AppConfig, NotificationPermissionStatus, ProjectMeta } from "@/ipc/types";
 import { useSessionsStore } from "@/stores/sessions";
 import { useSettingsStore } from "@/stores/settings";
+import { useToastStore } from "@/stores/toast";
 import { SettingsPage } from "./SettingsPage";
 
 // IPC 测试桩（vi.fn 可按用例指定返回值）
@@ -33,6 +35,14 @@ vi.mock("@/ipc/client", async (importOriginal) => {
   };
 });
 
+// 全局热键插件桩（29 号票：保存成功后 applyHotkey 会调插件注册——测试
+// 环境无 Tauri，桩成永不失败的 no-op；注册流自身单测在 hotkey.test.ts）
+vi.mock("@tauri-apps/plugin-global-shortcut", () => ({
+  register: vi.fn(async () => undefined),
+  unregisterAll: vi.fn(async () => undefined),
+  isRegistered: vi.fn(async () => false),
+}));
+
 /** 基准配置样例：草稿与基线都从这里深拷贝，保证两份独立。 */
 const BASE_CONFIG: AppConfig = {
   schemaVersion: 2,
@@ -46,7 +56,13 @@ const BASE_CONFIG: AppConfig = {
     requirePlan: false,
     gitAllowStageCommit: false,
   },
-  ui: { language: "zh-CN", theme: "system" },
+  // 界面组（29 号票 §3.2 ui 组补齐）：关闭收进托盘缺省开、热键缺省 alt+space
+  ui: {
+    language: "zh-CN",
+    theme: "system",
+    closeToTray: true,
+    hotkey: { enabled: true, accelerator: "alt+space" },
+  },
   log: { level: "info" },
   notifications: { enabled: true, interventionOnly: false },
   compaction: { threshold: 0.6, timeoutSecs: 180 },
@@ -80,6 +96,9 @@ beforeEach(() => {
   });
   // 会话域复位：无活跃 Tab / 无项目（项目入口用例按需造数据）
   useSessionsStore.setState({ tabs: [], activeId: null, projects: [] });
+  // 29 号票：反馈与热键状态复位（保存成功出 Toast / 热键错误红字）
+  useToastStore.setState({ toasts: [] });
+  useHotkeyStore.setState({ error: null });
 });
 // 每个用例后卸载渲染出的组件，避免 DOM 残留影响下一个用例
 afterEach(cleanup);
@@ -567,5 +586,82 @@ describe("命令审计模型（36 号票，agent.commandAudit.modelId）", () =>
     fireEvent.change(select, { target: { value: "" } });
     expect(useSettingsStore.getState().config?.agent?.commandAudit?.modelId).toBeUndefined();
     unmount();
+  });
+});
+
+describe("窗口行为（29 号票：关闭按钮行为 + 全局快捷键）", () => {
+  it("界面页渲染关闭行为开关与快捷键区；enabled 关时录制钮隐藏", async () => {
+    render(<SettingsPage initialPage="appearance" onClose={() => {}} />);
+    const closeSwitch = await screen.findByTestId("close-to-tray-switch");
+    expect(
+      closeSwitch.getAttribute("aria-checked") ?? closeSwitch.getAttribute("data-state"),
+    ).toBeTruthy();
+    const hotkeySwitch = screen.getByTestId("hotkey-enabled-switch");
+    expect(hotkeySwitch).toBeTruthy();
+    // 缺省开：录制钮显示当前组合键
+    const recorder = screen.getByTestId("hotkey-recorder");
+    expect(recorder.textContent).toContain("Alt+Space");
+    // 关掉启用开关：录制钮隐藏
+    fireEvent.click(hotkeySwitch);
+    expect(screen.queryByTestId("hotkey-recorder")).toBeNull();
+  });
+
+  it("关闭行为开关切换写草稿；保存载荷带 closeToTray=false 且成功出 Toast", async () => {
+    const saved = structuredClone(BASE_CONFIG);
+    saveConfigMock.mockResolvedValue(saved);
+    render(<SettingsPage initialPage="appearance" onClose={() => {}} />);
+    const closeSwitch = await screen.findByTestId("close-to-tray-switch");
+    fireEvent.click(closeSwitch);
+    // 保存（操作条「保存」按钮）
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(saveConfigMock).toHaveBeenCalledTimes(1));
+    const payload = saveConfigMock.mock.calls[0]?.[0];
+    expect(payload?.ui.closeToTray).toBe(false);
+    expect(payload?.ui.hotkey).toEqual({ enabled: true, accelerator: "alt+space" });
+    // 保存成功 Toast（29 号票反馈收敛）
+    await waitFor(() =>
+      expect(useToastStore.getState().toasts.some((t) => t.title === "设置已保存")).toBe(true),
+    );
+  });
+
+  it("快捷键录制：点击进入录制态，按下 Ctrl+Shift+P 归一化写回草稿并随保存提交", async () => {
+    const saved = structuredClone(BASE_CONFIG);
+    saveConfigMock.mockResolvedValue(saved);
+    render(<SettingsPage initialPage="appearance" onClose={() => {}} />);
+    const recorder = await screen.findByTestId("hotkey-recorder");
+    fireEvent.click(recorder);
+    // 录制态：打标记（设置页 Esc handler 让位依据）+ 提示文案
+    expect(recorder.getAttribute("data-hotkey-recording")).toBe("true");
+    expect(recorder.textContent).toContain("按下组合键");
+    // 按下组合键（修饰键顺序无关，归一化为固定序）
+    fireEvent.keyDown(window, {
+      key: "p",
+      ctrlKey: true,
+      shiftKey: true,
+      cancelable: true,
+    });
+    await waitFor(() => expect(recorder.textContent).toContain("Ctrl+Shift+P"));
+    expect(recorder.getAttribute("data-hotkey-recording")).toBe("false");
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(saveConfigMock).toHaveBeenCalledTimes(1));
+    expect(saveConfigMock.mock.calls[0]?.[0]?.ui.hotkey.accelerator).toBe("ctrl+shift+p");
+  });
+
+  it("录制态 Esc 取消：恢复显示原组合键，草稿不变", async () => {
+    render(<SettingsPage initialPage="appearance" onClose={() => {}} />);
+    const recorder = await screen.findByTestId("hotkey-recorder");
+    fireEvent.click(recorder);
+    expect(recorder.getAttribute("data-hotkey-recording")).toBe("true");
+    fireEvent.keyDown(window, { key: "Escape", cancelable: true });
+    await waitFor(() => expect(recorder.textContent).toContain("Alt+Space"));
+    // 取消不产生脏改动（快捷键未被改写，Esc 也不会关掉设置页）
+    expect(useSettingsStore.getState().config?.ui.hotkey.accelerator).toBe("alt+space");
+  });
+
+  it("注册失败红字：hotkey store 错误态在界面页显示被占用提示", async () => {
+    useHotkeyStore.setState({ error: "shortcut already registered" });
+    render(<SettingsPage initialPage="appearance" onClose={() => {}} />);
+    const error = await screen.findByTestId("hotkey-error");
+    expect(error.textContent).toContain("被其他应用占用");
   });
 });

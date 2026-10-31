@@ -1,6 +1,6 @@
 {
   "identifier": "default",
-  "description": "S6 最小权限基线：核心默认集 + 自绘标题栏插件与窗口控制 + 系统通知插件（C-7；17 号票）",
+  "description": "S6 最小权限基线：核心默认集 + 自绘标题栏插件与窗口控制 + 系统通知插件（C-7；17 号票）+ 全局热键注册面（29 号票：仅注册/注销/查询三个命令，NFR-10 按需最小集）",
   "windows": ["main"],
   "permissions": [
     "core:default",
@@ -13,6 +13,10 @@
     "core:window:allow-is-maximized",
     "core:window:allow-set-focus",
     "decoration:default",
-    "notification:default"
+    "notification:default",
+    "global-shortcut:allow-register",
+    "global-shortcut:allow-unregister",
+    "global-shortcut:allow-unregister-all",
+    "global-shortcut:allow-is-registered"
   ]
 }

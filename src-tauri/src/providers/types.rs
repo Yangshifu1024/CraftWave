@@ -246,6 +246,91 @@ pub struct UiConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub font_size: Option<u8>,
+    /// 关闭按钮行为（FR-13-06/§9.6，29 号票）：true（缺省，serde default
+    /// 回填旧配置零迁移）= 点关闭按钮收进托盘继续运行（hide）；false =
+    /// 点关闭按钮走退出拦截协议（活跃 run 时 app:exit_requested → 前端确认
+    /// → resolve_exit_request）。托盘菜单「退出」恒走退出拦截协议，不受
+    /// 本开关影响。
+    #[serde(default = "default_true")]
+    pub close_to_tray: bool,
+    /// 全局热键（FR-13-11/§10.7，29 号票）：系统级一键唤起/隐藏主窗。
+    #[serde(default)]
+    pub hotkey: HotkeyConfig,
+}
+
+/// 全局热键配置（§3.2 ui.hotkey，29 号票字段级）。
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HotkeyConfig {
+    /// 启用开关（缺省 true）：false 或注册失败（被其他应用占用）时完全不
+    /// 占系统热键资源、不进重试循环。
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// 组合键（缺省 "alt+space"）：存储形态 = 小写、修饰符固定序
+    /// [ctrl, alt, shift, super] 在前 + 主键在后；保存边界归一化
+    /// （[`normalize_accelerator`]），主键必填（纯修饰符组合拒绝）。
+    /// 注册失败不阻塞保存——设置页红字「快捷键被其他应用占用」+ Toast。
+    #[serde(default = "default_hotkey_accelerator")]
+    pub accelerator: String,
+}
+
+/// serde 缺省值函数：全局热键缺省 ⌥/Alt+Space（§10.7）。
+fn default_hotkey_accelerator() -> String {
+    DEFAULT_HOTKEY_ACCELERATOR.to_string()
+}
+
+/// 全局热键缺省组合键（§10.7：⌥/Alt+Space）。
+pub const DEFAULT_HOTKEY_ACCELERATOR: &str = "alt+space";
+
+/// 全局热键修饰符的归一化固定序（存储形态：修饰符全在前、按本序排列）。
+const HOTKEY_MODIFIER_ORDER: [&str; 4] = ["ctrl", "alt", "shift", "super"];
+
+/// 组合键归一化（29 号票）：大小写归一 + 修饰符别名收编 + 修饰符固定序排列。
+/// 返回 `None` = 非法（空串、空段、纯修饰符无主键）。
+///
+/// 规则：
+/// - 按 `+` 切段，段内 trim、整体小写；
+/// - 修饰符别名：`control`→`ctrl`、`option`/`opt`→`alt`、`cmd`/`command`/
+///   `meta`/`win`→`super`（同义别名收编后比较，"Cmd+Space"=="super+space"）；
+/// - 同一修饰符重复只保留一个（"alt+alt+space" == "alt+space"）；
+/// - 恰好一个非修饰符段作为主键（保留小写原词，如 `space`/`f1`/`p`）；
+///   主键不含空白。纯修饰符组合（如 "ctrl+shift"）非法。
+pub fn normalize_accelerator(raw: &str) -> Option<String> {
+    let mut modifiers = [false; HOTKEY_MODIFIER_ORDER.len()];
+    let mut main_key: Option<String> = None;
+    for segment in raw.split('+') {
+        let key = segment.trim().to_ascii_lowercase();
+        if key.is_empty() {
+            return None; // "alt++space" 之类的空段
+        }
+        let slot = match key.as_str() {
+            "ctrl" | "control" => Some(0),
+            "alt" | "option" | "opt" => Some(1),
+            "shift" => Some(2),
+            "super" | "cmd" | "command" | "meta" | "win" => Some(3),
+            _ => None,
+        };
+        match slot {
+            Some(index) => modifiers[index] = true,
+            None => {
+                // 主键只允许一个；主键含空白属录入噪声，拒绝
+                if main_key.is_some() || key.chars().any(char::is_whitespace) {
+                    return None;
+                }
+                main_key = Some(key);
+            }
+        }
+    }
+    let main_key = main_key?;
+    let mut parts: Vec<&str> = Vec::new();
+    for (index, flag) in modifiers.iter().enumerate() {
+        if *flag {
+            parts.push(HOTKEY_MODIFIER_ORDER[index]);
+        }
+    }
+    parts.push(main_key.as_str());
+    Some(parts.join("+"))
 }
 
 /// 日志级别（serilog 风格，低到高）。
@@ -653,7 +738,17 @@ impl Default for ApprovalConfig {
         }
     }
 }
-// UiConfig 的缺省值：中文界面、跟随系统主题、模型语言跟随用户输入。
+// HotkeyConfig 的缺省值：启用 + ⌥/Alt+Space（§10.7）。
+impl Default for HotkeyConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            accelerator: default_hotkey_accelerator(),
+        }
+    }
+}
+// UiConfig 的缺省值：中文界面、跟随系统主题、模型语言跟随用户输入、
+// 关闭收进托盘（§9.6 现状语义）、热键 ⌥/Alt+Space 开。
 impl Default for UiConfig {
     fn default() -> Self {
         Self {
@@ -661,6 +756,8 @@ impl Default for UiConfig {
             theme: Theme::System,
             ai_language: None,
             font_size: None,
+            close_to_tray: true,
+            hotkey: HotkeyConfig::default(),
         }
     }
 }
@@ -709,6 +806,17 @@ impl AppConfig {
             .is_some_and(|size| !(12..=18).contains(&size))
         {
             return Err(IpcError::invalid_arg("界面字号必须在 12–18px 之间"));
+        }
+        // ui.hotkey.accelerator：保存边界归一化（29 号票，§3.2 ui.hotkey）——
+        // 大小写/修饰符别名/修饰符顺序归一后存储；非法（空串、空段、纯修饰符
+        // 无主键、多主键）拒绝整份提交。
+        if let Some(normalized) = normalize_accelerator(&self.ui.hotkey.accelerator) {
+            self.ui.hotkey.accelerator = normalized;
+        } else {
+            return Err(IpcError::invalid_arg(format!(
+                "ui.hotkey.accelerator 不是合法的组合键：{}（示例：alt+space）",
+                self.ui.hotkey.accelerator
+            )));
         }
         // compaction：threshold 限 (0,1]（0 或负数会让每条消息都触发压缩，
         // 大于 1 则永不触发，均视为配置错误拒绝整份提交）；timeoutSecs 下限

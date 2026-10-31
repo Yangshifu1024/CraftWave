@@ -11,9 +11,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { useCompactionStore } from "@/chat/compaction-store";
 import { useBackendEvents } from "@/chat/event-bridge";
 import type { StoredCompactionEntry } from "@/ipc/types";
+import { useToastStore } from "@/stores/toast";
 
 afterEach(() => {
   useCompactionStore.setState({ bySession: {} });
+  useToastStore.setState({ toasts: [] });
 });
 
 /** 造一条压缩边界投影（生成物 StoredCompactionEntry 为裸载荷形态）。 */
@@ -30,13 +32,13 @@ describe("useCompactionStore（压缩状态分桶）", () => {
     act(() => {
       useCompactionStore.getState().setCompactions("s1", [compaction("a1")]);
       useCompactionStore.getState().setPhase("s1", "compacting");
-      useCompactionStore.getState().setPhase("s2", "failed");
+      useCompactionStore.getState().setPhase("s2", null);
     });
     expect(useCompactionStore.getState().bySession.s1).toEqual({
       compactions: [compaction("a1")],
       phase: "compacting",
     });
-    expect(useCompactionStore.getState().bySession.s2?.phase).toBe("failed");
+    expect(useCompactionStore.getState().bySession.s2?.phase).toBeNull();
     expect(useCompactionStore.getState().bySession.s2?.compactions).toEqual([]);
   });
 
@@ -76,9 +78,13 @@ describe("useBackendEvents 压缩三键（04 号票）", () => {
     act(() => handlers.get("run:compacting")?.({ sessionId: "s" }));
     expect(useCompactionStore.getState().bySession.s?.phase).toBe("compacting");
 
-    // compact_failed → 行内轻提示 phase（不打断输入）
+    // compact_failed → Toast 反馈（29 号票收敛）+ phase 复位（指示条撤除）
     act(() => handlers.get("run:compact_failed")?.({ sessionId: "s" }));
-    expect(useCompactionStore.getState().bySession.s?.phase).toBe("failed");
+    expect(useCompactionStore.getState().bySession.s?.phase).toBeNull();
+    const errorToast = useToastStore
+      .getState()
+      .toasts.find((t) => t.kind === "error" && t.title.includes("压缩失败"));
+    expect(errorToast).toBeDefined();
 
     // compacted → 收口 + 边界投影刷新（reloadCompactions 拉最新史册）
     act(() =>

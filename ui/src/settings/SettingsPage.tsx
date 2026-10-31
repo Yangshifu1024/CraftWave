@@ -25,6 +25,7 @@ import { Dialog } from "@/components/ui/dialog";
 import { Input, Textarea } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { applyHotkey, eventToAccelerator, formatAccelerator, useHotkeyStore } from "@/hotkey";
 import {
   notificationPermissionStatus,
   openDir,
@@ -59,6 +60,7 @@ import {
 import { SkillsPage } from "@/settings/SkillsPage";
 import { useSessionsStore } from "@/stores/sessions";
 import { useSettingsStore } from "@/stores/settings";
+import { pushToast } from "@/stores/toast";
 import { applyTheme } from "@/theme";
 import { applyUiFontSize } from "@/ui-font-size";
 
@@ -219,7 +221,7 @@ export function SettingsPage({
       return;
     }
     if (action === "save") {
-      const ok = await saveAll();
+      const ok = await handleSave();
       if (!ok) {
         setLeaveIntent(null); // 校验/落盘失败：留在设置页，错误提示由顶部 Alert 给出
         return;
@@ -235,7 +237,25 @@ export function SettingsPage({
     if (intent) onClose();
   }
 
-  // 页内 Esc：返回工作区（脏改动存在时同样先走三选）。浮层（select 下拉/弹框）展开时让位。
+  /**
+   * 保存（29 号票 Toast 收敛 + 热键应用）：成功/失败经顶部 Toast 反馈；
+   * 成功后按新配置应用全局热键（applyHotkey 幂等——enabled=false 注销、
+   * 换键先注销再注册、冲突错误进 hotkey store 红字 + Toast）。
+   */
+  async function handleSave(): Promise<boolean> {
+    const ok = await saveAll();
+    if (ok) {
+      pushToast("success", "设置已保存");
+      const saved = useSettingsStore.getState().config;
+      if (saved) void applyHotkey(saved.ui.hotkey);
+    } else {
+      pushToast("error", "设置保存失败", useSettingsStore.getState().error ?? undefined);
+    }
+    return ok;
+  }
+
+  // 页内 Esc：返回工作区（脏改动存在时同样先走三选）。浮层（select 下拉/弹框）
+  // 展开时让位；快捷键录制态让位（录制组件自己消费 Esc = 取消录制）。
   const closeRef = useRef(requestClose);
   closeRef.current = requestClose;
   useEffect(() => {
@@ -244,7 +264,8 @@ export function SettingsPage({
       const overlayOpen =
         leaveIntent !== null ||
         document.activeElement?.tagName === "SELECT" ||
-        !!document.querySelector(".settings-dialog-mask");
+        !!document.querySelector(".settings-dialog-mask") ||
+        !!document.querySelector("[data-hotkey-recording='true']");
       if (overlayOpen) return; // 弹框自身处理 Esc；原生下拉先归浏览器
       if (query.trim() !== "") {
         e.preventDefault();
@@ -415,7 +436,7 @@ export function SettingsPage({
             >
               取消
             </Button>
-            <Button disabled={!config || saving} onClick={() => void saveAll()}>
+            <Button disabled={!config || saving} onClick={() => void handleSave()}>
               {saving ? "保存中…" : "保存"}
             </Button>
           </div>
@@ -638,7 +659,8 @@ function NotificationPermissionNotice({
 }
 
 /** 界面页：主题 + 界面语言 + AI 回复语言（ui 段整卡）+ 系统通知偏好
- *  （含 19 号票的 macOS 授权引导：未授权/被拒时提示并给系统设置入口） */
+ *  （含 19 号票的 macOS 授权引导：未授权/被拒时提示并给系统设置入口）
+ *  + 窗口行为（29 号票：关闭按钮行为 + 全局快捷键）。 */
 function AppearancePage() {
   const config = useSettingsStore((s) => s.config);
   const patchConfig = useSettingsStore((s) => s.patchConfig);
@@ -724,6 +746,7 @@ function AppearancePage() {
           />
         </SettingsRow>
       </SettingsSection>
+      <AppearanceWindowBehavior config={config} patchUi={patchUi} />
       <SettingsSection title="语言">
         <SettingsRow title="界面语言" description="设置界面与提示文案的显示语言。">
           <Select
@@ -748,6 +771,121 @@ function AppearancePage() {
         </SettingsRow>
       </SettingsSection>
     </div>
+  );
+}
+
+/**
+ * 窗口行为区（29 号票）：关闭按钮行为 + 全局快捷键。
+ * - closeToTray（§9.6）：开（缺省）= 点关闭按钮收进托盘继续运行；关 =
+ *   点关闭按钮走退出拦截协议（活跃任务先弹确认）。保存后即时生效
+ *   （Rust 侧每次关闭时读配置）；
+ * - hotkey（§10.7）：启用开关 + 快捷键录制（按下组合键捕获显示、Esc 取
+ *   消）；注册失败（被其他应用占用）红字提示——注册发生在保存后
+ *   （applyHotkey），红字数据面在 hotkey store。
+ */
+function AppearanceWindowBehavior({
+  config,
+  patchUi,
+}: {
+  config: AppConfig;
+  patchUi: (patch: Partial<AppConfig["ui"]>) => void;
+}) {
+  const hotkeyError = useHotkeyStore((s) => s.error);
+  const hotkey = config.ui.hotkey ?? { enabled: true, accelerator: "alt+space" };
+  return (
+    <SettingsSection title="窗口行为">
+      <SettingsRow
+        title="关闭窗口时收进托盘"
+        description="开启：点关闭按钮最小化到系统托盘，后台继续运行。关闭：点关闭按钮直接退出（有运行中任务时先确认）。"
+      >
+        <Switch
+          aria-label="关闭窗口时收进托盘"
+          data-testid="close-to-tray-switch"
+          checked={config.ui.closeToTray ?? true}
+          onCheckedChange={(v) => patchUi({ closeToTray: v })}
+        />
+      </SettingsRow>
+      <SettingsRow
+        title="启用全局快捷键"
+        description="系统级唤起/隐藏窗口（应用在后台时同样生效）。关闭后不占用任何系统快捷键。"
+      >
+        <Switch
+          aria-label="启用全局快捷键"
+          data-testid="hotkey-enabled-switch"
+          checked={hotkey.enabled}
+          onCheckedChange={(v) => patchUi({ hotkey: { ...hotkey, enabled: v } })}
+        />
+      </SettingsRow>
+      {hotkey.enabled && (
+        <SettingsRow
+          title="唤起/隐藏组合键"
+          description="点击后按下新的组合键完成录制（需含至少一个非修饰键）；Esc 取消录制。保存后生效。"
+        >
+          <div className="flex min-w-0 flex-col items-end gap-1">
+            <HotkeyRecorder
+              value={hotkey.accelerator}
+              onChange={(accelerator) => patchUi({ hotkey: { ...hotkey, accelerator } })}
+            />
+            {hotkeyError && (
+              <span
+                data-testid="hotkey-error"
+                className="max-w-full text-right text-ui-sm text-[var(--danger)]"
+              >
+                快捷键被其他应用占用：{formatAccelerator(hotkey.accelerator)}（{hotkeyError}
+                ），可改用其他组合键或关闭开关
+              </span>
+            )}
+          </div>
+        </SettingsRow>
+      )}
+    </SettingsSection>
+  );
+}
+
+/**
+ * 快捷键录制钮（29 号票）：常态显示当前组合键；点击进入录制态（按钮打
+ * data-hotkey-recording 标记，设置页 Esc handler 据此让位），按下有效
+ * 组合键即归一化写回草稿并退出录制，Esc 取消恢复原值。
+ */
+function HotkeyRecorder({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (accelerator: string) => void;
+}) {
+  const [recording, setRecording] = useState(false);
+  useEffect(() => {
+    if (!recording) return;
+    const onKeydown = (event: KeyboardEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.key === "Escape") {
+        setRecording(false);
+        return;
+      }
+      const normalized = eventToAccelerator(event);
+      if (normalized !== null) {
+        onChange(normalized);
+        setRecording(false);
+      }
+      // 纯修饰键按下：继续等待主键（录制态不退出）
+    };
+    window.addEventListener("keydown", onKeydown, true);
+    return () => window.removeEventListener("keydown", onKeydown, true);
+  }, [recording, onChange]);
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      data-testid="hotkey-recorder"
+      data-hotkey-recording={recording ? "true" : "false"}
+      aria-label="录制唤起/隐藏组合键"
+      className={cn("min-w-36 font-mono", recording && "border-[var(--cw-focus)]")}
+      onClick={() => setRecording(true)}
+    >
+      {recording ? "按下组合键…（Esc 取消）" : formatAccelerator(value)}
+    </Button>
   );
 }
 

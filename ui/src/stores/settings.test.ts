@@ -59,7 +59,12 @@ function configFixture(providers: ProviderConfig[]): AppConfig {
       requirePlan: false,
       gitAllowStageCommit: false,
     },
-    ui: { language: "zh-CN", theme: "system" },
+    ui: {
+      language: "zh-CN",
+      theme: "system",
+      closeToTray: true,
+      hotkey: { enabled: true, accelerator: "alt+space" },
+    },
     log: { level: "info" },
     compaction: { threshold: 0.6, timeoutSecs: 180 },
     tools: { maxParallel: 4, batchReadLimit: 20 },

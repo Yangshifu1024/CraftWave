@@ -96,7 +96,9 @@ export function ChatThread({ onOpenSettings }: { onOpenSettings?: () => void }) 
     // 透明背景：透出承载它的大圆角卡（bg-card），自身不再铺底色
     <div className="flex h-full min-h-0 flex-1 flex-col text-[var(--foreground)]">
       <ThreadPrimitive.Root className="relative flex min-h-0 flex-1 flex-col">
-        <ThreadPrimitive.Viewport className="flex min-w-0 flex-1 flex-col overflow-y-auto px-4 py-6">
+        {/* cw-scroll-viewport：滚动锚点（29 号票）的查询标识——SessionTab 的
+            记账/恢复面按类名定位本会话的滚动容器 */}
+        <ThreadPrimitive.Viewport className="cw-scroll-viewport flex min-w-0 flex-1 flex-col overflow-y-auto px-4 py-6">
           <AuiIf condition={(s) => s.thread.isEmpty}>
             <ThreadEmptyState />
           </AuiIf>
@@ -1114,8 +1116,13 @@ function UserMessage() {
   useVisionStore((s) => s.activeModelId);
   useSessionModelStore((s) => s.bySession[sessionId]);
   const vision = visionOf(sessionId);
+  // 消息 id（29 号票滚动锚点的 DOM 锚）：data-message-id 挂在气泡根上
+  const messageId = useAuiState((s) => s.message.id);
   return (
-    <MessagePrimitive.Root className="group/user-row flex flex-col items-end py-2">
+    <MessagePrimitive.Root
+      data-message-id={messageId}
+      className="group/user-row flex flex-col items-end py-2"
+    >
       {/* 气泡右上 2px 折角 + 1px 边框（ZCode 同款），与平铺的助手消息区分 */}
       <div className="min-w-0 max-w-full rounded-xl rounded-tr-xs border border-[var(--border)] bg-[var(--muted)] px-4 py-3 text-ui-base leading-6 text-[var(--foreground)] sm:max-w-xl">
         <MessagePrimitive.Parts>
@@ -1316,9 +1323,14 @@ function AssistantMessage({ onOpenSettings }: { onOpenSettings?: () => void }) {
     (lastRun !== null && lastRun.runId === runId ? lastRun.durationMs : undefined);
   // 崩溃中断态（15 号票 shortcut 渲染层落地，17 号票）：marker 无 endedAt
   const interrupted = summary !== undefined && summary.endedAt === undefined;
+  // 消息 id（29 号票滚动锚点的 DOM 锚）：data-message-id 挂在消息根上
+  const messageId = useAuiState((s) => s.message.id);
 
   return (
-    <MessagePrimitive.Root className="flex min-w-0 w-full flex-col items-start gap-2 py-1">
+    <MessagePrimitive.Root
+      data-message-id={messageId}
+      className="flex min-w-0 w-full flex-col items-start gap-2 py-1"
+    >
       {/* 摘要行（ZCode AssistantHistoryStatus 同款）：过程存在且收起时显示，
           「已工作/工作中 + 时长」+ 底部分隔线；点击展开/收起回看完整过程 */}
       {collapsed && processParts.length > 0 && (

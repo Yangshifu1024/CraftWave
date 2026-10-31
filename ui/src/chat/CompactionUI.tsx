@@ -1,9 +1,9 @@
 /**
  * 上下文压缩 UI（FR-03-05，04 号票）：两块轻量呈现。
  *
- * - CompactionIndicator：Composer 上方的生命周期指示条——compacting=
- *   "正在压缩上下文…"（spinner 扫光）；failed=行内轻提示（不打断输入，
- *   Toast 反馈层属 29 号票）；
+ * - CompactionIndicator：Composer 上方的压缩进行指示条（compacting=
+ *   "正在压缩上下文…"，spinner 扫光）；失败反馈已改走顶部 Toast（29 号票
+ *   收敛，04 号票挂账清偿），本组件不再有常驻失败行；
  * - CompactionDivider：消息列表顶部的"已压缩早期上下文"分隔提示
  *   （§6.3 定稿：compaction 条目不进消息树，按投影面渲染，非消息体）。
  */
@@ -14,30 +14,19 @@ import { useRunMetricsStore } from "@/chat/run-metrics";
 import { useSessionScope } from "@/chat/session-scope";
 import { compactSession } from "@/ipc/client";
 
-/** Composer 上方的压缩生命周期指示条（phase 非 null 时占一行）。 */
+/** Composer 上方的压缩生命周期指示条（仅 compacting 态占一行）。 */
 export function CompactionIndicator() {
   const sessionId = useSessionScope();
   const { phase } = useSessionCompaction(sessionId);
-  if (phase === null) return null;
-  if (phase === "compacting") {
-    return (
-      <div
-        data-testid="compaction-indicator"
-        className="cw-pop-in mb-2 flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-1.5 text-ui-sm text-[var(--muted-foreground)]"
-        role="status"
-      >
-        <LoaderCircle size={12} aria-hidden className="shrink-0 animate-spin" />
-        正在压缩上下文…
-      </div>
-    );
-  }
+  if (phase !== "compacting") return null;
   return (
     <div
-      data-testid="compaction-failed"
-      className="cw-pop-in mb-2 flex items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-ui-sm text-amber-700 dark:text-amber-400"
-      role="alert"
+      data-testid="compaction-indicator"
+      className="cw-pop-in mb-2 flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-1.5 text-ui-sm text-[var(--muted-foreground)]"
+      role="status"
     >
-      上下文压缩失败：本次对话已继续（如可容纳），或重试压缩 / 开启新会话。
+      <LoaderCircle size={12} aria-hidden className="shrink-0 animate-spin" />
+      正在压缩上下文…
     </div>
   );
 }

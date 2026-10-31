@@ -21,6 +21,7 @@ import type { MessageEntry, RunConfig, SequencedFrame } from "@/ipc/types";
 import { applyAuditFrame } from "@/stores/audits";
 import { syncTreeBeforeSend, useSessionPersistStore } from "@/stores/session";
 import { applySubagentFrame } from "@/stores/subagents";
+import { pushToast } from "@/stores/toast";
 import { buildRefSection, collectRefs } from "./at-refs";
 import { bindCancelToRun } from "./cancel-bridge";
 import { type ChatPart, FrameBuffer, type FrameSnapshot, toParts } from "./frames";
@@ -359,8 +360,12 @@ export function createTauriChatAdapter(deps: TauriAdapterDeps): ChatModelAdapter
           .catch((err: unknown) => {
             // 命令面失败（未配模型/参数非法等，后端注册 run 前即 reject、
             // 零帧）：合成错误终态帧让 run 收口，避免线程挂死「处理中」；
-            // 原始错误进 console（排障线索，webview + tauri dev 终端）
+            // 原始错误进 console（排障线索，webview + tauri dev 终端）。
+            // 29 号票：顶部 Toast 同步轻提示（行内 ChatErrorBanner 在消息
+            // 流里可能被折叠，发送失败需要即时可见）
             console.error("[start_chat] 命令失败：", err);
+            const frameError = toFrameError(err);
+            pushToast("error", "发送失败", `${frameError.code}: ${frameError.message}`);
             buffer.push({
               seq: maxSeq + 1,
               type: "runEnded",
@@ -368,7 +373,7 @@ export function createTauriChatAdapter(deps: TauriAdapterDeps): ChatModelAdapter
               durationMs: 0,
               toolCount: 0,
               turn: 0,
-              error: toFrameError(err),
+              error: frameError,
             });
           });
         // 64ms 节流快照迭代：runEnded 快照 yield 后迭代自然收口（§10.2）

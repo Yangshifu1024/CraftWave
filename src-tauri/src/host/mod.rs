@@ -15,7 +15,9 @@ pub mod followup;
 pub mod notify;
 pub mod run_persistence;
 pub mod shell;
+// 窗口几何记忆（29 号票，§10.7）
 pub mod usage;
+pub mod window_state;
 
 #[cfg(test)]
 #[path = "run_persistence_test.rs"]
@@ -109,6 +111,9 @@ pub struct AppState {
     /// （`forget`）、备份恢复经 `clear_all` 失效（Q41 精神：明确授权不跨
     /// 生命周期；恢复流程接线由 33 号票负责）。
     pub plan_scopes: crate::backend::gate::PlanScopeMemory,
+    /// 窗口几何记忆（29 号票，§10.7）：`window-state.json` 的读恢复/防抖
+    /// 保存/关闭强写三面（路径 + 最新几何缓存 + 防抖序号）。
+    pub window_geometry: Arc<crate::host::window_state::WindowStateStore>,
 }
 
 impl AppState {
@@ -156,6 +161,9 @@ impl AppState {
             approval_memory: crate::backend::gate::ApprovalMemory::new(),
             session_trust: crate::knowledge::session_trust::SessionTrustSet::new(),
             plan_scopes: crate::backend::gate::PlanScopeMemory::new(),
+            window_geometry: Arc::new(crate::host::window_state::WindowStateStore::new(
+                data_dir.join("window-state.json"),
+            )),
         }
     }
 
@@ -209,6 +217,7 @@ impl AppState {
             approval_memory: self.approval_memory.clone(),
             session_trust: self.session_trust.clone(),
             plan_scopes: self.plan_scopes.clone(),
+            window_geometry: self.window_geometry.clone(),
         }
     }
 

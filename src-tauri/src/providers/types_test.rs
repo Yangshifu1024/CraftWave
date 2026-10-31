@@ -422,3 +422,104 @@ fn agent_max_concurrent_subagents_defaults_and_bounds() {
         );
     }
 }
+
+// 断言（29 号票，§3.2 ui 组）：closeToTray 旧配置无字段缺省 true（serde
+// default 回填零迁移，保持 M1「关闭一律收进托盘」现状）；显式 false 往返保真。
+#[test]
+fn close_to_tray_defaults_true_and_roundtrips() {
+    // 旧配置：ui 组只有 language/theme，无 closeToTray —— 缺省回填 true
+    let legacy = json!({
+        "schemaVersion": 2,
+        "ui": { "language": "zh-CN", "theme": "system" }
+    });
+    let config = serde_json::from_value::<AppConfig>(legacy).unwrap();
+    assert!(
+        config.ui.close_to_tray,
+        "旧配置缺字段应回填 true（现状语义）"
+    );
+
+    // 显式 false：语义「点关闭按钮走退出拦截协议」，往返保真
+    let mut config = AppConfig::default();
+    config.ui.close_to_tray = false;
+    config.normalize().unwrap();
+    let value = serde_json::to_value(&config).unwrap();
+    assert_eq!(value["ui"]["closeToTray"], false);
+    assert!(
+        !serde_json::from_value::<AppConfig>(value)
+            .unwrap()
+            .ui
+            .close_to_tray
+    );
+}
+
+// 断言（29 号票，§3.2 ui.hotkey）：旧配置无该组缺省（开 + alt+space）；
+// normalize 把录制形态归一为存储形态（大小写/修饰符顺序/别名收编）。
+#[test]
+fn hotkey_defaults_and_normalize() {
+    let legacy = json!({
+        "schemaVersion": 2,
+        "ui": { "language": "zh-CN", "theme": "system" }
+    });
+    let config = serde_json::from_value::<AppConfig>(legacy).unwrap();
+    assert!(config.ui.hotkey.enabled);
+    assert_eq!(config.ui.hotkey.accelerator, "alt+space");
+
+    // 录制形态 "Shift+Ctrl+P" → 存储形态固定序小写 "ctrl+shift+p"
+    let mut config = AppConfig::default();
+    config.ui.hotkey.accelerator = "Shift+Ctrl+P".into();
+    config.normalize().unwrap();
+    assert_eq!(config.ui.hotkey.accelerator, "ctrl+shift+p");
+}
+
+// 断言（29 号票）：组合键归一化纯函数表驱动——大小写等价、修饰符重排
+// 等价、别名收编、重复修饰符去重、纯修饰符/空段/多主键拒绝。
+#[test]
+fn normalize_accelerator_table() {
+    let cases: Vec<(&str, Option<&str>)> = vec![
+        // 大小写与修饰符顺序等价
+        ("Alt+Space", Some("alt+space")),
+        ("alt+space", Some("alt+space")),
+        ("SHIFT+CTRL+P", Some("ctrl+shift+p")),
+        ("p+shift+ctrl", Some("ctrl+shift+p")), // 主键在前也归一
+        // 别名收编
+        ("Cmd+Space", Some("super+space")),
+        ("Control+Alt+T", Some("ctrl+alt+t")),
+        ("Option+P", Some("alt+p")),
+        ("Meta+K", Some("super+k")),
+        // 重复修饰符去重
+        ("alt+alt+space", Some("alt+space")),
+        // 带空白的段容忍（trim 后有效）
+        ("alt + space", Some("alt+space")),
+        // 功能键/数字保留小写原词
+        ("F5", Some("f5")),
+        ("Ctrl+Shift+F1", Some("ctrl+shift+f1")),
+        // 非法形态：空串 / 纯修饰符 / 空段 / 多主键 / 主键含空白
+        ("", None),
+        ("   ", None),
+        ("ctrl+shift", None),
+        ("alt++space", None),
+        ("ctrl+alt+del+esc", None),
+        ("alt+sp ace", None),
+    ];
+    for (raw, expected) in cases {
+        assert_eq!(
+            normalize_accelerator(raw).as_deref(),
+            expected,
+            "组合键「{raw}」归一化结果不符"
+        );
+    }
+}
+
+// 断言（29 号票）：非法 accelerator 在保存边界拒绝整份提交（E_INVALID_ARG）。
+#[test]
+fn hotkey_invalid_accelerator_rejected() {
+    for bad in ["", "ctrl+shift", "alt++space"] {
+        let mut config = AppConfig::default();
+        config.ui.hotkey.accelerator = bad.into();
+        assert_eq!(
+            config.normalize().unwrap_err().code,
+            E_INVALID_ARG,
+            "accelerator「{bad}」应拒绝整份提交"
+        );
+    }
+}

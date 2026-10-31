@@ -11,6 +11,7 @@
  */
 
 import { create } from "zustand";
+import { type ScrollAnchor, sanitizeScrollAnchors } from "@/chat/scroll-anchor";
 import * as client from "@/ipc/client";
 import type { ProjectMeta, SessionMeta } from "@/ipc/types";
 
@@ -27,6 +28,9 @@ export interface UiStatePayload {
   queues?: Record<string, QueuedFollowUp[]>;
   /** 会话队列暂停态（06 号票失败暂停的展示面；跨重启保留）。 */
   queuePaused?: Record<string, boolean>;
+  /** 会话滚动锚点（FR-01-11 收口，29 号票：sessionId → { leafId, offset }，
+   *  随既有 300ms 防抖落盘；锚点失效回底部，见 chat/scroll-anchor.ts）。 */
+  scrollAnchors?: Record<string, ScrollAnchor>;
 }
 
 /** 一条待发消息的 UI 侧形状（后端 FollowUpEntry 的展示投影；06 号票）。 */
@@ -58,6 +62,8 @@ export interface SessionsStore {
   queues: Record<string, QueuedFollowUp[]>;
   /** 会话队列暂停态（06 号票失败暂停的展示面，ui-state 持久化）。 */
   queuePaused: Record<string, boolean>;
+  /** 会话滚动锚点（FR-01-11 收口，29 号票，ui-state 持久化）。 */
+  scrollAnchors: Record<string, ScrollAnchor>;
 
   /** 启动恢复：并行拉项目/会话/ui-state，重建 Tab 布局（空则兜底最新会话或新建）。 */
   bootstrap: () => Promise<void>;
@@ -86,6 +92,10 @@ export interface SessionsStore {
   setQueue: (sessionId: string, entries: QueuedFollowUp[]) => void;
   /** 队列暂停态写入（06 号票 run:queue.paused 事件驱动）。 */
   setQueuePaused: (sessionId: string, paused: boolean) => void;
+  /** 会话滚动锚点写入（29 号票滚动记账面；防抖由调用侧承担）。 */
+  setScrollAnchor: (sessionId: string, anchor: ScrollAnchor) => void;
+  /** 会话滚动锚点清理（删除会话随清）。 */
+  forgetScrollAnchor: (sessionId: string) => void;
   /** 清空队列并把返还文本合并回草稿（06 号票取消/失败返还面；returned
    *  为后端 run:queue.returned 交还的权威文本，追加在原草稿之后）。 */
   returnQueueToDraft: (sessionId: string, returned: string[]) => void;
@@ -137,6 +147,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
   drafts: {},
   queues: {},
   queuePaused: {},
+  scrollAnchors: {},
 
   bootstrap: async () => {
     const emptyUiState: UiStatePayload = { tabIds: [], activeId: null };
@@ -163,6 +174,8 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
       drafts: uiState.drafts ?? {},
       queues: uiState.queues ?? {},
       queuePaused: uiState.queuePaused ?? {},
+      // 锚点桶形状不可信（前端自管 JSON），清洗后再入 store
+      scrollAnchors: sanitizeScrollAnchors(uiState.scrollAnchors),
     });
     if (tabs.length > 0) {
       const active = tabs.find((m) => m.id === uiState.activeId) ?? tabs[0];
@@ -273,6 +286,21 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
     get().persistUiState();
   },
 
+  setScrollAnchor: (sessionId, anchor) => {
+    set((s) => ({ scrollAnchors: { ...s.scrollAnchors, [sessionId]: anchor } }));
+    get().persistUiState();
+  },
+
+  forgetScrollAnchor: (sessionId) => {
+    set((s) => {
+      if (!(sessionId in s.scrollAnchors)) return s;
+      const scrollAnchors = { ...s.scrollAnchors };
+      delete scrollAnchors[sessionId];
+      return { scrollAnchors };
+    });
+    get().persistUiState();
+  },
+
   returnQueueToDraft: (sessionId, returned) => {
     set((s) => {
       const queues = { ...s.queues };
@@ -296,7 +324,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
     if (persistTimer !== null) clearTimeout(persistTimer);
     persistTimer = setTimeout(() => {
       persistTimer = null;
-      const { tabs, activeId, inspectorOpen, drafts, queues, queuePaused } = get();
+      const { tabs, activeId, inspectorOpen, drafts, queues, queuePaused, scrollAnchors } = get();
       void client
         .setUiState({
           tabIds: tabs.map((t) => t.id),
@@ -305,6 +333,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
           drafts,
           queues,
           queuePaused,
+          scrollAnchors,
         } satisfies UiStatePayload)
         .catch((err) => console.warn("[ui-state] 布局落盘失败（忽略）", err));
     }, 300);

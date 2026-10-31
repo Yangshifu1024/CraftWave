@@ -84,6 +84,8 @@ export * from "./generated/GitStatusArgs";
 export * from "./generated/GitStatusFile";
 export * from "./generated/GitStatusResult";
 export * from "./generated/GitUser";
+// 全局热键配置（29 号票，§3.2 ui.hotkey；UiConfig 引用的连带导出面）
+export * from "./generated/HotkeyConfig";
 export * from "./generated/IncompleteReason";
 export * from "./generated/InjectMode";
 export * from "./generated/InjectRunMessageArgs";

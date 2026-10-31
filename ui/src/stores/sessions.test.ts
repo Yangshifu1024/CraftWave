@@ -204,3 +204,57 @@ describe("applyTitle（27 号票 session:title 事件面）", () => {
     expect(state.sessions.find((m) => m.id === "s1")?.title).toBe("后台起名");
   });
 });
+
+describe("scrollAnchors（29 号票滚动锚点桶）", () => {
+  it("bootstrap 从 ui-state 恢复锚点；坏数据条目剔除（形状清洗）", async () => {
+    listSessions.mockResolvedValue([meta("s1")]);
+    getUiState.mockResolvedValue({
+      tabIds: ["s1"],
+      activeId: "s1",
+      scrollAnchors: {
+        s1: { leafId: "m9", offset: 120 },
+        broken: { leafId: 42, offset: "x" }, // 类型不符 → 剔除
+        worse: "not-an-object", // 非对象 → 剔除
+      },
+    });
+    await useSessionsStore.getState().bootstrap();
+    expect(useSessionsStore.getState().scrollAnchors.s1).toEqual({
+      leafId: "m9",
+      offset: 120,
+    });
+    expect(useSessionsStore.getState().scrollAnchors.broken).toBeUndefined();
+    expect(useSessionsStore.getState().scrollAnchors.worse).toBeUndefined();
+  });
+
+  it("setScrollAnchor 写桶并随防抖落盘带出 scrollAnchors 字段", async () => {
+    vi.useFakeTimers();
+    try {
+      useSessionsStore.setState(useSessionsStore.getInitialState());
+      useSessionsStore.getState().setScrollAnchor("s1", { leafId: "m2", offset: 64 });
+      expect(useSessionsStore.getState().scrollAnchors.s1).toEqual({
+        leafId: "m2",
+        offset: 64,
+      });
+      await vi.advanceTimersByTimeAsync(350);
+      const payload = setUiState.mock.calls.at(-1)?.[0] as { scrollAnchors?: unknown };
+      expect(payload?.scrollAnchors).toEqual({ s1: { leafId: "m2", offset: 64 } });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("forgetScrollAnchor 清除该会话锚点并落盘", async () => {
+    vi.useFakeTimers();
+    try {
+      useSessionsStore.setState(useSessionsStore.getInitialState());
+      useSessionsStore.getState().setScrollAnchor("s1", { leafId: "m1", offset: 0 });
+      useSessionsStore.getState().forgetScrollAnchor("s1");
+      expect(useSessionsStore.getState().scrollAnchors.s1).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(350);
+      const payload = setUiState.mock.calls.at(-1)?.[0] as { scrollAnchors?: unknown };
+      expect(payload?.scrollAnchors).toEqual({});
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

@@ -50,6 +50,7 @@ import type {
 import { useAskStore } from "@/stores/ask";
 import { useSessionsStore } from "@/stores/sessions";
 import { subDone, subError, subReport, subSpawn, subStep, subUsage } from "@/stores/subagents";
+import { pushToast } from "@/stores/toast";
 
 /** 事件桥依赖面：listen 函数可注入（生产用 ipc/client 的 listenEvent，测试换假实现）。
  *  handler 参数标成 never 是为了让各种带具体类型的事件处理函数都能直接传入
@@ -134,7 +135,14 @@ export function useBackendEvents(deps: EventBridgeDeps = defaultEventBridgeDeps)
           .catch(() => {});
       }),
       deps.listen(EVENT_KEYS.runCompactFailed, (p: RunCompactFailedEvent) => {
-        useCompactionStore.getState().setPhase(p.sessionId, "failed");
+        // 29 号票收敛（04 号票挂账清偿）：失败反馈改走顶部 Toast，行内
+        // 常驻提示撤除——phase 复位（清除可能残留的 compacting 指示条）
+        useCompactionStore.getState().setPhase(p.sessionId, null);
+        pushToast(
+          "error",
+          "上下文压缩失败",
+          "本次对话已继续（如可容纳）；可在右侧面板重试压缩，或开启新会话",
+        );
       }),
       deps.listen(EVENT_KEYS.runInject, (p: RunInjectEvent) => {
         // steer 被消费：时间线本地插入插话节点（canonical 由 Rust 同 id 落盘，

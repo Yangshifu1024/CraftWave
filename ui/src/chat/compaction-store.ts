@@ -6,8 +6,8 @@
  *   load_session_tree 的 compactions 投影面在此落地）——时间线顶部分隔
  *   提示（"已压缩早期上下文"）的渲染源；
  * - phase：压缩生命周期（事件桥三键驱动）——compacting=Composer 上方
- *   指示条"正在压缩上下文…"；failed=行内轻提示（不打断输入，Toast 反馈
- *   层属 29 号票）；compacted 到达即收口为 null（边界投影同时刷新）。
+ *   指示条"正在压缩上下文…"；compact_failed 到达即清 phase（29 号票收敛：
+ *   失败反馈改走顶部 Toast，行内常驻提示撤除，04 号票挂账清偿）。
  */
 
 import { create } from "zustand";
@@ -17,8 +17,8 @@ import type { StoredCompactionEntry } from "@/ipc/types";
 export interface SessionCompaction {
   /** 历史压缩边界投影（追加序；最近一条在末位）。 */
   compactions: StoredCompactionEntry[];
-  /** 生命周期进行态（null = 空闲；failed 常驻直到下次压缩收口/清除）。 */
-  phase: null | "compacting" | "failed";
+  /** 压缩进行态（null = 空闲；失败不再有常驻态——反馈走 Toast）。 */
+  phase: null | "compacting";
 }
 
 /** store 状态与方法面。 */

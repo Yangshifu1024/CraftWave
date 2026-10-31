@@ -30,7 +30,14 @@ export const DEFAULT_CONFIG: AppConfig = {
     requirePlan: false,
     gitAllowStageCommit: false,
   },
-  ui: { language: "zh-CN", theme: "system" },
+  // 界面组（29 号票 §3.2 ui 组补齐）：closeToTray 缺省 true（关闭收进
+  // 托盘，§9.6 现状语义）；hotkey 缺省开 + ⌥/Alt+Space
+  ui: {
+    language: "zh-CN",
+    theme: "system",
+    closeToTray: true,
+    hotkey: { enabled: true, accelerator: "alt+space" },
+  },
   log: { level: "info" },
   notifications: { enabled: true, interventionOnly: false },
   compaction: { threshold: 0.6, timeoutSecs: 180 },

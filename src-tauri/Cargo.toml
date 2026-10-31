@@ -55,6 +55,12 @@ anstream = "0.6"
 rfd = "0.15"
 tauri-plugin-single-instance = "2.5.4"
 tauri-plugin-notification = "2.7.0"
+# 【M2 29 号票】全局热键（FR-13-11，§10.7）：tauri-plugin-global-shortcut 2.x
+# 官方插件（票面点名 crates.io 官方源）。注册发起面在前端（插件 JS API 转调
+# 插件命令）——注册冲突（被其他应用占用）的错误经 Promise 原生回传，设置页
+# 红字 + Toast 零新增契约面；Rust 侧只挂 with_handler 回调（快捷键按下时
+# toggle 主窗，host::shell::toggle_main_window）。
+tauri-plugin-global-shortcut = "2"
 open = "5"
 
 # 【M2 08 号票】MCP 客户端（FR-08，§9.7）：rig-rmcp 0.45 为票面点名选型，

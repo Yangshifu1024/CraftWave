@@ -366,12 +366,68 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_decoration::init())
         .plugin(tauri_plugin_notification::init())
-        // 关闭到托盘（FR-13-06/07，§9.6）：close 请求一律拦截为隐藏，
-        // 真正退出只经托盘菜单（存在活跃 run 时先经 app:exit_requested 确认）
+        // 全局热键（29 号票，FR-13-11/§10.7）：插件的快捷键注册由前端按配置
+        // 发起（冲突错误经插件 JS API 原生回传设置页），Rust 侧只挂回调——
+        // 快捷键按下即 toggle 主窗（可见隐藏 / 隐藏唤起，shell::toggle_main_window）。
+        .plugin({
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _shortcut, event| {
+                    if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                        host::shell::toggle_main_window(app);
+                    }
+                })
+                .build()
+        })
+        // 窗口事件（29 号票）：关闭按配置分流（closeToTray）+ 主窗几何记忆
+        // （防抖保存 / 关闭强写 / 销毁冲盘）。只认主窗：本应用单窗口，判定
+        // 仍显式写出防未来多窗时误记。事件回调给的是 &Window（无 webview
+        // 面），几何 API 统一走 WebviewWindow，经一次标签查找对齐。
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                let _ = window.hide();
+            if window.label() != host::shell::MAIN_WINDOW {
+                return;
+            }
+            let Some(window) = window
+                .app_handle()
+                .get_webview_window(host::shell::MAIN_WINDOW)
+            else {
+                return;
+            };
+            match event {
+                tauri::WindowEvent::CloseRequested { api, .. } => {
+                    api.prevent_close();
+                    // 关闭面几何强写先行：走退出分支时进程随即将终，防抖
+                    // 窗口里的最后一帧几何此刻必须落盘
+                    if let Some(state) = window.app_handle().try_state::<host::AppState>() {
+                        state.window_geometry.save_now(&window);
+                    }
+                    // closeToTray（§9.6/29 号票）：true（缺省）= hide 收进托盘
+                    // 继续运行；false = 走退出拦截协议（活跃 run 先经
+                    // app:exit_requested 前端确认）。配置读不到按现状 hide。
+                    let close_to_tray = window
+                        .app_handle()
+                        .try_state::<host::AppState>()
+                        .and_then(|state| state.config.load().ok())
+                        .map(|config| config.ui.close_to_tray)
+                        .unwrap_or(true);
+                    if close_to_tray {
+                        let _ = window.hide();
+                    } else {
+                        host::shell::request_exit(window.app_handle());
+                    }
+                }
+                // 几何记忆（§10.7）：移动/缩放防抖 500ms 落盘；销毁时窗口
+                // 方法已不可用，直接把缓存冲盘（终值语义）。
+                tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) => {
+                    if let Some(state) = window.app_handle().try_state::<host::AppState>() {
+                        state.window_geometry.on_geometry_event(&window);
+                    }
+                }
+                tauri::WindowEvent::Destroyed => {
+                    if let Some(state) = window.app_handle().try_state::<host::AppState>() {
+                        state.window_geometry.flush();
+                    }
+                }
+                _ => {}
             }
         })
         // HTML 沙箱预览协议（14 号票，§8.3 render_html 行/§9.5，FR-12-04）：
@@ -466,6 +522,14 @@ pub fn run() {
             app.manage(state.store.clone());
             app.manage(state);
             host::shell::install_tray(&handle)?;
+            // 窗口几何恢复（29 号票，§10.7）：此刻窗口仍隐藏（visible:false、
+            // 激活协议未亮窗），先读 window-state.json 应用几何——恢复天然
+            // 先于亮窗；越界/损坏回 tauri.conf.json 默认。
+            if let Some(state) = app.try_state::<host::AppState>()
+                && let Some(window) = handle.get_webview_window(host::shell::MAIN_WINDOW)
+            {
+                state.window_geometry.restore(&window);
+            }
             Ok(())
         })
         .invoke_handler(invoke_handler())

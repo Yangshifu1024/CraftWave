@@ -81,6 +81,19 @@ pub fn activate_main_window(app: &AppHandle) {
     }
 }
 
+/// 全局热键的 toggle 主窗（29 号票，FR-13-11）：可见即隐藏、隐藏即唤起
+/// （show + unminimize + set_focus，复用 [`activate_main_window`]）。
+/// 活跃 run 不受隐藏影响（run 在 Rust 侧继续推进，§9.6 后台运行语义）。
+pub fn toggle_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
+        if window.is_visible().unwrap_or(false) {
+            let _ = window.hide();
+        } else {
+            activate_main_window(app);
+        }
+    }
+}
+
 /// 装配托盘（图标 + 「显示主窗口 / 退出」菜单）。
 ///
 /// 三平台行为对齐（19 号票口径）：左键单击唤起主窗、右键弹菜单——

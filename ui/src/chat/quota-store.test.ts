@@ -60,7 +60,12 @@ function baseConfig(): AppConfig {
       requirePlan: false,
       gitAllowStageCommit: false,
     },
-    ui: { language: "zh-CN", theme: "system" },
+    ui: {
+      language: "zh-CN",
+      theme: "system",
+      closeToTray: true,
+      hotkey: { enabled: true, accelerator: "alt+space" },
+    },
     log: { level: "info" },
     notifications: { enabled: true, interventionOnly: false },
     compaction: { threshold: 0.6, timeoutSecs: 180 },

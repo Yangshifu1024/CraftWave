@@ -43,6 +43,7 @@ import { ReconnectOverlay } from "@/chat/ReconnectOverlay";
 import { useRunMetricsStore } from "@/chat/run-metrics";
 import { reconnectIfNeeded, useRunReconnectStore } from "@/chat/run-reconnect";
 import { sessionAdapter } from "@/chat/runtime";
+import { applyAnchor, collectAnchorElements, computeAnchor } from "@/chat/scroll-anchor";
 import { useSessionModelStore } from "@/chat/session-model";
 import { restoreSessionPrefs } from "@/chat/session-prefs";
 import { RunSummariesContext, SessionScopeContext } from "@/chat/session-scope";
@@ -71,6 +72,7 @@ import { SettingsPage } from "@/settings/SettingsPage";
 import { useAskStore } from "@/stores/ask";
 import { loadHistory, useSessionPersistStore } from "@/stores/session";
 import { findReusableEmptyTab, useSessionsStore } from "@/stores/sessions";
+import { pushToast } from "@/stores/toast";
 
 // 正式工具卡装配（S1 实测钉死：Tools 是 resource 工厂，经 AuiConfig 注入；
 // config 为纯数据可提模块级，各 SessionTab 共用同一份）。
@@ -283,6 +285,13 @@ function SessionTab({
   const runtime = useLocalRuntime(adapter);
   // run 收口摘要（17 号票折叠分组数据面）：历史收养后按 runMarker 推导
   const [summaries, setSummaries] = useState<Map<string, RunSummary>>(() => new Map());
+  // 本 Tab 容器（滚动锚点的 DOM 探测边界：多 Tab keep-mounted，查询必须
+  // 限定在各自容器内）
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  // 滚动锚点恢复信号（29 号票）：仅挂载后首次历史收养 bump——后续树重载
+  // （观察态收口等）不拉扯用户当前滚动位置
+  const [anchorRestoreTick, setAnchorRestoreTick] = useState(0);
+  const firstAdopt = useRef(true);
   // 树收养（历史恢复 + 观察态收口共用）：load → import → 摘要/压缩投影刷新
   const adoptTree = useCallback(
     async (tree: NonNullable<Awaited<ReturnType<typeof loadHistory>>>) => {
@@ -295,6 +304,12 @@ function SessionTab({
       useFollowUpStore
         .getState()
         .dropSteerNodes(sessionId, new Set(tree.messages.map((m) => m.id)));
+      // 挂载后首次历史就位：通知滚动锚点恢复（29 号票 FR-01-11——按
+      // leafId 定位回上次位置；切 Tab 的恢复由 Keeper 的 active 沿承担）
+      if (firstAdopt.current) {
+        firstAdopt.current = false;
+        setAnchorRestoreTick((n) => n + 1);
+      }
     },
     [runtime, sessionId],
   );
@@ -347,7 +362,7 @@ function SessionTab({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [active, sessionId]);
   return (
-    <div className={active ? "absolute inset-0 flex" : "hidden"}>
+    <div ref={containerRef} className={active ? "absolute inset-0 flex" : "hidden"}>
       <AssistantRuntimeProvider runtime={runtime} config={cwAuiConfig}>
         <SessionScopeContext.Provider value={sessionId}>
           <RunSummariesContext.Provider value={summaries}>
@@ -358,11 +373,96 @@ function SessionTab({
             <AskPanel />
             <RunningReporter sessionId={sessionId} />
             <DraftRestorer sessionId={sessionId} />
+            <ScrollAnchorKeeper
+              sessionId={sessionId}
+              active={active}
+              containerRef={containerRef}
+              restoreTick={anchorRestoreTick}
+            />
           </RunSummariesContext.Provider>
         </SessionScopeContext.Provider>
       </AssistantRuntimeProvider>
     </div>
   );
+}
+
+/**
+ * 滚动锚点挂件（29 号票，FR-01-11 收口）：记账 + 恢复两面。
+ *
+ * - 记账：容器 scroll 事件（捕获——Viewport 在深层）防抖 300ms 后算锚点
+ *   写 sessions store（随既有 ui-state 300ms 防抖落盘）；运行中
+ *   autoScroll 跟随时不记（跟随滚动是程序推的，记账会把回放位置当用户
+ *   位置，恢复时打底）；
+ * - 恢复：restoreTick 变化（历史收养后）与 active false→true（切 Tab 回
+ *   来——display:none 期间 scrollTop 丢失）两个时机；双 rAF 等布局就绪
+ *   再定位，锚点失效回底部（chat/scroll-anchor.ts 的回落语义）。
+ */
+function ScrollAnchorKeeper({
+  sessionId,
+  active,
+  containerRef,
+  restoreTick,
+}: {
+  sessionId: string;
+  active: boolean;
+  containerRef: React.RefObject<HTMLDivElement | null>;
+  /** 历史收养完成信号（SessionTab adoptTree 后 bump）。 */
+  restoreTick: number;
+}) {
+  const isRunning = useAuiState((s) => s.thread.isRunning);
+  const wasActive = useRef(active);
+  // 恢复：切 Tab 回来（display:none 期间 scrollTop 丢失）与首次历史收养
+  // （restoreTick 由 0 变 1）两个时机
+  useEffect(() => {
+    if (!active) {
+      wasActive.current = false;
+      return;
+    }
+    wasActive.current = true;
+    // 首次挂载且历史未收养（restoreTick=0）不恢复：空会话本来就在底部，
+    // 等收养信号到来再定位
+    if (restoreTick === 0) return;
+    let cancelled = false;
+    // 双 rAF：display 切换与树渲染各占一帧，第二帧布局才稳定
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (cancelled) return;
+        const viewport = containerRef.current?.querySelector<HTMLElement>(".cw-scroll-viewport");
+        if (!viewport) return;
+        applyAnchor(viewport, useSessionsStore.getState().scrollAnchors[sessionId]);
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [active, restoreTick, sessionId, containerRef]);
+  // 记账：滚动防抖 300ms（滚动是高频事件，逐事件写 store 会刷爆
+  // ui-state 落盘通道；防抖窗口与 persistUiState 同量级）
+  useEffect(() => {
+    const container = containerRef.current;
+    if (container === null) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const onScroll = () => {
+      if (timer !== null) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = null;
+        // 运行中 autoScroll 跟随 / 非活跃（display:none 无有效滚动）：不记
+        if (isRunning || !wasActive.current) return;
+        const viewport = container.querySelector<HTMLElement>(".cw-scroll-viewport");
+        if (viewport === null) return;
+        const anchor = computeAnchor(collectAnchorElements(viewport), viewport.scrollTop);
+        if (anchor !== null) {
+          useSessionsStore.getState().setScrollAnchor(sessionId, anchor);
+        }
+      }, 300);
+    };
+    container.addEventListener("scroll", onScroll, true);
+    return () => {
+      container.removeEventListener("scroll", onScroll, true);
+      if (timer !== null) clearTimeout(timer);
+    };
+  }, [isRunning, sessionId, containerRef]);
+  return null;
 }
 
 /** 运行态桥：assistant-ui thread 状态 → sessions store 的 Tab 指示。 */
@@ -443,15 +543,22 @@ function Sidebar({
         ? [
             { label: "重命名", onSelect: () => setRenamingId(menu.id) },
             // 导出（27 号票，FR-01-12）：左栏会话行 context-menu 下载入口
-            //（纯前端序列化；失败 console 记录，不打断列表交互）
+            //（纯前端序列化）；成功/失败经顶部 Toast 反馈（29 号票收敛——
+            // 失败不再只有 console）
             {
               label: "导出 Markdown",
               onSelect: () => {
                 const meta = sessions.find((m) => m.id === menu.id);
                 if (meta) {
-                  void exportSession(meta, "markdown").catch((err) =>
-                    console.error("[export] 导出 Markdown 失败", err),
-                  );
+                  void exportSession(meta, "markdown")
+                    .then((filename) => pushToast("success", "已导出 Markdown", filename))
+                    .catch((err) =>
+                      pushToast(
+                        "error",
+                        "导出 Markdown 失败",
+                        err instanceof Error ? err.message : String(err),
+                      ),
+                    );
                 }
               },
             },
@@ -460,9 +567,15 @@ function Sidebar({
               onSelect: () => {
                 const meta = sessions.find((m) => m.id === menu.id);
                 if (meta) {
-                  void exportSession(meta, "jsonl").catch((err) =>
-                    console.error("[export] 导出 JSONL 失败", err),
-                  );
+                  void exportSession(meta, "jsonl")
+                    .then((filename) => pushToast("success", "已导出 JSONL", filename))
+                    .catch((err) =>
+                      pushToast(
+                        "error",
+                        "导出 JSONL 失败",
+                        err instanceof Error ? err.message : String(err),
+                      ),
+                    );
                 }
               },
             },
@@ -771,6 +884,8 @@ async function deleteSessionAndClose(sessionId: string): Promise<void> {
   useCompactionStore.getState().forgetSession(sessionId);
   useRunReconnectStore.getState().forgetSession(sessionId);
   useFollowUpStore.getState().forgetSession(sessionId);
+  // 滚动锚点随会话删除清理（29 号票）
+  useSessionsStore.getState().forgetScrollAnchor(sessionId);
   // 用量面收尾（20 号票）：旧数据标量回落桶摘除（明细以后端删除为准）
   useUsageStatsStore.getState().forgetSession(sessionId);
   await useSessionsStore.getState().refresh();
