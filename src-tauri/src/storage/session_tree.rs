@@ -1,4 +1,4 @@
-//! 会话树存取引擎（技术设计文档 §6.3/§6.4/§7）：`save_session_tree` /
+//! 会话树存取引擎：`save_session_tree` /
 //! `load_session_tree` 的 Rust 侧实现。
 //!
 //! 术语解释：「会话树」指一个会话的全部消息按父子关系（parentId）组成的树，
@@ -8,11 +8,11 @@
 //! 连续执行（一次从开始到结束的生成过程），「runMarker」是收口一轮 run 的标记
 //! 条目；「幂等」指同一操作重复执行结果不变，不会产生重复数据。
 //!
-//! 职责（§6.3/§6.4）：revision 乐观并发校验（不符报 E_SESSION_REV）、既有节点
+//! 职责：revision 乐观并发校验（不符报 E_SESSION_REV）、既有节点
 //! 内容校验（同 id 内容变化 → E_SESSION_REV）、仅追加缺失节点（父先子后的顺序
 //! 由前端 `thread.export()` 导出序保证，此处再校验父节点存在性）、追加 meta 行
 //! 推进 revision。数据落盘：数据根 `~/.craftwave` 下的 `histories/<会话id>/`
-//! 分段日志。Tauri 命令层（host）只做校验与转调（§2.2 依赖方向 host → storage）。
+//! 分段日志。Tauri 命令层（host）只做校验与转调（依赖方向 host → storage）。
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -40,20 +40,20 @@ pub struct SessionStore {
     index: SessionIndex,
 }
 
-/// 存储引擎错误（命令层映射为 D14 `{code,message}`）。
+/// 存储引擎错误（命令层映射为 `{code,message}`）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StorageError {
-    /// §6.4：树同步基线过期或既有节点内容漂移。
+    /// ：树同步基线过期或既有节点内容漂移。
     RevisionConflict { expected: u64, actual: u64 },
     /// 目标会话不存在。
     NotFound(String),
     /// 参数校验失败（空 id、非法会话 id、孤儿节点、未知活动叶等）。
     InvalidArg(String),
-    /// 磁盘 IO / 序列化失败（§3.6 P0 注册表暂无对应码，命令层映射 E_STORAGE_IO）。
+    /// 磁盘 IO / 序列化失败（P0 注册表暂无对应码，命令层映射 E_STORAGE_IO）。
     Io(String),
 }
 
-/// 展示为 "变体: 说明"（命令层 `to_string` 面；Display 补齐于 04 号票，
+/// 展示为 "变体: 说明"（命令层 `to_string` 面；Display 补齐于，
 /// 供压缩编排等跨层调用方统一错误文本）。
 impl std::fmt::Display for StorageError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -68,8 +68,8 @@ impl std::fmt::Display for StorageError {
     }
 }
 
-/// `load_session_tree` 返回（§6.1 定稿结构：headId=activeLeafId + messages 含 `status?`；
-/// 04 号票增 `compactions` 投影面——§6.3 定稿：compaction 条目不投影为树节点，
+/// `load_session_tree` 返回（定稿结构：headId=activeLeafId + messages 含 `status?`；
+/// 增 `compactions` 投影面—— 定稿：compaction 条目不投影为树节点，
 /// 前端按此数组渲染"已压缩早期上下文"分隔提示，wire 边界由后端史册承载）。
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -87,7 +87,7 @@ pub struct SessionTreeData {
 
 /// `SessionStore` 的实现：全树同步、全量读取、canonical 追加与崩溃恢复、会话删除。
 impl SessionStore {
-    /// 以指定数据根构造（测试注入临时目录；生产为 `~/.craftwave`，§7.1）。
+    /// 以指定数据根构造（测试注入临时目录；生产为 `~/.craftwave`）。
     pub fn with_root(root: PathBuf) -> Self {
         Self {
             index: SessionIndex::new(&root),
@@ -96,7 +96,7 @@ impl SessionStore {
         }
     }
 
-    /// 生产数据根（§7.1）：`~/.craftwave`；无法定位主目录时退回系统临时目录。
+    /// 生产数据根：`~/.craftwave`；无法定位主目录时退回系统临时目录。
     pub fn default_root() -> PathBuf {
         // std::env::home_dir 自 1.85 起解除废弃（返回 Option，修复空 HOME 行为）
         match std::env::home_dir() {
@@ -105,7 +105,7 @@ impl SessionStore {
         }
     }
 
-    /// `save_session_tree`（§3.3 #26 / §6.3 / §6.4）：全树同步，仅追加缺失节点。
+    /// `save_session_tree`（ / ）：全树同步，仅追加缺失节点。
     ///
     /// 返回推进后的 revision。首存（无既有文件）要求 `base_revision == 0`，
     /// 并自动写入 session 头条目；每次成功推进 revision 并追加 meta 行。
@@ -135,7 +135,7 @@ impl SessionStore {
             });
         }
 
-        // 既有节点规范化串（键序=声明序，等价内容哈希比对，§6.3）
+        // 既有节点规范化串（键序=声明序，等价内容哈希比对）
         let mut known: HashMap<&str, String> = HashMap::new();
         for entry in log.entries() {
             if let StoredEntry::Message(m) = entry {
@@ -151,7 +151,7 @@ impl SessionStore {
             let canonical = canonical(message).map_err(|e| StorageError::Io(e.to_string()))?;
             match known.get(message.id.as_str()) {
                 Some(stored) if *stored != canonical => {
-                    // §6.3：同 id 内容漂移 → E_SESSION_REV
+                    // ：同 id 内容漂移 → E_SESSION_REV
                     return Err(StorageError::RevisionConflict {
                         expected: base_revision,
                         actual: current,
@@ -237,8 +237,8 @@ impl SessionStore {
         Ok(revision)
     }
 
-    /// `load_session_tree`（承载 §6.1 定稿结构）：全量条目重建 + 最新 meta 投影。
-    /// 读时修复（§7.3 末行）：发现无 runMarker 收口的 run → 追加 interrupted 修复行。
+    /// `load_session_tree`（承载 定稿结构）：全量条目重建 + 最新 meta 投影。
+    /// 读时修复（末行）：发现无 runMarker 收口的 run → 追加 interrupted 修复行。
     pub fn load_session_tree(&self, session_id: &str) -> Result<SessionTreeData, StorageError> {
         validate_session_id(session_id)?;
         let mutex = self.locks.get(session_id);
@@ -278,7 +278,7 @@ impl SessionStore {
         })
     }
 
-    /// canonical 追加原语（§7.3 落盘点的引擎面）：追加条目批 + meta(revision+1，
+    /// canonical 追加原语（落盘点的引擎面）：追加条目批 + meta(revision+1，
     /// activeLeaf 推进为批内最后一条 message 条目；title 沿用最新 meta 值）。
     /// 首次追加自动写 session 头。返回 (新 revision, 史册 message 条目总数)。
     pub fn append_canonical(
@@ -335,11 +335,11 @@ impl SessionStore {
         &self.index
     }
 
-    /// compaction 条目追加（§6.1【M2】/§7.3 时机表，04 号票）：**存储格式升级
-    /// 入口守卫**（Q34）——首次写入前成功创建一次可恢复备份，失败暂停写入
+    /// compaction 条目追加（时机表）：**存储格式升级
+    /// 入口守卫**——首次写入前成功创建一次可恢复备份，失败暂停写入
     /// 并报错（原数据不动；自动更新与手动安装共用本入口，天然同受保护）。
     /// 成功后经 append_canonical 落盘 + meta(revision++)，activeLeaf 不变
-    /// （compaction 非消息条目，§6.3 不挂树）。返回推进后的 revision。
+    /// （compaction 非消息条目，不挂树）。返回推进后的 revision。
     pub fn append_compaction(
         &self,
         session_id: &str,
@@ -356,7 +356,7 @@ impl SessionStore {
 
     /// 压缩状态概览（一次开日志读全）：（路径上最近的 compaction 条目，
     /// 已有压缩总数）。wire 重建取最近的；手动/自动压缩按总数推下一条序号
-    /// （§6.1 id 规则 `{owner}:compact:{n}`，n 跨 owner 连续递增）。
+    /// （id 规则 `{owner}:compact:{n}`，n 跨 owner 连续递增）。
     /// 会话不存在（空日志）→ (None, 0)。
     pub fn compaction_overview(
         &self,
@@ -380,13 +380,13 @@ impl SessionStore {
         Ok((latest, count))
     }
 
-    /// 会话标题落盘（§6.1 meta 行 `title?` 字段 + §7.3「自动标题落盘」行，
-    /// 27 号票）：会话锁内向段尾追加一条 meta 行（`title=Some(新标题)`、
+    /// 会话标题落盘（meta 行 `title?` 字段 + 「自动标题落盘」行，
+    /// ）：会话锁内向段尾追加一条 meta 行（`title=Some(新标题)`、
     /// `activeLeafId` 沿用当前活动叶、revision+1）。追加式「最新赢」——旧
     /// meta 行不动，读取以最后一条 meta 为准（与 save/append_canonical 的
     /// revision 链同源，前端下次 save 用 load 回的新 revision 无冲突）。
     /// index 侧的 title/updatedAt 更新由调用方随后经 `index().mutate` 完成
-    /// （锁序 session → index，§7.4：本方法持会话锁返回后调用方才碰 index）。
+    /// （锁序 session → index，：本方法持会话锁返回后调用方才碰 index）。
     /// 返回推进后的 revision。
     pub fn update_session_title(&self, session_id: &str, title: &str) -> Result<u64, StorageError> {
         validate_session_id(session_id)?;
@@ -410,12 +410,12 @@ impl SessionStore {
         Ok(revision)
     }
 
-    /// 数据根（§7.1；边车等同级布局的基准）。
+    /// 数据根（边车等同级布局的基准）。
     pub fn root(&self) -> &std::path::Path {
         &self.root
     }
 
-    /// 崩溃恢复（§7.3）：史册里出现过的 run 若无对应 runMarker 条目（该 run
+    /// 崩溃恢复：史册里出现过的 run 若无对应 runMarker 条目（该 run
     /// 终态前进程崩溃），补一条 interrupted 修复行（endedAt=None）+ meta 推进。
     fn repair_interrupted_runs(&self, log: &mut SessionLog) -> Result<(), StorageError> {
         let mut runs_seen: HashMap<String, i64> = HashMap::new();
@@ -432,7 +432,7 @@ impl SessionStore {
                     }
                     None => {
                         // 崩溃判定只认 canonical 形态条目（id 规则 `{runId}:{turn}…`，
-                        // 15 号票）：save_session_tree 直接落的任意 id 条目（前端
+                        // ）：save_session_tree 直接落的任意 id 条目（前端
                         // 分支节点带 runId 收养等）不视为未收口 run。
                         if let Some(run_id) = &m.run_id
                             && m.id.starts_with(&format!("{run_id}:"))
@@ -501,8 +501,8 @@ impl SessionStore {
             .count() as u64)
     }
 
-    /// 会话删除（§3.3 #16 存储面）：index 条目 + histories/ + prefs +
-    /// toolres 边车 + 图片 blob 目录（`<sid>.imgblob/`，17 号票 §7.7 v1
+    /// 会话删除（存储面）：index 条目 + histories/ + prefs +
+    /// toolres 边车 + 图片 blob 目录（`<sid>.imgblob/`， v1
     /// GC 口径：随会话整体删除）一并清除。运行中拒绝在命令层判定
     /// （E_SESSION_RUNNING）。返回是否存在（幂等面：不存在 → Ok(false)，
     /// 命令层转 E_NOT_FOUND）。
@@ -523,10 +523,10 @@ impl SessionStore {
         let _ = std::fs::remove_dir_all(self.histories_dir().join(session_id));
         let sessions_dir = self.root.join("sessions");
         let _ = std::fs::remove_file(sessions_dir.join(format!("{session_id}.prefs.json")));
-        // 产物登记（28 号票，§7.7 GC 口径：随 `<sid>.*` 家族一并删除）
+        // 产物登记（GC 口径：随 `<sid>.*` 家族一并删除）
         let _ = std::fs::remove_file(sessions_dir.join(format!("{session_id}.artifacts.json")));
         let _ = std::fs::remove_dir_all(sessions_dir.join(format!("{session_id}.toolres")));
-        // 图片 blob 目录（17 号票：§7.7 v1 GC——会话删除即整体删除；
+        // 图片 blob 目录（v1 GC——会话删除即整体删除；
         // 跨会话不共享 blob，无引用计数问题）
         let _ = std::fs::remove_dir_all(super::imgblob::imgblob_dir(&self.root, session_id));
         Ok(true)
@@ -537,7 +537,7 @@ impl SessionStore {
         self.root.join("histories")
     }
 
-    /// 登记一条产物（28 号票，FR-10-06）：`<sid>.artifacts.json` 追加/计数。
+    /// 登记一条产物：`<sid>.artifacts.json` 追加/计数。
     /// 持本会话 `MutexMap` 锁（与 segments/prefs 同锁序）串行化——与
     /// `delete_session` 的并发以锁为界（先写者持锁，删除等锁）。
     /// 失败原样上抛，调用方（工具执行器）只记日志不阻塞工具结果。
@@ -554,7 +554,7 @@ impl SessionStore {
         super::artifacts::record(&self.root, session_id, run_id, path)
     }
 
-    /// 产物清单查询（28 号票，§3.3 #59l 读面）：存在探测就地完成，排序
+    /// 产物清单查询（读面）：存在探测就地完成，排序
     /// = 存在优先 + lastSeenAt 倒序。读路径与登记同一把会话锁（避免读到
     /// 写了一半的中间态——原子写下非必然，但保持同锁序纪律）。
     pub fn list_artifacts(&self, session_id: &str) -> Vec<super::artifacts::ArtifactRow> {

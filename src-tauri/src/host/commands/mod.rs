@@ -1,33 +1,33 @@
-//! 命令实现（校验/转调），按域分文件（§2.2 host/commands/）。
+//! 命令实现（校验/转调），按域分文件（host/commands/）。
 //!
 //! 命令注册与 IPC manifest 由 crate 根 lib.rs 的 `ipc_commands!` 宏同源展开
-//! （§12.3/NFR-12 防漂移，全命令统一收编）；本模块只承载 manifest 的事件帧键面。
+//! （防漂移，全命令统一收编）；本模块只承载 manifest 的事件帧键面。
 
-// 产物面板与编辑器打开（28 号票，§3.3 #59l/#35/#36）
+// 产物面板与编辑器打开
 pub mod artifacts;
 pub mod chat;
 pub mod config;
-// 图片附件承载命令（17 号票，§3.3 #59h/#59i）
+// 图片附件承载命令
 pub mod image;
-// 日志命令（32 号票，§3.3 #54–56：读取/清单/打开目录）
+// 日志命令（读取/清单/打开目录）
 pub mod logs;
 pub mod project;
-// 配额快照命令（21 号票，§3.3 #53）
+// 配额快照命令
 pub mod quota;
-// HTML 沙箱预览注册命令（14 号票，§3.3 #59g）
+// HTML 沙箱预览注册命令
 pub mod preview;
 pub mod provider;
-// 网络搜索连通测试命令（13 号票，§3.3 #59f）
+// 网络搜索连通测试命令
 pub mod search;
 pub mod session;
 pub mod session_tree;
-// 用量统计命令（20 号票，§3.3 #52/#59k）
+// 用量统计命令
 pub mod stats;
-// 子代理命令与委派装配（10 号票，§3.3 #58/#59 + §5.9）
+// 子代理命令与委派装配
 pub mod subagent;
 pub mod system;
 pub mod ui_state;
-// 更新器支撑命令（33 号票，§3.3 #59m/#59n/#59o：状态门/安装门/主动暂停）
+// 更新器支撑命令（状态门/安装门/主动暂停）
 pub mod updater;
 pub mod workspace;
 
@@ -59,8 +59,8 @@ mod updater_test;
 #[path = "workspace_test.rs"]
 mod workspace_test;
 
-/// ChatFrame P0 全集 9 帧 + 【M2】压缩帧/摘要帧 + 【M2】子代理 4 帧 + 36 号票
-/// toolAudit 审计帧（§3.4；type 值与 TS 判别值一致）。
+/// ChatFrame P0 全集 9 帧 + 压缩帧/摘要帧 + 子代理 4 帧 +
+/// toolAudit 审计帧（type 值与 TS 判别值一致）。
 pub const FRAMES: &[&str] = &[
     "runStarted",
     "stepStarted",
@@ -80,13 +80,11 @@ pub const FRAMES: &[&str] = &[
     "toolAudit",
 ];
 
-/// 事件键（§3.5 P0 子集 + 【M2】压缩三键 + 06 号票队列键 + 08 号票
-/// mcp:status + 10 号票子代理六键 + 27 号票 session:title）：14 号票实装
-/// 5 键（ask 协议 / plan / suggest / 会话用量）；17 号票补 run 终态三键与
-/// notify/app 退出两键；04 号票补压缩生命周期三键；06 号票补 run:start /
-/// run:inject / run:queue 三键；08 号票补 mcp:status；10 号票补 sub:*
-/// 六键；27 号票补 session:title；其余键（run:retry / tool:* / menu:action）
-/// 随对应票填充。
+/// 事件键：ask 协议 / plan / suggest / 会话用量 / run 终态三键 /
+/// notify 与 app 退出两键 / 压缩生命周期三键 / run:start /
+/// run:inject / run:queue / mcp:status / sub:*
+/// 六键 / session:title；其余键（run:retry / tool:* / menu:action）
+/// 暂未实装。
 pub const EVENTS: &[&str] = &[
     "ask:opened",
     "ask:closed",

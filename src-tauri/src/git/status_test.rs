@@ -1,5 +1,5 @@
-//! git 只读查询测试（26 号票）：tempfile 临时仓库构造（绝不触碰本仓库
-//! 真实 .git），覆盖票面测试清单——status 各状态（修改/新增/删除/untracked/
+//! git 只读查询测试：tempfile 临时仓库构造（绝不触碰本仓库
+//! 真实 .git），覆盖——status 各状态（修改/新增/删除/untracked/
 //! ignore 尊重）、diff hunk 正确性（含二进制标记、CRLF）、log 排序与 limit、
 //! 非仓库空结果、.git 异常容错、user info。
 
@@ -56,7 +56,7 @@ fn status_of<'a>(result: &'a super::GitStatusResult, path: &str) -> &'a str {
 
 // 断言（状态矩阵与降级路径）：真实仓库 status 各状态——工作区修改（M）、
 // 删除（D）、未跟踪（untracked）、已暂存新文件（A）、.gitignore 尊重、
-// user info 回读（FR-11-01）；主状态归一位标志表（冲突 > 删除 > 新增 >
+// user info 回读；主状态归一位标志表（冲突 > 删除 > 新增 >
 // 修改 > 未跟踪，冲突态纯函数面核对）；非仓库 isRepo=false 空结果；空
 // 仓库（无 HEAD）untracked 照常；写坏 HEAD 的脏仓库降级空结果不报错
 // （status/log/diff 三面）。
@@ -93,7 +93,7 @@ fn status_matrix_and_degraded_paths() {
         "忽略文件不进状态列表：{:?}",
         result.files
     );
-    // user info（FR-11-01）：仓库配置身份回读
+    // user info：仓库配置身份回读
     let user = result.user.as_ref().expect("user 应有值");
     assert_eq!(user.name.as_deref(), Some("tester"));
     assert_eq!(user.email.as_deref(), Some("tester@test"));
@@ -166,7 +166,7 @@ fn status_matrix_and_degraded_paths() {
 // 行种类（删/增/上下文）与删除行文本（CRLF/换行已剥离）；untracked 文件
 // 计入差异（全行为新增）；二进制文件（NUL 字节）binary 标记 + 无内容行；
 // CRLF 文件行文本不带 \r；空仓库 diff 含 untracked 文件（全行为新增）且
-// log 空列表；staged 参数本票不支持（票面边界）——传 true/false 返回同一
+// log 空列表；staged 参数不支持（staged 视图不做）——传 true/false 返回同一
 // 聚合视图。
 #[test]
 fn diff_hunks_binary_crlf_and_edge_cases() {
@@ -258,7 +258,7 @@ fn diff_hunks_binary_crlf_and_edge_cases() {
     assert!(log.is_repo);
     assert!(log.commits.is_empty());
 
-    // staged 参数本票不支持（票面边界）：传 true/false 返回同一聚合视图。
+    // staged 参数不支持（staged 视图不做）：传 true/false 返回同一聚合视图。
     let dir = tempfile::tempdir().expect("临时目录");
     init_git_repo(dir.path());
     std::fs::write(dir.path().join("a.txt"), "changed\n").expect("改");

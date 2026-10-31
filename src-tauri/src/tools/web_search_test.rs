@@ -1,5 +1,5 @@
-//! web_search 工具测试（13 号票）：DDG HTML 快照解析（空结果自检三态）+
-//! SearXNG/Tavily 本地假服务回放（不连真实外网，map.md 站定偏好）+ 三通道
+//! web_search 工具测试：DDG HTML 快照解析（空结果自检三态）+
+//! SearXNG/Tavily 本地假服务回放（不连真实外网）+ 三通道
 //! 优先级切换 e2e（启用/停用 SearXNG 同查询走不同通道）。矩阵化合并为
 //! 解析 / 通道状态 / 优先级链三个用例。
 //!
@@ -296,7 +296,7 @@ async fn channel_provider_states_matrix() {
     assert_eq!(page.hits[0].title, "docs.rs");
     assert_eq!(page.hits[0].snippet, "Rust 文档");
 
-    // 403 = settings.yml 未开 format=json：错误信息必须引导配置（票面）。
+    // 403 = settings.yml 未开 format=json：错误信息必须引导配置。
     let base = spawn_searxng_fake(FakeMode::Forbidden).await;
     let err = searxng_provider(base, Duration::from_secs(5))
         .search("rust", 10, &token)
@@ -438,7 +438,7 @@ async fn channel_provider_states_matrix() {
         "401 不应重试"
     );
 
-    // 432 配额尽：分类为 QuotaExhausted，不重试（票面：用尽即当月停用）。
+    // 432 配额尽：分类为 QuotaExhausted，不重试——用尽即当月停用。
     let script = TavilyScript::new(vec![(
         StatusCode::from_u16(432).unwrap(),
         r#"{"detail":"Forbidden: monthly quota exceeded"}"#,

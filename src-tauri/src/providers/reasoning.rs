@@ -1,21 +1,21 @@
-//! Thinking 档位到模型请求参数的映射（§11.4 reasoning 映射回写表，18 号票）。
+//! Thinking 档位到模型请求参数的映射（reasoning 映射回写表）。
 //!
 //! 名词解释：「thinking 档位」指用户为某次对话选择的"模型思考力度"档位
-//! （FR-02-08 五档：off/minimal/low/medium/high）；「请求参数」指真正发往
+//! （五档：off/minimal/low/medium/high）；「请求参数」指真正发往
 //! 供应商 API 的推理控制字段——OpenAI 系（openai_chat / openai_responses
 //! 两方言）是 `reasoning_effort`，Anthropic（anthropic_messages 方言）是
-//! thinking budget（占上下文窗口的比例，§11.4 比例轴）。
+//! thinking budget（占上下文窗口的比例， 比例轴）。
 //!
 //! 本模块是纯函数层：不碰网络、不依赖 rig（providers 域保持纯配置层），
 //! 输出中立的 [`ReasoningDirective`]，由 backend 层（`backend::turn`）翻译为
-//! rig 的 `GenerationOptions`。两套档位体系在这里汇合（§11.4 回写表定稿）：
-//! - **会话档** [`ThinkingLevel`]（FR-02-08）：off/minimal/low/medium/high——
+//! rig 的 `GenerationOptions`。两套档位体系在这里汇合（回写表定稿）：
+//! - **会话档** [`ThinkingLevel`]：off/minimal/low/medium/high——
 //!   用户按会话显式选择，优先级最高；
-//! - **per-model 档** [`ReasoningEffort`]（§3.2 ProviderModel.reasoningEffort）：
+//! - **per-model 档** [`ReasoningEffort`]（ProviderModel.reasoningEffort）：
 //!   default/low/medium/high/max——模型配置里的静态缺省，会话未显式设置时
 //!   回落到它（含 default = 不传档）。
 //!
-//! 两者的对应关系按 §11.4 回写表（本票定稿，见技术设计文档 §11.4）：
+//! 两者的对应关系：
 //! 会话 minimal ↔ per-model default（同 20% 预算）；low/medium/high 同名；
 //! per-model max = 80% + max_tokens 上调；会话 off = 显式关闭（per-model
 //! 无对应档）。
@@ -24,8 +24,8 @@ use serde::{Deserialize, Serialize};
 
 use super::types::{ApiFormat, ReasoningEffort};
 
-/// 会话 thinking 档位（FR-02-08 五档，§3.3 #24/#25 / §3.2 RunConfig.thinking）。
-/// 序列化为 snake_case（与 Rust 侧 ReasoningEffort 同风格，D14 口径）。
+/// 会话 thinking 档位（五档， / / RunConfig.thinking）。
+/// 序列化为 snake_case（与 Rust 侧 ReasoningEffort 同风格， 口径）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
@@ -34,7 +34,7 @@ pub enum ThinkingLevel {
     /// thinking）。与「未设置」不同：off 是用户的明确选择，优先级高于
     /// per-model 配置。
     Off,
-    /// 最轻思考（Anthropic 20% 预算，§11.4 比例轴）。
+    /// 最轻思考（Anthropic 20% 预算， 比例轴）。
     Minimal,
     /// 低思考（40%）。
     Low,
@@ -46,7 +46,7 @@ pub enum ThinkingLevel {
 
 impl ThinkingLevel {
     /// 全部档位（Composer 快捷钮循环顺序：off → minimal → low → medium →
-    /// high，票面定案）。
+    /// high）。
     pub const ALL: [ThinkingLevel; 5] = [
         ThinkingLevel::Off,
         ThinkingLevel::Minimal,
@@ -55,7 +55,7 @@ impl ThinkingLevel {
         ThinkingLevel::High,
     ];
 
-    /// OpenAI 系 `reasoning_effort` 的 wire 词（§11.4：off → "none"，其余
+    /// OpenAI 系 `reasoning_effort` 的 wire 词（off → "none"，其余
     /// 同名；rig 的 `Effort::as_str` 同值——backend 层据此构造 rig 枚举）。
     pub fn effort_word(self) -> &'static str {
         match self {
@@ -67,7 +67,7 @@ impl ThinkingLevel {
         }
     }
 
-    /// Anthropic thinking 预算占上下文窗口的比例（§11.4 比例轴：20/40/60/80%）；
+    /// Anthropic thinking 预算占上下文窗口的比例（比例轴：20/40/60/80%）；
     /// off 不启用 thinking，返回 None。
     pub fn budget_ratio(self) -> Option<f64> {
         match self {
@@ -80,19 +80,19 @@ impl ThinkingLevel {
     }
 }
 
-/// 档位映射的中立结果（§11.4 回写表的一行）：按方言二选一生效。
+/// 档位映射的中立结果（回写表的一行）：按方言二选一生效。
 ///
 /// 为什么是中立结构而不是直接给 rig 枚举：providers 域保持零 rig 依赖
-/// （§2.2 层次纪律），rig `GenerationOptions` 的构造在 backend 层完成。
+/// （层次纪律），rig `GenerationOptions` 的构造在 backend 层完成。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReasoningDirective {
     /// OpenAI 系请求字段 `reasoning_effort` 的取值。None = 不传（供应商缺省
     /// 行为）；Some("none") = 显式关闭思考；其余为同名 effort 词。
     pub effort_word: Option<&'static str>,
     /// Anthropic thinking 预算（token 数 = contextWindow × 比例）。None =
-    /// 不启用 thinking。实际注入由 38 号票三协议接入消费（本票先定表）。
+    /// 不启用 thinking。实际注入由三协议接入消费（映射表见上文）。
     pub budget_tokens: Option<u64>,
-    /// Anthropic `max_tokens` 上调值（§11.4 上调规则：预算生效且预算超过
+    /// Anthropic `max_tokens` 上调值（上调规则：预算生效且预算超过
     /// 原 max_tokens 时上调，保证 thinking 预算之外仍保留原输出空间且不超
     /// 窗口）。None = 不调整。
     pub max_tokens_override: Option<u64>,
@@ -109,7 +109,7 @@ impl ReasoningDirective {
     }
 }
 
-/// Anthropic 口径的预算与 max_tokens 上调（§11.4 回写表的共享实现）：
+/// Anthropic 口径的预算与 max_tokens 上调（回写表的共享实现）：
 /// budget = contextWindow × ratio；预算超过原 max_tokens 时上调为
 /// min(contextWindow, budget + 原 max_tokens)——thinking 预算之外保留原
 /// 输出空间且不超窗口（Anthropic API 要求 max_tokens > budget_tokens）。
@@ -127,7 +127,7 @@ fn anthropic_directive(
     }
 }
 
-/// 会话档映射（优先级链第一级：会话 thinking 显式设置，§11.4 回写表）。
+/// 会话档映射（优先级链第一级：会话 thinking 显式设置， 回写表）。
 ///
 /// - OpenAI 系：off → `"none"`（显式关闭）；minimal/low/medium/high → 同名值；
 /// - Anthropic：off → 不启用；minimal/low/medium/high → 20/40/60/80% 预算
@@ -161,13 +161,13 @@ pub fn thinking_to_request(
 }
 
 /// per-model 档映射（优先级链第二级：会话未显式设置 thinking 时回落到
-/// `ProviderModel.reasoningEffort`，§11.4 原表的 default/low/medium/high/max 行）。
+/// `ProviderModel.reasoningEffort`， 原表的 default/low/medium/high/max 行）。
 ///
 /// - OpenAI 系：default → 不传（"default" 不是 OpenAI API 的合法 effort 值，
 ///   语义即供应商缺省）；low/medium/high/max → 同名值（max 由 rig 目录或
 ///   供应商自行裁决，`OnUnsupported::Ignore` 保证不支持时忽略不报错）；
 /// - Anthropic：default → 20%、low → 40%、medium → 60%、high → 80%、
-///   max → 80% + max_tokens 上调（§11.4 max 行）。
+///   max → 80% + max_tokens 上调（max 行）。
 pub fn model_effort_to_request(
     effort: ReasoningEffort,
     api_format: ApiFormat,
@@ -177,7 +177,7 @@ pub fn model_effort_to_request(
     match api_format {
         ApiFormat::OpenaiChat | ApiFormat::OpenaiResponses => {
             let word = match effort {
-                // default 档 = 不显式传（§3.2「reasoningEffort 可空 = 不传给
+                // default 档 = 不显式传（「reasoningEffort 可空 = 不传给
                 // 供应商」的 default 语义延伸）
                 ReasoningEffort::Default => return ReasoningDirective::none(),
                 ReasoningEffort::Low => "low",

@@ -1,4 +1,4 @@
-//! `storage/imgblob` 的单元测试（17 号票）：内容寻址与去重、哈希稳定、
+//! `storage/imgblob` 的单元测试：内容寻址与去重、哈希稳定、
 //! 白名单外格式与超限拒绝、越权读取（他会话 blob 不可见）、非法哈希拒绝、
 //! 会话删除 GC。全链路合并为单个 #[test]，断言消息带阶段标识。
 
@@ -32,7 +32,7 @@ fn temp_root(tag: &str) -> tempfile::TempDir {
 // 内容去重、文件名 <hash>.bin）；get_blob roundtrip 按魔数恢复 MIME；超限/
 // 空/白名单外写入拒绝；他会话 blob 不可见（root 归属）、非法哈希（含路径
 // 穿越向量）按参数错误拒绝、合法但不存在的哈希按 NotFound；SessionStore
-// 删会话连带删除 blob 目录（§7.7 v1 GC）。
+// 删会话连带删除 blob 目录（v1 GC）。
 #[test]
 fn imgblob_dedup_roundtrip_and_guards() {
     // 嗅探：白名单放行（WebP 为 RIFF 容器 + 偏移 8..12 的 "WEBP" 标记，

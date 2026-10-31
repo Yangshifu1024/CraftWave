@@ -90,7 +90,7 @@ fn text_and_args_deltas_passthrough_partial_json_kept() {
 }
 
 /// 断言桥接 id 映射面：End 定稿模型调用 id 登记后可反查（toolResult 同源
-/// 用）、同轮多工具一一对应、跨轮 part 序号复用不撞帧面 id（14 号票：无
+/// 用）、同轮多工具一一对应、跨轮 part 序号复用不撞帧面 id（无
 /// turn 前缀会撞同一帧面 id，前端卡片按 id 合并会丢卡片）、未命中映射回退
 /// 模型 id 本身（异常路径容错）、未带名 Start 不出帧且首个参数增量补登记
 /// （OpenAI 首个分片只带序号的边缘形态）。

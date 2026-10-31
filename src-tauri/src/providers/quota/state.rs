@@ -1,6 +1,6 @@
-//! 快照持久化（§7.7 `quota.json`，21 号票）：数据目录根下的行数组文件。
+//! 快照持久化（`quota.json`）：数据目录根下的行数组文件。
 //!
-//! 文件形态（§7.7 字面）：顶层数组 `[{ providerId, state, data?, fetchedAt,
+//! 文件形态（字面）：顶层数组 `[{ providerId, state, data?, fetchedAt,
 //! lastOkAt? }]`——每家「有请求结果的行」（ok/error/rejected）一行；
 //! no_key / unsupported 是即时可算的占位（不依赖网络），不入文件。
 //!
@@ -16,7 +16,7 @@
 //! 因此「读—改—写」收进进程内互斥（[`commit`]），且临界区内**重新读盘**再
 //! 合并——临界区只有同步文件 IO，绝不跨 `.await` 持锁，无死锁风险。
 //!
-//! 损坏处理（宁缺勿炸，§7.7 stats 同款惯例）：文件解析失败 → 先备份
+//! 损坏处理（宁缺勿炸， stats 同款惯例）：文件解析失败 → 先备份
 //! `quota.json.corrupt` 再按空继续（快照是可重取的缓存面，丢历史只损失
 //! 「曾成功过」判据与离线兜底，绝不 panic、不阻塞查询）。
 
@@ -25,7 +25,7 @@ use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use super::{QuotaData, QuotaSnapshot, QuotaStatus};
 
-/// 状态文件名（位于传入的数据目录根，§7.1/§7.7）。
+/// 状态文件名（位于传入的数据目录根）。
 pub const FILE_NAME: &str = "quota.json";
 
 /// 损坏文件的隔离后缀：`quota.json` → `quota.json.corrupt`
@@ -85,7 +85,7 @@ fn quarantine(dir: &Path) {
     }
 }
 
-/// 原子写盘（`util::atomic`，§7.4 同款）；失败只记日志，不阻断额度展示。
+/// 原子写盘（`util::atomic`， 同款）；失败只记日志，不阻断额度展示。
 fn save(dir: &Path, rows: &[QuotaSnapshot]) -> bool {
     let bytes = match serde_json::to_vec_pretty(rows) {
         Ok(bytes) => bytes,

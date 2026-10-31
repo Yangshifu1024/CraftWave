@@ -1,5 +1,5 @@
-//! storage/trust.rs 的单测（24 号票）：统一信任存储的 roundtrip、scope
-//! 判别、revoke 覆盖、08 号票遗留文件迁入、损坏兜底与 Q41 清空面。
+//! storage/trust.rs 的单测：统一信任存储的 roundtrip、scope
+//! 判别、revoke 覆盖、遗留文件迁入、损坏兜底与 清空面。
 //! 全链路语义合并为单个 #[test]，断言消息带阶段标识。
 
 use super::trust::{FileTrustStore, TrustDecision, TrustRecord, TrustScope, TrustStore};
@@ -22,10 +22,10 @@ fn record(
 
 // 断言：统一信任存储全链路——空表未信任；remember 后同 (scope, name,
 // fingerprint) 免问而换指纹/换资源名/跨作用域均不命中（scope 判别是第一键）；
-// revoke 覆盖 remember 立即生效（Q20）且同键覆盖不追加条目、再 remember 可
-// 恢复；跨实例（重启口径）roundtrip 决策保留；08 号票遗留 mcp.json 以
+// revoke 覆盖 remember 立即生效且同键覆盖不追加条目、再 remember 可
+// 恢复；跨实例（重启口径）roundtrip 决策保留；遗留 mcp.json 以
 // scope=Mcp 迁入视图且统一文件优先、旧文件保留不删；统一文件损坏按空表
-// 处理（宁缺勿炸）且可重建；clear_all 清空全部记录（Q41 恢复流程接线面）。
+// 处理（宁缺勿炸）且可重建；clear_all 清空全部记录（恢复流程接线面）。
 #[test]
 fn trust_store_semantics_end_to_end() {
     let dir = tempfile::tempdir().expect("临时目录");
@@ -47,7 +47,7 @@ fn trust_store_semantics_end_to_end() {
     assert!(store.is_trusted(TrustScope::Project, "guard", "fp1"));
     assert!(
         !store.is_trusted(TrustScope::Project, "guard", "fp2"),
-        "指纹变 → 重新询问（§9.8）"
+        "指纹变 → 重新询问"
     );
     assert!(
         !store.is_trusted(TrustScope::Project, "other", "fp1"),
@@ -73,7 +73,7 @@ fn trust_store_semantics_end_to_end() {
         .expect("撤销");
     assert!(
         !store.is_trusted(TrustScope::Project, "guard", "fp1"),
-        "撤销立即生效（Q20）"
+        "撤销立即生效"
     );
     assert_eq!(
         store.status_of(TrustScope::Project, "fp1").as_str(),
@@ -114,7 +114,7 @@ fn trust_store_semantics_end_to_end() {
     );
     assert!(reopened.is_trusted(TrustScope::Mcp, "", "srv-fp"));
 
-    // 08 号票遗留 mcp.json 迁入：旧条目合并进视图、统一文件优先、旧文件保留
+    // 遗留 mcp.json 迁入：旧条目合并进视图、统一文件优先、旧文件保留
     let dir = tempfile::tempdir().expect("临时目录");
     let trust_dir = dir.path().join("trust");
     std::fs::create_dir_all(&trust_dir).expect("建 trust 目录");
@@ -173,7 +173,7 @@ fn trust_store_semantics_end_to_end() {
         "损坏后可重建"
     );
 
-    // Q41 清空面：clear_all 后全部记录消失
+    // 清空面：clear_all 后全部记录消失
     let dir = tempfile::tempdir().expect("临时目录");
     let store = FileTrustStore::new(dir.path());
     store

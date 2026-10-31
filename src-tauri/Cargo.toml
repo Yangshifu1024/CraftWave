@@ -14,64 +14,64 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
-# 08 号票（MCP）：preserve_order = serde_json::Map 换 IndexMap 底座——mcp.json
-# 的未知字段经 serde(flatten) round-trip 时保持出现顺序（票面明文"保序 map"；
-# 不开则 BTreeMap 底座会按键排序重排，内容不丢但顺序漂移）
+# MCP：preserve_order = serde_json::Map 换 IndexMap 底座——mcp.json
+# 的未知字段经 serde(flatten) round-trip 时保持出现顺序
+#（不开则 BTreeMap 底座会按键排序重排，内容不丢但顺序漂移）
 serde_json = { version = "1", features = ["preserve_order"] }
 tauri = { version = "2.12", features = ["tray-icon"] }
 tauri-plugin-decoration = "3.0"
-# S2/S3 spike（C-6 双版本验证）：0.45.0 主底料；=0.46.0-rc.1 已平行重验通过（零改动）
+# 双版本验证：0.45.0 主底料；=0.46.0-rc.1 已平行重验通过（零改动）
 rig = "0.45.0"
 futures = "0.3"
-# 【S1 spike 原型】mock_chat 的 sleep（time feature）；后续后端模块本就会用到
-# 【S5 spike】process/macros/sync/rt：命令子进程、select!、Notify、任务驱动
-# 【12 号票】net：SSRF 共享层的 tokio::net::lookup_host（§9.2 DNS 解析）
+# mock_chat 的 sleep（time feature）；后续后端模块本就会用到
+# process/macros/sync/rt：命令子进程、select!、Notify、任务驱动
+# net：SSRF 共享层的 tokio::net::lookup_host（DNS 解析校验）
 tokio = { version = "1", default-features = false, features = ["time", "process", "macros", "sync", "rt", "net"] }
-# 【S5 spike】CancellationToken（§5.3 cancel_run 置位载体）
+# CancellationToken（cancel_run 的置位载体）
 tokio-util = { version = "0.7", features = ["rt"] }
-# providers（§9.4）：keyring 4.2 默认 v1 feature = apple keychain / windows native / zbus-secret-service
-# providers（§3.2）：ProviderConfig.id / ProviderModel.id 的 uuid v4
+# providers：keyring 4.2 默认 v1 feature = apple keychain / windows native / zbus-secret-service
+# providers：ProviderConfig.id / ProviderModel.id 的 uuid v4
 uuid = { version = "1", features = ["v4"] }
-# storage（§7）：段指纹/条目内容哈希；tools：edit 版本指纹
+# storage：段指纹/条目内容哈希；tools：edit 版本指纹
 sha2 = "0.11"
-# storage（§7）：整文件原子写 temp+fsync+rename（§7.4）
+# storage：整文件原子写 temp+fsync+rename
 tempfile = "3"
-# tools（§8）：C-10 编码解码、ripgrep 内嵌、图片 base64
+# tools：编码解码、ripgrep 内嵌、图片 base64
 encoding_rs = "0.8.42"
 chardetng = "1.0.0"
 grep-regex = "0.1.14"
 grep-searcher = "0.1.17"
 ignore = "0.4.33"
-# 【M2 14 号票】glob 工具的文件名模式匹配（§8.3 glob 行）：票面点名 globset
+# glob 工具的文件名模式匹配：选 globset
 # ——依赖树已在（ignore 的底层依赖，锁面 0.4.20 不新增下载），显式声明取其
 # Glob/GlobMatcher 的 `**` 递归语义；遍历仍走同源 ignore::WalkBuilder
 # （与 list_files 一致尊重 .gitignore）。
 globset = "0.4.20"
 regex = "1.13.1"
 base64 = "0.23.1"
-# tools（§8.8）：命令输出 ANSI/OSC 清洗（纯 Rust，anstyle 生态）
+# tools：命令输出 ANSI/OSC 清洗（纯 Rust，anstyle 生态）
 anstream = "0.6"
-# host（§3.3 #5）：select_dir 原生目录选择（同步命令主线程模态；tauri-plugin-dialog 的同款内核，免 JS 插件与 capability）
+# host：select_dir 原生目录选择（同步命令主线程模态；tauri-plugin-dialog 的同款内核，免 JS 插件与 capability）
 rfd = "0.15"
 tauri-plugin-single-instance = "2.5.4"
 tauri-plugin-notification = "2.7.0"
-# 【M2 29 号票】全局热键（FR-13-11，§10.7）：tauri-plugin-global-shortcut 2.x
-# 官方插件（票面点名 crates.io 官方源）。注册发起面在前端（插件 JS API 转调
+# 全局热键：tauri-plugin-global-shortcut 2.x
+# 官方插件。注册发起面在前端（插件 JS API 转调
 # 插件命令）——注册冲突（被其他应用占用）的错误经 Promise 原生回传，设置页
 # 红字 + Toast 零新增契约面；Rust 侧只挂 with_handler 回调（快捷键按下时
 # toggle 主窗，host::shell::toggle_main_window）。
 tauri-plugin-global-shortcut = "2"
-# 【M2 33 号票】应用内更新骨架（FR-16-03，§12.4）：tauri-plugin-updater 2.x
-# 官方插件（crates.io 官方源）——check/downloadAndInstall 全链在 Rust 侧执行
+# 应用内更新骨架：tauri-plugin-updater 2.x
+# 官方插件——check/downloadAndInstall 全链在 Rust 侧执行
 # （前端经插件 JS API 转调，下载不走 WebView，CSP connect-src 不动）；
 # tauri-plugin-process 2.x 提供 relaunch（安装完成后的「重启以完成更新」）。
 # pubkey 占位空串期间插件 check 必败，入口以 update_status.pubkeyConfigured
-# 禁用兜底（票内取舍 Answer：骨架先行，密钥由 HITL 配齐后填入）。
+# 禁用兜底（骨架先行，密钥由 HITL 配齐后填入）。
 tauri-plugin-updater = "2.14.1"
 tauri-plugin-process = "2.4.0"
 open = "5"
 
-# 【M2 08 号票】MCP 客户端（FR-08，§9.7）：rig-rmcp 0.45 为票面点名选型，
+# MCP 客户端：rig-rmcp 0.45 选型，
 # 对齐锁定的 rig 0.45.0 并把 rmcp 锚定在 ^3.5（避免依赖树版本分裂）；
 # rmcp 直依赖补充本仓需要的传输面：stdio 子进程 + streamable HTTP 客户端
 # （reqwest rustls TLS）。tools.allow/deny 的 glob 工具名过滤用 glob crate；
@@ -86,18 +86,18 @@ rmcp = { version = "3.5", features = [
 ] }
 # rmcp 的 streamable HTTP 客户端以 `reqwest?` 软依赖启用（feature 语法：
 # "reqwest?/rustls"）——使用方须自带 reqwest；锁 rustls TLS（对齐本仓
-# 无 OpenSSL 依赖纪律）。12 号票：gzip 自动解压（现代网站按 Accept-Encoding
+# 无 OpenSSL 依赖纪律）。gzip 自动解压（现代网站按 Accept-Encoding
 # 压缩响应，抓取正文须解压后才可交给 Readability）。
-# 【19 号票】socks：FR-02-10 代理 manual 模式支持 socks5:// 与 socks5h://
+# socks：代理 manual 模式支持 socks5:// 与 socks5h://
 # （socks5h = 域名由代理远端解析）；system-proxy：system 模式的 macOS
-# SystemConfiguration / Windows 系统设置内建探测（12 号票收敛点——此前
+# SystemConfiguration / Windows 系统设置内建探测（此前
 # system 模式只有环境变量探测；reqwest 0.13 的系统代理探测走该 feature）。
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "gzip", "socks", "system-proxy"] }
-# 【19 号票】代理 HTTP 客户端缓存的原子替换载体（ArcSwap：读侧无锁快照、
+# 代理 HTTP 客户端缓存的原子替换载体（ArcSwap：读侧无锁快照、
 # 写侧整体换新——save_config 热生效重建 client 时进行中请求持旧值跑完）。
 # 版本对齐依赖树既有锁面（1.9.x），不新增下载。
 arc-swap = "1"
-# 【19 号票】rig 传输注入（附录 B"代理经 rig-reqwest builder"）：
+# rig 传输注入（代理经 rig-reqwest builder）：
 # ReqwestClient::from(配置好的 reqwest::Client) 包一层的即是本 crate；
 # 版本对齐锁定的 rig 0.45.0（同版本族，不新增下载）。
 rig-reqwest = { version = "0.45.0", default-features = false, features = ["rustls"] }
@@ -109,7 +109,7 @@ process-wrap = { version = "10.0", features = [
 ] }
 glob = "0.3.3"
 
-# 【M2 09 号票】技能系统（FR-09-02，§9.8）：SKILL.md frontmatter 的 YAML 解析
+# 技能系统：SKILL.md frontmatter 的 YAML 解析
 # （name/description 必填、额外字段忽略以兼容 Claude 技能目录格式）。选
 # serde_yaml_ng（serde_yaml 归档后的活跃维护 fork，纯 Rust unsafe-libyaml 内核，
 # MIT/Apache 双许可）——frontmatter 的 description 常含冒号/引号/换行等合法
@@ -117,22 +117,22 @@ glob = "0.3.3"
 serde_yaml_ng = "0.10"
 git2 = { version = "0.21.0", default-features = false }
 
-# 【M2 12 号票】web_fetch 正文抽取（§8.3 web_fetch 行）：dom_smoothie 为
+# web_fetch 正文抽取：dom_smoothie 为
 # Mozilla Readability 算法的纯 Rust 移植（MIT，活跃维护，0.19.0 于 2026-10
 # 发布），基于 dom_query（HTML5 解析）+ 内置 Markdown 输出（TextMode::Markdown，
 # 经 dom_query 的 markdown 特性），备选 readability crate 久未维护不取。
-# 定案标准（票面）：纯 Rust、MIT、中文正文实测可用（快照测试覆盖）。
+# 选型标准：纯 Rust、MIT、中文正文实测可用（快照测试覆盖）。
 dom_smoothie = "0.19.0"
-# 【M2 12 号票】URL 解析（§9.2 URL 预校验）：与 reqwest 内部同款解析器
+# URL 解析（请求前预校验）：与 reqwest 内部同款解析器
 #（url 2.x），Host::Ipv4/Ipv6/Domain 判别是 IP 字面量拦截的依据。
 url = "2.5"
-# 【M2 13 号票】DuckDuckGo HTML 结果列表解析（§8.3 web_search 行）：
+# DuckDuckGo HTML 结果列表解析（web_search）：
 # dom_query 是 dom_smoothie 0.19 的底层 HTML5 解析器（已在依赖树内，锁面
 # 同版本不新增下载），提供 CSS 选择器查询——SERP 列表提取按 class 定位
 # 结果锚点与摘要块（属性顺序/引号形式无关），比正则宽松且对改版容错。
 dom_query = "0.29"
 
-# 【M2 16 号票】文档读取三选（15 号票选型定案，§8.9 读侧；全部纯 Rust、
+# 文档读取三选（全部纯 Rust、
 # MIT/Apache 兼容许可、零系统依赖）：
 # - xlsx → calamine（只读 reader，worksheet_range 天然二维表；xls/xlsm/
 #   xlsb/ods 顺带覆盖）；
@@ -143,30 +143,30 @@ dom_query = "0.29"
 calamine = "0.37"
 docx-rs = "0.4"
 pdf-extract = "0.12"
-# docx 降级路径（15 号票兜底方案）：zip + quick-xml 手解 word/document.xml。
+# docx 降级路径（兜底方案）：zip + quick-xml 手解 word/document.xml。
 # quick-xml 0.42 已在依赖树内（tauri → plist），锁同版本不新增下载；
 # zip 随 docx-rs 进入依赖树（8.6），声明同版本直接使用（calamine 另锁 9.1，
 # 为上游各自声明，不强行归一）。
 quick-xml = "0.42"
 zip = "8.6"
-# pdf 加密检测（16 号票）：lopdf 随 pdf-extract 进入依赖树（0.42），声明
+# pdf 加密检测：lopdf 随 pdf-extract 进入依赖树（0.42），声明
 # 同版本读取 trailer 的 /Encrypt 字典——加密文档在解析前给出明确错误，
 # 不依赖解析器对加密文件的未定义行为。
 lopdf = "0.42"
-# 【M2 20 号票】派生索引库 cache/index.db（§7.8）：stats_cache 表（stats_token
+# 派生索引库 cache/index.db：stats_cache 表（stats_token
 # 查询缓存，真相在 stats/*.json）。bundled feature = 自带 SQLite 源码经 cc
 # 编译静态链入（免系统 libsqlite3 依赖，三平台构建一致；macOS 侧
 # MACOSX_DEPLOYMENT_TARGET=13.0 对 C 编译同样生效）。
 rusqlite = { version = "0.41.1", features = ["bundled"] }
-# 【M2 20 号票】Q39 记账的「当时本地日期」：0.4.45 已在依赖树内（tauri 等
+# 用量记账的「当时本地日期」：0.4.45 已在依赖树内（tauri 等
 # 间接依赖，锁同版本不新增下载）；仅开 clock+std（Local 日期面，无序列化
 # 需求——日期以 YYYY-MM-DD 字符串进出 stats 文件与契约）。
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 
-# 【M2 22 号票】命令围栏 AST 写目标分析（FR-05-05 P1，§8.7 AST 管线）：
+# 命令围栏 AST 写目标分析：
 # tree-sitter 0.27 现行 runtime + 官方 bash grammar（tree-sitter-bash 0.25，
 # 2025-12 更新）与 PowerShell grammar（tree-sitter-powershell 0.26，airbus-cert
-# 维护，下载 488 万、2026-10 仍活跃更新——票内 spike 结论：crates.io 存在
+# 维护，下载 488 万、2026-10 仍活跃更新——调研结论：crates.io 存在
 # 维护良好的 PowerShell grammar，不降级词法）。两个 grammar crate 均以
 # tree-sitter-language 提供语言静态量、C 源码经 cc 编译静态链入（零系统
 # 依赖；MACOSX_DEPLOYMENT_TARGET=13.0 对 C 编译同样生效）。
@@ -174,11 +174,11 @@ tree-sitter = "0.27"
 tree-sitter-bash = "0.25"
 tree-sitter-powershell = "0.26"
 
-# 【S5 spike，cfg(unix)】进程组收割：kill(-pgid, SIGTERM/SIGKILL)
+# 进程组收割：kill(-pgid, SIGTERM/SIGKILL)
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
-# 【S5 spike，cfg(windows)】Job Object 整树收割（TerminateJobObject/KILL_ON_JOB_CLOSE）
+# Job Object 整树收割（TerminateJobObject/KILL_ON_JOB_CLOSE）
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
@@ -187,7 +187,7 @@ windows-sys = { version = "0.59", features = [
     "Win32_System_Threading",
 ] }
 
-# 【19 号票】macOS 通知授权态实查（设置页引导的数据面）：UNUserNotificationCenter
+# macOS 通知授权态实查（设置页引导的数据面）：UNUserNotificationCenter
 # 设置查询 + bundle id 早退判定。objc2 系已随桌面栈在依赖树内，版本与锁面一致
 # （不新增下载）；插件自带的 permission_state 在桌面端恒报 Granted（2.7/2.8
 # 源码核实），拿不到 macOS 真实授权态，故在此直查。
@@ -213,10 +213,10 @@ objc2-user-notifications = { version = "0.3", features = [
 ] }
 
 [dev-dependencies]
-# 本地 OpenAI 兼容 mock SSE 服务（S2 流保真 / S3 工具循环测试用，不进产物）
+# 本地 OpenAI 兼容 mock SSE 服务（流保真 / 工具循环测试用，不进产物）
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
-# 08 号票（MCP）：测试 fixture 的 MCP server 面只在测试构建启用——宏服务
+# MCP：测试 fixture 的 MCP server 面只在测试构建启用——宏服务
 # 定义（server/macros）、内存管道传输（transport-io）与本地回环 HTTP fixture
 # （transport-streamable-http-server）；feature unification 下 cargo build
 # 不激活 dev-dependencies，生产二进制不带 server 面。
@@ -226,11 +226,11 @@ rmcp = { version = "3.5", features = [
     "transport-io",
     "transport-streamable-http-server",
 ] }
-# 02 号票（C-2 定案）：契约负载类型的 TS 声明生成器——测试构建下 derive(TS)，
+# 契约负载类型的 TS 声明生成器——测试构建下 derive(TS)，
 # cargo test 导出 ui/src/ipc/generated/（生成物进 git，cargo build 不依赖生成步骤）。
 # serde-compat 为默认 feature（解析 serde 属性）；serde-json-impl 让 Value 可导出。
 ts-rs = { version = "12.0.1", features = ["serde-json-impl"] }
-# 37 号票（看门狗）：rig 剧本假模型（test_utils 的 MockCompletionModel）——
+# 看门狗：rig 剧本假模型（test_utils 的 MockCompletionModel）——
 # 以"剧本流 + 假执行器"直驱 drive_run 全链验证 E_RUN_STALLED 终态；仅测试
 # 构建启用（feature unification：cargo build 不含 test-utils，生产面不变）。
 rig = { version = "0.45.0", features = ["test-utils"] }

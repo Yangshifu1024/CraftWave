@@ -1,5 +1,5 @@
 //! 进程组收割原语单测（macOS 路径）：enable + 收割真实子进程。
-//! 整树收割（孙进程随组消亡）的实证在 S5 集成测试（tests/spike_s5_cancel.rs）。
+//! 整树收割（孙进程随组消亡）的实证由集成测试覆盖。
 
 use std::process::Stdio;
 use std::time::Duration;
@@ -24,7 +24,7 @@ async fn reap_grace_and_sigkill_fallback_matrix() {
     assert!(!status.success(), "SIGTERM 终止的 sleep 非零退出");
     assert!(
         elapsed < Duration::from_millis(500),
-        "收割耗时 {elapsed:?} 应远小于 500ms（S5 实测 6–8ms 量级）"
+        "收割耗时 {elapsed:?} 应远小于 500ms（实测 6–8ms 量级）"
     );
 
     // 忽略 SIGTERM 的 shell：耗满宽限期后 SIGKILL 兜底。

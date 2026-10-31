@@ -1,34 +1,33 @@
 //! 工具执行器适配：把 tools 模块的工具注册表接到主循环（RunLoop）要求的
 //! [`CancellableExecutor`](super::run_loop::CancellableExecutor) 执行契约上，
-//! 并提供受控并发的批次执行（§5.4 ⑤，07 号票）。
+//! 并提供受控并发的批次执行。
 //!
 //! 名词解释：主循环即 backend/run_loop.rs 的 run 主循环；契约指它规定的
-//! 执行器接口（可感知取消、返回统一的执行产物）。工具结果走"双通道"
-//! （§8.2）：一条给模型看（回喂文本），一条给界面看（摘要与错误帧）。
+//! 执行器接口（可感知取消、返回统一的执行产物）。工具结果走"双通道"：
+//! 一条给模型看（回喂文本），一条给界面看（摘要与错误帧）。
 //!
 //! - 模型通道的回喂文本由 [`crate::tools::compact_text`] 压缩生成；
 //! - 帧面的 ok/uiSummary/error 直接取自 `ToolOutcome`（工具执行结果）；
 //! - 参数 JSON 解析失败或未知工具 → 返回 `E_INVALID_ARG` 的工具级失败并
 //!   回喂模型（不中断 run，让模型看到错误后自行纠正；Malformed 调用——
-//!   即模型给出了无法解析的工具调用——也按此"回喂错误促纠正"处理，见
-//!   §5.4 对应工单的决议记录）；
+//!   即模型给出了无法解析的工具调用——也按此"回喂错误促纠正"处理）；
 //! - command：取消/超时感知的进程执行（`tools::command` 内部用 select!
 //!   同时监听执行与取消，结束时回收整个进程组，不留孤儿进程）；
 //! - plan：更新共享的计划状态（PlanState）并发 `plan:update` 事件；
 //! - ask：注册询问槽 → 发 `ask:opened` 事件 → 等 `resolve_ask` 命令经
-//!   oneshot 通道送回答案（§5.4 审批实现），答案回喂为工具结果。
+//!   oneshot 通道送回答案（审批实现），答案回喂为工具结果。
 //!
-//! 批次执行（07 号票，FR-03-11/FR-04-04）：[`ToolsetExecutor::execute_batch`]
-//! 把 M1 的批内串行升级为受控并发——
-//! - 同批写路径冲突检测（Q32，§8.4 步骤 4）：write/edit 经 safe_join 求
+//! 批次执行：[`ToolsetExecutor::execute_batch`]
+//! 把批内串行升级为受控并发——
+//! - 同批写路径冲突检测（步骤 4）：write/edit 经 safe_join 求
 //!   canonical 路径分组；同文件多个 edit 合并为一次原子提交（批次事务），
 //!   同文件混入 write 或区间重叠 → 拒绝后续冲突调用（E_INVALID_ARG）；
 //! - FileWrite 能力（write/edit）走**进程级全局互斥队列**（跨会话串行，
 //!   防两会话同写一文件）；
 //! - 其余能力（ReadOnly/Meta/Network）无冲突并发，信号量额度 =
-//!   `tools.maxParallel`（缺省 4，§3.2）；
-//! - JoinSet 收集后按**源序**返回（FR-03-11：完成顺序不改序）；
-//! - 取消收齐（§5.3 并发版）：cancel 置位 → 停止派发未开始任务 → join
+//!   `tools.maxParallel`（缺省 4）；
+//! - JoinSet 收集后按**源序**返回（完成顺序不改序）；
+//! - 取消收齐（并发版）：cancel 置位 → 停止派发未开始任务 → join
 //!   全部在飞任务，未派发项补 `Cancelled { executed: false }`。
 
 use std::future::Future;
@@ -51,7 +50,7 @@ use crate::util::errors::{E_INVALID_ARG, E_PROJECT_UNTRUSTED, ToolError};
 use crate::util::events::EventSink;
 use crate::util::events::keys;
 
-/// MCP 调用面（08 号票；backend 不依赖 mcp 模块——host 装配时注入实现，
+/// MCP 调用面（backend 不依赖 mcp 模块——host 装配时注入实现，
 /// 依赖倒置与审批门 [`super::gate::McpGateView`] 同精神）。
 pub trait McpCaller: Send + Sync {
     /// 调用一个 MCP 动态工具（归一名反查 + 结果未知语义收口在 mcp/pool）。
@@ -62,10 +61,10 @@ pub trait McpCaller: Send + Sync {
     ) -> Pin<Box<dyn Future<Output = ToolOutcome> + Send + '_>>;
 }
 
-/// 子代理委派面（10 号票，§5.9）：subagent 工具的执行入口由 host 装配注入
+/// 子代理委派面：subagent 工具的执行入口由 host 装配注入
 /// （依赖倒置——backend 只见本 trait，委派语义/并发治理/worktree 回收都在
 /// host/agent 层）。`parent_token` 是父 run 的取消令牌：实现据此派生子令牌
-/// 达成取消级联（S5）。
+/// 达成取消级联。
 pub trait SubagentSpawner: Send + Sync {
     /// 委派一个子代理并等待其终态汇报（阻塞到子 run 收尾）；父取消时级联
     /// 取消子代理并等子 runEnded 帧收齐后才返回（不留僵尸子 run）。
@@ -80,9 +79,9 @@ pub trait SubagentSpawner: Send + Sync {
 /// 执行器写入、宿主命令 resolve_ask 读取后送回应答）。
 pub type AskSlotCell = Mutex<Option<AskSlot>>;
 
-/// 问卷类 ask 开关的日志接缝（32 号票，kind=approval 的 ask 协议两端口）：
+/// 问卷类 ask 开关的日志接缝（kind=approval 的 ask 协议两端口）：
 /// backend 层只定义回调面——落盘实现在宿主（host 的 SessionLogger），
-/// 避免 backend 反向依赖 host（§2.2 依赖方向）。
+/// 避免 backend 反向依赖 host（依赖方向纪律）。
 pub trait AskLogSink: Send + Sync {
     /// 询问打开（ask 工具注册槽、发 ask:opened 处）。
     fn ask_opened(&self, session_id: &str, ask_id: &str, run_id: &str);
@@ -92,7 +91,7 @@ pub trait AskLogSink: Send + Sync {
 
 /// 交互类工具的执行环境：ask/plan 工具需要的事件出口与共享状态，以及
 /// 工具结果边车文件的数据根目录（边车文件 = 与主存储分开、按需加载的
-/// 附属数据文件，见 §7.5）。
+/// 附属数据文件）。
 #[derive(Clone)]
 pub struct ExecutorEnv {
     /// 事件出口（向前端推送 ask:opened / plan:update 等事件）。
@@ -105,55 +104,55 @@ pub struct ExecutorEnv {
     pub session_id: String,
     /// 所属 run id（事件载荷与询问槽登记用）。
     pub run_id: String,
-    /// 数据根目录（§7.1）：工具结果边车落在 `sessions/<会话id>.toolres/`
-    /// 目录下（§7.5）。
+    /// 数据根目录：工具结果边车落在 `sessions/<会话id>.toolres/`
+    /// 目录下。
     pub data_root: std::path::PathBuf,
-    /// 问卷类 ask 开关日志接缝（32 号票，kind=approval 的 ask 协议端口）：
+    /// 问卷类 ask 开关日志接缝（kind=approval 的 ask 协议端口）：
     /// backend 只定义回调面（[`AskLogSink`]），落盘在宿主 SessionLogger
-    /// ——避免 backend 反向依赖 host（§2.2 依赖方向）。None = 不记。
+    /// ——避免 backend 反向依赖 host（依赖方向纪律）。None = 不记。
     pub ask_log: Option<Arc<dyn AskLogSink>>,
-    /// MCP 动态工具调用面（None = 未装配 MCP；08 号票）。
+    /// MCP 动态工具调用面（None = 未装配 MCP）。
     pub mcp: Option<Arc<dyn McpCaller>>,
-    /// run 内技能快照（09 号票，Q20 版本固定：run 开始时拍定正文全文，
+    /// run 内技能快照（版本固定：run 开始时拍定正文全文，
     /// `skill` 工具只读快照不触盘；None = 未装配快照——无技能环境）。
     pub skills: Option<Arc<crate::knowledge::skills::SkillSnapshot>>,
-    /// 子代理委派面（10 号票，§5.9）：None = 不得委派（子代理环境的工具表
-    /// 已过滤 subagent，绕过工具表直接调用也在此拒绝——Q13 仅主代理可委派）。
+    /// 子代理委派面：None = 不得委派（子代理环境的工具表
+    /// 已过滤 subagent，绕过工具表直接调用也在此拒绝——仅主代理可委派）。
     pub subagents: Option<Arc<dyn SubagentSpawner>>,
-    /// 本环境的工具白名单（10 号票，FR-05-01 三处同源的角色边界落实）：
+    /// 本环境的工具白名单（三处同源的角色边界落实）：
     /// Some(名单) 时执行入口只放行名单内工具（工具可见面 = 执行许可）；
     /// None = 不限（主代理环境）。
     pub allowed_tools: Option<Vec<String>>,
-    /// 网络工具执行环境（12 号票，web_fetch/http_request）：SSRF 策略 +
+    /// 网络工具执行环境（web_fetch/http_request）：SSRF 策略 +
     /// 代理 + 进程级节流器，宿主按 AppConfig 装配注入；None = 未装配
     /// （无网络环境的纯文件工具测试）。
     pub network: Option<Arc<crate::tools::NetworkEnv>>,
-    /// 会话存储器（28 号票产物登记，FR-10-06）：write/edit 成功落盘后经
+    /// 会话存储器（产物登记）：write/edit 成功落盘后经
     /// 它写 `<sid>.artifacts.json`（锁表与 delete_session 共享，串行化
     /// 同会话读写）。None = 不登记（headless 测试与子代理环境——子代理
     /// 写入落在独立 worktree，不进会话产物面，ADR-0001 汇回由主代理协调）。
     pub store: Option<Arc<crate::storage::SessionStore>>,
 }
 
-/// 工具注册表全集的执行器：模型可见的 8 个工具（§8.3）都经它执行。
+/// 工具注册表全集的执行器：模型可见的 8 个工具都经它执行。
 /// `Clone`：批次并发派发需要把执行器克隆进 tokio 任务（全部字段为
 /// Arc/Copy 级共享句柄，克隆零深拷贝）。
 pub struct ToolsetExecutor {
     /// 工具执行上下文（项目根、权限边界等，tools 模块定义）。
     ctx: ToolsContext,
-    /// 权限档（§8.5，控制模型可用工具范围的档位）：plan 档已从工具表
+    /// 权限档（控制模型可用工具范围的档位）：plan 档已从工具表
     /// 过滤掉写/联网工具，模型仍点名调用时按权限档排除。
     tier: PermissionTier,
     /// 交互类工具的执行环境；None = 未装配环境（无界面的纯文件工具测试用）。
     env: Option<ExecutorEnv>,
-    /// 同批无冲突调用的并发上限（`tools.maxParallel`，§3.2；缺省 4）。
+    /// 同批无冲突调用的并发上限（`tools.maxParallel`；缺省 4）。
     /// 按 run 装配执行器时读取生效。
     max_parallel: usize,
-    /// batch_read 的单批文件数上限（`tools.batchReadLimit`，§3.2/§8.3；
-    /// 缺省 20，14 号票）。按 run 装配执行器时读取生效。
+    /// batch_read 的单批文件数上限（`tools.batchReadLimit`；
+    /// 缺省 20）。按 run 装配执行器时读取生效。
     batch_read_limit: u32,
-    /// 当前 run 模型是否支持图片输入（`ProviderModel.vision`，§3.2；17 号
-    /// 票：read(kind="image") 的前置校验面。缺省 false——保守拒绝，装配时
+    /// 当前 run 模型是否支持图片输入（`ProviderModel.vision`；
+    /// read(kind="image") 的前置校验面。缺省 false——保守拒绝，装配时
     /// 经 [`Self::with_vision`] 按解析出的模型标记开启）。
     vision: bool,
 }
@@ -176,7 +175,7 @@ impl ToolsetExecutor {
     /// 构造：给定工具上下文与权限档，初始不带交互环境（生产装配需再调
     /// [`Self::with_env`]）。并发上限取缺省 4（可再调 [`Self::with_max_parallel`]）；
     /// batch_read 单批上限取缺省 20（可再调 [`Self::with_batch_read_limit`]）；
-    /// vision 取缺省 false（17 号票：read 图片读取的保守面，生产装配按
+    /// vision 取缺省 false（read 图片读取的保守面，生产装配按
     /// 模型标记开启）。
     pub fn new(ctx: ToolsContext, tier: PermissionTier) -> Self {
         Self {
@@ -195,20 +194,20 @@ impl ToolsetExecutor {
         self
     }
 
-    /// 设置当前 run 模型的视觉能力标记（17 号票）：read(kind="image") 在
-    /// false 时前置拒绝并提示切换视觉模型（Q30：主动读图与新附图同一口径）。
+    /// 设置当前 run 模型的视觉能力标记：read(kind="image") 在
+    /// false 时前置拒绝并提示切换视觉模型（主动读图与新附图同一口径）。
     pub fn with_vision(mut self, vision: bool) -> Self {
         self.vision = vision;
         self
     }
 
-    /// 设置同批无冲突调用的并发上限（`tools.maxParallel`，§3.2）。
+    /// 设置同批无冲突调用的并发上限（`tools.maxParallel`）。
     pub fn with_max_parallel(mut self, max_parallel: usize) -> Self {
         self.max_parallel = max_parallel.max(1);
         self
     }
 
-    /// 设置 batch_read 的单批文件数上限（`tools.batchReadLimit`，§3.2，14 号票）。
+    /// 设置 batch_read 的单批文件数上限（`tools.batchReadLimit`）。
     pub fn with_batch_read_limit(mut self, batch_read_limit: u32) -> Self {
         self.batch_read_limit = batch_read_limit.max(1);
         self
@@ -216,7 +215,7 @@ impl ToolsetExecutor {
 
     /// 同步工具（文件类与小工具包）的分发入口。
     fn dispatch(&self, name: &str, args_json: &str) -> ToolOutcome {
-        // §8.1 三处同源过滤的主循环侧：plan 档的写/联网工具虽已从广播给
+        // 三处同源过滤的主循环侧：plan 档的写/联网工具虽已从广播给
         // 模型的工具表里过滤，但模型仍可能点名调用——此时按权限档排除
         // （E_TOOL_BLOCKED，回喂错误但不中断 run）。
         let Some(spec) = crate::tools::lookup_spec(name) else {
@@ -246,8 +245,8 @@ impl ToolsetExecutor {
             }
         };
         match name {
-            // read（17 号票）：kind="image" 的 vision 前置校验在分发面——
-            // 非 vision 模型拒绝并提示切换视觉模型（Q30 与新附图同一口径）；
+            // read：kind="image" 的 vision 前置校验在分发面——
+            // 非 vision 模型拒绝并提示切换视觉模型（与新附图同一口径）；
             // read::run 本体保持 headless 纯逻辑（只做大小与格式校验）。
             "read" => {
                 if let Ok(parsed) = serde_json::from_value::<read::ReadArgs>(args.clone())
@@ -265,7 +264,7 @@ impl ToolsetExecutor {
             }
             "write" => {
                 let outcome = run_typed(&self.ctx, &args, write::run);
-                // 产物登记（28 号票）：成功落盘才登记（失败不登）。
+                // 产物登记：成功落盘才登记（失败不登）。
                 if outcome.ok
                     && let Some(path) = args.get("path").and_then(|p| p.as_str())
                 {
@@ -284,7 +283,7 @@ impl ToolsetExecutor {
             }
             "list_files" => run_typed(&self.ctx, &args, list_files::run),
             "grep" => run_typed(&self.ctx, &args, grep::run),
-            // batch_read（14 号票）：带 tools.batchReadLimit 上限的三参入口
+            // batch_read：带 tools.batchReadLimit 上限的三参入口
             //（其余同步工具统一 run_typed 双参面）。
             "batch_read" => match serde_json::from_value::<batch_read::BatchReadArgs>(args.clone())
             {
@@ -329,7 +328,7 @@ impl ToolsetExecutor {
         let plan_state = plan_state.get_or_insert_with(PlanState::default);
         match crate::tools::plan::apply(plan_state, &args) {
             Ok(items) => {
-                // plan:update 事件（§3.5，25 号票起全量计划态）：条目 + 写
+                // plan:update 事件（全量计划态）：条目 + 写
                 // 范围声明 + 批准态与冻结基线——前端计划卡/Inspector 展示
                 // 基线标记与待批准范围的数据面。
                 env.events.emit(
@@ -386,7 +385,7 @@ impl ToolsetExecutor {
                 session_id: env.session_id.clone(),
                 run_id: env.run_id.clone(),
                 kind: "question",
-                // 原始载荷留存：重连后的待审批/询问恢复查询（§5.6 #59c）据此展示
+                // 原始载荷留存：重连后的待审批/询问恢复查询据此展示
                 payload: payload.clone(),
                 tx,
             });
@@ -399,7 +398,7 @@ impl ToolsetExecutor {
                 "payload": payload,
             }),
         );
-        // 问卷打开行（32 号票 kind=approval 的 ask 端口，经宿主接缝落盘）
+        // 问卷打开行（kind=approval 的 ask 端口，经宿主接缝落盘）
         if let Some(log) = &env.ask_log {
             log.ask_opened(&env.session_id, &ask_id, &env.run_id);
         }
@@ -437,10 +436,10 @@ impl ToolsetExecutor {
         }
     }
 
-    /// skill 工具（§8.3 M2 表 Meta 行，09 号票）：从 run 快照取正文全文
-    /// 回喂（Q20 版本固定——不触盘，活跃 run 不混用旧 description 与新
-    /// 正文）。头部标注「以下是技能 X 的正文」；超长截断同 §8.2 compact
-    /// 口径（头 4KB + 尾 8KB）。未信任技能回 E_PROJECT_UNTRUSTED（§9.8）。
+    /// skill 工具（Meta 能力）：从 run 快照取正文全文
+    /// 回喂（版本固定——不触盘，活跃 run 不混用旧 description 与新
+    /// 正文）。头部标注「以下是技能 X 的正文」；超长截断同 compact
+    /// 口径（头 4KB + 尾 8KB）。未信任技能回 E_PROJECT_UNTRUSTED。
     fn run_skill(&self, args_json: &str) -> ToolExecution {
         let Some(snapshot) = self.env.as_ref().and_then(|e| e.skills.clone()) else {
             return completed_failure("skill 工具需要执行环境（未装配技能快照）");
@@ -451,7 +450,7 @@ impl ToolsetExecutor {
         };
         let name = args.name.as_str();
         if let Some(entry) = snapshot.find(name) {
-            // 命中：正文全文 + 头部标注（§8.3 结果要点），超长 compact 截断。
+            // 命中：正文全文 + 头部标注（结果要点），超长 compact 截断。
             let full = format!("以下是技能 {} 的正文：\n\n{}", entry.name, entry.body);
             let model_text = crate::tools::truncate_middle(&full, 4 * 1024, 8 * 1024);
             ToolExecution::Completed {
@@ -462,7 +461,7 @@ impl ToolsetExecutor {
             }
         } else if snapshot.is_rejected(name) {
             // 未信任（projectTrust 被拒/未决）：E_PROJECT_UNTRUSTED 回喂，
-            // 引导模型不再尝试（§9.8）。
+            // 引导模型不再尝试。
             let message = format!(
                 "技能 {name} 未获信任（用户未允许访问项目技能资源）；\
                  不要重复调用，可向用户说明需要信任该技能后重试"
@@ -491,7 +490,7 @@ impl ToolsetExecutor {
         }
     }
 
-    /// 清空询问槽并发 ask:closed 事件（§3.5：answered 标记是否真正拿到了
+    /// 清空询问槽并发 ask:closed 事件（answered 标记是否真正拿到了
     /// 用户应答，取消关闭时为 false）。
     fn close_ask(env: &ExecutorEnv, ask_id: &str, answered: bool) {
         let mut slot = env
@@ -503,13 +502,13 @@ impl ToolsetExecutor {
             keys::ASK_CLOSED,
             serde_json::json!({ "askId": ask_id, "answered": answered }),
         );
-        // 问卷收口行（32 号票 ask 端口，answered = 是否真正拿到应答）
+        // 问卷收口行（ask 端口，answered = 是否真正拿到应答）
         if let Some(log) = &env.ask_log {
             log.ask_closed(&env.session_id, ask_id, &env.run_id, answered);
         }
     }
 
-    /// 把工具结果全量写入边车文件（§7.5；未装配执行环境则跳过——无界面
+    /// 把工具结果全量写入边车文件（未装配执行环境则跳过——无界面
     /// 测试没有数据根目录）。
     fn persist_outcome(&self, call_id: &str, outcome: &ToolOutcome) {
         if let Some(env) = &self.env {
@@ -517,11 +516,11 @@ impl ToolsetExecutor {
         }
     }
 
-    /// 产物登记（28 号票，FR-10-06 / §7.7）：write/edit 成功落盘后把目标
+    /// 产物登记：write/edit 成功落盘后把目标
     /// 路径追加进 `<sid>.artifacts.json`（去重计数，工具面板回看数据面）。
     /// 未装配存储器（headless 测试 / 子代理环境——worktree 内写入不进会话
     /// 产物面，ADR-0001 汇回由主代理协调）跳过；登记失败只记日志不阻塞
-    /// 工具结果（§7.3 ⑤ 落盘失败同口径）。`raw_path` 为工具参数原文——
+    /// 工具结果（与落盘失败同口径）。`raw_path` 为工具参数原文——
     /// 规范化（safe_join resolve，symlink 解析）在守卫内完成，解析失败视为
     /// 不入 roots 的异常参数，静默跳过（工具结果本身已回喂错误）。
     fn record_artifact(&self, raw_path: &str) {
@@ -591,7 +590,7 @@ fn completed_of(outcome: ToolOutcome) -> ToolExecution {
     }
 }
 
-/// FileWrite 能力的进程级全局互斥（§5.4 ⑤"文件写全局队列"，07 号票）：
+/// FileWrite 能力的进程级全局互斥（"文件写全局队列"）：
 /// 跨会话串行——同进程全部会话的 write/edit 批次任务在此排队，防止两个
 /// 会话同时写同一文件。OnceLock 惰性单例（进程内唯一）。
 pub(crate) fn file_write_gate() -> &'static Arc<tokio::sync::Mutex<()>> {
@@ -612,13 +611,13 @@ pub(super) struct PlannedTask {
     pub run: Pin<Box<dyn Future<Output = TaskOutput> + Send>>,
 }
 
-/// 批次并发调度核心（§5.4 ⑤，07 号票；纯调度，不含写冲突检测——那是
+/// 批次并发调度核心（纯调度，不含写冲突检测——那是
 /// [`ToolsetExecutor::plan_batch`] 的职责，单测可直接驱动）：
 ///
 /// - 任务并发派发（tokio JoinSet）；非文件写任务先过信号量（额度 =
 ///   `max_parallel`， ReadOnly/Meta/Network 无冲突并发共享）；
 /// - 文件写任务持 [`file_write_gate`] 全局互斥（跨会话串行），不占信号量；
-/// - **取消收齐（§5.3 并发版）**：cancel 置位 → 停止派发未开始任务（补
+/// - **取消收齐（并发版）**：cancel 置位 → 停止派发未开始任务（补
 ///   `Cancelled { executed: false }`）→ join 全部在飞任务（命令类由工具
 ///   实现内部收割）→ 全部收齐后才返回；
 /// - 输出与批内下标一一对应（源序），完成顺序不改序。
@@ -680,7 +679,7 @@ pub(super) async fn run_batch_tasks(
         .collect()
 }
 
-/// 同文件写冲突的统一拒绝产物（Q32，§8.4 步骤 4）：后续冲突调用以
+/// 同文件写冲突的统一拒绝产物（冲突检测步骤）：后续冲突调用以
 /// E_INVALID_ARG 明确回喂，源序首个写调用保留执行资格。
 fn conflict_rejected(path: &str, reason: &str) -> ToolExecution {
     ToolExecution::Completed {
@@ -698,7 +697,7 @@ fn conflict_rejected(path: &str, reason: &str) -> ToolExecution {
 }
 
 /// 批内一次调用的能力分级查询（未知工具 → None，由执行路径回喂错误）。
-/// 08 号票：走 [`crate::tools::lookup_spec`]（静态段 + MCP 动态段）——
+/// 走 [`crate::tools::lookup_spec`]（静态段 + MCP 动态段）——
 /// MCP 工具能力只会是 ReadOnly/Network，非 FileWrite，天然走独立执行
 /// 信号量路径。
 fn capability_of(name: &str) -> Option<crate::safety::tier::Capability> {
@@ -706,7 +705,7 @@ fn capability_of(name: &str) -> Option<crate::safety::tier::Capability> {
 }
 
 /// 主循环执行契约的实现：按工具名分流——command/plan/ask 三个交互型工具
-/// 各有专门路径，其余同步文件工具走 dispatch；批次执行为受控并发（§5.4 ⑤）。
+/// 各有专门路径，其余同步文件工具走 dispatch；批次执行为受控并发。
 impl CancellableExecutor for ToolsetExecutor {
     /// 执行一次工具调用：完成后把结果写边车文件并返回统一产物；
     /// command 的取消由工具实现内部收割进程组后以 Cancelled 返回。
@@ -718,7 +717,7 @@ impl CancellableExecutor for ToolsetExecutor {
         token: &'a CancellationToken,
     ) -> Pin<Box<dyn Future<Output = ToolExecution> + Send + 'a>> {
         Box::pin(async move {
-            // 10 号票（FR-05-01 三处同源）：环境带工具白名单（子代理角色边界）
+            // 三处同源：环境带工具白名单（子代理角色边界）
             // 时，执行入口只放行名单内工具——工具可见面 = 执行许可，不依赖
             // 模型自觉。
             if let Some(allowed) = self.env.as_ref().and_then(|e| e.allowed_tools.as_ref())
@@ -785,7 +784,7 @@ impl CancellableExecutor for ToolsetExecutor {
                     execution
                 }
                 "skill" => {
-                    // 技能加载（09 号票，§8.3 Meta 行）：快照正文回喂 +
+                    // 技能加载（Meta 能力）：快照正文回喂 +
                     // 边车（卡片正文折叠预览的数据面）；失败路径（未信任/
                     // 未知技能）帧面 uiSummary+error 足够，不写边车。
                     let execution = self.run_skill(args_json);
@@ -810,9 +809,9 @@ impl CancellableExecutor for ToolsetExecutor {
                     execution
                 }
                 "subagent" => {
-                    // 子代理委派（10 号票，§5.9）：执行面由 host 装配注入
+                    // 子代理委派：执行面由 host 装配注入
                     // （委派治理/并发/worktree 回收在 agent + host 层）。
-                    // None = 子代理环境或未装配——Q13 仅主代理可委派：子代理
+                    // None = 子代理环境或未装配——仅主代理可委派：子代理
                     // 工具表已过滤 subagent，绕过工具表直接调用也在此拒绝。
                     let Some(spawner) = self.env.as_ref().and_then(|e| e.subagents.clone()) else {
                         let message = "仅主代理可以委派子代理；子代理需进一步拆分任务时，\
@@ -868,8 +867,8 @@ impl CancellableExecutor for ToolsetExecutor {
                     execution
                 }
                 "web_fetch" | "http_request" | "web_search" => {
-                    // 网络工具（12 号票，§8.3 M2 表 Network 两行 + 13 号票
-                    // web_search）：执行面 = safety/ssrf 的抓取循环（§9.2
+                    // 网络工具（web_fetch/http_request + web_search）：
+                    // 执行面 = safety/ssrf 的抓取循环（
                     // 五步防线，web_search 三通道内复用），环境由 host 按
                     // AppConfig 装配注入；None = 未装配（缺网络环境的测试
                     // 场景）按工具级失败回喂。
@@ -882,10 +881,10 @@ impl CancellableExecutor for ToolsetExecutor {
                         return completed_of(outcome);
                     };
                     if name == "web_search" {
-                        // web_search（13 号票，§8.3 M2 表 Network 行）：三通道
+                        // web_search：三通道
                         // 优先级链在 tools/web_search::execute 内编排（SearXNG
                         // → 内置抓取 → Tavily），本分支只做参数解析与装配。
-                        // 结果条数缺省取 search.searxng.maxResults 配置（§3.2
+                        // 结果条数缺省取 search.searxng.maxResults 配置（
                         // search 组口径）——装配面已在 NetworkEnv.search，配置
                         // 缺省值经该处透出（此处经 env 快照带出）。
                         let outcome = match serde_json::from_str::<
@@ -985,7 +984,7 @@ impl CancellableExecutor for ToolsetExecutor {
                     completed_of(outcome)
                 }
                 other => {
-                    // MCP 动态工具分支（08 号票）：归一名反查命中 → 经
+                    // MCP 动态工具分支：归一名反查命中 → 经
                     // McpCaller 调用（连接、结果未知语义在 mcp/pool）。
                     // 未命中或未装配 → 静态表 dispatch（未知工具回喂错误）。
                     if let Some(mcp) = self.env.as_ref().and_then(|e| e.mcp.as_ref())
@@ -1004,7 +1003,7 @@ impl CancellableExecutor for ToolsetExecutor {
         })
     }
 
-    /// 受控并发批次执行（§5.4 ⑤，07 号票）：同批写冲突检测 → 任务规划 →
+    /// 受控并发批次执行：同批写冲突检测 → 任务规划 →
     /// [`run_batch_tasks`] 并发调度 → 按源序返回（与 `batch` 一一对应）。
     fn execute_batch<'a>(
         &'a self,
@@ -1018,9 +1017,9 @@ impl CancellableExecutor for ToolsetExecutor {
     }
 }
 
-/// ToolsetExecutor 的批次规划与合并组执行（§5.4 ②/⑤，07 号票）。
+/// ToolsetExecutor 的批次规划与合并组执行。
 impl ToolsetExecutor {
-    /// 同批写路径冲突检测 + 任务规划（Q32，§8.4 步骤 4）：
+    /// 同批写路径冲突检测 + 任务规划（同批冲突检测步骤）：
     ///
     /// - write/edit 先 safe_join 求 canonical 路径，同路径写调用分组；
     /// - 组内全为 edit（≥2 个）→ 合并组（[`Self::run_edit_group`] 统一预演、
@@ -1122,7 +1121,7 @@ impl ToolsetExecutor {
         Some(resolved.to_string_lossy().into_owned())
     }
 
-    /// 同文件多个 edit 的合并组执行（§8.4 步骤 4/5，Q32）：统一基于修改前
+    /// 同文件多个 edit 的合并组执行（冲突检测与合并提交）：统一基于修改前
     /// 内容预演（三级匹配 → 归一化字节区间），区间重叠的后续成员拒绝
     /// （E_INVALID_ARG），接受成员合并为一次原子落盘（批次事务，失败回滚
     /// 整组）；任一成员匹配失败 → 整组降级为源序逐个独立执行。结果按成员
@@ -1158,7 +1157,7 @@ impl ToolsetExecutor {
                 write::atomic_write_utf8(p, b)
             });
             for ((index, call_id, args), outcome) in mergeable.into_iter().zip(outcomes) {
-                // 产物登记（28 号票）：合并提交的每个接受成员都是一次成功
+                // 产物登记：合并提交的每个接受成员都是一次成功
                 // 编辑（runCount 逐次 +1）；失败成员不登记。
                 if outcome.ok {
                     self.record_artifact(&args.path);

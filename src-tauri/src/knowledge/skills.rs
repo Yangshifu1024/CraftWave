@@ -1,18 +1,18 @@
-//! 技能系统（FR-09-02，§7.7 存储行 / §8.3 `skill` 工具行 / §9.8 信任与版本
-//! 字段级细则；09 号票）。
+//! 技能系统（存储、`skill` 工具、信任与版本
+//! 字段级细则见本模块各结构体注释）。
 //!
 //! 名词解释：技能（skill）= 教智能体干专项活的一个目录——一份 `SKILL.md`
 //! （YAML frontmatter 声明 name/description，正文是给模型看的操作指引）
 //! 加任意随附资源文件（脚本、模板等，按相对路径随正文可用）。模型平时只在
-//! 系统提示里看到「技能名 + 一句话简介」的清单（渐进披露，FR-09-02：不撑
+//! 系统提示里看到「技能名 + 一句话简介」的清单（渐进披露，：不撑
 //! 上下文），需要时经 `skill` 工具按需加载正文全文。
 //!
-//! 三来源发现（§9.8 目录清单）：内置（随应用资源分发）< 全局
+//! 三来源发现（目录清单）：内置（随应用资源分发）< 全局
 //! `<data>/skills/` < 项目 `<项目主目录>/.craftwave/skills/`，同名（frontmatter
 //! `name`）后者胜。frontmatter 索引常驻内存（重扫才重建）；启停状态
-//! 持久化在 `<data>/skills-state.json`（FR-14-04，§7.7）。
+//! 持久化在 `<data>/skills-state.json`。
 //!
-//! 版本一致性（Q20）与整体信任（Q21）：run 开始时快照「启用技能清单 + 正文
+//! 版本一致性与整体信任：run 开始时快照「启用技能清单 + 正文
 //! 全文 + 整目录版本指纹」，run 内 `skill` 工具只读快照——活跃 run 不混用
 //! 旧 description 与新正文；重扫只影响管理页与下一 run。指纹覆盖 SKILL.md
 //! 与全部附属资源（算法见 [`version_fingerprint`]），变更后下一 run 重新
@@ -29,14 +29,14 @@ use crate::tools::{ToolAnnotations, ToolOrigin, ToolSpec};
 
 // ---- 数据形状 ----
 
-/// 技能来源（§7.7 覆盖优先级 内置 < 全局 < 项目；skill_list 的 source 面）。
+/// 技能来源（覆盖优先级 内置 < 全局 < 项目；skill_list 的 source 面）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "lowercase")]
 pub enum SkillSource {
-    /// 随应用资源分发（内置技能豁免信任，§9.8）。
+    /// 随应用资源分发（内置技能豁免信任）。
     Builtin,
-    /// 全局数据目录 `<data>/skills/`（scope=global，§9.8）。
+    /// 全局数据目录 `<data>/skills/`（scope=global）。
     Global,
     /// 项目数据目录 `<项目主目录>/.craftwave/skills/`。
     Project,
@@ -66,11 +66,11 @@ pub struct SkillEntry {
     pub description: String,
     /// 技能目录绝对路径（inspect 按需读盘——预览最新内容）。
     pub dir: PathBuf,
-    /// 整目录版本指纹（Q21，[`version_fingerprint`]）。
+    /// 整目录版本指纹（[`version_fingerprint`]）。
     pub fingerprint: String,
 }
 
-/// 启停状态文件（§7.7 `skills-state.json`，FR-14-04）：禁用名清单。
+/// 启停状态文件（`skills-state.json`）：禁用名清单。
 /// `version` 缺省/旧文件补 1（读取面兜底），新写入恒 1。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SkillsState {
@@ -113,7 +113,7 @@ pub struct ParsedSkill {
 /// frontmatter 防御上限（字节）：超限视为非法文件跳过（防超大文件拖垮扫描）。
 const FRONTMATTER_MAX: usize = 64 * 1024;
 
-/// 解析 SKILL.md 文本（§9.8）：`---\n{YAML}\n---\n` 头部取 name/description
+/// 解析 SKILL.md 文本：`---\n{YAML}\n---\n` 头部取 name/description
 /// （额外字段忽略，兼容 Claude 技能目录格式），其后为正文全文。
 ///
 /// 规则：
@@ -185,7 +185,7 @@ fn collapse_whitespace(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// 技能名合法性（§9.8）：非空、≤64 字符、`[a-zA-Z0-9_-]`。
+/// 技能名合法性：非空、≤64 字符、`[a-zA-Z0-9_-]`。
 pub fn valid_skill_name(name: &str) -> bool {
     !name.is_empty()
         && name.chars().count() <= 64
@@ -194,13 +194,13 @@ pub fn valid_skill_name(name: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
-// ---- 版本指纹（Q21 整体信任） ----
+// ---- 版本指纹（整体信任）----
 
-/// 参与指纹的防御上限（§9.8 路径边界）：每技能目录 ≤512 文件、总量 ≤64 MiB。
+/// 参与指纹的防御上限（路径边界）：每技能目录 ≤512 文件、总量 ≤64 MiB。
 const FINGERPRINT_MAX_FILES: usize = 512;
 const FINGERPRINT_MAX_BYTES: u64 = 64 * 1024 * 1024;
 
-/// 计算一个技能目录的整体版本指纹（Q21，§9.8 算法逐字）：
+/// 计算一个技能目录的整体版本指纹（算法逐字）：
 /// `sha256("craftwave-skill-v1|" + name + "|" + Σ(相对路径 + "=" +
 /// sha256(文件字节)))`，Σ 按相对路径字典序拼接、`|` 分隔。SKILL.md 与全部
 /// 附属资源任一变化（新增/删除/改动）都改变指纹。
@@ -276,7 +276,7 @@ fn hex(bytes: &[u8]) -> String {
 // ---- 目录扫描与三来源合并 ----
 
 /// 单来源根扫描：根下一级子目录各含 SKILL.md → 条目（frontmatter name 为
-/// 准）；指纹算不出的目录跳过（§9.8 宁缺勿炸）。
+/// 准）；指纹算不出的目录跳过（宁缺勿炸）。
 pub fn scan_source(root: &Path, source: SkillSource) -> Vec<SkillEntry> {
     let Ok(entries) = std::fs::read_dir(root) else {
         return Vec::new();
@@ -310,7 +310,7 @@ pub fn scan_source(root: &Path, source: SkillSource) -> Vec<SkillEntry> {
     out
 }
 
-/// 三来源合并（§7.7 覆盖优先级 内置 < 全局 < 项目）：按扫描序插入，同名
+/// 三来源合并（覆盖优先级 内置 < 全局 < 项目）：按扫描序插入，同名
 /// 后者覆盖前者。顺序 = 传入顺序（调用方保证 内置→全局→项目）。
 pub fn merge_sources(sources: &[Vec<SkillEntry>]) -> Vec<SkillEntry> {
     let mut out: Vec<SkillEntry> = Vec::new();
@@ -325,7 +325,7 @@ pub fn merge_sources(sources: &[Vec<SkillEntry>]) -> Vec<SkillEntry> {
     out
 }
 
-// ---- 注册表（进程级单例，仿 mcp/tools::McpToolRegistry） ----
+// ---- 注册表（进程级单例，仿 mcp/tools::McpToolRegistry）----
 
 /// 注册表三来源根（configure 一次设置；project 随活跃会话刷新）。
 #[derive(Debug, Clone, Default)]
@@ -352,7 +352,7 @@ pub struct SkillRegistry {
     inner: Mutex<RegistryInner>,
 }
 
-/// 注册表内部状态（合并清单 + 三来源根；会话级信任集已随 24 号票收敛到
+/// 注册表内部状态（合并清单 + 三来源根；会话级信任集已随 收敛到
 /// [`crate::knowledge::session_trust::SessionTrustSet`]，本注册表不再持有）。
 #[derive(Default)]
 struct RegistryInner {
@@ -396,7 +396,7 @@ impl SkillRegistry {
         self.reload();
     }
 
-    /// 重扫三来源并重建索引（`skill_reload` 命令面；§3.3 #50）。
+    /// 重扫三来源并重建索引（`skill_reload` 命令面； ）。
     pub fn reload(&self) {
         let (builtin, global, project) = {
             let inner = self.lock();
@@ -446,7 +446,7 @@ impl SkillRegistry {
         read_state(&path).disabled
     }
 
-    /// 启停切换（FR-14-04；§3.3 #49）：写入 skills-state.json（原子写）。
+    /// 启停切换：写入 skills-state.json（原子写）。
     /// 名字在注册表不存在时返回 false（命令层转 E_NOT_FOUND）。
     pub fn set_enabled(&self, name: &str, enabled: bool) -> bool {
         if self.find(name).is_none() {
@@ -475,7 +475,7 @@ impl SkillRegistry {
     }
 }
 
-/// 读 skills-state.json（缺失/损坏 = 默认全启用；§7.7 宁缺勿炸）。
+/// 读 skills-state.json（缺失/损坏 = 默认全启用； 宁缺勿炸）。
 fn read_state(path: &Path) -> SkillsState {
     std::fs::read(path)
         .ok()
@@ -483,7 +483,7 @@ fn read_state(path: &Path) -> SkillsState {
         .unwrap_or_default()
 }
 
-/// 原子写 skills-state.json（util/atomic，§7.4 同款）。
+/// 原子写 skills-state.json（util/atomic， 同款）。
 fn write_state(path: &Path, state: &SkillsState) -> Result<(), String> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("创建数据目录失败：{e}"))?;
@@ -492,9 +492,9 @@ fn write_state(path: &Path, state: &SkillsState) -> Result<(), String> {
     crate::util::atomic::write_json(path, &json).map_err(|e| format!("写启停状态失败：{e}"))
 }
 
-// ---- skill 工具规格（§8.3 M2 表 Meta 行） ----
+// ---- skill 工具规格（M2 表 Meta 行）----
 
-/// skill 工具参数（§8.3：`{ name, args? }`，args 可选 string 透传）。
+/// skill 工具参数（`{ name, args? }`，args 可选 string 透传）。
 #[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -507,9 +507,9 @@ pub struct SkillToolArgs {
     pub args: Option<String>,
 }
 
-/// 渐进披露的系统提示注入文本（FR-09-02）：仅「技能名 + description」一行
-/// 清单（§6.2 注入层末位），断言不含正文——测试钉住。入参 = run 快照的
-/// 可用技能（启用 + 已信任，Q20：description 与正文同版本）。
+/// 渐进披露的系统提示注入文本：仅「技能名 + description」一行
+/// 清单（注入层末位），断言不含正文——测试钉住。入参 = run 快照的
+/// 可用技能（启用 + 已信任，：description 与正文同版本）。
 pub fn disclosure_text(entries: &[SkillSnapshotEntry]) -> Option<String> {
     if entries.is_empty() {
         return None;
@@ -522,7 +522,7 @@ pub fn disclosure_text(entries: &[SkillSnapshotEntry]) -> Option<String> {
     Some(out)
 }
 
-/// skill 工具的注册表规格（§8.3 M2 表）：Meta 能力（全档放行）、参数
+/// skill 工具的注册表规格（M2 表）：Meta 能力（全档放行）、参数
 /// `{ name, args? }`；description 动态列出当前启用技能名清单（build_registry
 /// 每次现读注册表——toggle/reload 后下一 run 生效）。无启用技能时给兜底
 /// 文案（工具仍暴露，模型调用回「无启用技能」错误以便自纠）。
@@ -564,11 +564,11 @@ pub fn skill_spec() -> ToolSpec {
     )
 }
 
-// ---- run 快照（Q20 版本固定；host 装配层构造、executor 消费） ----
+// ---- run 快照（版本固定；host 装配层构造、executor 消费）----
 
 /// run 内技能快照条目：run 开始时从注册表拍定，run 内 `skill` 工具只读
-/// 快照（正文全文进内存——活跃 run 不混用旧 description 与新正文，Q20；
-/// 旧版本天然可得，「不可得」分支不触发，§9.8 定案）。
+/// 快照（正文全文进内存——活跃 run 不混用旧 description 与新正文，
+/// 旧版本天然可得，「不可得」分支不触发）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct SkillSnapshotEntry {
     /// 技能名。
@@ -577,10 +577,10 @@ pub struct SkillSnapshotEntry {
     pub description: String,
     /// SKILL.md 正文全文（`skill` 工具回喂面）。
     pub body: String,
-    /// 整目录版本指纹（Q21，信任核验与展示用）。
+    /// 整目录版本指纹（信任核验与展示用）。
     pub fingerprint: String,
     /// 信任判定未通过（询问被拒/未决）：不注入清单；`skill` 调用回
-    /// E_PROJECT_UNTRUSTED（§9.8）。
+    /// E_PROJECT_UNTRUSTED。
     pub untrusted: bool,
 }
 
@@ -611,8 +611,8 @@ impl SkillSnapshot {
         self.rejected.iter().any(|n| n == name)
     }
 
-    /// `skill` 工具的执行结果面（§8.3）：头部标注 + 正文全文。供 executor
-    /// 组装模型通道文本（超长截断同 §8.2 由调用方处理）。
+    /// `skill` 工具的执行结果面：头部标注 + 正文全文。供 executor
+    /// 组装模型通道文本（超长截断同 由调用方处理）。
     pub fn body_text(&self, name: &str) -> Option<String> {
         let entry = self.find(name)?;
         Some(format!(

@@ -1,7 +1,7 @@
-//! 项目域命令（§3.3 #10 `list_projects` / #11 `save_project` / #12
-//! `delete_project`，FR-10-01，16 号票）。
+//! 项目域命令（`list_projects` / `save_project` /
+//! `delete_project`）。
 //!
-//! 删除项目时其名下会话转临时（projectId 置空、历史保留，16 号票钉死）；
+//! 删除项目时其名下会话转临时（projectId 置空、历史保留——行为钉死）；
 //! 运行中的 run 不受影响（roots 是 start_chat 时解析的快照）。
 
 use serde::Deserialize;
@@ -11,7 +11,7 @@ use crate::host::AppState;
 use crate::host::IpcError;
 use crate::storage::{ProjectError, ProjectMeta};
 
-/// `save_project` 参数契约（§3.3 #11：`{ project: { id?, name, homeDir } }`）。
+/// `save_project` 参数契约（`{ project: { id?, name, homeDir } }`）。
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -31,7 +31,7 @@ pub struct NewProjectInput {
     pub home_dir: String,
 }
 
-/// `delete_project` 参数契约（§3.3 #12）。
+/// `delete_project` 参数契约。
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -39,7 +39,7 @@ pub struct DeleteProjectArgs {
     pub project_id: String,
 }
 
-/// ProjectError → D14 错误码（§3.6）。
+/// ProjectError → IPC 错误码。
 fn to_ipc_error(err: ProjectError) -> IpcError {
     match err {
         ProjectError::DuplicateHome(home) => {
@@ -66,13 +66,13 @@ fn validate_input(name: &str, home_dir: &str) -> Result<(), IpcError> {
     Ok(())
 }
 
-/// 项目列表（§3.3 #10）。
+/// 项目列表。
 #[tauri::command]
 pub(crate) async fn list_projects(app: State<'_, AppState>) -> Result<Vec<ProjectMeta>, IpcError> {
     app.projects.list().map_err(to_ipc_error)
 }
 
-/// 项目新建/更新（§3.3 #11）：homeDir 变更触发 project.json 重绑。
+/// 项目新建/更新：homeDir 变更触发 project.json 重绑。
 #[tauri::command]
 pub(crate) async fn save_project(
     app: State<'_, AppState>,
@@ -90,7 +90,7 @@ pub(crate) async fn save_project(
         .map_err(to_ipc_error)
 }
 
-/// 项目删除（§3.3 #12）：只删注册与 project.json；名下会话转临时。
+/// 项目删除：只删注册与 project.json；名下会话转临时。
 #[tauri::command]
 pub(crate) async fn delete_project(
     app: State<'_, AppState>,

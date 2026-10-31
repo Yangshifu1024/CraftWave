@@ -1,4 +1,4 @@
-//! 窗口几何记忆（29 号票，§10.7 回写条目）：关掉再开回到原位原尺寸，
+//! 窗口几何记忆（回写条目）：关掉再开回到原位原尺寸，
 //! 拔显示器也不丢窗。
 //!
 //! 数据面：`~/.craftwave/window-state.json`，`{ version, x, y, width, height,
@@ -16,7 +16,7 @@
 //! 后恢复还原前几何再 maximize，还原本来的窗口而不是铺满整屏的几何。
 //!
 //! 恢复时机：tauri setup 阶段——窗口以 `visible:false` 启动尚未亮窗，恢复
-//! 先于前端激活协议（§2.1）的 show，天然满足"恢复先于亮窗"。
+//! 先于前端激活协议的 show，天然满足"恢复先于亮窗"。
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -30,9 +30,9 @@ use crate::util::atomic;
 
 /// 落盘格式版本（结构变化时递增；不匹配按损坏处理整体丢弃）。
 pub const STATE_VERSION: u32 = 1;
-/// 越界校验的最小可见交集宽（逻辑像素，§10.7 回写口径）。
+/// 越界校验的最小可见交集宽（逻辑像素，回写口径）。
 pub const MIN_VISIBLE_WIDTH: f64 = 120.0;
-/// 越界校验的最小可见交集高（逻辑像素，§10.7 回写口径）。
+/// 越界校验的最小可见交集高（逻辑像素，回写口径）。
 pub const MIN_VISIBLE_HEIGHT: f64 = 80.0;
 /// Moved/Resized 事件的落盘防抖窗口。
 const SAVE_DEBOUNCE: Duration = Duration::from_millis(500);
@@ -70,7 +70,7 @@ pub struct Rect {
     pub height: f64,
 }
 
-/// 越界校验（§10.7 回写口径的纯几何函数）：窗口与任一显示器的可见交集
+/// 越界校验（回写口径的纯几何函数）：窗口与任一显示器的可见交集
 /// 宽高都达到 [`MIN_VISIBLE_WIDTH`]×[`MIN_VISIBLE_HEIGHT`] 即视为可恢复。
 /// "可见交集"按矩形重叠取正部计算；完全不重叠时交集为零自然不达标。
 pub fn is_recoverable(rect: &Rect, monitors: &[Rect]) -> bool {
@@ -135,7 +135,7 @@ impl WindowStateStore {
     }
 
     /// 从窗口抓取当前几何并入缓存。最大化期间几何字段保留缓存里的还原前
-    /// 值、只置位 maximized（§10.7：重启后还原"原来的窗口"再最大化）。
+    /// 值、只置位 maximized（重启后还原"原来的窗口"再最大化）。
     pub fn observe(&self, window: &WebviewWindow) {
         if window.is_maximized().unwrap_or(false) {
             let mut cache = self

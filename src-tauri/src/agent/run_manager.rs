@@ -1,18 +1,18 @@
-//! RunManager：维护"会话 → 活跃 run"对应关系的注册表（技术设计文档 §5.1）。
+//! RunManager：维护"会话 → 活跃 run"对应关系的注册表。
 //!
 //! run 指一次模型任务的完整执行过程；本注册表记录每个会话当前是否有正在
 //! 运行的 run，并保证三件事：
 //! - 同一会话已有活跃 run 时，再次 `start` 返回错误 E_SESSION_RUNNING
-//!   （§3.3 第 18 条：同一会话不允许并行两个 run）；
+//!   （同一会话不允许并行两个 run）；
 //! - `cancel` 只把取消令牌（CancellationToken，异步协作取消的标准原语，
-//!   置位后所有监听它的任务都会感知到取消）置位就立刻返回（§3.3 第 19 条
-//!   "置位即返回"），run 的真正收尾由 run 任务自己做，做完后调用
+//!   置位后所有监听它的任务都会感知到取消）置位就立刻返回，run 的真正收尾
+//!   由 run 任务自己做，做完后调用
 //!   [`RunManager::remove`] 把自己从注册表摘除；
 //! - RunState（run 的运行时状态快照）随时可读；对账快照命令
-//!   （`session_run_snapshot`，用于前后端互相核对状态是否一致）由 05 号票
-//!   实装（本文件的 [`RunHandle`] 即数据源头）。
+//!   （`session_run_snapshot`，用于前后端互相核对状态是否一致）的数据源头
+//!   即本文件的 [`RunHandle`]。
 //!
-//! 帧枢纽（§5.8/D16，05 号票）：每个 run 的 [`FrameHub`] 承担"seq 递增 →
+//! 帧枢纽：每个 run 的 [`FrameHub`] 承担"seq 递增 →
 //! 入环形缓冲 → 下发"的帧出口职责，环形缓冲（512 帧）供 WebView 重载后
 //! `attach_run(sinceSeq)` 重放续流，发送通道可热切换（重放后新帧只走新通道）。
 
@@ -29,10 +29,10 @@ use crate::backend::frames::{
 use crate::tools::plan::PlanState;
 use crate::util::errors::{E_SESSION_RUNNING, IpcError};
 
-/// 环形帧缓冲容量（D16 定案：512 帧；溢出丢最旧并记 dropped 计数）。
+/// 环形帧缓冲容量（512 帧；溢出丢最旧并记 dropped 计数）。
 pub const FRAME_BUFFER_CAPACITY: usize = 512;
 
-/// `attach_run` 重连结果（§5.8，§3.3 #57）：`replayed` = 重放的区间帧数
+/// `attach_run` 重连结果：`replayed` = 重放的区间帧数
 /// （不含摘要帧）；`snapshot_sent` = 是否补发了 runSnapshot 摘要帧
 /// （重放窗口耗尽——sinceSeq 落在环形缓冲之前时为 true）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,7 +41,7 @@ pub struct AttachOutcome {
     pub snapshot_sent: bool,
 }
 
-/// run 的生命周期状态（技术设计文档 §5.1 完整状态机在当前阶段的简化版）。
+/// run 的生命周期状态（完整状态机在当前阶段的简化版）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunStatus {
     /// 运行中：模型循环仍在推进，帧（后端发给前端的事件消息）持续产生。
@@ -69,11 +69,11 @@ pub struct RunState {
 }
 
 /// 单个活跃 run 的句柄：持有取消令牌与运行时状态，供宿主命令层操作这个
-/// run（技术设计文档 §5.1）。ask 槽与计划状态由 backend 执行器写入、宿主
-/// 命令 resolve_ask/approve_plan 读取；steer 插话队列（§5.5，06 号票）由
+/// run。ask 槽与计划状态由 backend 执行器写入、宿主
+/// 命令 resolve_ask/approve_plan 读取；steer 插话队列由
 /// `inject_run_message` 命令写入、RunLoop 在 turn 边界消费（宿主侧
 /// `SteerSource` 实现承担落盘与回执副作用）；帧枢纽 [`FrameHub`] 承担帧
-/// 出口（seq 递增 → 入环 → 下发）与 attach 重连（§5.8，05 号票）。
+/// 出口（seq 递增 → 入环 → 下发）与 attach 重连。
 #[derive(Debug)]
 pub struct RunHandle {
     /// 本 run 的唯一标识。
@@ -85,16 +85,16 @@ pub struct RunHandle {
     /// 运行时状态快照（互斥锁保护，供状态读取与统计更新）。
     pub state: Mutex<RunState>,
     /// 当前未决 ask（ask = 模型向用户发起的提问；oneshot 回执指"只能回传
-    /// 一次应答"的异步通道，用户应答经它唤醒等待中的 run；见 §5.1 ask 槽）。
+    /// 一次应答"的异步通道，用户应答经它唤醒等待中的 run）。
     pub ask: Arc<AskSlotCell>,
     /// 计划状态（模型用 plan 工具写 / approve_plan 命令冻结 / 审批门读取）。
     pub plan: Arc<Mutex<Option<PlanState>>>,
-    /// steer 插话队列（§5.5，06 号票）：`inject_run_message` 运行中入队，
+    /// steer 插话队列：`inject_run_message` 运行中入队，
     /// RunLoop 的 turn 边界消费（工具批结果回喂后、下一次模型调用前）；
     /// run 收尾时残余按终态分流（Done → 转会话 followUp 队列尾，取消/失败
     /// → 随 `run:queue.returned` 交还草稿）。
     pub steer: Arc<Mutex<VecDeque<String>>>,
-    /// 帧枢纽（§5.8）：环形帧缓冲 + 可热切换的下发通道，`attach_run`
+    /// 帧枢纽：环形帧缓冲 + 可热切换的下发通道，`attach_run`
     /// 重放续流的数据源（Arc 共享给 sink 装饰链与宿主命令两侧）。
     pub hub: Arc<FrameHub>,
 }
@@ -115,7 +115,7 @@ impl RunHandle {
         state
     }
 
-    /// `attach_run` 重连（§5.8，§3.3 #57）：以当前运行状态构造 runSnapshot
+    /// `attach_run` 重连：以当前运行状态构造 runSnapshot
     /// 摘要帧所需数据，交给帧枢纽完成"重放 `(sinceSeq, 头]` + 窗口耗尽补
     /// 摘要帧 + 热切换下发通道"。
     pub fn attach(&self, since_seq: u64, out: Box<dyn SequencedSink>) -> AttachOutcome {
@@ -134,8 +134,8 @@ impl RunHandle {
         self.hub.attach(since_seq, snapshot, out)
     }
 
-    /// §3.2 RunSnapshot 的命令面构造（`session_run_snapshot` 返回体，
-    /// FR-03-08 对账用）：以当前运行状态填充，status 恒为 Running（无活跃
+    /// 对账快照的命令面构造（`session_run_snapshot` 返回体，供前后端
+    /// 状态对账）：以当前运行状态填充，status 恒为 Running（无活跃
     /// run 的会话在命令层返回 null）。
     pub fn run_snapshot(&self) -> RunSnapshot {
         let state = self.snapshot();
@@ -151,11 +151,11 @@ impl RunHandle {
     }
 }
 
-/// 帧枢纽（§5.8/D16，05 号票）：run 的帧出口枢纽——"seq 递增 → 入环形缓冲
+/// 帧枢纽：run 的帧出口枢纽——"seq 递增 → 入环形缓冲
 /// （512 帧，溢出丢最旧并记 dropped）→ 下发"收在一处；下发通道可热切换
 /// （`attach_run` 重放后续流帧只走新通道）。互斥锁同时保护缓冲与通道：
 /// run 任务写入与 attach 命令的重放/切换共用一把锁，保证切换后新帧必在
-/// 全部重放帧之后发出（帧序严格不乱，§3.4 排序规则）。
+/// 全部重放帧之后发出（帧序严格不乱）。
 #[derive(Debug)]
 pub struct FrameHub {
     inner: Mutex<HubInner>,
@@ -204,7 +204,7 @@ impl FrameHub {
         }
     }
 
-    /// 已发出的最大帧序号（无帧时为 0；§3.2 RunSnapshot.lastSeq 口径）。
+    /// 已发出的最大帧序号（无帧时为 0；RunSnapshot.lastSeq 口径）。
     pub fn last_seq(&self) -> u64 {
         self.lock().next_seq.saturating_sub(1)
     }
@@ -214,9 +214,9 @@ impl FrameHub {
         self.lock().dropped
     }
 
-    /// 帧入口（§5.8）：seq 递增 → 入环（溢出丢最旧并记 dropped）→ 下发。
+    /// 帧入口：seq 递增 → 入环（溢出丢最旧并记 dropped）→ 下发。
     /// 下发失败（webview 已重载）不影响入环——帧已在缓冲里，可被 attach
-    /// 重放（§5.8"发送失败不影响入环"）。锁被污染时直接恢复使用：帧枢纽
+    /// 重放（"发送失败不影响入环"）。锁被污染时直接恢复使用：帧枢纽
     /// 是纯内存结构，没有需要回滚的状态。
     pub fn push(&self, frame: ChatFrame) {
         let mut inner = self.lock();
@@ -237,12 +237,12 @@ impl FrameHub {
         }
     }
 
-    /// `attach_run` 主体（§5.8）：锁内完成"收集重放区间 → 窗口耗尽判定 →
+    /// `attach_run` 主体：锁内完成"收集重放区间 → 窗口耗尽判定 →
     /// 补 runSnapshot 摘要帧（占一个新 seq 号，不进环形缓冲）→ 热切换下发
     /// 通道 → 逐帧下发"。摘要帧与重放帧都经新通道发出，此后新帧只走新
     /// 通道且必排在本批之后。
     ///
-    /// `snapshot` 为调用方按当前运行状态预构造的 §3.2 RunSnapshot（运行中
+    /// `snapshot` 为调用方按当前运行状态预构造的 RunSnapshot（运行中
     /// 形态；`last_seq` 由本方法按摘要帧之前的最大帧序号回填）。
     pub fn attach(
         &self,
@@ -253,7 +253,7 @@ impl FrameHub {
         let mut inner = self.lock();
         // ① 重放区间：sinceSeq 的语义 = 前端"已见最大帧序号"（0 = 一无所见，
         //    从 seq 0 起全量重放——重载后前端的唯一取值）；其余取值重放
-        //    `(sinceSeq, 头]`。帧原样携带 seq/ts（§3.4 帧基座，前端按既有
+        //    `(sinceSeq, 头]`。帧原样携带 seq/ts（前端按既有
         //    去重规则忽略已见）。
         let wanted_from = if since_seq == 0 {
             0
@@ -393,8 +393,8 @@ impl RunManager {
         Ok(handle)
     }
 
-    /// 取消指定会话的 run：只把取消令牌置位就立刻返回（§3.3 第 19 条，
-    /// 不等待收尾完成），返回值表示是否命中了活跃 run。
+    /// 取消指定会话的 run：只把取消令牌置位就立刻返回（不等待收尾完成），
+    /// 返回值表示是否命中了活跃 run。
     pub fn cancel(&self, session_id: &str) -> bool {
         let runs = self
             .runs
@@ -418,7 +418,7 @@ impl RunManager {
             .cloned()
     }
 
-    /// 是否还有任一活跃 run（应用退出前的拦截判定，§9.6：有活跃 run 时不直接退出）。
+    /// 是否还有任一活跃 run（应用退出前的拦截判定：有活跃 run 时不直接退出）。
     pub fn has_active(&self) -> bool {
         !self
             .runs
@@ -427,7 +427,7 @@ impl RunManager {
             .is_empty()
     }
 
-    /// 活跃 run 数量（33 号票 `update_precheck` 安装门判定面：任一会话有
+    /// 活跃 run 数量（`update_precheck` 安装门判定面：任一会话有
     /// 活跃 run——含审批挂起中——即阻止安装与重启；数量供前端展示阻止原因）。
     /// 空判定由 [`Self::has_active`] 承担（语义命名保留，不强行改名 is_empty）。
     #[allow(clippy::len_without_is_empty)]

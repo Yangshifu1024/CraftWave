@@ -1,14 +1,14 @@
-//! 派生索引库 `cache/index.db`（§7.8，D13：M2 建库承载 sessions/stats 缓存，
-//! 20 号票落地 stats_cache 面）。
+//! 派生索引库 `cache/index.db`（M2 建库承载 sessions/stats 缓存，
+//! 落地 stats_cache 面）。
 //!
 //! 名词解释：「派生索引库」指从权威数据（stats/*.json 等文件）算出来的
 //! 查询加速库——SQLite 单文件数据库；「真相」指唯一权威数据源，本库对
-//! stats 而言只是缓存，删掉可随时从 stats/*.json 重建（§7.8 三铁律）。
+//! stats 而言只是缓存，删掉可随时从 stats/*.json 重建（三铁律）。
 //!
-//! 生命周期（§7.8 定稿）：
+//! 生命周期（定稿）：
 //! - **启动校验**：`PRAGMA quick_check`（页面级完整性检查）+ `PRAGMA
 //!   user_version` 比对（本仓 schema 版本 = [`INDEX_DB_VERSION`]）；任一
-//!   不符 → 弃库（删文件）重建（建表 DDL 逐字 §7.8）。
+//!   不符 → 弃库（删文件）重建（建表 DDL 逐字）。
 //! - **维护**：stats 落账成功后 upsert 对应 (day, model_id) 行；失败仅记
 //!   日志、不阻断落账主链路（"异步"语义的实质 = 不影响主链路时序，
 //!   进程内同步执行）。库被清空/重建后由查询路径发现缺日回填。
@@ -33,7 +33,7 @@ pub fn index_db_path(root: &Path) -> PathBuf {
     root.join("cache").join("index.db")
 }
 
-/// §7.8 DDL（逐字；stats_cache 的 runs 列为 20 号票回写增补）。
+/// DDL（逐字；stats_cache 的 runs 列为 回写增补）。
 const SCHEMA_SQL: &str = "
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY, project_id TEXT, title TEXT NOT NULL,
@@ -149,7 +149,7 @@ impl IndexDb {
     }
 
     /// upsert 一批 stats_cache 行（stats 落账成功后的写穿面；失败仅记日志，
-    /// 不上抛——§7.8 维护行）。降级态静默跳过。
+    /// 不上抛—— 维护行）。降级态静默跳过。
     pub fn upsert_stats(&self, row: &StatsCacheRow) {
         let guard = self
             .db

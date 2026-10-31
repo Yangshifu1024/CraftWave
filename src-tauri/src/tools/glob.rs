@@ -1,4 +1,4 @@
-//! `glob` 工具（ReadOnly，§8.3 M2 表）：按文件名模式检索工作区文件，
+//! `glob` 工具（ReadOnly）：按文件名模式检索工作区文件，
 //! globset 匹配（支持 `**` 递归语义），ignore::WalkBuilder 遍历（与
 //! list_files 同源 ignore 栈：尊重 .gitignore、跳过隐藏文件与 .git），
 //! 上限 500 条目截断。
@@ -10,7 +10,7 @@ use crate::safety::tier::Capability;
 use crate::tools::{ToolAnnotations, ToolOutcome, ToolSpec, ToolsContext};
 use crate::util::errors::ToolError;
 
-/// 条目上限（§8.3 glob 行「上限 500」，与 list_files 同口径）。
+/// 条目上限（上限 500，与 list_files 同口径）。
 pub const MAX_ENTRIES: usize = 500;
 
 /// glob 工具参数：匹配模式 + 可选起点目录。
@@ -47,7 +47,7 @@ pub fn run(ctx: &ToolsContext, args: &GlobArgs) -> ToolOutcome {
         }
     };
 
-    // 遍历配置与 list_files 完全同源（§8.3 工具语义一致）：
+    // 遍历配置与 list_files 完全同源（工具语义一致）：
     // hidden(true) 跳隐藏文件、require_git(false) 非 git 项目也应用
     // .gitignore、filter_entry 排除 .git 目录本身。
     let mut builder = ignore::WalkBuilder::new(&root);
@@ -114,7 +114,7 @@ pub fn run(ctx: &ToolsContext, args: &GlobArgs) -> ToolOutcome {
     )
 }
 
-/// glob 工具规格（能力 ReadOnly，全档放行，§8.5）。
+/// glob 工具规格（能力 ReadOnly，全档放行）。
 pub fn spec() -> ToolSpec {
     ToolSpec {
         name: "glob".to_string(),

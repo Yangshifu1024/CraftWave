@@ -1,9 +1,9 @@
-//! run 生命周期落盘器（§7.3 时机表的帧观察实现，15 号票）。
+//! run 生命周期落盘器（下方落盘时机表的帧观察实现）。
 //!
 //! 形态：`FrameSink` 装饰器（与 chat.rs 的 `EventfulSink` 同款模式，零侵入
 //! RunLoop）——帧流出口处聚合出 canonical 条目并即时落盘：
 //!
-//! | 帧事件 | 落盘动作（§7.3） |
+//! | 帧事件 | 落盘动作 |
 //! |---|---|
 //! | `usage`（turn 收口，节流 flush 后必发） | 追加该 turn 文本条目 `{runId}:{turn}` |
 //! | `toolResult`（批内最后一个结果到达时） | 追加该 turn 工具条目 `{runId}:{turn}.tools` |
@@ -16,7 +16,7 @@
 //! `{runId}:{turn}.tools`、runMarker `{runId}:marker`——前端可从
 //! runStarted/stepStarted 帧同规则派生（save 载荷引用 canonical 节点时用）。
 //!
-//! 落盘失败记日志不中断 run（M1 取舍：帧面可用性优先；历史缺行在下次
+//! 落盘失败记日志不中断 run（取舍：帧面可用性优先；历史缺行在下次
 //! load 的崩溃恢复扫描中补 interrupted 标记）。
 
 use std::collections::BTreeMap;
@@ -55,8 +55,8 @@ pub struct RunRecorder {
     store: Arc<SessionStore>,
     session_id: String,
     run_id: String,
-    /// 应用日志通道（32 号票，§7.3 ⑤ 落盘失败记账：canonical/index 写失败
-    /// 记 app 行不中断 run——帧面可用性优先，M1 取舍的记账面）。None =
+    /// 应用日志通道（落盘失败记账：canonical/index 写失败
+    /// 记 app 行不中断 run——帧面可用性优先，取舍的记账面）。None =
     /// 测试装配。
     app_log: Option<Arc<crate::host::session_log::SessionLogger>>,
     started_at: Option<i64>,
@@ -69,7 +69,7 @@ pub struct RunRecorder {
     last_message_count: u64,
 }
 
-/// §7.3 落盘装饰器：先记录再转发（帧序不变）。
+/// 落盘装饰器：先记录再转发（帧序不变）。
 pub struct PersistingSink {
     recorder: RunRecorder,
     inner: Box<dyn FrameSink>,
@@ -91,7 +91,7 @@ impl FrameSink for PersistingSink {
 
 impl RunRecorder {
     /// 构造时读一次史册 activeLeaf 作为 canonical 链尾（新会话 → None）。
-    /// `app_log` = 应用日志通道（32 号票：落盘失败记账面；测试传 None）。
+    /// `app_log` = 应用日志通道（落盘失败记账面；测试传 None）。
     pub fn new(
         store: Arc<SessionStore>,
         session_id: String,
@@ -118,7 +118,7 @@ impl RunRecorder {
     }
 
     /// 帧分发：只聚合不落盘，收口时机交给 usage / 工具批齐 / runEnded
-    /// 三个触发点（对应下方三个 flush/finish 方法），即 §7.3 时机表。
+    /// 三个触发点（对应下方三个 flush/finish 方法），即下方落盘时机表。
     fn record(&mut self, frame: &ChatFrame) {
         match frame {
             ChatFrame::RunStarted { run_id, model: _ } => {
@@ -174,7 +174,7 @@ impl RunRecorder {
                 {
                     call.result = Some((*ok, ui_summary.clone()));
                 }
-                // 批内全部结果收齐 → 逐 turn 落（§7.3 工具结果行）
+                // 批内全部结果收齐 → 逐 turn 落（工具结果行）
                 let all_settled = self
                     .turns
                     .get(&self.current_turn)
@@ -190,19 +190,19 @@ impl RunRecorder {
                 let turn = self.current_turn;
                 self.flush_text_turn(turn);
             }
-            // 压缩完成帧（04 号票）：通知面透传，不落 canonical 条目
-            //（compaction 条目由压缩编排经 append_compaction 落盘，§7.3）
+            // 压缩完成帧：通知面透传，不落 canonical 条目
+            //（compaction 条目由压缩编排经 append_compaction 落盘）
             ChatFrame::CompactDone { .. } => {}
-            // runState 摘要帧（05 号票）：attach 对账辅助，无 canonical 产物
+            // runState 摘要帧：attach 对账辅助，无 canonical 产物
             ChatFrame::RunSnapshot { .. } => {}
-            // 子代理 4 帧（10 号票）：子代理过程经 subFrame 在父 run 帧面
+            // 子代理 4 帧：子代理过程经 subFrame 在父 run 帧面
             // 透传，canonical 只记父 run 的 subagent 工具调用与结果本身
-            //（不展开子帧），子代理历史独立落 histories/subs/（§5.9）
+            //（不展开子帧），子代理历史独立落 histories/subs/
             ChatFrame::SubStarted { .. } => {}
             ChatFrame::SubFrame { .. } => {}
             ChatFrame::SubReport { .. } => {}
             ChatFrame::SubDone { .. } => {}
-            // 审计状态帧（36 号票，§3.4）：通知面透传（前端工具卡审计行），
+            // 审计状态帧：通知面透传（前端工具卡审计行），
             // 无 canonical 产物——审计不是工具执行，命令条目仍由其 toolResult
             // 收口
             ChatFrame::ToolAudit { .. } => {}
@@ -222,7 +222,7 @@ impl RunRecorder {
         }
     }
 
-    /// 文本 turn 收口（§7.3「turn 文本完成」行）：usage 帧触发。
+    /// 文本 turn 收口（「turn 文本完成」行）：usage 帧触发。
     fn flush_text_turn(&mut self, turn: u32) {
         let Some(bucket) = self.turns.get_mut(&turn) else {
             return;
@@ -256,7 +256,7 @@ impl RunRecorder {
         self.append(vec![StoredEntry::Message(entry)]);
     }
 
-    /// 工具 turn 收口（§7.3「每个工具结果」行）：批内最后结果触发。
+    /// 工具 turn 收口（「每个工具结果」行）：批内最后结果触发。
     fn flush_tool_turn(&mut self, turn: u32) {
         let Some(bucket) = self.turns.get_mut(&turn) else {
             return;
@@ -300,7 +300,7 @@ impl RunRecorder {
         self.append(vec![StoredEntry::Message(entry)]);
     }
 
-    /// run 终态（§7.3「run 终态」行）：runMarker 条目 + index upsert。
+    /// run 终态（「run 终态」行）：runMarker 条目 + index upsert。
     fn finish(&mut self, duration_ms: u64, tool_count: u32) {
         let marker = MessageEntry {
             id: format!("{}:marker", self.run_id),
@@ -335,7 +335,7 @@ impl RunRecorder {
                     "[craftwave] canonical 落盘失败（session={} run={}）：{e:?}",
                     self.session_id, self.run_id
                 );
-                // 落盘失败记账（32 号票，§7.3 ⑤ app 通道；无内容副本——
+                // 落盘失败记账（app 通道；无内容副本——
                 // 只记元数据与错误形态）
                 if let Some(log) = &self.app_log {
                     log.app_line(
@@ -350,7 +350,7 @@ impl RunRecorder {
         }
     }
 
-    /// index.json upsert（§7.1）：会话首现时建档，终态推进用量与修订号。
+    /// index.json upsert：会话首现时建档，终态推进用量与修订号。
     fn upsert_index(&self) {
         let now = now_ms();
         let existing = self
@@ -371,7 +371,7 @@ impl RunRecorder {
                 revision: self.last_revision.max(prior.revision),
                 message_count: self.last_message_count.max(prior.message_count),
                 total_tokens: prior.total_tokens + run_tokens,
-                // 外部目录授权跨 run 生效（24 号票 §9.9）：run 终态 upsert
+                // 外部目录授权跨 run 生效：run 终态 upsert
                 // 只推进用量/条目/修订号，不清既有授权（曾误写空数组的
                 // 回归由 run_persistence_test 钉住）。
                 authorized_external_dirs: prior.authorized_external_dirs.clone(),
@@ -394,7 +394,7 @@ impl RunRecorder {
                 "[craftwave] index.json upsert 失败（{}）：{e:?}",
                 self.session_id
             );
-            // 落盘失败记账（32 号票，§7.3 ⑤ app 通道）
+            // 落盘失败记账（app 通道）
             if let Some(log) = &self.app_log {
                 log.app_line(
                     crate::providers::types::LogLevel::Warn,

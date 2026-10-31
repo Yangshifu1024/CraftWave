@@ -1,15 +1,14 @@
-//! web_fetch 工具（技术设计文档 §8.3 M2 表 web_fetch 行，12 号票）：
-//! 抓取网页并提取正文回喂模型。
+//! web_fetch 工具：抓取网页并提取正文回喂模型。
 //!
 //! - 两种输出模式：`readability`（默认）= dom_smoothie 正文提取
-//!   （Mozilla Readability 算法移植，输出 Markdown，选型理由见票内
-//!   决议记录）；`raw` = 清洗后的原始 HTML（compact 口径头 4KB + 尾 8KB）；
-//! - SSRF 五步防线与节流在 [`crate::safety::ssrf`]（§9.2），本文件只组装；
+//!   （Mozilla Readability 算法移植，输出 Markdown）；`raw` = 清洗后的
+//!   原始 HTML（compact 口径头 4KB + 尾 8KB）；
+//! - SSRF 五步防线与节流在 [`crate::safety::ssrf`]，本文件只组装；
 //! - 正文 ≤50MiB（Content-Length 预检 + 流式计数双保险）；
 //! - 能力 Network：plan 档过滤、confirm_each/auto_edit 档审批、
-//!   full_access 放行（§8.5，gate.rs 零改动）。
+//!   full_access 放行。
 //!
-//! 已知取舍（票面边界）：无 headless 浏览器，JS 渲染的页面只能拿到
+//! 已知取舍：无 headless 浏览器，JS 渲染的页面只能拿到
 //! raw HTML 骨架；正文提取质量以静态 HTML 为限。
 
 use std::sync::Arc;
@@ -29,21 +28,21 @@ use super::ToolSpec;
 
 /// readability 模式正文的额外保护上限（1MiB）：正常文章在几 KB～几十 KB
 /// 量级；异常超长时先本地截断，避免 50MiB 级正文整个序列化进 data 再被
-/// compact 丢弃（模型通道反正只见头 4KB + 尾 8KB，§8.2）。
+/// compact 丢弃（模型通道反正只见头 4KB + 尾 8KB）。
 pub const READABILITY_CONTENT_LIMIT: usize = 1024 * 1024;
 
-/// web_fetch 参数（§8.3：`{ url, format?: "readability"|"raw" }`）。
+/// web_fetch 参数：`{ url, format?: "readability"|"raw" }`。
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WebFetchArgs {
-    /// 目标 URL（仅 http/https；SSRF 校验见 §9.2）。
+    /// 目标 URL（仅 http/https；SSRF 校验见 safety/ssrf）。
     pub url: String,
     /// 输出模式：缺省 readability。
     #[serde(default)]
     pub format: Option<WebFetchFormat>,
 }
 
-/// 输出模式（serde 小写对齐票面枚举值）。
+/// 输出模式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum WebFetchFormat {

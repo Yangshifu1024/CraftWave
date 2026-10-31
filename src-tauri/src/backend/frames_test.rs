@@ -1,7 +1,7 @@
 //! 帧协议与节流合并器的单元测试（测试独立成文件，源码零测试）。
 //!
-//! 最早版本改编自早期验证原型（S2 spike）的同名测试；此后补充覆盖产品化
-//! 新增面：usage / stepStarted / runEnded.error 帧的形态与 `ts` 出口字段。
+//! 覆盖产品化各帧的形态与节流行为：usage / stepStarted / runEnded.error
+//! 帧的形态与 `ts` 出口字段。
 
 use std::thread::sleep;
 use std::time::Duration;
@@ -92,19 +92,19 @@ fn delta_kinds_ordered_seq_increasing_partial_json_joined() {
     }
 }
 
-/// 断言帧序列化契约（§3.1/§3.4）：字段名 camelCase、基座 `{ seq, type,
+/// 断言帧序列化契约：字段名 camelCase、基座 `{ seq, type,
 /// ts?, ... }` 的 ts 可选且缺省整个省略、usage 帧的累计与形态（rate 可选
 /// 缺省省略）、runEnded 的 reason/error 面（cancelled 无 error 字段省略）。
 #[test]
 fn frame_serialization_contract_cases() {
-    // toolArgs 帧：camelCase 字段（§3.1 契约）
+    // toolArgs 帧：camelCase 字段（契约）
     let mut t = DeltaThrottler::new();
     t.push_tool_args("call_1", "{\"pa");
     let mut sink = CollectingSink::default();
     t.flush(&mut sink);
     let v = serde_json::to_value(&sink.frames[0].frame).unwrap();
     assert_eq!(v["type"], "toolArgs");
-    assert_eq!(v["callId"], "call_1", "字段名为 camelCase（§3.1）");
+    assert_eq!(v["callId"], "call_1", "字段名为 camelCase");
     assert_eq!(v["chunk"], "{\"pa");
 
     // 基座：ts 有值时出现、缺省时字段整个省略（可选字段无 null 满字段）

@@ -248,7 +248,7 @@ fn crash_tolerance_and_fingerprint_discipline() {
     assert_eq!(
         fs::read(&file).unwrap(),
         first_bytes,
-        "绝不续写含损坏尾行的既有段（§7.2）"
+        "绝不续写含损坏尾行的既有段"
     );
     assert!(path.join("0002.jsonl").exists(), "应滚动到新段");
     let final_log = SessionLog::open(path.clone()).unwrap();

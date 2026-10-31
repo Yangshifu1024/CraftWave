@@ -1,4 +1,4 @@
-//! [`super::wire`] 三方言统一防腐层的单测（38 号票）。
+//! [`super::wire`] 三方言统一防腐层的单测。
 //!
 //! 不发网络请求：全链路语义合并为单个 #[test]——三方言按 `ApiFormat` 构造
 //! 出正确变体、描述符里的方言名/模型名正确、对同一组请求参数的 encode 走向
@@ -134,7 +134,7 @@ fn dialect_wire_construction_encoding_and_pairing() {
         DialectReassembler::Anthropic(_)
     ));
 
-    // 图片多模态块的方言 encode（17 号票 wire 重建双形态的下游实证）：
+    // 图片多模态块的方言 encode（wire 重建双形态的下游实证）：
     // 带 image 块的请求经 anthropic wire 编码后出现 base64 图片块形状
     let image = rig::message::UserContent::Image(rig::message::Image {
         data: rig::message::DocumentSourceKind::base64("aGVsbG8="),

@@ -1,4 +1,4 @@
-//! ask 工具纯逻辑单测（§8.3 ask 行）：问卷校验与 AskPayload 构造。
+//! ask 工具纯逻辑单测：问卷校验与 AskPayload 构造。
 
 use super::ask::{AskArgs, AskQuestionArg, build_payload};
 

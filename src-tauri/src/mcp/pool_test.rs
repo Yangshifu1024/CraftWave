@@ -1,7 +1,7 @@
-//! mcp/pool.rs 的测试（08 号票）：fixture 全链（connect→发现→调用→状态
-//! 事件→断连重连→Q14 结果未知→generation 失效）。
+//! mcp/pool.rs 的测试：fixture 全链（connect→发现→调用→状态
+//! 事件→断连重连→ 结果未知→generation 失效）。
 //!
-//! 全链测试经 [`crate::mcp::fixture`] 的进程内 echo server（§12.5 测试
+//! 全链测试经 [`crate::mcp::fixture`] 的进程内 echo server（测试
 //! 基建）：字节走内存管道，握手/清单同步/断线重连语义与生产一致。
 //! 串行锁：McpToolRegistry 是进程级单例，fixture 测试互相串行（避免
 //! 动态段互相污染）。
@@ -96,7 +96,7 @@ async fn wait_state(host: &Arc<McpHost>, key: &ConnKey, want: ConnState, ticks: 
 
 // 断言（全链 A+B，连接池状态机/重连退避代表）：connect → 工具发现注册
 // （echo/add 进模型工具表动态段）→ 调用回喂（UI 摘要 + data）→ 状态四态
-// 事件可见（starting/ready/stopped 逐字）；服务端断连 → Error → 自动重连
+// 事件名逐字可见（starting/ready/stopped）；服务端断连 → Error → 自动重连
 // （新连接新清单同步）→ Ready、工具再次可用、error 态事件在案；用户显式
 // disconnect 后 desired=false，server 再崩也不重连（Stopped 恒定）。
 #[tokio::test(flavor = "current_thread")]
@@ -130,7 +130,7 @@ async fn fixture_chain_connect_call_reconnect_and_disconnect() {
     let outcome = super::pool::call_tool(&env.host, "add", r#"{"a":2,"b":40}"#).await;
     assert!(outcome.ok);
     assert_eq!(outcome.data.expect("data")["content"], "42");
-    // 状态事件：Starting → Ready 至少两次迁移，state 值逐字（§3.5）
+    // 状态事件：Starting → Ready 至少两次迁移，state 值逐字
     let statuses: Vec<serde_json::Value> = env
         .events
         .payloads_of(keys::MCP_STATUS)
@@ -186,7 +186,7 @@ async fn fixture_chain_connect_call_reconnect_and_disconnect() {
     );
 }
 
-// 断言（Q14 结果未知 + generation 失效）：arm die → 调用 → server 记录
+// 断言（结果未知 + generation 失效）：arm die → 调用 → server 记录
 // 执行后挂住 → kill → 调用收到 E_MCP_RESULT_UNKNOWN（可能已执行）、计数
 // 保持 1（连接恢复路径不重放）、detail 结构化标记在案；重连恢复后显式
 // 重试才第二次执行；断开（generation+1）后旧断线回调/旧握手不得改写新
@@ -194,7 +194,7 @@ async fn fixture_chain_connect_call_reconnect_and_disconnect() {
 #[tokio::test(flavor = "current_thread")]
 async fn result_unknown_never_replayed_and_generation_stable() {
     let _guard = chain_lock().await;
-    // —— Q14 结果未知不重放 ——
+    // —— 结果未知不重放 ——
     let env = ready_env("fixture-die").await;
     env.fixture.arm_die_after_record();
     // 调用在后台走（server 会记录后挂住）

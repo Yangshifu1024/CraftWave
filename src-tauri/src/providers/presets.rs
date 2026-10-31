@@ -1,13 +1,13 @@
 //! 内置供应商预设清单（M1 切片交付项）。
 //!
-//! 设计文档未钉死预设集内容（§11 只定字段与解析语义），本清单为 M1 内置的
+//! 设计文档未钉死预设集内容（只定字段与解析语义），本清单为 M1 内置的
 //! 常识性静态数据：slug 是前端稳定键；模型仅作"开箱建议值"，用户可增删改。
 //! 自定义 OpenAI 兼容端点不走预设（设置页直接空表单，apiFormat=openai_chat
 //! + baseUrl 覆写）。
 //!
-//! 单源口径（03 号票定稿，§3.3 注记）：本清单是预设的唯一权威——类型
+//! 单源口径（定稿）：本清单是预设的唯一权威——类型
 //! derive(TS) 后由 cargo test 统一导出类型声明与清单常量进
-//! `ui/src/ipc/generated/`（02 号票 ts-rs 机制），前端 re-export 消费，
+//! `ui/src/ipc/generated/`（ts-rs 机制），前端 re-export 消费，
 //! 不设 list_presets 命令、无前端副本。
 
 use serde::Serialize;
@@ -47,7 +47,7 @@ pub struct ProviderPreset {
     pub base_url: &'static str,
     /// 开箱即用的建议模型清单（仅是建议值，用户可增删改）。
     pub models: &'static [PresetModel],
-    /// 本地服务标记（FR-02-04，19 号票）：true = 本机推理端点——免 API
+    /// 本地服务标记：true = 本机推理端点——免 API
     /// Key（resolve_model 允许无 Key，本地服务不校验凭据）、离线可用；
     /// 设置页标注"本地 / 离线可用"并隐藏 Key 输入。
     pub local: bool,
@@ -172,9 +172,9 @@ pub fn builtin_presets() -> &'static [ProviderPreset] {
             }],
             local: false,
         },
-        // ---- 本地模型三家（FR-02-04，19 号票）：全部 openai_chat 方言 +
+        // ---- 本地模型三家：全部 openai_chat 方言 +
         // 免 Key（本地服务不校验凭据）+ 离线可用。取舍：走各家 OpenAI
-        // 兼容端点而非 rig 原生 ollama 方言（零新方言代码、行为一致，§11.1
+        // 兼容端点而非 rig 原生 ollama 方言（零新方言代码、行为一致，
         // 同一注入面）；llama.cpp / LM Studio 的 wire id 由服务端实际加载的
         // 模型决定，预设值仅是"开箱建议"（server 端不校验或需按加载名改）。
         ProviderPreset {

@@ -1,15 +1,15 @@
-//! 写后完整性自检（22 号票，FR-05-05 配套 / §8.4 步骤 6 EOL 口径 / C-10）。
+//! 写后完整性自检（edit 的 EOL 保持口径 / 落盘一律 UTF-8 约定的配套防线）。
 //!
 //! write/edit 落盘成功后**重读文件**做纯内存比对：
 //! 1. 「哈希」：重读字节与写入内容逐字节一致（sha256 比对）——磁盘坏块、
 //!    并发改写、杀毒软件篡改等静默写坏当场暴露；
-//! 2. 「UTF-8」：重读内容严格 UTF-8 解码成功（C-10「落盘一律 UTF-8」；
+//! 2. 「UTF-8」：重读内容严格 UTF-8 解码成功（「落盘一律 UTF-8」；
 //!    与哈希校验互为纵深——哈希一致时本项恒过，但独立校验保证本模块
 //!    对任何写入通道单独成立）；
-//! 3. 「EOL」（edit 场景）：原 CRLF 文件写回后仍为 CRLF（§8.4 步骤 6
-//!    「EOL 保持」的落盘后实证）；LF 文件未被引入 CRLF。
+//! 3. 「EOL」（edit 场景）：原 CRLF 文件写回后仍为 CRLF（「EOL 保持」
+//!    的落盘后实证）；LF 文件未被引入 CRLF。
 //!
-//! 任一阶段失败 → 工具结果 ok=false，错误码 E_INTERNAL（§3.6 通用兜底），
+//! 任一阶段失败 → 工具结果 ok=false，错误码 E_INTERNAL（通用兜底），
 //! message 含路径与校验阶段（模型可据此重试或改写）。
 //!
 //! 诚实边界：本模块校验的是「落盘后的文件与预期一致」，无法防落盘**前**
@@ -23,7 +23,7 @@ use sha2::{Digest, Sha256};
 
 use crate::util::errors::ToolError;
 
-/// EOL 期望（edit 场景保持原文件风格，§8.4 步骤 6）。
+/// EOL 期望（edit 场景保持原文件风格）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EolExpect {
     /// 无 EOL 要求（write 新建：内容原样 UTF-8 落盘）。
@@ -65,7 +65,7 @@ pub fn verify_written(
         });
     }
 
-    // 阶段三「UTF-8」：严格解码（C-10 落盘一律 UTF-8）。
+    // 阶段三「UTF-8」：严格解码（落盘一律 UTF-8）。
     if let Err(e) = std::str::from_utf8(&actual) {
         return Err(PostcheckFailure {
             stage: "UTF-8",
@@ -102,8 +102,8 @@ pub fn verify_written(
     Ok(())
 }
 
-/// 自检失败 → 工具错误（E_INTERNAL，message 含路径与校验阶段，§3.6 通用
-/// 兜底；专用错误码待评审定，若增设先回写 §3.6）。
+/// 自检失败 → 工具错误（E_INTERNAL，message 含路径与校验阶段，通用
+/// 兜底错误码）。
 pub fn postcheck_error(display_path: &str, failure: &PostcheckFailure) -> ToolError {
     ToolError::new(
         crate::util::errors::E_INTERNAL,

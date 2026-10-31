@@ -1,5 +1,5 @@
 //! glob 工具测试：递归模式、gitignore 生效、500 截断、非法 pattern 拒绝、
-//! 排序与 kind 标注（票面测试计划逐项；越界拒绝见 mod.rs 共享守卫测试）。
+//! 排序与 kind 标注（越界拒绝见 mod.rs 共享守卫测试）。
 
 use serde_json::json;
 

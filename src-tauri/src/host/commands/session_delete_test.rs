@@ -1,4 +1,4 @@
-//! [`delete_session_core`] 的 Q43 盘点联动测试（32 号票）：会话专属日志
+//! [`delete_session_core`] 的盘点联动测试：会话专属日志
 //! 与轮转副本随删、删除失败必须报告、子代理历史按 meta 归属盘点清理、
 //! 队列文件随删、用户工作成果不误伤。
 
@@ -48,11 +48,11 @@ fn line(app: &AppState, session: &str, msg: &str) {
     );
 }
 
-/// Q43 盘点联动全链：会话日志与轮转副本随删、其他会话日志不误删；删除
+/// 盘点联动全链：会话日志与轮转副本随删、其他会话日志不误删；删除
 /// 失败必须报告（E_IO 带残留清单），不得声称全部删除成功；归属边界——
 /// 本会话的子代理历史随删（meta 匹配）、他会话的不误删（meta 不匹配）、
-/// meta 缺失无法归属的保守保留、followUp 队列文件随删（06 号票）、用户
-/// 工作成果（workspace 内产出）不随会话销毁（Q43：共享资源只清本会话
+/// meta 缺失无法归属的保守保留、followUp 队列文件随删、用户
+/// 工作成果（workspace 内产出）不随会话销毁（共享资源只清本会话
 /// 引用，不删项目成果）。
 #[test]
 fn delete_session_purge_ownership_and_failure_reporting() {
@@ -117,7 +117,7 @@ fn delete_session_purge_ownership_and_failure_reporting() {
     // meta 缺失的目录（无法归属）：保守保留
     let orphan = subs.join("run-3");
     std::fs::create_dir_all(&orphan).expect("建目录");
-    // 队列文件（06 号票）
+    // 队列文件
     let queue = dir.path().join("sessions").join("s-main.queue.json");
     std::fs::write(&queue, r#"{"version":1,"paused":false,"entries":[]}"#).expect("写队列");
     // 用户工作成果
@@ -134,6 +134,6 @@ fn delete_session_purge_ownership_and_failure_reporting() {
     assert_eq!(
         std::fs::read_to_string(workspace.join("产出.txt")).expect("成果仍在"),
         "AI 产出",
-        "工作区文件不随会话删除（Q43 工作成果保留）"
+        "工作区文件不随会话删除（工作成果保留）"
     );
 }

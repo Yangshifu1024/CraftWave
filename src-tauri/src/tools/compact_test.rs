@@ -1,4 +1,4 @@
-//! compact 文本与 ToolOutcome 测试（§8.2 双通道）。
+//! compact 文本与 ToolOutcome 测试（双通道）。
 
 use super::{ToolOutcome, compact_text};
 use crate::util::errors::ToolError;

@@ -1,5 +1,5 @@
-//! `write` 工具（FileWrite，§8.3）：仅新建，已存在拒绝（E_INVALID_ARG）
-//! 引导用 edit；落盘一律 UTF-8（C-10）。原子写：同目录 tmp + rename。
+//! `write` 工具（FileWrite）：仅新建，已存在拒绝（E_INVALID_ARG）
+//! 引导用 edit；落盘一律 UTF-8。原子写：同目录 tmp + rename。
 
 use serde::Deserialize;
 use serde_json::json;
@@ -46,7 +46,7 @@ pub fn run(ctx: &ToolsContext, args: &WriteArgs) -> ToolOutcome {
         Ok(()) => {}
         Err(e) => return ToolOutcome::from(e),
     }
-    // 写后完整性自检（22 号票）：重读比对哈希 + 严格 UTF-8（C-10）。
+    // 写后完整性自检：重读比对哈希 + 严格 UTF-8。
     // 失败 → ok=false 回喂 E_INTERNAL（模型可据此重试或改写）。
     if let Err(f) =
         crate::tools::postcheck::verify_written(&resolved, args.content.as_bytes(), EolExpect::Any)

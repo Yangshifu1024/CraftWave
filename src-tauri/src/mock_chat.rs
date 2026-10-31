@@ -1,4 +1,4 @@
-//! 【S1 spike 原型，随时可弃】dev-only mock 帧源：按剧本发 ToolStart / ToolProgress / ToolResult。
+//! 【dev-only 原型，随时可弃】mock 帧源：按剧本发 ToolStart / ToolProgress / ToolResult。
 //!
 //! 不接真 rig、不需要 API key。验证点：前端镜像工具（ui/src/chat/mirror/）能被 Channel 帧驱动出
 //! 完整状态机；参数增量以半截 JSON 分片下发，前端以「参数准备中」展示。
@@ -52,7 +52,7 @@ pub(crate) struct ScriptStep {
     pub frame: MockFrame,
 }
 
-/// 验证剧本（覆盖票面全部判定点）：正文 → 工具1（半截 JSON 参数增量 ×2 → 参数齐 → 完成）
+/// 验证剧本（覆盖全部判定点）：正文 → 工具1（半截 JSON 参数增量 ×2 → 参数齐 → 完成）
 /// → 工具2（完整参数 → isError 结果）→ 收尾正文 → run-ended。
 pub(crate) fn mock_script() -> Vec<ScriptStep> {
     use MockFrame::*;

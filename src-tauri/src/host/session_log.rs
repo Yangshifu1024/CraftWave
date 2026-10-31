@@ -1,24 +1,23 @@
-//! 会话级日志写入通道（32 号票，FR-15-01/FR-14-04/FR-14-07，§7.1 日志布局）。
+//! 会话级日志写入通道（日志布局）。
 //!
-//! 轻量自写 logger（票面定案：**不引入 tracing 全家桶**——per-session 分
-//! 文件 + JSON 行需要自定义 subscriber layer，成本高于收益；取舍记录于
-//! 票内 Answer）。三个面：
+//! 轻量自写 logger（**不引入 tracing 全家桶**——per-session 分
+//! 文件 + JSON 行需要自定义 subscriber layer，成本高于收益）。三个面：
 //!
 //! 1. **应用日志** `<logs>/app.log`：运行元数据（启动序/命令报错/panic
-//!    捕获/落盘失败记账）。红线：不记录会话正文或图片（Q43——应用日志
+//!    捕获/落盘失败记账）。红线：不记录会话正文或图片（应用日志
 //!    在会话删除后仍存活，不能成为内容副本）；>5MB 轮转 `.log.1`
 //!    （保留 1 份，再满覆盖）。
 //! 2. **会话日志** `<logs>/sessions/<sessionId>.jsonl`：每会话一文件，
 //!    每行 `{ ts, level, kind, msg, data?, runId?, callId?, subId? }`，
 //!    `kind ∈ run|llm|tool|approval|compact|subagent`；>10MB 轮转
 //!    `.jsonl.1`（保留 1 份）。会话删除时关闭句柄并删除本会话日志与
-//!    轮转副本（Q43：删会话同步删专属日志）。
+//!    轮转副本（删会话同步删专属日志）。
 //! 3. **级别过滤**：写前按 `config.log.level` 判定（Debug/Info/Warn/
 //!    Error，**verbose = level 设为 Debug**）；每次写入都读配置缓存
 //!    （`ConfigStore::load` 内存命中），save_config 热替换后下一行即按
 //!    新级别过滤——级别修改即时生效，无需重启。
 //!
-//! 落盘纪律（与 NFR-06 会话数据通道严格区分）：append 打开、**不 fsync**
+//! 落盘纪律（与会话数据通道严格区分）：append 打开、**不 fsync**
 //! ——日志可丢、性能优先；轮转与写失败都吞掉（尽力而为，不反压业务）。
 
 use std::collections::HashMap;
@@ -33,12 +32,12 @@ use serde_json::{Value, json};
 use crate::providers::types::{AppConfig, LogLevel};
 use crate::storage::config_store::ConfigStore;
 
-/// 会话日志单文件轮转阈值（10MB，票面 §7.1 布局）。
+/// 会话日志单文件轮转阈值（10MB）。
 const SESSION_ROTATE_BYTES: u64 = 10 * 1024 * 1024;
 /// 应用日志单文件轮转阈值（5MB）。
 const APP_ROTATE_BYTES: u64 = 5 * 1024 * 1024;
 
-/// 会话日志条目的事件类别（票面 §7.1 布局定值）。
+/// 会话日志条目的事件类别（定值）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogKind {
     /// run 生命周期（起止与终态）。
@@ -56,7 +55,7 @@ pub enum LogKind {
 }
 
 impl LogKind {
-    /// 行内 kind 字符串（§7.1 布局小写定值）。
+    /// 行内 kind 字符串（小写定值）。
     fn as_str(self) -> &'static str {
         match self {
             LogKind::Run => "run",
@@ -86,14 +85,14 @@ impl LogWriter {
 
 /// 会话级日志器（进程内单例，`AppState.session_log` 持有）。
 pub struct SessionLogger {
-    /// 日志根目录（§7.1：`~/.craftwave/logs/`）。
+    /// 日志根目录（`~/.craftwave/logs/`）。
     root: PathBuf,
     /// 配置缓存句柄（级别热生效的数据源：每次写入时 load 内存缓存）。
     config: Arc<ConfigStore<AppConfig>>,
     /// 会话写手表（sessionId → 句柄）。会话删除时摘除并关句柄。
     writers: Mutex<HashMap<String, LogWriter>>,
     /// 已清除会话名单（close_and_purge 登记）：名单内会话的写入直接
-    /// 丢弃——防删除竞态窗口的迟到写入重建文件（Q43 删除红线）。
+    /// 丢弃——防删除竞态窗口的迟到写入重建文件（删除联动红线）。
     purged: Mutex<std::collections::HashSet<String>>,
     /// 应用日志写手（单文件，惰性打开）。
     app: Mutex<Option<LogWriter>>,
@@ -189,7 +188,7 @@ impl SessionLogger {
 
     /// 追加一行应用日志（`app.log`：运行元数据）。红线：调用方不得把
     /// 会话正文或图片放进 `msg`/`data`（应用日志不随会话删除，不能成为
-    /// 内容副本——Q43）。
+    /// 内容副本）。
     pub fn app_line(&self, level: LogLevel, msg: String, data: Option<Value>) {
         if Self::rank(level) < Self::rank(self.level()) {
             return;
@@ -211,11 +210,11 @@ impl SessionLogger {
         self.write_app(body.as_bytes());
     }
 
-    /// 会话删除联动（Q43）：关闭句柄并删除本会话日志及轮转副本
+    /// 会话删除联动：关闭句柄并删除本会话日志及轮转副本
     /// （`<sid>.jsonl` + `<sid>.jsonl.1`）。**删除失败必须报告**——返回
     /// 失败清单（非空 = 有残留，调用方不得声称全部删除成功）。清除后该
     /// 会话进入已清除名单：迟到的写入（删除与在飞任务收尾的竞态窗口）
-    /// 直接丢弃——删除后的会话不能在磁盘上重建日志副本（Q43 红线）。
+    /// 直接丢弃——删除后的会话不能在磁盘上重建日志副本（红线）。
     pub fn close_and_purge(&self, session_id: &str) -> Vec<String> {
         // 先摘写手（关句柄：后续写不再复活文件）
         let _ = self
@@ -240,7 +239,7 @@ impl SessionLogger {
         failures
     }
 
-    /// 读会话日志尾部（§3.3 #54）：文件不存在 → 空清单不报错；`tail`
+    /// 读会话日志尾部：文件不存在 → 空清单不报错；`tail`
     /// 为返回的最大行数（调用方已按契约 clamp）。坏行（不完整 JSON 行）
     /// 原样输出（容错：日志是诊断面，不给读制造障碍）。
     pub fn read_tail(&self, session_id: &str, tail: usize) -> Vec<String> {
@@ -256,8 +255,8 @@ impl SessionLogger {
             .collect::<Vec<_>>()
     }
 
-    /// 列出 logs/ 下全部日志文件相对名（§3.3 #55：`app.log*` +
-    /// `sessions/*`；spill 子目录不在此列——票面布局明确两项）。
+    /// 列出 logs/ 下全部日志文件相对名（`app.log*` +
+    /// `sessions/*`；spill 子目录不在此列——只这两类）。
     pub fn list_files(&self) -> Vec<String> {
         let mut out = Vec::new();
         let entries = match std::fs::read_dir(&self.root) {
@@ -294,7 +293,7 @@ impl SessionLogger {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .contains(session_id)
         {
-            return; // 删除后的迟到写入：丢弃，不重建文件（Q43 红线）
+            return; // 删除后的迟到写入：丢弃，不重建文件（红线）
         }
         let Ok(mut writers) = self.writers.lock() else {
             return;

@@ -1,14 +1,14 @@
-//! 【38 号票】三协议（openai_chat / openai_responses / anthropic_messages）
+//! 三协议（openai_chat / openai_responses / anthropic_messages）
 //! 对话链路 e2e：本地 mock SSE 服务（tests/common），无网络、无真实 Key。
 //!
-//! 覆盖面（票面"测试"节）：
+//! 覆盖面：
 //! - anthropic_messages / openai_responses 的文本、reasoning、工具调用往返、
 //!   四口径 usage（start_chat_core 命令面全链）；
-//! - thinking 档（§11.4 Anthropic 预算轴 + max_tokens 上调规则）与不传档
+//! - thinking 档（Anthropic 预算轴 + max_tokens 上调规则）与不传档
 //!   （协议必填的请求级 max_tokens 兜底）；
 //! - 流中取消（Anthropic SSE 流丢弃语义与 openai_chat 同源）；
 //! - 连接测试（providers::probe 三方言——probe_test.rs 单测覆盖，此处不重复）；
-//! - 同一 run 内跨方言热切换（openai_chat → anthropic_messages，37 号票
+//! - 同一 run 内跨方言热切换（openai_chat → anthropic_messages，
 //!   泛型化 TurnDriver 的收口验证）；
 //! - 401 等供应商错误明确反馈（runEnded(error)，不伪装成功）。
 
@@ -220,7 +220,7 @@ async fn anthropic_full_chain_text_reasoning_tool_usage() {
     let runs = RunManager::new();
     let sink = SharedSink::default();
 
-    // thinking=medium → §11.4 Anthropic 面预算轴 60%：budget = 128000×0.6 =
+    // thinking=medium → Anthropic 面预算轴 60%：budget = 128000×0.6 =
     // 76800（> max_tokens 32768 → max_tokens 上调为 min(128000, 76800+32768)
     // = 109568）
     let result = craftwave_lib::host::commands::chat::start_chat_core(
@@ -254,7 +254,7 @@ async fn anthropic_full_chain_text_reasoning_tool_usage() {
     let bodies = mock.request_bodies().await;
     assert_eq!(bodies.len(), 2, "两拍请求（工具调用往返）");
 
-    // ① thinking 档：第 1 拍请求带 60% 预算与上调后的 max_tokens（§11.4）
+    // ① thinking 档：第 1 拍请求带 60% 预算与上调后的 max_tokens
     assert_eq!(
         bodies[0]["thinking"],
         serde_json::json!({"type": "enabled", "budget_tokens": 76800}),
@@ -327,7 +327,7 @@ async fn anthropic_full_chain_text_reasoning_tool_usage() {
 }
 
 /// thinking 未设置（None）时：Anthropic 协议必填的请求级 max_tokens 由
-/// 模型配置兜底注入（32768），thinking 字段不出现（§11.4 off/不传 → 不启用）。
+/// 模型配置兜底注入（32768），thinking 字段不出现（off/不传 → 不启用）。
 #[tokio::test]
 async fn anthropic_without_thinking_injects_base_max_tokens() {
     let mock = MockAnthropic::start().await;
@@ -424,7 +424,7 @@ async fn openai_responses_full_chain_text_reasoning_tool_usage() {
     let runs = RunManager::new();
     let sink = SharedSink::default();
 
-    // thinking=high → OpenAI 系 reasoning_effort="high"（§11.4 同名行）
+    // thinking=high → OpenAI 系 reasoning_effort="high"
     let result = craftwave_lib::host::commands::chat::start_chat_core(
         &app,
         &runs,
@@ -501,7 +501,7 @@ async fn openai_responses_full_chain_text_reasoning_tool_usage() {
 /// 指向 mock 的三方言模型驱动（与 chat.rs resolve_model 同一装配路径：
 /// providers::wire::dialect_model）。直驱路径没有 HostRequestRefresher 的
 /// 每拍注入面，spec 预置 Anthropic 协议必填的请求级 max_tokens（模拟宿主
-/// 已按 §11.4 注入后的状态）。
+/// 已按 thinking 预算规则注入后的状态）。
 fn dialect_driver(
     api_format: ApiFormat,
     base_url: &str,
@@ -589,10 +589,10 @@ async fn anthropic_cancel_midstream_discards_stream() {
     );
 }
 
-/// 同一 run 内跨方言热切换（37 号票泛型化 TurnDriver 的收口验证）：
+/// 同一 run 内跨方言热切换（泛型化 TurnDriver 的收口验证）：
 /// 第 1 拍 openai_chat，refresher 在第二拍前 swap 到 anthropic_messages
 /// wire + thinking 预算参数——第二拍请求落在 anthropic mock 且带
-/// thinking 预算与请求级 max_tokens（§11.4 参数面随方言切换生效）。
+/// thinking 预算与请求级 max_tokens（参数面随方言切换生效）。
 #[tokio::test]
 async fn cross_dialect_mid_run_switch_applies_on_next_request() {
     let mock_chat = MockOpenAI::start().await;

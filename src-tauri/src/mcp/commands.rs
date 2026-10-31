@@ -1,7 +1,7 @@
-//! MCP 命令实现（§3.3 #40–47 逐字；08 号票）+ TOFU 启动信任询问槽。
+//! MCP 命令实现 + TOFU 启动信任询问槽。
 //!
 //! TOFU 询问不属任何 run（管理页连接触发），因此挂在 AppState 的应用级槽表
-//! （`app_asks`，09 号票由本模块专用的 `mcp_asks`/`PendingTrustAsk` 泛化；
+//! （`app_asks`，由本模块专用的 `mcp_asks`/`PendingTrustAsk` 泛化；
 //! 元素 = backend/ask [`crate::backend::ask::AppAskSlot`]）而非
 //! RunHandle.ask；`resolve_ask` 命令在 run 槽未命中时落到这里。应答经既有
 //! [`crate::backend::ask::AskAnswer::Approval`]（optionId =
@@ -24,11 +24,11 @@ use crate::host::AppState;
 use crate::tools::ToolOutcome;
 use crate::util::errors::IpcError;
 
-/// MCP TOFU 询问槽（09 号票前的专用形状；现 = [`crate::backend::ask::AppAskSlot`]
-/// 别名，08 号票测试面沿用）。
+/// MCP TOFU 询问槽（前的专用形状；现 = [`crate::backend::ask::AppAskSlot`]
+/// 别名，测试面沿用）。
 pub type PendingTrustAsk = crate::backend::ask::AppAskSlot;
 
-/// mcpTrust 三选项（§3.2 options id 逐字）。
+/// mcpTrust 三选项（options id 与前端逐字一致）。
 fn trust_options() -> Vec<AskOption> {
     vec![
         AskOption {
@@ -52,9 +52,9 @@ fn trust_options() -> Vec<AskOption> {
     ]
 }
 
-// —— 命令契约类型（§3.3 #40–47；derive TS 进生成物）——
+// —— 命令契约类型（–47；derive TS 进生成物）——
 
-/// `mcp_list_config` 参数契约（§3.3 #40）。
+/// `mcp_list_config` 参数契约。
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -73,7 +73,7 @@ pub struct McpListConfigResult {
     pub project_available: bool,
 }
 
-/// `mcp_save_config` 参数契约（§3.3 #41）：整份保存一个作用域。
+/// `mcp_save_config` 参数契约：整份保存一个作用域。
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -84,7 +84,7 @@ pub struct McpSaveConfigArgs {
     pub config: McpConfigFile,
 }
 
-/// `mcp_connect` / `mcp_disconnect` / `mcp_reconnect` 参数契约（§3.3 #42–44）。
+/// `mcp_connect` / `mcp_disconnect` / `mcp_reconnect` 参数契约（–44）。
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -95,7 +95,7 @@ pub struct McpServerRefArgs {
     pub name: String,
 }
 
-/// `mcp_test` 参数契约（§3.3 #45）：草稿条目（不经保存直接试连）。
+/// `mcp_test` 参数契约：草稿条目（不经保存直接试连）。
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -115,7 +115,7 @@ pub struct McpTestTool {
     pub description: String,
 }
 
-/// `mcp_test` 返回契约（§3.3 #45）：ok + 工具清单或错误（总预算 60s）。
+/// `mcp_test` 返回契约：ok + 工具清单或错误（总预算 60s）。
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -130,7 +130,7 @@ pub struct McpTestResult {
     pub error: Option<String>,
 }
 
-/// `mcp_set_launch_trust` 参数契约（§3.3 #46）：管理页直接写/撤销信任。
+/// `mcp_set_launch_trust` 参数契约：管理页直接写/撤销信任。
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -141,14 +141,14 @@ pub struct McpSetLaunchTrustArgs {
     pub decision: LaunchDecision,
 }
 
-/// `mcp_snapshot` 参数契约（§3.3 #47，空参）。
+/// `mcp_snapshot` 参数契约（空参）。
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct McpSnapshotArgs {}
 
-/// `mcp_snapshot` 的单服务器行（§3.3 #47 逐字段 + 补充面：scope/detail/
-/// fingerprint/trustStatus 为 08 号票管理页数据面扩展）。
+/// `mcp_snapshot` 的单服务器行（逐字段 + 补充面：scope/detail/
+/// fingerprint/trustStatus 为 管理页数据面扩展）。
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -183,7 +183,7 @@ pub struct McpSnapshotResult {
 // —— AppState 侧的共享解析（host 装配面）——
 
 /// 当前项目上下文（project 作用域的解析面）：活跃会话归属的项目。
-/// 收敛点（票内记录）：设置页无会话参数，project 作用域锚定「当前活跃
+/// 收敛点：设置页无会话参数，project 作用域锚定「当前活跃
 /// 会话的项目」；无活跃会话/会话无项目 → project 不可用。
 pub fn project_context_of(app: &AppState) -> Option<(String, PathBuf)> {
     let session_id = app
@@ -204,7 +204,7 @@ fn config_store_of(app: &AppState) -> McpConfigStore {
 }
 
 /// 解析一个服务器条目：返回（配置, 连接键, 指纹）。信任计算读取配置文件
-/// 原始字节（§9.7 sha256(config) = 文件整体）。
+/// 原始字节（sha256(config) = 文件整体）。
 fn resolve_server(
     app: &AppState,
     scope: McpScope,
@@ -247,7 +247,7 @@ fn resolve_server(
     Ok((config, key, fingerprint))
 }
 
-/// TOFU 信任询问（§9.7）：无信任记录 → 挂 ask 槽 + ask:opened → 等应答。
+/// TOFU 信任询问：无信任记录 → 挂 ask 槽 + ask:opened → 等应答。
 /// 返回 Some(选项 id)（allow_once/remember）；deny/取消 → None。
 async fn ensure_launch_trust(
     app: &AppState,
@@ -341,17 +341,17 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
-/// TOFU 询问槽的应答投递（resolve_ask 的 run 槽未命中兜底；09 号票起收敛
-/// 为 [`AppState::resolve_app_ask`] 的薄包装——泛化桶共用一个投递面，08 号
-/// 票测试沿用本入口）。命中即取走槽位（oneshot 发送端不可克隆；取走后
+/// TOFU 询问槽的应答投递（resolve_ask 的 run 槽未命中兜底；起收敛
+/// 为 [`AppState::resolve_app_ask`] 的薄包装——泛化桶共用一个投递面，
+/// 测试沿用本入口）。命中即取走槽位（oneshot 发送端不可克隆；取走后
 /// 等待方收到应答并自清 ask:closed——见 [`ensure_launch_trust`] 的单一出口）。
 pub async fn resolve_trust_ask(app: &AppState, ask_id: &str, answer: AskAnswer) -> bool {
     app.resolve_app_ask(ask_id, answer)
 }
 
-// —— 8 个命令（§3.3 #40–47 逐字）——
+// —— 8 个命令 ——
 
-/// `mcp_list_config`（§3.3 #40）：双作用域原样配置。
+/// `mcp_list_config`：双作用域原样配置。
 #[tauri::command]
 pub(crate) async fn mcp_list_config(
     app: tauri::State<'_, AppState>,
@@ -379,7 +379,7 @@ pub fn mcp_list_config_core(app: &AppState) -> Result<McpListConfigResult, IpcEr
     })
 }
 
-/// `mcp_save_config`（§3.3 #41）：整份原子保存（未知字段随文件保真）。
+/// `mcp_save_config`：整份原子保存（未知字段随文件保真）。
 #[tauri::command]
 pub(crate) async fn mcp_save_config(
     app: tauri::State<'_, AppState>,
@@ -407,7 +407,7 @@ pub fn mcp_save_config_core(
     store.save(scope, config).map_err(IpcError::invalid_arg)
 }
 
-/// `mcp_connect`（§3.3 #42）：信任核验（TOFU）→ 发起连接（后台任务，
+/// `mcp_connect`：信任核验（TOFU）→ 发起连接（后台任务，
 /// 状态经 mcp:status 可见）。
 #[tauri::command]
 pub(crate) async fn mcp_connect(
@@ -440,7 +440,7 @@ pub async fn mcp_connect_core(app: &AppState, scope: McpScope, name: &str) -> Re
     }
 }
 
-/// `mcp_disconnect`（§3.3 #43）。
+/// `mcp_disconnect`。
 #[tauri::command]
 pub(crate) async fn mcp_disconnect(
     app: tauri::State<'_, AppState>,
@@ -457,7 +457,7 @@ pub fn mcp_disconnect_core(app: &AppState, scope: McpScope, name: &str) -> Resul
     Ok(())
 }
 
-/// `mcp_reconnect`（§3.3 #44）：断开重连（指纹变更会经 TOFU 重问——
+/// `mcp_reconnect`：断开重连（指纹变更会经 TOFU 重问——
 /// connect 内的 ensure_launch_trust 兜底）。
 #[tauri::command]
 pub(crate) async fn mcp_reconnect(
@@ -492,7 +492,7 @@ pub async fn mcp_reconnect_core(
     }
 }
 
-/// `mcp_test`（§3.3 #45）：草稿试连（initialize + tools/list），总预算
+/// `mcp_test`：草稿试连（initialize + tools/list），总预算
 /// 60s，不进池、不写信任（试连 = 只读探测）。
 #[tauri::command]
 pub(crate) async fn mcp_test(draft: McpTestArgs) -> Result<McpTestResult, IpcError> {
@@ -539,8 +539,8 @@ async fn test_once(config: &McpServerConfig) -> Result<Vec<McpTestTool>, String>
         .collect())
 }
 
-/// `mcp_set_launch_trust`（§3.3 #46）：决策写 `trust/mcp.json`（§7.7 trust
-/// 域；§9.7 keyring 字样已随 08 号票回写为文件存储）。
+/// `mcp_set_launch_trust`：决策写 `trust/mcp.json`（trust
+/// 域； keyring 字样已随 回写为文件存储）。
 #[tauri::command]
 pub(crate) async fn mcp_set_launch_trust(
     app: tauri::State<'_, AppState>,
@@ -551,7 +551,7 @@ pub(crate) async fn mcp_set_launch_trust(
 }
 
 /// mcp_set_launch_trust 主体。revoke 时连带撤销该服务器全部工具许可
-/// （服务器身份不可信 → 工具许可不得延续，Q44）。
+/// （服务器身份不可信 → 工具许可不得延续）。
 pub fn mcp_set_launch_trust_core(
     app: &AppState,
     fingerprint: &str,
@@ -570,7 +570,7 @@ pub fn mcp_set_launch_trust_core(
     Ok(())
 }
 
-/// `mcp_snapshot`（§3.3 #47）：配置 × 连接池 × 信任状态快照。
+/// `mcp_snapshot`：配置 × 连接池 × 信任状态快照。
 #[tauri::command]
 pub(crate) async fn mcp_snapshot(
     app: tauri::State<'_, AppState>,
@@ -674,6 +674,6 @@ pub fn state_of(
     app.mcp.state_of(&key)
 }
 
-/// 测试辅助：应用级 ask 槽表类型（AppState 构造面；09 号票随 `app_asks`
+/// 测试辅助：应用级 ask 槽表类型（AppState 构造面；随 `app_asks`
 /// 泛化改指 [`crate::backend::ask::AppAskSlot`]）。
 pub type TrustAskMap = std::collections::HashMap<String, PendingTrustAsk>;

@@ -1,16 +1,16 @@
-//! 用量落账与统计查询编排（§7.7/§3.3 #52，20 号票）：把「每次模型响应
+//! 用量落账与统计查询编排：把「每次模型响应
 //! 返回 usage」的贡献增量落到三个面——
 //!
 //! 1. **日/模型聚合**（`stats/<YYYY-MM-DD>.json`，匿名、90 天保留）；
-//! 2. **run/会话四口径明细**（`sessions/<sid>.usage.json`，Q37 权威恢复面）；
-//! 3. **stats_cache 写穿**（`cache/index.db`，§7.8 查询缓存；失败仅记日志）。
+//! 2. **run/会话四口径明细**（`sessions/<sid>.usage.json`，权威恢复面）；
+//! 3. **stats_cache 写穿**（`cache/index.db`，查询缓存；失败仅记日志）。
 //!
 //! 落账入口只有一个（[`UsageLedger::record`]），主 run 帧面（EventfulSink）、
 //! 子代理帧面（SubRunSink）与辅助调用（suggest/压缩）共用——调用方各自
 //! 保证「增量为本次调用的贡献」（累计 usage 帧先差分），本层不做二次折算
-//! （Q40：聚合与明细只计一次；重放/重连不经本入口，天然幂等）。
+//! （聚合与明细只计一次；重放/重连不经本入口，天然幂等）。
 //!
-//! 记账日（Q39）：[`local_today`] 取**当时**本地日期——每次落账独立取值，
+//! 记账日：[`local_today`] 取**当时**本地日期——每次落账独立取值，
 //! 跨午夜的 run 前后两拍自然分属两天；历史已落日期永不重算（切时区不改
 //! 历史文件）。
 
@@ -30,7 +30,7 @@ pub fn local_today() -> String {
     format!("{:04}-{:02}-{:02}", now.year(), now.month(), now.day())
 }
 
-/// run 明细的类别值（Q40）：主 run / 子代理 run / 辅助调用。
+/// run 明细的类别值：主 run / 子代理 run / 辅助调用。
 pub mod run_kind {
     pub const MAIN: &str = "main";
     pub const SUB: &str = "sub";
@@ -42,9 +42,9 @@ pub mod run_kind {
 pub struct UsageLedger {
     /// 日/模型聚合（真相面）。
     pub stats: Arc<StatsStore>,
-    /// run/会话四口径明细（Q37 权威恢复面）。
+    /// run/会话四口径明细（权威恢复面）。
     pub detail: Arc<UsageDetailStore>,
-    /// 派生索引库（stats_cache 查询缓存，§7.8；降级态自动直读真相面）。
+    /// 派生索引库（stats_cache 查询缓存，降级态自动直读真相面）。
     pub cache: Arc<crate::storage::index_db::IndexDb>,
 }
 
@@ -59,7 +59,7 @@ impl UsageLedger {
         }
     }
 
-    /// 落一笔用量贡献（Q39/Q40 单一入口）：记账日 = [`local_today`]。
+    /// 落一笔用量贡献（单一入口）：记账日 = [`local_today`]。
     /// 参数与语义见 [`Self::record_on_day`]。
     #[allow(clippy::too_many_arguments)]
     pub fn record(
@@ -84,10 +84,10 @@ impl UsageLedger {
         );
     }
 
-    /// 落账的可注入日期版本（Q39「当时本地日期」的生产取值在 [`Self::
+    /// 落账的可注入日期版本（「当时本地日期」的生产取值在 [`Self::
     /// record`]；测试注入固定日期验证跨午夜/切时区不重算）。任何一面失败
     /// 仅记日志不 panic（统计面不阻断 run 主链路）；落账成功后顺带做 90 天
-    /// 惰性清理（§7.7：无后台任务）。参数面为两个落账请求的并集
+    /// 惰性清理（无后台任务）。参数面为两个落账请求的并集
     /// （聚合身份 + 会话/run 身份），扁平传入保持单一调用出口的直读性。
     #[allow(clippy::too_many_arguments)]
     pub fn record_on_day(
@@ -113,7 +113,7 @@ impl UsageLedger {
             #[cfg(debug_assertions)]
             eprintln!("[craftwave] 日统计落账失败（session={session_id} day={day}）：{e}");
         }
-        // ② run/会话明细（Q37 权威面）
+        // ② run/会话明细（权威面）
         let detail_record = crate::storage::stats::RunUsageRecord {
             session_id,
             run_id,
@@ -126,7 +126,7 @@ impl UsageLedger {
             #[cfg(debug_assertions)]
             eprintln!("[craftwave] 会话用量明细落账失败（session={session_id}）：{e}");
         }
-        // ③ stats_cache 写穿（§7.8：失败仅记日志；read_day 重新加锁读一次，
+        // ③ stats_cache 写穿（失败仅记日志；read_day 重新加锁读一次，
         //    保证写进缓存的 = 真相面最新值）
         if !self.cache.degraded()
             && let Some(entry) = self.stats.read_day(day).models.get(model_id)
@@ -151,13 +151,13 @@ impl UsageLedger {
         }
     }
 
-    /// 统计查询（§3.3 #52 数据面）：`from`/`to` 为闭区间本地日期（None =
+    /// 统计查询（数据面）：`from`/`to` 为闭区间本地日期（None =
     /// 全部保留期）。优先 stats_cache（缺日回填），库降级直读
     /// `stats/*.json`（真相面）；两种路径的数字同源一致。
     pub fn query_range(&self, from: &str, to: &str) -> Vec<DailyStats> {
         let truth = self.stats.read_range(from, to);
         if self.cache.degraded() {
-            return truth; // 降级直读（§7.8）
+            return truth; // 降级直读
         }
         // 完整性校验：缓存行覆盖的日期集合与真相面不一致（重建后首次查询/
         // 写穿失败缺日）→ 全量回填再读缓存

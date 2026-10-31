@@ -1,4 +1,4 @@
-//! 【38 号票】本地 Anthropic Messages 兼容 mock SSE 服务：脚本化输出
+//! 本地 Anthropic Messages 兼容 mock SSE 服务：脚本化输出
 //! Anthropic 流协议事件序列（thinking delta / text delta / tool_use 的
 //! input_json_delta 增量含分段 JSON），无网络、无 API key。仅测试编译
 //! 单元（tests/）可见，不进产物。

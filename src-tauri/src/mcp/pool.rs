@@ -1,23 +1,23 @@
-//! MCP 连接池（FR-08-05，§9.7 字段级；08 号票）。
+//! MCP 连接池。
 //!
 //! 连接池 = 每个已配置服务器的连接生命周期管家：
-//! - **key 与容量**：key = `(scope, projectId, name, canonicalPath)`（§9.7），
+//! - **key 与容量**：key = `(scope, projectId, name, canonicalPath)`，
 //!   LRU 上限 16（超容驱逐「非期望保持 + 最久未用」优先的条目）；
 //! - **状态机**：`Starting → Ready → Stopped/Error`，每次迁移发
-//!   `mcp:status` 事件（§3.5 M2 键，payload `{scope, name, state, detail?}`）；
+//!   `mcp:status` 事件（M2 键，payload `{scope, name, state, detail?}`）；
 //! - **generation 计数**：每次连接动作（connect/reconnect）递增，旧握手与
 //!   旧断线回调发现 generation 已过期即丢弃——防"旧握手复活"（重连后旧
 //!   初始化回调把状态改回 Ready）；
 //! - **断线自动重连**：连接结束（server 退出/传输关闭）→ Error → 指数
 //!   退避（1s/2s/4s…封顶 60s）重连；用户显式 disconnect 后 desired=false
 //!   停止重连；重连前重核启动信任（指纹不在信任表 → 停在 Error，等用户
-//!   重新走 TOFU，§9.7"指纹变更重问"）；
-//! - **结果未知不重放**（Q14，§9.7）：已发出而结果未知的工具调用返回
+//!   重新走 TOFU，"指纹变更重问"）；
+//! - **结果未知不重放**：已发出而结果未知的工具调用返回
 //!   可辨识的 `E_MCP_RESULT_UNKNOWN`（"可能已执行"），由主代理先核查再
 //!   决定重试；本层与上层都不得经通用失败重试路径重发。
 //!
 //! stdio 子进程：process-wrap 套进程组（Unix，子进程为组长）/Job Object
-//! （Windows）+ KillOnDrop，断开/超时经组级信号整树收割（与 §8.8 命令
+//! （Windows）+ KillOnDrop，断开/超时经组级信号整树收割（与 命令
 //! 治理同款语义；直接子进程另有 tokio kill_on_drop 兜底防孤儿）。
 
 use std::collections::HashMap;
@@ -38,7 +38,7 @@ use crate::tools::{ToolAnnotations, ToolOutcome};
 use crate::util::errors::{E_INVALID_ARG, ToolError};
 use crate::util::events::EventSink;
 
-/// 新增错误码（§3.6，08 号票补录）：
+/// 新增错误码（补录）：
 /// - `E_MCP_DISCONNECTED`：连接不在 Ready 或请求明确未完成，调用**未执行**
 ///   （普通失败，模型可直接重试）；
 /// - `E_MCP_RESULT_UNKNOWN`：调用**已发出**但连接断开/超时，结果未知——
@@ -47,7 +47,7 @@ use crate::util::events::EventSink;
 pub const E_MCP_DISCONNECTED: &str = "E_MCP_DISCONNECTED";
 pub const E_MCP_RESULT_UNKNOWN: &str = "E_MCP_RESULT_UNKNOWN";
 
-/// 连接池容量上限（§9.7 LRU ≤16）。
+/// 连接池容量上限（LRU ≤16）。
 pub const POOL_CAPACITY: usize = 16;
 
 /// 断线重连退避基数（1s → 2s → 4s → … 封顶 60s）。
@@ -57,7 +57,7 @@ const RECONNECT_CAP: Duration = Duration::from_secs(60);
 /// stdio 启动与 HTTP 握手的初始化超时。
 const INIT_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// 连接状态机（§9.7 Starting→Ready→Stopped/Error；§3.5 事件载荷字符串面）。
+/// 连接状态机（Starting→Ready→Stopped/Error； 事件载荷字符串面）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnState {
     /// 连接建立中（spawn/握手）。
@@ -71,7 +71,7 @@ pub enum ConnState {
 }
 
 impl ConnState {
-    /// 事件载荷字符串（§3.5："starting"|"ready"|"stopped"|"error"）。
+    /// 事件载荷字符串（"starting"|"ready"|"stopped"|"error"）。
     pub fn as_str(self) -> &'static str {
         match self {
             ConnState::Starting => "starting",
@@ -99,7 +99,7 @@ pub(crate) struct LiveConn {
     pub(crate) reaper: Option<Box<dyn process_wrap::tokio::ChildWrapper>>,
 }
 
-/// stdio 子进程的整树收割（复用 §8.8 收割语义）。
+/// stdio 子进程的整树收割（复用 收割语义）。
 async fn reap_child(mut child: Box<dyn process_wrap::tokio::ChildWrapper>) {
     #[cfg(unix)]
     if let Some(pid) = child.id() {
@@ -158,7 +158,7 @@ pub struct McpHost {
     events: Arc<dyn EventSink>,
     /// 启动信任存储（`trust/mcp.json`）。
     pub trust: TrustStore,
-    /// 工具级许可存储（`trust/mcp-tools.json`，Q44）。
+    /// 工具级许可存储（`trust/mcp-tools.json`）。
     pub licenses: super::trust::ToolLicenseStore,
     /// 数据目录（`~/.craftwave`）。
     data_dir: std::path::PathBuf,
@@ -208,7 +208,7 @@ impl McpHost {
             .map(|e| (e.state, e.detail.clone()))
     }
 
-    /// 连接池快照（§3.3 #47 mcp_snapshot）。
+    /// 连接池快照（mcp_snapshot）。
     pub fn snapshot(&self) -> Vec<McpServerSnapshot> {
         self.inner
             .lock()
@@ -229,7 +229,7 @@ impl McpHost {
     }
 }
 
-/// mcp_snapshot 的单服务器行（§3.3 #47：{name, state, toolCount} + 补充面）。
+/// mcp_snapshot 的单服务器行（{name, state, toolCount} + 补充面）。
 #[derive(Debug, Clone)]
 pub struct McpServerSnapshot {
     /// 配置名。
@@ -344,7 +344,7 @@ impl McpHost {
         self.emit_status(key, state, detail);
     }
 
-    /// 发 mcp:status 事件（§3.5 载荷逐字）。
+    /// 发 mcp:status 事件（载荷逐字）。
     fn emit_status(&self, key: &ConnKey, state: ConnState, detail: Option<String>) {
         self.events.emit(
             crate::util::events::keys::MCP_STATUS,
@@ -389,7 +389,7 @@ impl McpHost {
     ) {
         host.set_state(&key, generation, ConnState::Starting, None);
         // 重连路径的信任重核：指纹不在信任表（配置变过/被撤销）→ 不连接，
-        // 停在 Error 等用户重新走 TOFU（§9.7"指纹变更重问"）。
+        // 停在 Error 等用户重新走 TOFU（"指纹变更重问"）。
         if !host.trust.is_trusted(&fingerprint) {
             host.set_state(
                 &key,
@@ -408,7 +408,7 @@ impl McpHost {
                         let registered =
                             host.registry()
                                 .sync(key.clone(), fingerprint.clone(), &config, tools);
-                        // 服务器级 always_allow 的自动授权（Q44）：清单同步
+                        // 服务器级 always_allow 的自动授权：清单同步
                         // 后批量授予许可；schema 有未确认变更（许可表存在
                         // 同工具不同 hash 的记录）的工具不自动放行，等用户
                         // 首次调用重新确认。
@@ -512,7 +512,7 @@ impl McpHost {
                         }
                         // 挂工具清单订阅（rmcp 3.8 的 subscriptions/listen
                         // 机制）：server 发 tools/list_changed → 重拉清单
-                        // 热更新注册表（FR-08-06）。订阅失败不影响连接
+                        // 热更新注册表。订阅失败不影响连接
                         // （热同步退化为下次重连后全量同步，尽力而为）。
                         {
                             let sub_peer = host
@@ -737,7 +737,7 @@ impl McpHost {
         entry.live.as_ref().map(|l| l.peer.clone())
     }
 
-    /// 服务器级 always_allow 的许可自动授权（Q44）：对清单里的每个工具，
+    /// 服务器级 always_allow 的许可自动授权：对清单里的每个工具，
     /// 许可表无「同工具不同 hash 的未确认记录」时授予当前版本许可——
     /// schema 变更未经用户确认（审批「始终允许」）的工具不自动放行；
     /// read_only 工具天然走矩阵，授予无害（记录即确认痕迹）。
@@ -756,7 +756,7 @@ impl McpHost {
     }
 }
 
-/// 工具调用（执行器 dispatch 入口）：结果未知语义在此收口（Q14）。
+/// 工具调用（执行器 dispatch 入口）：结果未知语义在此收口。
 ///
 /// - 归一名反查失败 → E_INVALID_ARG（未知动态工具）；
 /// - 参数非对象 → E_INVALID_ARG（MCP 规范：参数是 JSON 对象或 null）；
@@ -812,7 +812,7 @@ pub async fn call_tool(host: &McpHost, normalized_name: &str, args_json: &str) -
     let mut request =
         CallToolRequestParams::new(std::borrow::Cow::Owned(identity.original_name.clone()));
     request.arguments = arguments;
-    // —— 从这里起请求已发出：任何「没拿到结果」的收场都是结果未知（Q14）。
+    // —— 从这里起请求已发出：任何「没拿到结果」的收场都是结果未知。
     let timeout = identity.call_timeout;
     match tokio::time::timeout(timeout, peer.call_tool(request)).await {
         Ok(Ok(call_result)) => {
@@ -877,8 +877,8 @@ pub async fn call_tool(host: &McpHost, normalized_name: &str, args_json: &str) -
     }
 }
 
-/// 「可能已执行」的可辨识结果（Q14）：ok=false + E_MCP_RESULT_UNKNOWN，
-/// 行动指引写在错误消息里（§8.2：要求模型据此行动的结论进模型通道）；
+/// 「可能已执行」的可辨识结果：ok=false + E_MCP_RESULT_UNKNOWN，
+/// 行动指引写在错误消息里（要求模型据此行动的结论进模型通道）；
 /// detail 带结构化标记供 UI 与边车识别。
 fn result_unknown(identity: &McpToolIdentity, reason: String) -> ToolOutcome {
     ToolOutcome {
@@ -932,7 +932,7 @@ pub(crate) async fn list_tools(
                 tool.name.to_string(),
                 tool.description.as_deref().unwrap_or("").to_owned(),
                 tool.schema_as_json_value(),
-                // 注解仅作元数据透传（远端 annotations 不提权，§9.7 Q44）。
+                // 注解仅作元数据透传（远端 annotations 不提权）。
                 ToolAnnotations {
                     read_only_hint: annotations.is_some_and(|a| a.read_only_hint.unwrap_or(false)),
                     destructive_hint: annotations
@@ -947,7 +947,7 @@ pub(crate) async fn list_tools(
         .collect())
 }
 
-/// 草稿试连的临时连接（§3.3 #45 mcp_test）：持有连接句柄，Drop 时取消
+/// 草稿试连的临时连接（mcp_test）：持有连接句柄，Drop 时取消
 /// 服务任务并收割 stdio 子进程（不进池、不发状态事件）。
 pub(crate) struct TestConnection {
     /// 请求出口（tools/list 用）。
@@ -989,7 +989,7 @@ pub(crate) async fn open_for_test(
     })
 }
 
-/// 按配置打开一条连接（stdio / streamable HTTP 双传输，FR-08-01）。
+/// 按配置打开一条连接（stdio / streamable HTTP 双传输）。
 /// 返回就绪连接句柄（initialize 握手完成）。
 pub(crate) async fn open_connection(
     config: &McpServerConfig,
@@ -1116,7 +1116,7 @@ impl LiveConn {
 }
 
 /// tools/list_changed 通知的客户端处理器：重拉清单热更新注册表并重导
-/// toolSpecs（FR-08-06）。generation 过期（重连后旧连接的迟到通知）丢弃。
+/// toolSpecs。generation 过期（重连后旧连接的迟到通知）丢弃。
 #[derive(Clone)]
 pub(crate) struct ListChangedHandler {
     host: Arc<McpHost>,
@@ -1144,7 +1144,7 @@ impl rmcp::ClientHandler for ListChangedHandler {
     }
 }
 
-// McpHost 的清单热同步（FR-08-06：tools/list_changed → 重拉清单 → 热更新
+// McpHost 的清单热同步（tools/list_changed → 重拉清单 → 热更新
 // 注册表并重导 toolSpecs）。
 impl McpHost {
     /// 清单热同步入口（订阅流与兜底回调共用）。generation 复核：旧连接
@@ -1195,7 +1195,7 @@ impl McpHost {
             let registered = self
                 .registry()
                 .sync(key.clone(), fingerprint.clone(), &config, tools);
-            // 清单热同步的 always_allow 自动授权（Q44）：与连接建立同规——
+            // 清单热同步的 always_allow 自动授权：与连接建立同规——
             // schema 有未确认变更的工具不自动放行。
             if config.always_allow {
                 self.auto_grant_licenses(key, &fingerprint);

@@ -1,20 +1,19 @@
-//! run 主循环（技术设计文档 §5.2）+ 工具批的审批挂起机制 + 取消传播的
-//! 收齐语义（§5.3）+ 受控并发批次调度（§5.4 ⑤，07 号票）。
+//! run 主循环 + 工具批的审批挂起机制 + 取消传播的
+//! 收齐语义 + 受控并发批次调度。
 //!
 //! 名词解释：run = 一次模型任务的完整执行；主循环（RunLoop）= 驱动这个
 //! 过程的循环——反复"调模型 → 执行工具批 → 再调模型"，直到模型给出最终
 //! 答复；AgentRun 是 rig 库提供的可步进、可序列化的任务状态机，本模块
 //! 一步步驱动它，同时生产帧（后端发给前端的事件消息）。
 //!
-//! 本模块由早期验证原型（`spike/turn.rs` 的手动循环与 `spike/cancel.rs` 的
-//! 取消版）产品化而来，当前版本要点：
-//! - 工具批的门控预判（§5.4 ①–④）：先对整批调用做完审批判定再执行——
+//! 本模块要点：
+//! - 工具批的门控预判（步骤①–④）：先对整批调用做完审批判定再执行——
 //!   首个需挂起项即挂起（**挂起时批内零执行**；恢复后主循环原样重放
 //!   全部调用，因此不存在重复副作用）；硬拦项回喂错误结果帧（不中断 run）；
-//! - **策略门（Q35/Q42，07 号票）**：批内含 ask（Interactive 能力）时只
+//! - **策略门**：批内含 ask（Interactive 能力）时只
 //!   执行源序首个 ask，其余调用（含其余 ask）明确回喂"未执行"
 //!   （E_TOOL_SKIPPED）——先筛选再门控预判，被跳过项不申请审批；
-//! - **受控并发执行（§5.4 ⑤，07 号票）**：批内 Allow 项交执行器的批次
+//! - **受控并发执行（门控步骤⑤）**：批内 Allow 项交执行器的批次
 //!   契约（[`CancellableExecutor::execute_batch`]，生产实现 = FileWrite
 //!   全局互斥串行 + 其余信号量并发），结果按源序收集后统一发帧回喂；
 //! - [`DriveState`]：跨挂起/恢复延续的驱动状态（计时、用量累计、工具
@@ -42,16 +41,16 @@ use super::turn::{StreamExit, TurnDriver, usage_total};
 use super::watchdog::{RunWatchdog, StallGuard, WatchdogAction, is_model_delta};
 use crate::util::errors::E_RUN_STALLED;
 
-/// 被取消工具的结果帧补挂的错误码（§3.4 toolResult.error.code 与 §3.6
+/// 被取消工具的结果帧补挂的错误码（toolResult.error.code 与
 /// 错误码注册表中的取消错误）。
 pub const E_CANCELLED: &str = "E_CANCELLED";
 
-/// ask 混批（Q35/Q42）与同批写冲突（Q32）中被跳过调用的错误码（§3.6，
-/// 07 号票）：工具级失败回喂"未执行"，模型据说明重新决定或纠正。
+/// ask 混批与同批写冲突中被跳过调用的错误码：
+/// 工具级失败回喂"未执行"，模型据说明重新决定或纠正。
 const E_TOOL_SKIPPED: &str = "E_TOOL_SKIPPED";
 
 /// 工具执行产物：帧面（给界面）与模型回喂面（给模型）的双通道裁剪
-/// （§8.2 双通道在主循环侧的形状）。
+/// （双通道在主循环侧的形状）。
 #[derive(Debug, Clone, PartialEq)]
 pub enum ToolExecution {
     /// 执行完毕（成功或工具级失败——失败也是收齐的结果，回喂模型促其纠正）。
@@ -62,17 +61,17 @@ pub enum ToolExecution {
         ui_summary: String,
         /// 错误面（失败时携带）。
         error: Option<FrameError>,
-        /// 模型通道的压缩文本（§8.2：成功时序列化数据；失败时为
+        /// 模型通道的压缩文本（成功时序列化数据；失败时为
         /// 错误码 + 消息）。
         model_text: String,
     },
     /// 取消终止：`executed=false` 为批内尚未执行（补标记不留悬空调用）；
-    /// `executed=true` 为执行中途被收割（§5.3：已产生副作用的文件写不回滚）。
-    /// 并发批（07 号票）中两态分别对应"未派发"与"在飞被收割"。
+    /// `executed=true` 为执行中途被收割（已产生副作用的文件写不回滚）。
+    /// 并发批中两态分别对应"未派发"与"在飞被收割"。
     Cancelled { executed: bool, message: String },
 }
 
-/// 一批待执行调用中的单项（源序；07 号票批次执行契约的输入单元）。
+/// 一批待执行调用中的单项（源序；批次执行契约的输入单元）。
 #[derive(Debug, Clone)]
 pub struct BatchCall {
     /// 模型侧调用 id。
@@ -83,7 +82,7 @@ pub struct BatchCall {
     pub args_json: String,
 }
 
-/// 取消可感知的工具执行器契约（§5.4 门控与执行在 backend 侧的接口；
+/// 取消可感知的工具执行器契约（门控与执行在 backend 侧的接口；
 /// 生产实现见 [`super::exec::ToolsetExecutor`]，command 工具在实现内部
 /// 以取消令牌 select! 收割进程组——原语见 `tools::process`）。
 pub trait CancellableExecutor: Send + Sync {
@@ -96,13 +95,13 @@ pub trait CancellableExecutor: Send + Sync {
         token: &'a CancellationToken,
     ) -> Pin<Box<dyn Future<Output = ToolExecution> + Send + 'a>>;
 
-    /// 执行一批工具调用（§5.4 ⑤，07 号票批次契约）：返回结果与 `batch`
+    /// 执行一批工具调用（门控步骤⑤，批次契约）：返回结果与 `batch`
     /// 按**源序**一一对应（完成顺序不改序——并发实现 JoinSet 收集后按下标
-    /// 重排）。取消收齐语义（§5.3 并发版）由实现保证：cancel 置位 → 停止
+    /// 重排）。取消收齐语义（并发版）由实现保证：cancel 置位 → 停止
     /// 派发未开始任务 → join 全部在飞任务，未派发项以
     /// `Cancelled { executed: false }` 收口。
     ///
-    /// 默认实现 = 逐个串行（M1 语义）：测试假执行器与未覆写实现沿用，
+    /// 默认实现 = 逐个串行：测试假执行器与未覆写实现沿用，
     /// 生产 [`super::exec::ToolsetExecutor`] 覆写为受控并发 + 同批写冲突
     /// 检测 + FileWrite 全局互斥。
     fn execute_batch<'a>(
@@ -131,7 +130,7 @@ pub trait CancellableExecutor: Send + Sync {
     }
 }
 
-/// 工具门控判定接口（§5.4 步骤①–④）。`Allow` 直接执行；`Suspend` 表示需
+/// 工具门控判定接口（门控步骤①–④）。`Allow` 直接执行；`Suspend` 表示需
 /// 审批/围栏确认——主循环把整只 run 序列化（把内存对象转成 JSON 文本保存
 /// 现场）后挂起并返回 [`RunExit::Suspended`]，宿主拿到审批应答后反序列化
 /// 恢复继续（跨重启恢复天然支持，早期原型已验证）；`Blocked` 硬拦（围栏
@@ -148,9 +147,9 @@ pub enum GateVerdict {
     /// 放行：直接执行。
     Allow,
     /// 挂起等待审批（`fence_reason`：围栏要求确认的写信号原因；`external_dir`：
-    /// 外部目录授权目标（24 号票，§9.9——roots 外路径须"始终允许"授权该
-    /// 目录及子目录）；`plan_scope`：计划范围门的计划外写路径（25 号票，
-    /// §8.6——已批准计划基线外的写入须用户确认范围）。三者互斥，最多一个
+    /// 外部目录授权目标——roots 外路径须"始终允许"授权该
+    /// 目录及子目录；`plan_scope`：计划范围门的计划外写路径——
+    /// 已批准计划基线外的写入须用户确认范围。三者互斥，最多一个
     /// Some）。
     Suspend {
         fence_reason: Option<String>,
@@ -184,17 +183,17 @@ pub struct PendingCall {
     pub args_json: String,
     /// 围栏要求确认的写信号原因（None = 纯权限矩阵审批）。
     pub fence_reason: Option<String>,
-    /// 外部目录授权目标（24 号票，§9.9）：Some = 外部目录授权挂起（载荷
+    /// 外部目录授权目标：Some = 外部目录授权挂起（载荷
     /// 形态 externalDir，恢复循环在允许后调 allow_external_dir 并入会话
     /// roots 快照）；None = 普通审批/围栏挂起。
     pub external_dir: Option<String>,
-    /// 计划范围门的计划外写路径（25 号票，§8.6）：Some = 范围门挂起（载荷
+    /// 计划范围门的计划外写路径：Some = 范围门挂起（载荷
     /// 形态 approval.planScope，恢复循环在 allow_once 放行 / always_session
     /// 把目标父目录并入会话基线扩展）；None = 非范围门挂起。
     pub plan_scope: Option<String>,
 }
 
-/// 计划提醒的触发阈值（FR-06-04，附录 B 定 N=8，25 号票）：根会话每累计
+/// 计划提醒的触发阈值（N=8）：根会话每累计
 /// 8 次变更工具未伴随 plan:update → 下一拍请求注入一次性提醒。
 pub const PLAN_REMINDER_EVERY: u32 = 8;
 
@@ -207,7 +206,7 @@ pub struct DriveState {
     /// run 的用量累计（各轮相加）。
     pub total_usage: UsageTotal,
     /// 最近一次模型请求的真实输入 token 数（usage 收口时刷新；ask 关闭后
-    /// 压缩触发点的占用估算基准，§6.2 触发点②）。
+    /// 压缩触发点的占用估算基准）。
     pub last_input: u64,
     /// 已执行的工具调用计数。
     pub tool_count: u32,
@@ -215,11 +214,11 @@ pub struct DriveState {
     pub last_turn: u32,
     /// 模型调用 id → 桥接帧面 id 映射（挂起时带出、恢复时播种新桥接器）。
     pub model_call_ids: HashMap<String, String>,
-    /// 监督看门狗状态（§5.7，37 号票）：工具结果滑动窗口 + 无进展计数 +
+    /// 监督看门狗状态：工具结果滑动窗口 + 无进展计数 +
     /// 各信号纠偏水位。挂在驱动状态上跨审批挂起延续——恢复不丢历史、
     /// 重放批不重复计数（挂起时批内零执行，恢复后原样执行一次）。
     pub watchdog: RunWatchdog,
-    /// 计划提醒开关（FR-06-04，25 号票，§8.6）：仅根会话 run 装配为 true
+    /// 计划提醒开关：仅根会话 run 装配为 true
     ///（宿主 start_chat 构造初始 DriveState 时置位）；子代理 run 用缺省
     /// Default（false）——"根会话"口径，子会话不计数不提醒。缺省 false
     /// 保证既有测试装配（resume: None）零行为漂移。
@@ -233,7 +232,7 @@ pub struct DriveState {
 /// 主循环的退出态。
 #[derive(Debug)]
 pub enum RunExit {
-    /// 自然终态（§5.3 Streaming → Done）。
+    /// 自然终态（Streaming → Done）。
     Done(Box<PromptResponse>),
     /// 取消终态：工具结果已全部收齐并补上标记，runEnded(cancelled) 已发出。
     Cancelled,
@@ -242,19 +241,19 @@ pub enum RunExit {
     /// 恢复重放无重复副作用）。Box 收纳大负载（避免枚举整体变大，
     /// clippy large_enum_variant）。
     Suspended(Box<SuspendedInfo>),
-    /// 看门狗终止终态（§5.7，37 号票）：runEnded(error, E_RUN_STALLED) 已由
+    /// 看门狗终止终态：runEnded(error, E_RUN_STALLED) 已由
     /// [`drive_run`] 发出（已输出内容与工具结果帧保留、不撤回，触发批的
     /// 已执行工具不重放副作用）；message 说明停滞或重复失败原因，宿主随
-    /// `run:error` 事件带出、followUp 队列按失败暂停（§5.5）。
+    /// `run:error` 事件带出、followUp 队列按失败暂停。
     Stalled { message: String },
-    /// 每拍请求刷新失败终态（18 号票，§11.1 运行中切换的预算重查）：常见
-    /// 为切到窗口更小的模型后现有上下文放不下（E_CONTEXT_OVERFLOW，§6.2
+    /// 每拍请求刷新失败终态（运行中切换的预算重查）：常见
+    /// 为切到窗口更小的模型后现有上下文放不下（E_CONTEXT_OVERFLOW，
     /// 兜底语义——暂停保留输入）。runEnded(error, {code, message}) 已由
     /// [`drive_run`] 发出，宿主按失败分流（`run:error` 事件 + 队列暂停）。
     Failed { code: String, message: String },
 }
 
-/// 每拍模型请求前的刷新契约（18 号票，FR-02-07 修正案 / §11.1）：
+/// 每拍模型请求前的刷新契约（"下一请求生效"）：
 /// "下一请求生效"覆盖同一 run 内的下一次模型请求——每拍 CallModel 前
 /// [`drive_run`] 调用宿主实现，宿主读最新会话偏好，需要时替换模型客户端
 /// （`TurnDriver::swap_model`）与请求参数（`TurnDriver::update_spec`），
@@ -272,10 +271,10 @@ pub trait RequestRefresher: Send + Sync {
     fn before_request(&self, state: &DriveState) -> Result<(), RefreshFailure>;
 }
 
-/// 刷新失败（§3.6 错误码面）。
+/// 刷新失败（错误码面）。
 #[derive(Debug, Clone)]
 pub enum RefreshFailure {
-    /// 切换后的模型窗口装不下现有上下文 + 回复预留（§6.2：暂停保留输入，
+    /// 切换后的模型窗口装不下现有上下文 + 回复预留（暂停保留输入，
     /// 提示压缩或新会话）。
     ContextOverflow { estimated: u64, window: u64 },
     /// 其他刷新失败（模型解析失败等，参数面问题——E_INVALID_ARG 面向上抛
@@ -284,7 +283,7 @@ pub enum RefreshFailure {
 }
 
 impl RefreshFailure {
-    /// (错误码, 消息)（§3.6）。
+    /// (错误码, 消息)。
     fn parts(&self) -> (&'static str, String) {
         match self {
             RefreshFailure::ContextOverflow { estimated, window } => (
@@ -310,7 +309,7 @@ pub struct SuspendedInfo {
     pub state: DriveState,
 }
 
-/// 审批挂起机制的基础：把整只 run 序列化为 JSON 文本（§5.2）。
+/// 审批挂起机制的基础：把整只 run 序列化为 JSON 文本。
 pub fn suspend_run(run: &AgentRun) -> serde_json::Result<String> {
     serde_json::to_string(run)
 }
@@ -321,7 +320,7 @@ pub fn resume_run(run_json: &str) -> serde_json::Result<AgentRun> {
     serde_json::from_str(run_json)
 }
 
-/// steer 插话源（§5.5，06 号票）：RunLoop 在 turn 边界（工具批结果回喂后、
+/// steer 插话源：RunLoop 在 turn 边界（工具批结果回喂后、
 /// 下一次模型调用前）经它取一条插话注入下一请求。副作用（canonical 落盘 +
 /// `run:inject` 回执事件）收在宿主实现里——backend 层只见纯文本的取出口，
 /// 不依赖存储与事件汇。测试直驱路径传 None（无插话源）。
@@ -332,36 +331,36 @@ pub trait SteerSource: Send + Sync {
     fn take(&self, turn: u32) -> Option<String>;
 }
 
-/// 主循环驱动（§5.2 的"每轮"循环 + §3.4 的帧生产）：
+/// 主循环驱动（"每轮"循环 + 帧生产）：
 ///
 /// - 首次调用（`resume` 为 None）发 runStarted 起手帧；恢复调用延续
 ///   [`DriveState`]（不重发 runStarted、用量与计数延续）；
 /// - CallModel（调模型）：发 stepStarted → 流式调用（增量经 64ms 节流器
-///   出帧）→ 收口发 usage 帧（§10.5 累计口径，rate = 本轮输出速度，
+///   出帧）→ 收口发 usage 帧（累计口径，rate = 本轮输出速度，
 ///   token/秒）→ 收尾 flush；
-/// - **模型停滞看门狗（§5.7 计时边界，Q33，37 号票）**：停滞计时随单次模型
+/// - **模型停滞看门狗（计时边界）**：停滞计时随单次模型
 ///   请求生灭——`stall_timeout` 从请求发出起算，`select!` 让流式调用与停滞
 ///   截止竞争，有效模型增量（三类增量帧）刷新计时，停滞胜出即丢弃在飞
 ///   HTTP 流（与取消同形）按 E_RUN_STALLED 终止；工具执行、审批挂起等待、
 ///   子代理等待不在计时生命周期内（各阶段 `drive_run` 已退出）；
-/// - **工具窗口看门狗（§5.7，37 号票）**：工具批收口（结果回喂前）把结果
+/// - **工具窗口看门狗**：工具批收口（结果回喂前）把结果
 ///   记入滑动窗口并做 turn 边界评估——纠偏注入 hidden system 提示（下一拍
 ///   CallModel 的请求面 history，不落 canonical），终止按 E_RUN_STALLED
 ///   收尾（runEnded(error) 只发一次，已输出内容与工具结果保留）；
-/// - **steer 消费（§5.5，06 号票）**：非首拍的 CallModel 前（即上一 turn
+/// - **steer 消费**：非首拍的 CallModel 前（即上一 turn
 ///   已收尾——工具批结果回喂后）经 `steer` 取一条插话，以 user 消息追加进
 ///   本拍请求的 history（落盘与回执副作用在宿主实现内）；
-/// - **每拍请求刷新（§11.1，18 号票）**：每拍 CallModel 前经 `refresh`
+/// - **每拍请求刷新**：每拍 CallModel 前经 `refresh`
 ///   询问宿主（会话模型/thinking 偏好可能已变）——宿主换模型/换参数后
 ///   本拍即用新组合；刷新失败按 [`RunExit::Failed`] 终止（预算越界暂停
 ///   保留输入）；
 /// - CallTools（执行工具批）：**先策略门筛选、再整批判定、后受控并发**
-///   （§5.4 ①–⑤，07 号票）——批内含 ask 时只执行源序首个 ask（其余回喂
+///   （门控步骤①–⑤）——批内含 ask 时只执行源序首个 ask（其余回喂
 ///   E_TOOL_SKIPPED"未执行"）；真正执行的调用中首个 Suspend 即把整只 run
 ///   序列化挂起（批内零执行）；Blocked 回喂错误结果；其余交执行器批次
 ///   契约并发执行（FileWrite 全局互斥串行 + 其余信号量限流），结果收集后
 ///   **按源序**发 toolResult 帧（调用 id 经桥接映射与流式三帧同源）；
-/// - 取消（§5.3）：流中取消即收尾 flush + runEnded(cancelled)；工具批内
+/// - 取消：流中取消即收尾 flush + runEnded(cancelled)；工具批内
 ///   任一任务报告取消（或批次执行前已取消）→ 未派发/未执行项补
 ///   E_CANCELLED，全部收齐后才发终态帧；
 /// - Done：runEnded(done) 必为最后一帧。
@@ -402,14 +401,14 @@ where
     let mut bridge = RigEventBridge::new();
     bridge.seed_model_call_ids(state.model_call_ids.clone());
 
-    // 看门狗的跨拍状态（37 号票，§5.7）：
+    // 看门狗的跨拍状态：
     // - 纠偏提示待注入（上一工具批评估产生，下一拍 CallModel 注入请求面
     //   history——hidden system 提示，不落 canonical、不进用户可见树）；
     // - 本轮模型输出是否出现过正文增量（textDelta；无进展信号的数据源之一，
     //   推理增量不算——向用户可见的输出才算进展）。
     let mut pending_corrective: Option<String> = None;
     let mut turn_had_text = false;
-    // 计划提醒待注入（FR-06-04，25 号票，§8.6）：变更工具计数达阈值后置位，
+    // 计划提醒待注入：变更工具计数达阈值后置位，
     // 下一拍 CallModel 以 hidden system 消息一次性注入（一次性 = take 后不
     // 重发；不产生工具结果帧、不阻塞）。仅 plan_reminder_enabled 的根会话
     // run 计数（子代理缺省关闭）。
@@ -424,11 +423,11 @@ where
                 turn,
             } => {
                 state.last_turn = turn as u32;
-                // 每拍请求刷新（§11.1，18 号票）：会话模型/thinking 偏好在
+                // 每拍请求刷新：会话模型/thinking 偏好在
                 // 上一拍结束后可能已变——宿主实现重读偏好并按需换模型客户端
-                // 与请求参数（FR-02-07「下一请求生效」= 同 run 内的下一次
+                // 与请求参数（「下一请求生效」= 同 run 内的下一次
                 // 模型请求，不只下一次 start_chat）。失败按 E_CONTEXT_
-                // OVERFLOW 等错误码终止（§6.2 暂停保留输入语义）。
+                // OVERFLOW 等错误码终止（暂停保留输入语义）。
                 if let Some(refresh) = refresh
                     && let Err(failure) = refresh.before_request(&state)
                 {
@@ -445,7 +444,7 @@ where
                         message,
                     });
                 }
-                // steer 消费点（§5.5，06 号票）：turn 边界 = 上一拍已收尾
+                // steer 消费点：turn 边界 = 上一拍已收尾
                 // （turn > 1 意味着走完了「模型输出 → 工具批回喂」的边界）。
                 // 首拍（turn == 1）不消费——插话不并入模型见到的第一批输入。
                 let mut history = history;
@@ -456,13 +455,13 @@ where
                         content: vec![rig::message::UserContent::text(text)],
                     }));
                 }
-                // 纠偏注入（§5.7，37 号票）：上一工具批评估出的 hidden system
+                // 纠偏注入：上一工具批评估出的 hidden system
                 // 提示追加在本拍请求 history 末尾（紧跟工具结果，语义最近；
                 // 请求面生效、不入史册）。
                 if let Some(text) = pending_corrective.take() {
                     history.push(Arc::new(Message::System { content: text }));
                 }
-                // 计划提醒注入（FR-06-04，25 号票，§8.6）：变更工具计数达
+                // 计划提醒注入：变更工具计数达
                 // 阈值后的一次性 hidden system 提醒，同纠偏机制（请求面生效、
                 // 不入史册、不产生工具结果帧、不阻塞）；排在纠偏之后。
                 if let Some(text) = pending_plan_reminder.take() {
@@ -473,7 +472,7 @@ where
                 let mut turn_bridge = RigEventBridge::new();
                 turn_bridge.seed_model_call_ids(bridge.model_call_ids().clone());
                 bridge = turn_bridge;
-                // 模型停滞计时（§5.7 计时边界，Q33，37 号票）：随本拍请求生灭——
+                // 模型停滞计时（仅请求阶段计时）：随本拍请求生灭——
                 // armed 即"请求发出"；闭包内三类增量帧（有效模型增量）刷新；
                 // select! 与流式调用竞争，停滞胜出丢弃在飞 HTTP 流（select
                 // 丢弃 stream future 即关流）并按 E_RUN_STALLED 终止。工具
@@ -538,14 +537,14 @@ where
                 }
             }
             AgentRunStep::CallTools { calls } => {
-                // —— 策略门（Q35/Q42，§5.4）：批内含 ask（Interactive 能力）
+                // —— 策略门：批内含 ask（Interactive 能力）
                 // 时只执行源序首个 ask，其余调用（含其余 ask）全部跳过——
                 // 不能继续执行同批预先生成的参数，由模型看到回答后重新决定。
                 let parts: Vec<(String, String, String)> =
                     calls.iter().map(pending_parts).collect();
                 let first_ask = parts.iter().position(|(_, name, _)| is_interactive(name));
 
-                // —— 批级门控预判（§5.4 ①–④）：只对真正执行的调用判定 ——
+                // —— 批级门控预判（门控步骤①–④）：只对真正执行的调用判定 ——
                 // 被跳过项不参与（挂起时不为它们申请审批，Blocked 排除逻辑
                 // 也不作用于它们）；Suspend：批内零执行即挂起（恢复重放整批，
                 // 策略门与门控按同参数重判，结果一致，无重复副作用）。
@@ -592,7 +591,7 @@ where
                 }
 
                 // —— 组装批次：Allow 项进批次执行器；Blocked 项直接补错误
-                // 结果（硬拦不执行、不中断 run，§5.4 ①/③）。 ——
+                // 结果（硬拦不执行、不中断 run）。 ——
                 let mut batch: Vec<BatchCall> = Vec::new();
                 let mut batch_positions: Vec<usize> = Vec::new();
                 let mut prefilled: Vec<(usize, ToolExecution)> = Vec::new();
@@ -622,17 +621,17 @@ where
                     }
                 }
 
-                // —— 受控并发执行（§5.4 ⑤）：ToolsetExecutor 覆写为
+                // —— 受控并发执行（门控步骤⑤）：ToolsetExecutor 覆写为
                 // FileWrite 全局互斥串行 + 其余信号量并发；测试假执行器走
                 // trait 默认串行实现。取消收齐由实现保证（未派发补
                 // Cancelled{executed:false}，在飞 join 后才返回）。 ——
                 let executed: Vec<ToolExecution> = executor.execute_batch(&batch, &token).await;
 
-                // —— 源序拼装（FR-03-11）：帧按源序发出、answers 按源序
+                // —— 源序拼装：帧按源序发出、answers 按源序
                 // 回喂——完成顺序不改序。 ——
                 let mut outcomes: Vec<Option<ToolExecution>> = vec![None; parts.len()];
                 // 真正进批次执行的位置集（Blocked 预填项不在此列——计划提醒
-                // 计数只认已执行的工具，硬拦结果不算"变更执行"，25 号票 §8.6）。
+                // 计数只认已执行的工具，硬拦结果不算"变更执行"）。
                 let executed_positions: HashSet<usize> = batch_positions.iter().copied().collect();
                 for (pos, exec) in batch_positions.into_iter().zip(executed) {
                     outcomes[pos] = Some(exec);
@@ -650,7 +649,7 @@ where
 
                 let mut answers = Vec::new();
                 let mut cancel_seen = false;
-                // 看门狗入窗记录（§5.7，37 号票）：本批真正收到的结果
+                // 看门狗入窗记录：本批真正收到的结果
                 // （Completed 无论成败；取消补标记不入窗——run 即将终结）。
                 let mut records = Vec::new();
                 for (idx, call) in calls.into_iter().enumerate() {
@@ -667,7 +666,7 @@ where
                             model_text,
                         } => {
                             records.push(super::watchdog::make_record(&name, &args_json, ok));
-                            // 计划提醒计数（FR-06-04，25 号票，§8.6）：仅根
+                            // 计划提醒计数：仅根
                             // 会话开关开启时计数；已执行（进批次）的 Completed
                             // 才算——plan 成功更新清零（同批伴随清零），变更
                             // 工具（FileWrite/Network 能力）累加，达 8 注入
@@ -708,10 +707,10 @@ where
                     }
                 }
                 if cancel_seen {
-                    // 收齐后才发终态帧（§5.3 不变量：取消中工具收齐 → runEnded(cancelled)）
+                    // 收齐后才发终态帧（不变量：取消中工具收齐 → runEnded(cancelled)）
                     return Ok(finish_cancelled(sink, started_at, state));
                 }
-                // —— 工具窗口看门狗（§5.7，37 号票）：turn 边界评估（结果
+                // —— 工具窗口看门狗：turn 边界评估（结果
                 // 回喂前）——纠偏留待下一拍 CallModel 注入；终止按
                 // E_RUN_STALLED 收尾：结果帧已发（保留不撤回）、本批不再
                 // 回喂模型，已执行的工具不重放副作用。
@@ -741,7 +740,7 @@ where
     }
 }
 
-/// 流式增量的节流入口：三型增量进节流器（满窗即 flush，首帧立即——§3.4 节流
+/// 流式增量的节流入口：三型增量进节流器（满窗即 flush，首帧立即——节流
 /// 语义），其余帧直通 sink（保证 toolResult 必晚于同 callId 全部 toolArgs）。
 fn ingest_delta(throttler: &mut DeltaThrottler, sink: &mut dyn FrameSink, frame: &ChatFrame) {
     match frame {
@@ -770,7 +769,7 @@ fn finish_cancelled(sink: &mut dyn FrameSink, started_at: Instant, state: DriveS
     RunExit::Cancelled
 }
 
-/// 发出看门狗终止终态帧并返回停滞退出态（§5.7，37 号票）：
+/// 发出看门狗终止终态帧并返回停滞退出态：
 /// runEnded(error, { code: E_RUN_STALLED, message }) 只发一次；终止前已发出
 /// 的文本增量与工具结果帧原样保留（不撤回），触发批已收齐的工具不重放。
 fn finish_stalled(
@@ -789,7 +788,7 @@ fn finish_stalled(
     RunExit::Stalled { message }
 }
 
-/// 被取消工具的 toolResult 帧：ok=false + error.code=E_CANCELLED（§3.4 error 面）。
+/// 被取消工具的 toolResult 帧：ok=false + error.code=E_CANCELLED（error 面）。
 fn cancelled_result_frame(call_id: &str, ui_summary: &str, executed: bool) -> ChatFrame {
     ChatFrame::ToolResult {
         call_id: call_id.to_owned(),
@@ -806,7 +805,7 @@ fn cancelled_result_frame(call_id: &str, ui_summary: &str, executed: bool) -> Ch
     }
 }
 
-/// ask（Interactive 能力）判定（Q35 策略门）：查工具注册表的能力分级。
+/// ask（Interactive 能力）判定（策略门）：查工具注册表的能力分级。
 /// 未知工具名视为非 ask（由执行器回喂 E_INVALID_ARG）；suggest 属 run 尾
 /// 后台调用、不在注册表，天然不进本批。
 fn is_interactive(name: &str) -> bool {
@@ -814,7 +813,7 @@ fn is_interactive(name: &str) -> bool {
         .is_some_and(|spec| spec.capability == crate::safety::tier::Capability::Interactive)
 }
 
-/// 变更工具判定（FR-06-04 计划提醒的计数口径，25 号票 §8.6）：FileWrite /
+/// 变更工具判定（计划提醒的计数口径）：FileWrite /
 /// Network 能力的工具执行一次计一次（write/edit/command/web_*/http_request
 /// 等）；ReadOnly/Interactive/Meta 不计。未知工具名不计（执行器会回喂
 /// E_INVALID_ARG，没有产生变更）。
@@ -827,7 +826,7 @@ fn is_change_tool(name: &str) -> bool {
     })
 }
 
-/// 计划提醒文本（一次性 hidden system 注入，§8.6）：固定中文话术，提示
+/// 计划提醒文本（一次性 hidden system 注入）：固定中文话术，提示
 /// 模型同步计划条目状态。N 为触达阈值的变更次数（恒为
 /// [`PLAN_REMINDER_EVERY`]，入参便于测试断言与文案自洽）。
 fn plan_reminder_text(n: u32) -> String {
@@ -838,8 +837,8 @@ fn plan_reminder_text(n: u32) -> String {
     )
 }
 
-/// ask 混批（Q35/Q42）被跳过调用的统一"未执行"产物：明确告知模型该调用
-/// 未执行、等待回答后重新决定——无副作用，也不申请审批（§5.4）。
+/// ask 混批被跳过调用的统一"未执行"产物：明确告知模型该调用
+/// 未执行、等待回答后重新决定——无副作用，也不申请审批。
 fn skipped_by_ask(name: &str) -> ToolExecution {
     ToolExecution::Completed {
         ok: false,

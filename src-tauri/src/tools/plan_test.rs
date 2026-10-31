@@ -1,4 +1,4 @@
-//! plan 工具纯逻辑单测（§8.3 plan 行 + §8.6 计划门）。
+//! plan 工具纯逻辑单测（工具约束 + 计划门）。
 
 use crate::storage::entries::{PlanItem, PlanItemStatus};
 
@@ -213,7 +213,7 @@ fn plan_state_gate_and_paths_declaration_matrix() {
     assert_eq!(state.approved_at, Some(1000));
     assert_eq!(state.approved_snapshot.as_ref().unwrap().len(), 1);
 
-    // 批准冻结写范围基线：批准后模型改 paths，基线不动（§8.6）。
+    // 批准冻结写范围基线：批准后模型改 paths，基线不动。
     let mut state = PlanState::default();
     apply(
         &mut state,

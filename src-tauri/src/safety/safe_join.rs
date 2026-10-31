@@ -1,11 +1,11 @@
-//! 路径边界 safe_join（FR-05-06，§9.1）。
+//! 路径边界 safe_join。
 //!
 //! 判定链：拒绝空/控制字符/Windows 保留名 → 解析绝对路径（相对路径相对
 //! 项目主目录）→ 规范化并解析符号链接 → canonical 前缀 ∈ roots。
 //! `full_access` 档不解除本检查（由调用方纪律保证，本模块无法感知档位）。
 //!
-//! roots = 项目主目录 + 数据目录下 `workspace/` 子目录（§9.1，无 extra_roots；
-//! C-8 复判 2026-10-28 收窄，21 号票——数据目录本体退出 agent 可见面，收窄
+//! roots = 项目主目录 + 数据目录下 `workspace/` 子目录（缺省无 extra_roots；
+//! 数据目录本体退出 agent 可见面，收窄
 //! 单一落点在 host::commands::workspace::resolve_session_roots）。
 
 use std::path::{Component, Path, PathBuf};
@@ -16,7 +16,7 @@ use crate::util::errors::ToolError;
 /// 之后 [`PathGuard::resolve`] 可反复调用。
 #[derive(Debug, Clone)]
 pub struct PathGuard {
-    /// canonical 后的 roots（项目主目录 + workspace 子目录，§9.1 收窄口径）。
+    /// canonical 后的 roots（项目主目录 + workspace 子目录，收窄口径）。
     roots: Vec<PathBuf>,
     /// canonical 后的项目主目录（相对路径的解析基准）。
     project_root: PathBuf,
@@ -36,7 +36,7 @@ impl PathGuard {
                     .map_err(|e| ToolError::invalid_arg(format!("root {:?} 无法解析：{e}", r)))?,
             );
         }
-        // 首个 root 约定为项目主目录（§9.1：相对路径相对项目主目录）。
+        // 首个 root 约定为项目主目录（相对路径相对项目主目录）。
         let project_root = canonical[0].clone();
         Ok(Self {
             roots: canonical,
@@ -96,7 +96,7 @@ impl PathGuard {
     }
 }
 
-/// Windows 保留名（§9.1）。stem 判定：CON.txt 同样非法。
+/// Windows 保留名。stem 判定：CON.txt 同样非法。
 fn is_windows_reserved(name: &str) -> bool {
     let stem = name.split('.').next().unwrap_or("");
     matches!(
@@ -128,8 +128,8 @@ fn is_windows_reserved(name: &str) -> bool {
 
 /// 整条路径存在则 canonicalize；否则对最长存在前缀 canonicalize +
 /// 剩余段词法归一（ParentDir 在已解析基上弹栈、CurDir 去除；不存在段
-/// 无 symlink，`..` 逃逸由最终前缀检查拦截）。crate 内单一实现（24 号票
-/// 起审批门的外部目录判定与 #33 预检共用，避免第二份归一逻辑漂移）。
+/// 无 symlink，`..` 逃逸由最终前缀检查拦截）。crate 内单一实现（审批门的
+/// 外部目录判定与授权预检共用，避免第二份归一逻辑漂移）。
 pub(crate) fn canonicalize_best_effort(absolute: &Path) -> Result<PathBuf, ToolError> {
     if let Ok(c) = std::fs::canonicalize(absolute) {
         return Ok(c);

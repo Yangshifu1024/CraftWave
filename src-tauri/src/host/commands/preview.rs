@@ -1,9 +1,9 @@
-//! HTML 沙箱预览命令（14 号票，§3.3 #59g `preview_register`）：
+//! HTML 沙箱预览命令（`preview_register`）：
 //! 前端把待预览的 HTML 全文注册进进程级 [`PreviewRegistry`]，换取 token 后
 //! 以 `preview://localhost/<token>`（Windows `http://preview.localhost/`）
 //! 的 iframe 加载——自定义协议响应自带预览专用 CSP，不继承主窗 CSP
-//! （srcdoc/blob: 帧会继承主窗 `script-src 'self'` 拦内联脚本，14 号票
-//! 验证点定案，§9.5）。
+//! （srcdoc/blob: 帧会继承主窗 `script-src 'self'` 拦内联脚本，
+//! 已实测验证）。
 //!
 //! 注册表是进程内存（不落盘），应用退出清空；同内容幂等（token =
 //! sha256 前 16 hex），历史卡片重新展开时前端按参数原文重注册兜底。

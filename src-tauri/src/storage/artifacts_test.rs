@@ -1,4 +1,4 @@
-//! 产物登记测试（独立测试文件，28 号票）：登记合并（首写/重复计数）、
+//! 产物登记测试（独立测试文件）：登记合并（首写/重复计数）、
 //! 损坏兜底、list 存在探测与排序、会话删除 GC 联动。同型用例在单个
 //! #[test] 内顺序合并，断言消息带用例标识。
 
@@ -134,7 +134,7 @@ fn list_probe_sort_and_store_gc() {
     let one = rows.iter().find(|r| r.path == "/p/one.txt").unwrap();
     assert_eq!(one.run_count, 2, "同会话多次登记计数正确");
 
-    // GC：`<sid>.artifacts.json` 随 delete_session 一并清除（§7.5 toolres
+    // GC：`<sid>.artifacts.json` 随 delete_session 一并清除（toolres
     // 边车 GC 同款口径），删除后查询 → 空清单
     assert!(artifacts_path(dir.path(), "s-del").exists());
     store.delete_session("s-del").unwrap();

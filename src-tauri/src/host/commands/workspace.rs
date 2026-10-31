@@ -1,16 +1,16 @@
-//! 工作区只读域命令（§3.3 #27 `search_workspace_paths` / #28
-//! `read_workspace_file`，16 号票）+ 外部目录授权（§3.3 #33
-//! `check_external_path` / #34 `allow_external_dir`，24 号票）。
+//! 工作区只读域命令（`search_workspace_paths` /
+//! `read_workspace_file`）+ 外部目录授权（
+//! `check_external_path` / `allow_external_dir`）。
 //!
-//! 路径校验复用 safety::PathGuard（§9.1 safe_join 单一实现；C-8 收窄后
-//! roots = 项目主目录 + 数据目录下 `workspace/` 子目录，21 号票；24 号票起
-//! 追加会话级授权目录——`authorized_external_dirs` 持久于 SessionMeta，
-//! §9.9「授权持久于会话 roots 快照，不全局生效」）；解码复用
-//! util::encoding（与 read 工具共用，C-10）；单次响应 ≤512KB（MAX_RESPONSE_BYTES）。
+//! 路径校验复用 safety::PathGuard（safe_join 单一实现；roots =
+//! 项目主目录 + 数据目录下 `workspace/` 子目录，追加会话级授权目录——
+//! `authorized_external_dirs` 持久于 SessionMeta，授权只进会话 roots
+//! 快照、不全局生效）；解码复用
+//! util::encoding（与 read 工具共用）；单次响应 ≤512KB（MAX_RESPONSE_BYTES）。
 //!
-//! @ 补全的返回路径约定（16 号票钉死）：项目主目录下的条目返回相对路径
+//! @ 补全的返回路径约定（钉死）：项目主目录下的条目返回相对路径
 //! （模型 read 工具的解析基准即项目主目录，可直接消费）；workspace 子目录
-//! 专属条目返回绝对路径（数据目录本体退出可见面，21 号票）。
+//! 专属条目返回绝对路径（数据目录本体退出可见面）。
 
 use std::collections::HashSet;
 use std::fs;
@@ -25,13 +25,13 @@ use crate::safety::safe_join::PathGuard;
 use crate::util::encoding::{MAX_RESPONSE_BYTES, decode_text, is_probably_binary};
 use crate::util::errors::{E_PATH_OUTSIDE_ROOTS, ToolError};
 
-/// 会话 roots 解析（§6.2/§9.1，C-8 复判收窄，21 号票；24 号票扩授权目录）：
+/// 会话 roots 解析（含外部授权目录扩展）：
 ///
 /// - 项目会话：两根 = 项目主目录 + `<data_root>/workspace/`；
 /// - 临时会话（含未知会话兜底）：两根同目录 = `<data_root>/workspace/`；
-/// - 第三集合 = SessionMeta 授权的外部目录（§9.9 会话 roots 快照：#34
+/// - 第三集合 = SessionMeta 授权的外部目录（会话 roots 快照：
 ///   「始终允许」并入后随 index.json 持久化，会话内跨 run 生效、跨会话
-///   不延续；Q41 备份恢复由恢复流程清空）。
+///   不延续；备份恢复由恢复流程清空）。
 ///
 /// 数据目录本体（config.json/sessions/ 等存储内部文件）退出模型文件工具
 /// 与 @ 补全的可见面。目录不在这里落盘创建，由使用方 create_dir_all
@@ -56,7 +56,7 @@ impl SessionRoots {
         roots
     }
 
-    /// 初始两根（不含授权目录；#33 insideRoots 判定口径）。
+    /// 初始两根（不含授权目录；insideRoots 判定口径）。
     pub fn core(&self) -> Vec<PathBuf> {
         vec![self.project_root.clone(), self.workspace_root.clone()]
     }
@@ -90,12 +90,12 @@ pub(crate) fn resolve_session_roots(app: &AppState, session_id: &str) -> Session
     }
 }
 
-/// ToolError → D14 错误码（safe_join 语义原样透传）。
+/// ToolError → IPC 错误码（safe_join 语义原样透传）。
 fn to_ipc_error(err: ToolError) -> IpcError {
     IpcError::new(err.code, err.message)
 }
 
-/// `search_workspace_paths` 参数契约（§3.3 #27）。
+/// `search_workspace_paths` 参数契约。
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -107,7 +107,7 @@ pub struct SearchWorkspacePathsArgs {
     pub limit: Option<usize>,
 }
 
-/// 路径命中条目（§3.3 #27：`{ path, kind }`）。
+/// 路径命中条目（`{ path, kind }`）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -138,7 +138,7 @@ pub(crate) fn search_workspace_paths_core(
     query: &str,
     limit: Option<usize>,
 ) -> Result<Vec<WorkspacePathHit>, IpcError> {
-    // 性能埋点（28 号票验收：万级文件库 P95 < 300ms）：单次搜索全耗时，
+    // 性能埋点（验收：万级文件库 P95 < 300ms）：单次搜索全耗时，
     // 超过 100ms 才输出 warn（避免正常小目录的日志噪音）。
     let started = std::time::Instant::now();
     let needle = query.trim().to_lowercase();
@@ -177,7 +177,7 @@ pub(crate) fn search_workspace_paths_core(
     Ok(hits)
 }
 
-/// @ 引用补全（§3.3 #27）：BFS 遍历会话 roots，基名大小写不敏感子串匹配。
+/// @ 引用补全：BFS 遍历会话 roots，基名大小写不敏感子串匹配。
 #[tauri::command]
 pub(crate) async fn search_workspace_paths(
     app: State<'_, AppState>,
@@ -239,7 +239,7 @@ fn search_under(
 
 /// 展示路径：项目主目录下返回相对路径（read 工具解析基准），否则绝对路径。
 /// 相对路径分隔符统一正斜杠（Windows 下 PathBuf 默认反斜杠；正斜杠两侧
-/// 工具链均接受，且与前端 @ 补全插入形态一致——16 号票口径的平台补全）。
+/// 工具链均接受，且与前端 @ 补全插入形态一致）。
 fn display_path(path: &Path, project_root: &Path) -> String {
     if let Ok(rel) = path.strip_prefix(project_root)
         && !rel.as_os_str().is_empty()
@@ -249,7 +249,7 @@ fn display_path(path: &Path, project_root: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
-/// `read_workspace_file` 参数契约（§3.3 #28：range 按行翻页）。
+/// `read_workspace_file` 参数契约（range 按行翻页）。
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -270,7 +270,7 @@ pub struct ReadRange {
     pub limit: u64,
 }
 
-/// `read_workspace_file` 返回契约（§3.3 #28：`{ content, truncated }`）。
+/// `read_workspace_file` 返回契约（`{ content, truncated }`）。
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -293,7 +293,7 @@ pub(crate) fn read_workspace_file_core(
     };
     let roots = resolve_session_roots(app, session_id);
     // roots 需真实存在（canonicalize）：项目目录按需补建；workspace 子目录
-    // 首次使用即建（chat.rs 同款习惯，21 号票收窄后的第二根）
+    // 首次使用即建（chat.rs 同款习惯，第二根）
     let _ = fs::create_dir_all(&roots.project_root);
     let _ = fs::create_dir_all(&roots.workspace_root);
     let guard = PathGuard::new(roots.all()).map_err(to_ipc_error)?;
@@ -335,7 +335,7 @@ pub(crate) fn read_workspace_file_core(
     Ok(ReadWorkspaceResult { content, truncated })
 }
 
-/// 预览读取（§3.3 #28）：roots 内校验 → 编码自动判断（与 read 工具共用）→
+/// 预览读取：roots 内校验 → 编码自动判断（与 read 工具共用）→
 /// 前 8KB NUL 判二进制 → 行区间切片 → 512KB 截断。
 #[tauri::command]
 pub(crate) async fn read_workspace_file(
@@ -358,9 +358,9 @@ pub(crate) async fn read_workspace_file(
     )
 }
 
-// ---- 拖拽路径探测（§3.3 #59j，17 号票）----
+// ---- 拖拽路径探测 ----
 
-/// `path_kind` 参数契约（§3.3 #59j）。
+/// `path_kind` 参数契约。
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -368,7 +368,7 @@ pub struct PathKindArgs {
     pub path: String,
 }
 
-/// `path_kind` 返回契约（§3.3 #59j）：kind 三态——dir = 目录（拖拽路由弹
+/// `path_kind` 返回契约：kind 三态——dir = 目录（拖拽路由弹
 /// 「添加为项目」确认）、file = 普通文件（转 @ 路径引用）、missing = 不存在
 /// （忽略）；imageMime = 按扩展名识别出的图片 MIME（png/jpeg/gif/webp，
 /// 拖拽路由据此走图片附件），非图片省略。
@@ -395,11 +395,11 @@ fn image_mime_by_extension(path: &str) -> Option<&'static str> {
     }
 }
 
-/// 拖拽路径探测（§3.3 #59j，17 号票）：判定拖入路径是目录还是文件（symlink
+/// 拖拽路径探测：判定拖入路径是目录还是文件（symlink
 /// 追随语义），并按扩展名识别图片 MIME。纯探测语义——不做 roots 校验、
 /// 不泄露内容，前端拖拽路由（目录提议添加项目 / 图片转附件 / 普通文件转
 /// 路径引用）据此分流；普通文件的模型侧可见性仍由 read 管线的授权链把关
-/// （roots 外路径不因拖入自动放开，FR-13-16）。
+/// （roots 外路径不因拖入自动放开）。
 pub fn path_kind_core(path: &str) -> PathKindResult {
     let mime = image_mime_by_extension(path);
     let kind = match fs::metadata(path) {
@@ -413,7 +413,7 @@ pub fn path_kind_core(path: &str) -> PathKindResult {
     }
 }
 
-/// `path_kind` 命令（§3.3 #59j）。
+/// `path_kind` 命令。
 #[tauri::command]
 pub(crate) async fn path_kind(path: String) -> Result<PathKindResult, IpcError> {
     // 契约命名单一事实源：平铺形参回组为文档契约结构
@@ -424,9 +424,9 @@ pub(crate) async fn path_kind(path: String) -> Result<PathKindResult, IpcError> 
     Ok(path_kind_core(&args.path))
 }
 
-// ---- 外部目录授权（§3.3 #33/#34，FR-05-12/§9.9，24 号票）----
+// ---- 外部目录授权 ----
 
-/// `check_external_path` 参数契约（§3.3 #33）。
+/// `check_external_path` 参数契约。
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -435,7 +435,7 @@ pub struct CheckExternalPathArgs {
     pub path: String,
 }
 
-/// `check_external_path` 返回契约（§3.3 #33 逐字段）：insideRoots = 路径在
+/// `check_external_path` 返回契约（逐字段）：insideRoots = 路径在
 /// 初始两根（项目主目录 + workspace）内（无需授权）；allowed = 路径当前
 /// 可访问（初始两根内，或已授权目录内）。外部未授权 → allowed=false,
 /// insideRoots=false。
@@ -480,7 +480,7 @@ pub(crate) fn check_external_path_core(
     }
 }
 
-/// `check_external_path` 命令（§3.3 #33）。
+/// `check_external_path` 命令。
 #[tauri::command]
 pub(crate) async fn check_external_path(
     app: State<'_, AppState>,
@@ -489,7 +489,7 @@ pub(crate) async fn check_external_path(
     check_external_path_core(&app, &args.session_id, &args.path)
 }
 
-/// `allow_external_dir` 参数契约（§3.3 #34）。
+/// `allow_external_dir` 参数契约。
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -498,7 +498,7 @@ pub struct AllowExternalDirArgs {
     pub dir: String,
 }
 
-/// `allow_external_dir` 返回契约（§3.3 #34）：授权后的会话 roots 全集
+/// `allow_external_dir` 返回契约：授权后的会话 roots 全集
 /// （初始两根 + 全部已授权外部目录，canonical 字符串）。
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -515,10 +515,10 @@ fn home_dir() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-/// 授权目标是否属「整体放行」禁区（§9.9，命中即 E_INVALID_ARG 拒绝）：
+/// 授权目标是否属「整体放行」禁区（命中即 E_INVALID_ARG 拒绝）：
 /// 文件系统根、家目录本身、宿主托管目录（`~/.craftwave` = 数据目录）。
 /// 从严口径：家目录的**祖先**（比家目录粒度更大）与数据目录的**祖先及
-/// 后代**一并拒绝——授权托管目录的子目录会拆穿 C-8 收窄防线（数据目录
+/// 后代**一并拒绝——授权托管目录的子目录会拆穿第二根防线（数据目录
 /// 本体退出 agent 可见面），家目录以上粒度违背「目录及子目录」的授权
 /// 精神。项目主目录恰在数据目录内属于配置异常，同样被拒（防线优先）。
 pub(crate) fn is_protected_grant_target(dir: &Path, data_dir: &Path) -> bool {
@@ -538,7 +538,7 @@ pub(crate) fn is_protected_grant_target(dir: &Path, data_dir: &Path) -> bool {
             return true;
         }
     }
-    // 数据目录本身、其祖先（粒度 ≥ 托管目录）或其内部（拆穿 C-8 收窄）。
+    // 数据目录本身、其祖先（粒度 ≥ 托管目录）或其内部（拆穿防线）。
     dir == data_dir || data_dir.starts_with(dir) || dir.starts_with(data_dir)
 }
 
@@ -558,7 +558,7 @@ fn roots_as_strings(roots: &SessionRoots) -> Vec<String> {
 }
 
 /// `allow_external_dir` 主体：校验禁授权目标 → canonical → 并入
-/// SessionMeta 授权表（§9.9 会话 roots 快照持久化）→ 返回 roots 全集。
+/// SessionMeta 授权表（会话 roots 快照持久化）→ 返回 roots 全集。
 /// 幂等：已授权的目录重复授权直接返回现状。
 pub(crate) fn allow_external_dir_core(
     app: &AppState,
@@ -610,7 +610,7 @@ pub(crate) fn allow_external_dir_core(
     })
 }
 
-/// `allow_external_dir` 命令（§3.3 #34）。
+/// `allow_external_dir` 命令。
 #[tauri::command]
 pub(crate) async fn allow_external_dir(
     app: State<'_, AppState>,
@@ -619,7 +619,7 @@ pub(crate) async fn allow_external_dir(
     allow_external_dir_core(&app, &args.session_id, &args.dir)
 }
 
-/// `revoke_external_dir` 参数契约（24 号票补充面，§9.9 撤销入口：Inspector
+/// `revoke_external_dir` 参数契约（撤销入口：Inspector
 /// 已授权目录列表的移除按钮）。
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -630,7 +630,7 @@ pub struct RevokeExternalDirArgs {
 }
 
 /// `revoke_external_dir` 主体：按 canonical 字符串移除一条授权（不存在不
-/// 报错——幂等撤销）；返回剩余 roots 全集。移除后下次访问重新询问（§9.9）。
+/// 报错——幂等撤销）；返回剩余 roots 全集。移除后下次访问重新询问。
 pub(crate) fn revoke_external_dir_core(
     app: &AppState,
     session_id: &str,
@@ -669,7 +669,7 @@ pub(crate) fn revoke_external_dir_core(
     })
 }
 
-/// `revoke_external_dir` 命令（24 号票补充面）。
+/// `revoke_external_dir` 命令（撤销已授权外部目录）。
 #[tauri::command]
 pub(crate) async fn revoke_external_dir(
     app: State<'_, AppState>,

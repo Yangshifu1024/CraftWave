@@ -1,5 +1,5 @@
-//! host/commands/stats.rs 的单元测试（20 号票）：#52 range 校验与按日/模型
-//! 聚合形状、#59k 恢复读面的三级回落与 Q43 删除语义。
+//! host/commands/stats.rs 的单元测试：range 校验与按日/模型
+//! 聚合形状、恢复读面的三级回落与删除联动语义。
 
 use super::*;
 
@@ -44,11 +44,11 @@ fn record(app: &AppState, day: &str, run: &str, kind: &str, model: &str, input: 
     );
 }
 
-/// 断言 #52：range 非法格式与 from > to 都 E_INVALID_ARG；聚合形状——
-/// byDay 逐日合计、byModel 两桶 runs 只统计主 run（Q40）、total 合计、
-/// 缺省范围（全部保留期）数字一致；#59k 恢复读面三级回落与 Q43 删除
-/// 语义：无记录全零；旧数据仅标量（index totalTokens）→ 标量回落不伪造
-/// 拆分；明细文件权威（Q37）恢复 sessionTotal；内存表优先（活跃实时面）
+/// 断言 range 非法格式与 from > to 都 E_INVALID_ARG；聚合形状——
+/// byDay 逐日合计、byModel 两桶 runs 只统计主 run、total 合计、
+/// 缺省范围（全部保留期）数字一致；恢复读面三级回落与删除
+/// 联动语义：无记录全零；旧数据仅标量（index totalTokens）→ 标量回落不伪造
+/// 拆分；明细文件权威恢复 sessionTotal；内存表优先（活跃实时面）
 /// 累计增量；删除会话（内存摘除 + 明细清除）→ 查询全零而匿名日聚合保留
 /// （真实消耗）。
 #[test]
@@ -92,7 +92,7 @@ fn stats_token_range_aggregation_and_usage_fallback_delete() {
     assert_eq!(result.by_day[0].total, 101);
     assert_eq!(result.by_day[1].day, "2026-10-30");
     assert_eq!(result.by_day[1].total, 55);
-    // byModel 两桶：runs 只统计主 run（Q40）
+    // byModel 两桶：runs 只统计主 run
     let m1 = result
         .by_model
         .iter()
@@ -115,7 +115,7 @@ fn stats_token_range_aggregation_and_usage_fallback_delete() {
         stats_token_core(&app, &StatsTokenArgs { range: None }, "2026-10-30").expect("查询");
     assert_eq!(default_range.total.total, result.total.total);
 
-    // #59k 恢复读面与 Q43 删除语义。
+    // 恢复读面与删除联动语义。
     let (dir, app) = app_fixture();
     // ① 无任何记录：全零
     let none = session_usage_core(&app, "s-none");
@@ -143,7 +143,7 @@ fn stats_token_range_aggregation_and_usage_fallback_delete() {
         "旧记录不伪造四口径拆分"
     );
     assert_eq!(legacy.legacy_total_tokens, Some(777));
-    // ③ 明细文件权威（Q37）：恢复 sessionTotal
+    // ③ 明细文件权威：恢复 sessionTotal
     app.ledger
         .detail
         .record(&crate::storage::stats::RunUsageRecord {
@@ -184,7 +184,7 @@ fn stats_token_range_aggregation_and_usage_fallback_delete() {
     let live = session_usage_core(&app, "s-legacy");
     assert_eq!(live.usage.input, 41);
 
-    // Q43：删除会话 → 内存表摘除 + 明细文件清除 → 查询全零，匿名日聚合保留。
+    // 删除会话 → 内存表摘除 + 明细文件清除 → 查询全零，匿名日聚合保留。
     record(&app, "2026-10-30", "r1", "main", "m1", 9);
     app.session_usage
         .lock()

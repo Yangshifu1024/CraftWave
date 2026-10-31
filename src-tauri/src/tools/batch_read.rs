@@ -1,17 +1,16 @@
-//! `batch_read` 工具（ReadOnly，§8.3 M2 表）：一次读取多个文本文件。
+//! `batch_read` 工具（ReadOnly）：一次读取多个文本文件。
 //!
-//! 设计要点（票面逐条）：
+//! 设计要点：
 //! - 文件数上限 ≤[`DEFAULT_BATCH_READ_LIMIT`]（缺省 20，可经
-//!   `AppConfig.tools.batchReadLimit` 调整，§3.2——14 号票回写补齐字段级
-//!   定义）；超限整批拒绝（E_INVALID_ARG）。
-//! - 逐文件复用 read 的文本路径（util::encoding 解码、行窗口默认 2000 行，
-//!   C-10），本工具不接受逐文件 offset/limit——批量调研场景要的是每个文件
+//!   `AppConfig.tools.batchReadLimit` 调整）；超限整批拒绝（E_INVALID_ARG）。
+//! - 逐文件复用 read 的文本路径（util::encoding 解码、行窗口默认 2000 行），
+//!   本工具不接受逐文件 offset/limit——批量调研场景要的是每个文件
 //!   的开头窗口，精细翻页用单文件 read。
 //! - **512KB 单响应上限跨全批次共享**：批内按源序逐文件扣减预算；预算
 //!   截断的文件标注 truncated 与续读 nextOffset；预算耗尽后的文件不读取
 //!   （error 说明「批响应预算耗尽」），单文件失败不影响其余文件。
 //! - 结果 data=`{ files: [{ path, ok, content?, error?, truncated, … }],
-//!   truncatedFiles }`；模型据此行动的续读指引写入 error/nextOffset（§8.2）。
+//!   truncatedFiles }`；模型据此行动的续读指引写入 error/nextOffset。
 
 use serde::Deserialize;
 use serde_json::json;
@@ -45,8 +44,8 @@ pub fn run(ctx: &ToolsContext, args: &BatchReadArgs, limit: u32) -> ToolOutcome 
         .into();
     }
 
-    // 共享预算：批内所有文件的内容字节合计 ≤512KB（§8.3「512KB 单响应上限
-    // 跨全批次共享」）。预算截断后剩余预算清零——该文件尚未读完，模型本就
+    // 共享预算：批内所有文件的内容字节合计 ≤512KB（512KB 单响应上限
+    // 跨全批次共享）。预算截断后剩余预算清零——该文件尚未读完，模型本就
     // 需要续读，后续文件不再占用本次响应。
     let mut remaining = MAX_RESPONSE_BYTES;
     let mut files: Vec<serde_json::Value> = Vec::with_capacity(args.paths.len());
@@ -132,7 +131,7 @@ pub fn run(ctx: &ToolsContext, args: &BatchReadArgs, limit: u32) -> ToolOutcome 
     )
 }
 
-/// batch_read 工具规格（能力 ReadOnly，全档放行，§8.5）。
+/// batch_read 工具规格（能力 ReadOnly，全档放行）。
 pub fn spec() -> ToolSpec {
     ToolSpec {
         name: "batch_read".to_string(),

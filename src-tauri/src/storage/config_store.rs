@@ -1,4 +1,4 @@
-//! 配置协调器（技术设计文档 §7.6，FR-14-03）：config.json 的唯一写入口。
+//! 配置协调器：config.json 的唯一写入口。
 //!
 //! 术语解释：「原子写」指先把新内容写进同目录临时文件、强制刷盘（fsync，把
 //! 操作系统缓冲区的数据真正写到磁盘）、再改名为正式文件——这样无论何时崩溃，
@@ -12,11 +12,11 @@
 //! 权限收紧 0600，Key 明文承载后的边界，2026-10-28 用户决策）→ 内存缓存
 //! 热替换 → 返回归一化结果。
 //!
-//! 并发写协调（§7.4）：M1 单进程 + 单实例插件 → 无跨进程写并发；
+//! 并发写协调：M1 单进程 + 单实例插件 → 无跨进程写并发；
 //! 进程内以互斥锁串行化全部提交；跨进程 CW FileCoordinator 留 1.x。
 //! 原子 rename 保证读侧永不看到半行。
 //!
-//! （历史注记：keyring 时代的 intent.json 意向日志随 §9.4 废除一并移除。）
+//! （历史背景：keyring 时代的 intent.json 意向日志已随 keyring 废除一并移除。）
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -45,7 +45,7 @@ pub trait ConfigPayload:
 pub struct ConfigStore<T: ConfigPayload> {
     /// 配置文件完整路径。
     path: PathBuf,
-    /// 写串行锁（进程内并发写协调，§7.4）。
+    /// 写串行锁（进程内并发写协调）。
     write_lock: Mutex<()>,
     /// 内存缓存（热替换：提交成功后整体换成新 Arc）。
     cache: Mutex<Option<Arc<T>>>,

@@ -1,19 +1,19 @@
-//! 系统域命令（17 号票）：退出确认回执；19 号票：通知授权态查询与
+//! 系统域命令：退出确认回执；通知授权态查询与
 //! 系统设置深链。
 //!
-//! §9.6 退出拦截的收口：托盘「退出」在存在活跃 run 时挂起并广播
+//! 退出拦截的收口：托盘「退出」在存在活跃 run 时挂起并广播
 //! `app:exit_requested`，前端弹确认框后调 `resolve_exit_request`——
 //! `accepted=true` 放行真正退出，`false` 取消退出回到托盘常驻。
-//! 19 号票补超时兜底（`shell::EXIT_CONFIRM_TIMEOUT`）：前端无响应时
+//! 补超时兜底（`shell::EXIT_CONFIRM_TIMEOUT`）：前端无响应时
 //! 到点自动放行，用户退出意图优先，退出流程不因前端挂死而悬死。
 //!
-//! 通知引导（19 号票）：macOS 通知授权被拒/未决时设置页给引导——
+//! 通知引导：macOS 通知授权被拒/未决时设置页给引导——
 //! `notification_permission_status` 返回真实授权态（插件自带的
 //! permission_state 桌面端恒 Granted，不可用），`open_notification_settings`
 //! 打开系统设置的通知面板。
 //!
-//! 数据目录入口（03 号票，FR-14-07，§3.3 #3）：`open_dir` 以固定白名单
-//! （数据目录 / 日志目录 / 已注册项目的项目数据目录，§7.1）校验入参路径
+//! 数据目录入口：`open_dir` 以固定白名单
+//! （数据目录 / 日志目录 / 已注册项目的项目数据目录）校验入参路径
 //! 后交系统打开——排障第一入口（查看 config.json、日志、project.json）。
 
 use std::path::PathBuf;
@@ -26,7 +26,7 @@ use crate::host::IpcError;
 use crate::safety::safe_join::PathGuard;
 use crate::util::errors::{E_INTERNAL, E_INVALID_ARG, E_IO, E_NOT_FOUND};
 
-/// `resolve_exit_request` 参数契约（§9.6：`{ accepted: boolean }`）。
+/// `resolve_exit_request` 参数契约（`{ accepted: boolean }`）。
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -35,7 +35,7 @@ pub struct ResolveExitRequestArgs {
     pub accepted: bool,
 }
 
-/// 退出确认回执（§9.6）。无挂起的退出请求时调用为无操作。
+/// 退出确认回执。无挂起的退出请求时调用为无操作。
 #[tauri::command]
 pub(crate) async fn resolve_exit_request(
     app: State<'_, AppState>,
@@ -44,7 +44,7 @@ pub(crate) async fn resolve_exit_request(
 ) -> Result<(), IpcError> {
     // 契约命名单一事实源：文档契约结构占位
     let _args = ResolveExitRequestArgs { accepted };
-    // 解除挂起（19 号票超时兜底定时任务看到已解除即 no-op），再按回执放行
+    // 解除挂起（超时兜底定时任务看到已解除即 no-op），再按回执放行
     let was_pending = {
         let mut confirm = app
             .exit_confirm
@@ -62,7 +62,7 @@ pub(crate) async fn resolve_exit_request(
     Ok(())
 }
 
-/// `notification_permission_status` 返回契约（§9.6，19 号票）。
+/// `notification_permission_status` 返回契约。
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -75,7 +75,7 @@ pub struct NotificationPermissionStatus {
     pub has_settings_entry: bool,
 }
 
-/// 通知授权态查询（19 号票）：macOS 实查 UNUserNotificationCenter；
+/// 通知授权态查询：macOS 实查 UNUserNotificationCenter；
 /// Windows/Linux 桌面通知无授权门，恒 granted。
 #[tauri::command]
 pub(crate) async fn notification_permission_status(
@@ -119,7 +119,7 @@ pub(crate) async fn notification_permission_status(
     }
 }
 
-/// 打开系统通知设置（19 号票设置页引导动作）。macOS 深链直达「通知」面板；
+/// 打开系统通知设置（设置页引导动作）。macOS 深链直达「通知」面板；
 /// Windows 走 ms-settings:；Linux 无统一入口，报错由前端兜底（正常不触达：
 /// 前端只在 hasSettingsEntry=true 时渲染按钮）。spawn 后不等待设置应用退出。
 #[tauri::command]
@@ -149,7 +149,7 @@ pub(crate) fn open_notification_settings() -> Result<(), IpcError> {
     }
 }
 
-/// `open_dir` 参数契约（§3.3 #3：`{ path: string }`）。
+/// `open_dir` 参数契约（`{ path: string }`）。
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -158,12 +158,12 @@ pub struct OpenDirArgs {
     pub path: String,
 }
 
-/// `open_dir` 白名单根集合（§7.1 目录布局）：数据目录 `~/.craftwave/`、
+/// `open_dir` 白名单根集合（目录布局）：数据目录 `~/.craftwave/`、
 /// 日志目录 `~/.craftwave/logs/`、各注册项目的项目数据目录
 /// `<项目主目录>/.craftwave/`（save_project 注册即建，必存在）。
 /// 日志目录应用启动不预建，此处幂等补建——白名单校验（PathGuard）要求
 /// 根真实存在，且"打开日志目录"按钮的语义就是目录没建也能点开。
-/// 备份目录 `~/.craftwave/backups/`（33 号票 Q43 删除确认的目录入口）同款
+/// 备份目录 `~/.craftwave/backups/`（删除确认的目录入口）同款
 /// 幂等补建——从未升级过格式的安装没有该目录，入口按钮不该报不存在。
 fn open_dir_roots(app: &AppState) -> Result<Vec<PathBuf>, IpcError> {
     let data_root = app.store.root().to_path_buf();
@@ -189,7 +189,7 @@ fn tool_error_to_ipc(err: crate::util::errors::ToolError) -> IpcError {
 }
 
 /// 展开 "~" 前缀为用户主目录（unix HOME / windows USERPROFILE）。前端不知
-/// 道数据目录的绝对路径（§7.1 固定在 `~/.craftwave/`），入口按钮以 `~/`
+/// 道数据目录的绝对路径（固定在 `~/.craftwave/`），入口按钮以 `~/`
 /// 语义路径传参，后端展开后照常走白名单校验；无 "~" 前缀（如项目数据目录
 /// 的绝对路径）原样返回。环境变量缺失时原样返回，交白名单校验拒绝。
 pub(crate) fn expand_home_prefix(path: &str) -> String {
@@ -228,7 +228,7 @@ pub(crate) fn resolve_open_dir(app: &AppState, path: &str) -> Result<PathBuf, Ip
     Ok(resolved)
 }
 
-/// `open_dir` 主体（§3.3 #3）：校验 → 交系统打开。OS 打开失败归 E_IO（§3.6）。
+/// `open_dir` 主体：校验 → 交系统打开。OS 打开失败归 E_IO。
 pub(crate) fn open_dir_core(app: &AppState, path: &str) -> Result<(), IpcError> {
     let resolved = resolve_open_dir(app, path)?;
     // 脱离进程打开（macOS /usr/bin/open 即交即返；Windows/Linux 不等待
@@ -237,7 +237,7 @@ pub(crate) fn open_dir_core(app: &AppState, path: &str) -> Result<(), IpcError> 
         .map_err(|e| IpcError::new(E_IO, format!("系统打开目录失败：{e}")))
 }
 
-/// 系统打开目录（§3.3 #3，03 号票，FR-14-07）：设置页"打开数据/日志/项目
+/// 系统打开目录：设置页"打开数据/日志/项目
 /// 数据目录"三入口的统一承载。
 #[tauri::command]
 pub(crate) async fn open_dir(app: State<'_, AppState>, path: String) -> Result<(), IpcError> {

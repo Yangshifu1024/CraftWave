@@ -1,7 +1,7 @@
-//! CW schema v2 配置类型（§3.2 共享类型，Rust 侧逐一镜像；D14 camelCase）。
+//! CW schema v2 配置类型（共享类型，Rust 侧逐一镜像； camelCase）。
 //!
-//! `AppConfig` 即 `~/.craftwave/config.json` 的载药结构（§7.1），
-//! `normalize` 是配置协调器（§7.6）的"入参校验/归一化"步骤。
+//! `AppConfig` 即 `~/.craftwave/config.json` 的载药结构，
+//! `normalize` 是配置协调器的"入参校验/归一化"步骤。
 
 use std::collections::BTreeMap;
 
@@ -10,19 +10,19 @@ use serde::{Deserialize, Serialize};
 use crate::storage::config_store::ConfigPayload;
 use crate::util::errors::IpcError;
 
-/// 当前 schema 版本（CW schema v2，§3.2）。
+/// 当前 schema 版本（CW schema v2）。
 pub const SCHEMA_VERSION: u32 = 2;
 
-/// 默认 max_tokens（§3.2 ProviderModel 注记）。
+/// 默认 max_tokens。
 pub const DEFAULT_MAX_TOKENS: u32 = 32768;
-/// 默认 context_window（§3.2 ProviderModel 注记）。
+/// 默认 context_window。
 pub const DEFAULT_CONTEXT_WINDOW: u32 = 128000;
-/// 单供应商 Key 数量上限（§11.2）。
+/// 单供应商 Key 数量上限。
 pub const MAX_KEYS_PER_PROVIDER: usize = 10;
 
-// ---- 供应商（CW schema v2，实现 FR-02-01/06/07）----
+// ---- 供应商（CW schema v2，实现 /06/07）----
 
-/// apiFormat：决定 rig Model 构造方言（§11.1）。
+/// apiFormat：决定 rig Model 构造方言。
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -37,7 +37,7 @@ pub enum ApiFormat {
 
 // ApiFormat 的辅助方法。
 impl ApiFormat {
-    /// 官方缺省地址（baseUrl 缺省时按 apiFormat 取，§3.2 注记）。
+    /// 官方缺省地址（baseUrl 缺省时按 apiFormat 取）。
     pub fn official_base_url(self) -> &'static str {
         match self {
             Self::OpenaiChat => "https://api.openai.com/v1",
@@ -47,7 +47,7 @@ impl ApiFormat {
     }
 }
 
-/// reasoning 映射档位（§11.4）：控制模型思考力度的档位值，
+/// reasoning 映射档位：控制模型思考力度的档位值，
 /// 序列化为 snake_case 透传给供应商 API。
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -76,12 +76,12 @@ pub struct ProviderConfig {
     pub name: String,
     /// API 请求方言，决定构造请求的方式。
     pub api_format: ApiFormat,
-    /// 缺省按 apiFormat 用官方缺省地址（§3.2）；自定义 OpenAI 兼容端点在此覆写。
+    /// 缺省按 apiFormat 用官方缺省地址；自定义 OpenAI 兼容端点在此覆写。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub base_url: Option<String>,
     /// API Key 明文（用户决策废除 keyring，2026-10-28：Key 存 config.json，
-    /// 文件权限 0600 收紧；§9.4 已改写）。空串归一为 None。
+    /// 文件权限 0600 收紧）。空串归一为 None。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub api_key: Option<String>,
@@ -91,12 +91,12 @@ pub struct ProviderConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub headers: Option<BTreeMap<String, String>>,
-    /// 本地服务标记（FR-02-04，19 号票）：Ollama / llama.cpp / LM Studio 等
+    /// 本地服务标记：Ollama / llama.cpp / LM Studio 等
     /// 本机推理端点——免 API Key（`resolve_model` 允许 apiKey 缺省，rig 侧
     /// 以占位值发请求，本地服务不校验凭据），设置页隐藏 Key 输入并标注
     /// "本地 / 离线可用"。仅按本字段显式判定，不做"baseUrl 是 localhost 即
     /// 本地"的隐式推断（远端自建网关同样可能是回环地址）。旧配置无该字段
-    /// serde default 回填 false（schemaVersion 维持 2，§3.2）。
+    /// serde default 回填 false（schemaVersion 维持 2）。
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub local: bool,
 }
@@ -126,7 +126,7 @@ pub struct ProviderModel {
     pub vision: Option<bool>,
 }
 
-// ---- 应用配置（实现 FR-14）----
+// ---- 应用配置 ----
 
 /// 代理模式：不走代理 / 跟随系统代理 / 手动指定代理地址。
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -160,35 +160,35 @@ pub struct ProxyConfig {
 #[serde(rename_all = "camelCase")]
 pub struct ApprovalConfig {
     /// 审批总开关（false 时不再弹出任何审批；黑名单/内部状态硬拦/计划门/
-    /// MCP 审批与信任询问不受影响，plan 档判定不变——23 号票字段级）。
+    /// MCP 审批与信任询问不受影响，plan 档判定不变——字段级）。
     #[serde(default = "default_true")]
     pub enabled: bool,
     /// 自动确认（不打扰用户；危险命令围栏仍会硬拦）。
     #[serde(default)]
     pub auto_confirm: bool,
-    /// ③ 会话内记忆启用（23 号票，FR-14-04）：true 时命令类审批展示
+    /// ③ 会话内记忆启用：true 时命令类审批展示
     /// 「始终允许（本会话）」选项（AskPayload option mode=always_session），
     /// 选中后同签名命令本会话跨 run 免批；false 不出该选项。默认开。
     #[serde(default = "default_true")]
     pub session_memory_enabled: bool,
-    /// ④ 命令白名单启用（23 号票，FR-14-04）：整体开关，false 时
+    /// ④ 命令白名单启用：整体开关，false 时
     /// commandAllowlist 不参与判定（条目保留不删）。默认开。
     #[serde(default = "default_true")]
     pub allowlist_enabled: bool,
-    /// 命令白名单：命中即免审批直接放行（23 号票字段级：词序列前缀匹配
+    /// 命令白名单：命中即免审批直接放行（字段级：词序列前缀匹配
     /// ——条目 `git status` 匹配 `git status …` 不匹配 `git statusx`；
     /// 围栏 Confirm 与矩阵 NeedsApproval 免除，黑名单 Block 永不豁免，
     /// plan 档不豁免）。
     #[serde(default)]
     pub command_allowlist: Vec<String>,
-    /// 严格计划硬门（FR-06-02，§8.6，25 号票实装）：true 且无已批准计划
+    /// 严格计划硬门（实装）：true 且无已批准计划
     /// 时 FileWrite/Network 工具直接 E_PLAN_REQUIRED 硬拦（不挂起）。默认
     /// 关（默认"有计划即守门"：无计划时不阻写，PRD 定稿策略）；设置页
     /// 安全页「严格计划模式」开关承载。旧配置无该字段时 serde default
     /// 回填 false（零迁移）。
     #[serde(default)]
     pub require_plan: bool,
-    /// git 写策略白名单（FR-11-03，§8.7 git 分类表，26 号票实装）：false
+    /// git 写策略白名单（git 分类表，实装）：false
     /// （缺省，serde default 回填旧配置零迁移）= AI 默认禁止 stage/commit
     /// ——`git add`/`git stage`/`git commit` 经审批门策略层 E_FENCE_BLOCKED
     /// 硬拦，`git merge`/`git rebase` 恒禁（开关不豁免）；true = add/stage/
@@ -196,7 +196,7 @@ pub struct ApprovalConfig {
     /// `git push` 恒 Confirm（「push 永远确认」，任何配置不豁免）；
     /// `git push --force` 恒 Block（黑名单既有 + 策略层双保险）。设置页
     /// 安全页「允许 AI 执行 stage/commit」开关承载。应用受控 worktree
-    /// 管理（10 号票 agent/worktree.rs）不消费本开关——分开授权。
+    /// 管理（agent/worktree.rs）不消费本开关——分开授权。
     #[serde(default)]
     pub git_allow_stage_commit: bool,
 }
@@ -230,7 +230,7 @@ pub enum Language {
 
 impl Language {
     /// 序列化值（"zh-CN" / "en-US"）——与 serde rename 一致；ai_language
-    /// 注入层（31 号票）按它选固定行。
+    /// 注入层按它选固定行。
     pub fn as_str(&self) -> &'static str {
         match self {
             Language::ZhCn => "zh-CN",
@@ -258,19 +258,19 @@ pub struct UiConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub font_size: Option<u8>,
-    /// 关闭按钮行为（FR-13-06/§9.6，29 号票）：true（缺省，serde default
+    /// 关闭按钮行为：true（缺省，serde default
     /// 回填旧配置零迁移）= 点关闭按钮收进托盘继续运行（hide）；false =
     /// 点关闭按钮走退出拦截协议（活跃 run 时 app:exit_requested → 前端确认
     /// → resolve_exit_request）。托盘菜单「退出」恒走退出拦截协议，不受
     /// 本开关影响。
     #[serde(default = "default_true")]
     pub close_to_tray: bool,
-    /// 全局热键（FR-13-11/§10.7，29 号票）：系统级一键唤起/隐藏主窗。
+    /// 全局热键：系统级一键唤起/隐藏主窗。
     #[serde(default)]
     pub hotkey: HotkeyConfig,
 }
 
-/// 全局热键配置（§3.2 ui.hotkey，29 号票字段级）。
+/// 全局热键配置（ui.hotkey，字段级）。
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -287,18 +287,18 @@ pub struct HotkeyConfig {
     pub accelerator: String,
 }
 
-/// serde 缺省值函数：全局热键缺省 ⌥/Alt+Space（§10.7）。
+/// serde 缺省值函数：全局热键缺省 ⌥/Alt+Space。
 fn default_hotkey_accelerator() -> String {
     DEFAULT_HOTKEY_ACCELERATOR.to_string()
 }
 
-/// 全局热键缺省组合键（§10.7：⌥/Alt+Space）。
+/// 全局热键缺省组合键（⌥/Alt+Space）。
 pub const DEFAULT_HOTKEY_ACCELERATOR: &str = "alt+space";
 
 /// 全局热键修饰符的归一化固定序（存储形态：修饰符全在前、按本序排列）。
 const HOTKEY_MODIFIER_ORDER: [&str; 4] = ["ctrl", "alt", "shift", "super"];
 
-/// 组合键归一化（29 号票）：大小写归一 + 修饰符别名收编 + 修饰符固定序排列。
+/// 组合键归一化：大小写归一 + 修饰符别名收编 + 修饰符固定序排列。
 /// 返回 `None` = 非法（空串、空段、纯修饰符无主键）。
 ///
 /// 规则：
@@ -370,7 +370,7 @@ pub struct LogConfig {
     pub level: LogLevel,
 }
 
-/// 系统通知偏好（FR-13-06 设置项，17 号票）。
+/// 系统通知偏好（设置项）。
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -393,39 +393,39 @@ impl Default for NotificationConfig {
     }
 }
 
-/// 子代理全局并发上限的缺省值（§3.2 agent 组/§5.9 Q13：所有会话共用，缺省 4）。
+/// 子代理全局并发上限的缺省值（agent 组/ ：所有会话共用，缺省 4）。
 pub const DEFAULT_MAX_CONCURRENT_SUBAGENTS: u32 = 4;
 /// maxConcurrentSubagents 合法区间上限（与工具批并发 tools.maxParallel 同界，
 /// 防资源失控；下限 1 由"正整数"语义承担）。
 pub const MAX_CONCURRENT_SUBAGENTS_LIMIT: u32 = 16;
 
-/// 智能体行为配置（§3.2 agent 组）。M2 03 号票起承载 customPrompt；
-/// M2 10 号票补 maxConcurrentSubagents（子代理全局并发上限）；36 号票补
-/// commandAudit（灰区命令审计专用模型，§8.7）。
+/// 智能体行为配置（agent 组）。M2 起承载 customPrompt；
+/// M2 补 maxConcurrentSubagents（子代理全局并发上限）；补
+/// commandAudit（灰区命令审计专用模型）。
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentConfig {
-    /// 自定义提示词（FR-09-06）：非空时注入为每次对话的系统级前缀
-    /// （§6.2 注入次序首位：customPrompt → 压缩 summary → 当前计划）。
-    /// 空/未配置零注入；save_config 即时生效于下次 run（§7.6 缓存热替换）。
+    /// 自定义提示词：非空时注入为每次对话的系统级前缀
+    /// （注入次序首位：customPrompt → 压缩 summary → 当前计划）。
+    /// 空/未配置零注入；save_config 即时生效于下次 run（缓存热替换）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub custom_prompt: Option<String>,
-    /// 子代理全局并发上限（FR-07-04/§5.9 Q13，10 号票）：应用内所有会话共用，
+    /// 子代理全局并发上限：应用内所有会话共用，
     /// 满额排队不拒绝；要求正整数，旧配置缺省回填 4，非法值在保存边界拒绝。
     /// 运行中修改：已启动任务继续不取消；降低后暂停补入直到运行数低于新上限，
     /// 提高后立即按新上限启动排队任务（并发闸 [`crate::agent::sub_registry`]）。
     #[serde(default = "default_max_concurrent_subagents")]
     pub max_concurrent_subagents: u32,
-    /// 灰区命令审计配置（FR-05-05/§8.7，36 号票）：缺省整组为 None（serde
+    /// 灰区命令审计配置：缺省整组为 None（serde
     /// default 回填，旧配置零迁移）——未配置时审计模型跟随会话当前模型。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub command_audit: Option<CommandAuditConfig>,
 }
 
-/// serde 缺省值函数：子代理全局并发上限缺省 4（§5.9 Q13）。
+/// serde 缺省值函数：子代理全局并发上限缺省 4。
 fn default_max_concurrent_subagents() -> u32 {
     DEFAULT_MAX_CONCURRENT_SUBAGENTS
 }
@@ -441,13 +441,13 @@ impl Default for AgentConfig {
     }
 }
 
-/// 灰区命令审计配置（§3.2 agent.commandAudit，36 号票，§8.7 字段级）。
+/// 灰区命令审计配置（agent.commandAudit，字段级）。
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommandAuditConfig {
     /// 审计专用模型 id（指向某 ProviderModel.id）：未配置时跟随会话当前
-    /// 模型（挂起时点 refresher 刷新的会话模型槽，§8.7）。指定模型解析
+    /// 模型（挂起时点 refresher 刷新的会话模型槽）。指定模型解析
     /// 失败（模型/供应商已删除、Key 缺失）按审计失败转人工并显示原因，
     /// 不静默切换其他供应商。总超时固定 15 秒（含证据收集与模型请求，
     /// 不可配置）。
@@ -456,8 +456,8 @@ pub struct CommandAuditConfig {
     pub model_id: Option<String>,
 }
 
-/// 启动静默检查的最小间隔小时数缺省值（§3.2 update 组，FR-16-03「检查
-/// 频率可调」，33 号票）：一天一次是桌面应用的常规节奏。
+/// 启动静默检查的最小间隔小时数缺省值（update 组，「检查
+/// 频率可调」）：一天一次是桌面应用的常规节奏。
 pub const DEFAULT_UPDATE_INTERVAL_HOURS: u32 = 24;
 /// 静默检查间隔的合法区间下限（小时；低于 1 小时的轮询对 GitHub Releases
 /// 无意义且浪费请求）。
@@ -466,13 +466,13 @@ pub const MIN_UPDATE_INTERVAL_HOURS: u32 = 1;
 /// 关闭语义走 enabled=false，区间只防手滑输入非法值）。
 pub const MAX_UPDATE_INTERVAL_HOURS: u32 = 8760;
 
-/// 应用内更新配置（§3.2 update 组，FR-16-03，33 号票实装）。
+/// 应用内更新配置（update 组，实装）。
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateConfig {
     /// 更新检查开关（缺省 true，serde default 回填旧配置）：false = 启动
-    /// 静默检查与设置页手动检查全部禁用（NFR-11：关闭后不发起任何更新
+    /// 静默检查与设置页手动检查全部禁用（关闭后不发起任何更新
     /// 外联请求）。tauri.conf.json 的 updater pubkey 为占位空串（HITL
     /// 密钥未配）时入口同样禁用——update_status 命令的
     /// `pubkeyConfigured=false` 传导，配置开关与构建面双门兜底。
@@ -480,18 +480,18 @@ pub struct UpdateConfig {
     pub enabled: bool,
     /// 启动静默检查的最小间隔小时数（缺省 24，合法区间 1–8760，越界拒绝
     /// 整份提交）：间隔记账在前端 ui-state 的 `lastUpdateCheckAt`（不敏感，
-    /// 不进 config，§3.2 注记）；设置页手动检查不受间隔限制，只受 enabled
+    /// 不进 config）；设置页手动检查不受间隔限制，只受 enabled
     /// 与 pubkey 门控。save_config 即时生效（下一次静默检查判定读取）。
     #[serde(default = "default_update_interval_hours")]
     pub interval_hours: u32,
 }
 
-/// serde 缺省值函数：静默检查间隔缺省 24 小时（§3.2 update 组）。
+/// serde 缺省值函数：静默检查间隔缺省 24 小时（update 组）。
 fn default_update_interval_hours() -> u32 {
     DEFAULT_UPDATE_INTERVAL_HOURS
 }
 
-// UpdateConfig 的缺省值：启用 + 24 小时间隔（§3.2 update 组缺省口径）。
+// UpdateConfig 的缺省值：启用 + 24 小时间隔（update 组缺省口径）。
 impl Default for UpdateConfig {
     fn default() -> Self {
         Self {
@@ -501,7 +501,7 @@ impl Default for UpdateConfig {
     }
 }
 
-/// 上下文压缩配置（§3.2 compaction 组，FR-03-05，04 号票实装）。
+/// 上下文压缩配置（compaction 组，实装）。
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -518,11 +518,11 @@ pub struct CompactionConfig {
     pub model_id: Option<String>,
 }
 
-/// serde 缺省值函数：自动压缩阈值缺省 0.6（§6.2）。
+/// serde 缺省值函数：自动压缩阈值缺省 0.6。
 fn default_compaction_threshold() -> f64 {
     0.6
 }
-/// serde 缺省值函数：压缩总超时缺省 180 秒（§6.2）。
+/// serde 缺省值函数：压缩总超时缺省 180 秒。
 fn default_compaction_timeout_secs() -> u64 {
     180
 }
@@ -538,32 +538,32 @@ impl Default for CompactionConfig {
     }
 }
 
-/// 同批工具并发上限的缺省值（§3.2 tools 组注记，FR-03-11）。
+/// 同批工具并发上限的缺省值（tools 配置组）。
 pub const DEFAULT_MAX_PARALLEL: u32 = 4;
-/// maxParallel 合法区间上限（§3.2 tools 组注记：1–16）。
+/// maxParallel 合法区间上限（tools 配置组：1–16）。
 pub const MAX_PARALLEL_LIMIT: u32 = 16;
 
-/// batch_read 单批文件数的缺省上限（§3.2 tools.batchReadLimit / §8.3
-/// batch_read 行，14 号票）。
+/// batch_read 单批文件数的缺省上限（tools.batchReadLimit /
+/// batch_read 行）。
 pub const DEFAULT_BATCH_READ_LIMIT: u32 = 20;
-/// batchReadLimit 合法区间上限（§3.2 tools.batchReadLimit 注记：真正的硬顶
+/// batchReadLimit 合法区间上限（tools.batchReadLimit 配置：真正的硬顶
 /// 是 batch_read 的 512KB 共享响应预算，本字段只是文件数闸门；上限 100
 /// 覆盖大范围清单式调研）。
 pub const MAX_BATCH_READ_LIMIT: u32 = 100;
 
-/// 模型流停滞超时的缺省秒数（§3.2 watchdog 组/§5.7：300 秒）。
+/// 模型流停滞超时的缺省秒数（watchdog 组/：300 秒）。
 pub const DEFAULT_STALL_TIMEOUT_SECS: u32 = 300;
-/// stallTimeoutSecs 合法区间下限（§5.7：5 秒）。
+/// stallTimeoutSecs 合法区间下限（5 秒）。
 pub const MIN_STALL_TIMEOUT_SECS: u32 = 5;
-/// stallTimeoutSecs 合法区间上限（§5.7：3600 秒）。
+/// stallTimeoutSecs 合法区间上限（3600 秒）。
 pub const MAX_STALL_TIMEOUT_SECS: u32 = 3600;
 
-/// 监督看门狗配置（§3.2 watchdog 组，FR-03-07，37 号票实装）。
+/// 监督看门狗配置（watchdog 组，实装）。
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WatchdogConfig {
-    /// 模型流停滞超时秒数（§5.7 计时边界：仅模型请求阶段计时）：单次模型请求
+    /// 模型流停滞超时秒数（计时边界：仅模型请求阶段计时）：单次模型请求
     /// 自发出起无有效模型增量达到该时长即终止 run（E_RUN_STALLED）；缺省 300，
     /// 合法区间 5–3600；按 run 装配驱动时读取生效（save_config 后下一次
     /// start_chat 应用）。
@@ -571,12 +571,12 @@ pub struct WatchdogConfig {
     pub stall_timeout_secs: u32,
 }
 
-/// serde 缺省值函数：模型流停滞超时缺省 300 秒（§5.7）。
+/// serde 缺省值函数：模型流停滞超时缺省 300 秒。
 fn default_stall_timeout_secs() -> u32 {
     DEFAULT_STALL_TIMEOUT_SECS
 }
 
-// WatchdogConfig 的缺省值：停滞超时 300 秒（§5.7）。
+// WatchdogConfig 的缺省值：停滞超时 300 秒。
 impl Default for WatchdogConfig {
     fn default() -> Self {
         Self {
@@ -585,34 +585,34 @@ impl Default for WatchdogConfig {
     }
 }
 
-/// 工具批执行配置（§3.2 tools 组，FR-03-11/FR-04-04，07 号票实装）。
+/// 工具批执行配置（tools 组，/，实装）。
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolsConfig {
     /// 同批工具并发上限：批内无冲突调用（ReadOnly/Meta/Network）共享的信号量
     /// 额度，缺省 4，合法区间 1–16；文件写不走此额度（进程级全局互斥队列
-    /// 串行，§5.4 ⑤）；按 run 装配执行器时读取生效（save_config 后下一次
+    /// 串行， ⑤）；按 run 装配执行器时读取生效（save_config 后下一次
     /// start_chat 应用）。
     #[serde(default = "default_max_parallel")]
     pub max_parallel: u32,
-    /// batch_read 工具的单批文件数上限（§8.3 batch_read 行「≤20 文件」的
-    /// 可配承载，14 号票回写 §3.2 补齐字段级定义）：缺省 20，合法区间
+    /// batch_read 工具的单批文件数上限（batch_read 行「≤20 文件」的
+    /// 可配承载，回写 补齐字段级定义）：缺省 20，合法区间
     /// 1–100，越界拒绝整份提交；save_config 后下一次工具调用生效。
     #[serde(default = "default_batch_read_limit")]
     pub batch_read_limit: u32,
 }
 
-/// serde 缺省值函数：同批工具并发上限缺省 4（§3.2）。
+/// serde 缺省值函数：同批工具并发上限缺省 4。
 fn default_max_parallel() -> u32 {
     DEFAULT_MAX_PARALLEL
 }
-/// serde 缺省值函数：batch_read 单批文件数上限缺省 20（§3.2/§8.3）。
+/// serde 缺省值函数：batch_read 单批文件数上限缺省 20。
 fn default_batch_read_limit() -> u32 {
     DEFAULT_BATCH_READ_LIMIT
 }
 
-// ToolsConfig 的缺省值：并发上限 4 + 单批读取上限 20（§3.2）。
+// ToolsConfig 的缺省值：并发上限 4 + 单批读取上限 20。
 impl Default for ToolsConfig {
     fn default() -> Self {
         Self {
@@ -622,42 +622,42 @@ impl Default for ToolsConfig {
     }
 }
 
-/// 网络工具 SSRF 防护配置（§3.2 network 组，FR-05-07/§9.2，12 号票实装）。
+/// 网络工具 SSRF 防护配置（network 配置组）。
 /// Default（derive）：allow_private_network = false，拒绝私网访问（最保守，
-/// §3.2 network 组注记）。
+/// network 配置组口径）。
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NetworkConfig {
     /// 允许 web_fetch/http_request 访问私网/回环/链路本地/CGNAT/ULA 地址
-    /// （§9.2 全地址校验的设置例外）：缺省 false（拒绝，最保守）；旧配置
+    /// （全地址校验的设置例外）：缺省 false（拒绝，最保守）；旧配置
     /// 无该组时 serde default 回填 false；save_config 后下一次工具调用生效。
     #[serde(default)]
     pub allow_private_network: bool,
 }
 
-/// web_search 每次搜索的结果条数缺省值（§3.2 search.searxng 组/§8.3
-/// web_search 行，13 号票）：工具未显式给 limit 参数时各通道用它截断。
+/// web_search 每次搜索的结果条数缺省值（search.searxng 组/
+/// web_search 行）：工具未显式给 limit 参数时各通道用它截断。
 pub const DEFAULT_SEARCH_MAX_RESULTS: u32 = 10;
-/// 搜索结果条数的合法区间上限（§3.2 search 组注记：结果列表直接回喂模型
+/// 搜索结果条数的合法区间上限（search 配置组：结果列表直接回喂模型
 /// 上下文，条数过大挤占窗口且对上游引擎压力大；下限 1 由「正整数」承担）。
 pub const MAX_SEARCH_RESULTS_LIMIT: u32 = 30;
 
-/// SearXNG 自托管元搜索配置（§3.2 search.searxng 组，FR-05-05/C-12，
-/// 13 号票实装）。用户显式启用才参与 web_search 通道 1（本地优先）。
+/// SearXNG 自托管元搜索配置（search.searxng 组，/，
+/// 实装）。用户显式启用才参与 web_search 通道 1（本地优先）。
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SearxngConfig {
-    /// 是否启用 SearXNG 通道（C-12 优先级①的开关）：缺省 false——未启用时
+    /// 是否启用 SearXNG 通道（优先级①的开关）：缺省 false——未启用时
     /// web_search 直接从通道 2（内置抓取）开始，不自动探测本地服务。
     #[serde(default)]
     pub enabled: bool,
     /// SearXNG 服务基地址（缺省 `http://127.0.0.1:8888`；归一化剥尾部 `/`）。
-    /// 请求走本地回环、不经应用代理（C-12 定案：自托管服务无代理必要，
+    /// 请求走本地回环、不经应用代理（定案：自托管服务无代理必要，
     /// 走代理反而可能被代理规则拦掉回环地址）；也**不经 SSRF 校验**——
-    /// 用户显式启用即信任该地址，而回环地址天然被 §9.2 防线拒绝（§9.2
-    /// SearXNG 例外注记）。
+    /// 用户显式启用即信任该地址，而回环地址天然被既有防线拒绝
+    /// （SearXNG 例外：私网放行不适用本处）。
     #[serde(default = "default_searxng_base_url")]
     pub base_url: String,
     /// 每次搜索返回的结果条数上限（各通道共用缺省：工具未带 limit 参数时
@@ -666,11 +666,11 @@ pub struct SearxngConfig {
     pub max_results: u32,
 }
 
-/// serde 缺省值函数：SearXNG 服务基地址缺省本机 8888 端口（§3.2/C-12）。
+/// serde 缺省值函数：SearXNG 服务基地址缺省本机 8888 端口。
 fn default_searxng_base_url() -> String {
     "http://127.0.0.1:8888".to_string()
 }
-/// serde 缺省值函数：搜索结果条数缺省 10（§8.3 web_search 行口径）。
+/// serde 缺省值函数：搜索结果条数缺省 10（web_search 行口径）。
 fn default_search_max_results() -> u32 {
     DEFAULT_SEARCH_MAX_RESULTS
 }
@@ -686,7 +686,7 @@ impl Default for SearxngConfig {
     }
 }
 
-/// 网络搜索配置（§3.2 search 组，FR-05-05/C-12 本地优先三通道，13 号票
+/// 网络搜索配置（search 组，/ 本地优先三通道，
 /// 实装）：web_search 工具按「SearXNG（启用且探活成功）→ 内置直接抓取
 /// （默认兜底）→ Tavily（Key 已配才参与）」的钉死优先级自动选通道。
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -698,8 +698,8 @@ pub struct SearchConfig {
     pub searxng: SearxngConfig,
     /// Tavily API Key（通道 3，BYOK 高级区）：空白归一为 None（"没填"与
     /// "填了又删掉"等价，未配 Key 该通道不参与优先级链）；明文随 config.json
-    /// 0600 落盘（v2.5 存储协议，§9.4——票面"钥匙串协议"按现行协议落
-    /// config.json，票内决议记录说明）。旧配置无该组时 serde default 回填。
+    /// 0600 落盘（v2.5 存储协议：明文落 config.json）。旧配置无该组时
+    /// serde default 回填。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub tavily_api_key: Option<String>,
@@ -737,30 +737,30 @@ pub struct AppConfig {
     /// 系统通知偏好。
     #[serde(default)]
     pub notifications: NotificationConfig,
-    /// 智能体行为配置（可空 = 全部缺省，§3.2 agent 组）。
+    /// 智能体行为配置（可空 = 全部缺省， agent 组）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub agent: Option<AgentConfig>,
-    /// 上下文压缩（FR-03-05，04 号票；缺省值经 Default：0.6 阈值 / 180s 超时）。
+    /// 上下文压缩（缺省值经 Default：0.6 阈值 / 180s 超时）。
     #[serde(default)]
     pub compaction: CompactionConfig,
-    /// 工具批执行（FR-03-11/FR-04-04，07 号票；缺省值经 Default：并发上限 4）。
+    /// 工具批执行（缺省值经 Default：并发上限 4）。
     #[serde(default)]
     pub tools: ToolsConfig,
-    /// 监督看门狗（FR-03-07，37 号票；缺省值经 Default：停滞超时 300 秒。
+    /// 监督看门狗（缺省值经 Default：停滞超时 300 秒。
     /// 旧配置无该组时 serde default 回填默认值）。
     #[serde(default)]
     pub watchdog: WatchdogConfig,
-    /// 网络工具 SSRF 防护（FR-05-07/§9.2，12 号票；缺省值经 Default：
+    /// 网络工具 SSRF 防护（缺省值经 Default：
     /// 拒绝私网访问。旧配置无该组时 serde default 回填）。
     #[serde(default)]
     pub network: NetworkConfig,
-    /// 网络搜索（FR-05-05/C-12 本地优先三通道，13 号票；缺省值经 Default：
+    /// 网络搜索（本地优先三通道；缺省值经 Default：
     /// SearXNG 不启用 + Key 未配 = 零配置默认走内置抓取。旧配置无该组时
     /// serde default 回填）。
     #[serde(default)]
     pub search: SearchConfig,
-    /// 应用内更新（FR-16-03，33 号票；缺省值经 Default：启用 + 24 小时。
+    /// 应用内更新（缺省值经 Default：启用 + 24 小时。
     /// 旧配置无该组时 serde default 回填，schemaVersion 维持 2——新增域
     /// 不破坏旧版读取，serde 忽略未知字段）。
     #[serde(default)]
@@ -785,7 +785,7 @@ fn default_log_level() -> LogLevel {
 }
 
 // ApprovalConfig 的缺省值：审批开、不自动确认、会话记忆与白名单启用、
-// 白名单为空、严格计划硬门关（最保守；23 号票四开关 + 25 号票 requirePlan
+// 白名单为空、严格计划硬门关（最保守；四开关 + requirePlan
 // 缺省口径）。
 impl Default for ApprovalConfig {
     fn default() -> Self {
@@ -800,7 +800,7 @@ impl Default for ApprovalConfig {
         }
     }
 }
-// HotkeyConfig 的缺省值：启用 + ⌥/Alt+Space（§10.7）。
+// HotkeyConfig 的缺省值：启用 + ⌥/Alt+Space。
 impl Default for HotkeyConfig {
     fn default() -> Self {
         Self {
@@ -810,7 +810,7 @@ impl Default for HotkeyConfig {
     }
 }
 // UiConfig 的缺省值：中文界面、跟随系统主题、模型语言跟随用户输入、
-// 关闭收进托盘（§9.6 现状语义）、热键 ⌥/Alt+Space 开。
+// 关闭收进托盘（现状语义）、热键 ⌥/Alt+Space 开。
 impl Default for UiConfig {
     fn default() -> Self {
         Self {
@@ -856,7 +856,7 @@ impl Default for AppConfig {
 
 // AppConfig 的归一化与校验方法。
 impl AppConfig {
-    /// 归一化 + 校验（§7.6 协调器第一步）。规则：
+    /// 归一化 + 校验（协调器第一步）。规则：
     /// - schemaVersion 必须为 2（CW schema v2 之外拒绝）；
     /// - provider/model 的 id、name 非空，baseUrl（如有）必须 http(s)；
     /// - model 的 maxTokens/contextWindow 缺省/为 0 → 默认值（32768/128000）；
@@ -870,7 +870,7 @@ impl AppConfig {
         {
             return Err(IpcError::invalid_arg("界面字号必须在 12–18px 之间"));
         }
-        // ui.hotkey.accelerator：保存边界归一化（29 号票，§3.2 ui.hotkey）——
+        // ui.hotkey.accelerator：保存边界归一化（ui.hotkey）——
         // 大小写/修饰符别名/修饰符顺序归一后存储；非法（空串、空段、纯修饰符
         // 无主键、多主键）拒绝整份提交。
         if let Some(normalized) = normalize_accelerator(&self.ui.hotkey.accelerator) {
@@ -895,7 +895,7 @@ impl AppConfig {
                 "compaction.timeoutSecs 不能低于 30 秒",
             ));
         }
-        // tools.maxParallel：正整数且不超过 16（§3.2 tools 组注记——并发度过高
+        // tools.maxParallel：正整数且不超过 16（tools 配置组约束——并发度过高
         // 会放大命令/网络类工具的资源占用，超限视为配置错误拒绝整份提交）。
         if self.tools.max_parallel == 0 || self.tools.max_parallel > MAX_PARALLEL_LIMIT {
             return Err(IpcError::invalid_arg(format!(
@@ -903,17 +903,17 @@ impl AppConfig {
                 self.tools.max_parallel
             )));
         }
-        // tools.batchReadLimit：合法区间 1–100（§3.2 tools.batchReadLimit 注记
+        // tools.batchReadLimit：合法区间 1–100（tools.batchReadLimit 配置约束
         // ——真正的硬顶是 batch_read 的 512KB 共享响应预算，本字段只是文件数
         // 闸门；越界视为配置错误拒绝整份提交。旧配置缺字段由 serde default
-        // 回填 20，14 号票）。
+        // 回填。
         if self.tools.batch_read_limit == 0 || self.tools.batch_read_limit > MAX_BATCH_READ_LIMIT {
             return Err(IpcError::invalid_arg(format!(
                 "tools.batchReadLimit 必须在 1–{MAX_BATCH_READ_LIMIT} 内（实际 {}）",
                 self.tools.batch_read_limit
             )));
         }
-        // watchdog.stallTimeoutSecs：合法区间 5–3600 秒（§3.2 watchdog 组/§5.7——
+        // watchdog.stallTimeoutSecs：合法区间 5–3600 秒（watchdog 组/——
         // 过短会对慢模型/长首包误杀，过长失去停滞检测意义；越界视为配置错误
         // 拒绝整份提交）。
         if !(MIN_STALL_TIMEOUT_SECS..=MAX_STALL_TIMEOUT_SECS)
@@ -930,7 +930,7 @@ impl AppConfig {
             .take()
             .map(|m| m.trim().to_owned())
             .filter(|m| !m.is_empty());
-        // agent.maxConcurrentSubagents：正整数且不超过 16（§5.9 Q13——所有会话
+        // agent.maxConcurrentSubagents：正整数且不超过 16（所有会话
         // 共用的子代理并发上限，越界视为配置错误拒绝整份提交；旧配置缺字段由
         // serde default 回填 4）。
         if let Some(agent) = &self.agent
@@ -952,7 +952,7 @@ impl AppConfig {
         }
         // search.searxng.baseUrl：必须带主机名的 http(s) 地址（防 file:// 等
         // 非预期协议进入配置）；剥尾部 `/`（Url::join 拼路径时不产生双斜杠）；
-        // search.searxng.maxResults：正整数且不超过 30（§3.2 search 组注记——
+        // search.searxng.maxResults：正整数且不超过 30（search 配置组约束——
         // 结果列表直接回喂模型上下文，条数过大挤占窗口；越界拒绝整份提交）；
         // search.tavilyApiKey：空白归一为 None（未配 Key 通道 3 不参与优先级链）。
         self.search.searxng.base_url = self
@@ -978,7 +978,7 @@ impl AppConfig {
             .take()
             .map(|k| k.trim().to_owned())
             .filter(|k| !k.is_empty());
-        // update.intervalHours：合法区间 1–8760 小时（§3.2 update 组，33 号票
+        // update.intervalHours：合法区间 1–8760 小时（update 组，
         // ——过短对 GitHub Releases 无意义且浪费请求，过长失去检查意义；
         // 越界视为配置错误拒绝整份提交。旧配置缺字段由 serde default 回填 24）。
         if !(MIN_UPDATE_INTERVAL_HOURS..=MAX_UPDATE_INTERVAL_HOURS)
@@ -989,7 +989,7 @@ impl AppConfig {
                 self.update.interval_hours
             )));
         }
-        // proxy（FR-02-10，19 号票）：manual 模式必须有地址且 scheme 在
+        // proxy：manual 模式必须有地址且 scheme 在
         // 白名单（http/https/socks5/socks5h——socks5h = 域名由代理远端解析）；
         // 校验口径与 providers::http::validate_proxy_url 同源（保存前拦截，
         // 防 http.rs 运行时装配路径才报错）。none/system 模式的 url 字段
@@ -1083,7 +1083,7 @@ fn ensure_http_url(url: &str) -> Result<(), IpcError> {
     }
 }
 
-/// AppConfig 实现协调器载荷 trait（providers → storage 单向依赖，§2.2）。
+/// AppConfig 实现协调器载荷 trait（providers → storage 单向依赖）。
 impl ConfigPayload for AppConfig {
     fn normalize(&mut self) -> Result<(), IpcError> {
         AppConfig::normalize(self)

@@ -5,7 +5,7 @@ use crate::providers::types::{ApiFormat, SCHEMA_VERSION};
 
 // 断言：预设清单与实例化全语义——slug 全局唯一、远端预设 baseUrl 一律 https、
 // 本地预设走 http 回环、每家至少带一个建议模型、清单至少 9 家（6 远端 + 3 本地）；
-// 本地模型三家（FR-02-04）slug/端口/方言对齐官方缺省；deepseek 实例化出字段
+// 本地模型三家slug/端口/方言对齐官方缺省；deepseek 实例化出字段
 // 齐全合法的 ProviderConfig（Key 留空、id 为 uuid、窗口参数为正数）且能过
 // schema v2 归一化；ollama 免 Key 实例化（api_key=None + local=true 组合可过
 // 归一化）；按不存在的 slug 查询返回 None 不报错。
@@ -15,7 +15,7 @@ fn presets_inventory_and_instantiation() {
     let presets = builtin_presets();
     assert!(
         presets.len() >= 9,
-        "M2 至少内置 9 家预设（6 远端 + 3 本地，19 号票）"
+        "M2 至少内置 9 家预设（6 远端 + 3 本地）"
     );
     let mut slugs: Vec<_> = presets.iter().map(|p| p.slug).collect();
     slugs.sort_unstable();
@@ -75,7 +75,7 @@ fn presets_inventory_and_instantiation() {
     };
     config.normalize().unwrap();
 
-    // 本地免 Key 实例化（FR-02-04）：api_key=None + local=true 可过归一化
+    // 本地免 Key 实例化：api_key=None + local=true 可过归一化
     let preset = find_preset("ollama").expect("ollama 预设存在");
     let provider = preset_to_provider(preset);
     assert!(provider.local, "local 随预设带出");

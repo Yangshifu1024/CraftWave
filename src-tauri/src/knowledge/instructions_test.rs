@@ -1,4 +1,4 @@
-//! knowledge/instructions.rs 的 headless 测试（24 号票，§9.8 挂接点①）：
+//! knowledge/instructions.rs 的 headless 测试（挂接点①）：
 //! 项目指令（AGENTS.md/CRAFTWAVE.md/CLAUDE.md）首用信任三路径（allow_session
 //! / remember / deny）、内容变更重问、deny 后不注入、无项目上下文零注入。
 
@@ -95,10 +95,10 @@ async fn answer_project_trust(
 
 // 断言（信任三路径 + 内容变更重问，验收第 1/2 条后端面 + 红线「指纹变更
 // 重问」）：deny → 注入 None + 不产生记录（下一 run 重新询问），询问载荷
-// 字段级（§9.8 resourceName/scope/fingerprint/options）；allow_session →
+// 字段级（resourceName/scope/fingerprint/options）；allow_session →
 // 注入 + 会话内存免问（trust 文件无记录，新会话重问）；remember → 注入 +
 // trust/project.json 落盘（新会话也免问）；内容变更（指纹不符）→ 重新
-// 询问且变更后 deny 不注入（不能沿用旧信任读新正文，Q20 同精神）；
+// 询问且变更后 deny 不注入（不能沿用旧信任读新正文， 同精神）；
 // 无项目上下文（临时会话）零注入零询问。
 #[tokio::test(flavor = "current_thread")]
 async fn instruction_trust_change_reask_and_scope() {
@@ -119,7 +119,7 @@ async fn instruction_trust_change_reask_and_scope() {
     }
     let trust = ProjectTrustStore::new(dir.path());
     assert!(trust.entries().is_empty(), "deny 不产生记录");
-    // 询问载荷形状（§9.8 字段级：resourceName/scope/fingerprint/options）
+    // 询问载荷形状（字段级：resourceName/scope/fingerprint/options）
     let opened = events
         .payloads_of(keys::ASK_OPENED)
         .into_iter()
@@ -173,7 +173,7 @@ async fn instruction_trust_change_reask_and_scope() {
         );
     }
 
-    // —— remember：落盘免问（新会话也免） ——
+    // —— remember：落盘免问（新会话也免）——
     {
         let answer_app = app.clone();
         let answer_events = events.clone();
@@ -205,8 +205,8 @@ async fn instruction_trust_change_reask_and_scope() {
         "remember 后跨会话免问"
     );
 
-    // —— 内容变更（指纹不符）→ 重新询问（§9.8「内容变更 → 重新询问」）；
-    // 变更后 deny → 不注入（不能沿用旧信任读新正文，Q20 同精神）。
+    // —— 内容变更（指纹不符）→ 重新询问（「内容变更 → 重新询问」）；
+    // 变更后 deny → 不注入（不能沿用旧信任读新正文， 同精神）。
     std::fs::write(home.join("AGENTS.md"), "# v2 恶意指令").unwrap();
     {
         let answer_app = app.clone();

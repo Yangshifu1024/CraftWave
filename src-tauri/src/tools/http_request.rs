@@ -1,15 +1,14 @@
-//! http_request 工具（技术设计文档 §8.3 M2 表 http_request 行，12 号票）：
-//! 通用 HTTP 请求（模型调试 API / 拉取资源用）。
+//! http_request 工具：通用 HTTP 请求（模型调试 API / 拉取资源用）。
 //!
-//! - 方法限 GET/POST/PUT/PATCH/DELETE/HEAD（§8.3 参数摘要）；
-//! - SSRF 五步防线与节流在 [`crate::safety::ssrf`]（§9.2），重定向逐跳校验
+//! - 方法限 GET/POST/PUT/PATCH/DELETE/HEAD；
+//! - SSRF 五步防线与节流在 [`crate::safety::ssrf`]，重定向逐跳校验
 //!   与跨源剥敏感头同 web_fetch；
-//! - 响应治理同命令输出（§8.8）：>96KB 全量 spill 至
+//! - 响应治理同命令输出：>96KB 全量 spill 至
 //!   `<data>/logs/spill/<callId>.txt` + 尾部 16KB + spill 路径（24h lazy
 //!   清理，复用 tools/command 的 spill 原语）；
 //! - 结果 data=`{ status, headers(截断), body }`；
 //! - 能力 Network：plan 档过滤、confirm_each/auto_edit 档审批、
-//!   full_access 放行（§8.5，gate.rs 零改动）。
+//!   full_access 放行。
 
 use std::collections::BTreeMap;
 use std::sync::atomic::AtomicBool;
@@ -22,21 +21,21 @@ use crate::util::errors::ToolError;
 
 use super::{ToolAnnotations, ToolOrigin, ToolOutcome, ToolSpec};
 
-/// 允许的 HTTP 方法白名单（§8.3：method 限 GET/POST/PUT/PATCH/DELETE/HEAD）。
+/// 允许的 HTTP 方法白名单（method 限 GET/POST/PUT/PATCH/DELETE/HEAD）。
 pub const ALLOWED_METHODS: [&str; 6] = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"];
 
 /// 单个响应头的值保留上限（防巨型头挤爆工具结果；头总数一般 <100）。
 const HEADER_VALUE_LIMIT: usize = 512;
 
-/// http_request 参数（§8.3：`{ method, url, headers?, body? }`）。
+/// http_request 参数：`{ method, url, headers?, body? }`。
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HttpRequestArgs {
     /// HTTP 方法（白名单内，大小写不敏感）。
     pub method: String,
-    /// 目标 URL（仅 http/https；SSRF 校验见 §9.2）。
+    /// 目标 URL（仅 http/https；SSRF 校验见 safety/ssrf）。
     pub url: String,
-    /// 自定义请求头（跨源重定向时敏感头自动剥除，§9.2）。
+    /// 自定义请求头（跨源重定向时敏感头自动剥除）。
     #[serde(default)]
     pub headers: Option<BTreeMap<String, String>>,
     /// 请求体（文本；GET/HEAD 忽略）。
@@ -54,7 +53,7 @@ pub enum RequestExit {
 }
 
 /// 执行一次 HTTP 请求（门控放行后调用）。`call_id` 为 spill 文件名；
-/// `ctx` 提供数据根目录（spill 落 `<data>/logs/spill/`，§8.8）。
+/// `ctx` 提供数据根目录（spill 落 `<data>/logs/spill/`）。
 pub async fn execute(
     ctx: &super::ToolsContext,
     policy: SsrfPolicy,
@@ -169,7 +168,7 @@ pub async fn execute(
         headers_json.insert(key, serde_json::Value::String(display));
     }
 
-    // 响应体：文本化（lossy）+ §8.8 治理（>96KB spill + 尾 16KB）
+    // 响应体：文本化（lossy）+ spill 治理（>96KB spill + 尾 16KB）
     let body_text = String::from_utf8_lossy(&response.body).into_owned();
     let mut data = serde_json::json!({
         "status": response.status,
@@ -183,7 +182,7 @@ pub async fn execute(
     );
 
     if body_text.len() > super::command::SPILL_THRESHOLD {
-        // spill 情形（§8.8）：全量落盘 + body 只带尾部 16KB + spill 路径
+        // spill 情形：全量落盘 + body 只带尾部 16KB + spill 路径
         match super::command::spill_full(ctx, call_id, &body_text) {
             Ok(path) => {
                 data["spillPath"] = serde_json::Value::String(path.clone());

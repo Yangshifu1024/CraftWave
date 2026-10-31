@@ -1,4 +1,4 @@
-//! fence AST 写目标分析测试（22 号票）：绕过向量测试集、字面量掩码、
+//! fence AST 写目标分析测试：绕过向量测试集、字面量掩码、
 //! 四象限判定、fail-closed、git_classify 表驱动、PowerShell 面。
 
 use std::collections::HashMap;
@@ -40,7 +40,7 @@ fn lit(s: &str) -> TargetPath {
 // 命中（Opaque）、写命令表（tee/sed -i/rm/mv/chmod/cp/install/dd/mkfs）、
 // 只读命令与变量赋值不产目标、PowerShell 面（重定向、流合并、Set-Content
 // 大小写、Remove-Item、Copy-Item、Tee-Object、变量掩码、只读管道）；
-// git_classify（26 号票接缝）只读/写/破坏性三分表，非 git 输入保守归写。
+// git_classify 只读/写/破坏性三分表，非 git 输入保守归写。
 #[test]
 fn parse_extraction_and_git_classify_tables() {
     // 重定向各形态。
@@ -219,7 +219,7 @@ fn parse_extraction_and_git_classify_tables() {
     // PowerShell 只读管道无写目标。
     assert_targets(Shell::PowerShell, "Get-Content x | Measure-Object", &[]);
 
-    // git_classify 表（26 号票接缝）。
+    // git_classify 分类表。
     let readonly = [
         vec!["git", "status"],
         vec!["git", "diff", "HEAD~1"],
@@ -454,7 +454,7 @@ mod unix_fs_tests {
     // → Confirm（字面量掩码）、symlink 穿越界外 → Confirm（symlink 逃逸）、
     // heredoc 重定向 → 提取目标并判定（roots 内 → Allow）；界外写 Confirm、
     // 界外删除 Block（硬拦）、tee/tee -a/sed -i 越界保守 Confirm、roots 内
-    // 普通写 Allow（auto_edit 档直写语义由 §8.5 矩阵合成）；解析失败路径
+    // 普通写 Allow（auto_edit 档直写语义由能力矩阵合成）；解析失败路径
     // （未闭合引号/超深嵌套）恒 Confirm 无 fail-open；dd of=/dev/… 黑名单
     // 先行 Block。
     #[test]
@@ -524,7 +524,7 @@ mod unix_fs_tests {
         );
         assert_eq!(out.verdict, FenceVerdict::Confirm);
 
-        // roots 内普通写 → Allow（auto_edit 档直写语义由 §8.5 矩阵合成）。
+        // roots 内普通写 → Allow（auto_edit 档直写语义由能力矩阵合成）。
         let out = judge_in(&fence, "echo done > build.log", &ws);
         assert_eq!(out.verdict, FenceVerdict::Allow);
 

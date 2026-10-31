@@ -1,4 +1,4 @@
-//! 图片附件承载命令的单元测试（17 号票）：attach_image 的白名单/超限/合法
+//! 图片附件承载命令的单元测试：attach_image 的白名单/超限/合法
 //! base64 校验与去重、read_image_blob 的本会话读取/跨会话隔离/非法哈希拒绝。
 
 use base64::Engine;
@@ -22,7 +22,8 @@ fn app() -> (AppState, tempfile::TempDir) {
 }
 
 /// 断言 attach_image 的承载与校验语义：base64 入口内容寻址落盘（哈希 =
-/// SHA-256 前 32 hex、重复上传幂等去重、文件落会话 imgblob 目录 §7.7 v1）；
+/// SHA-256 前 32 hex、重复上传幂等去重、文件落会话 imgblob 目录
+/// （v1 路径口径））；
 /// 拖拽路径入口与 base64 同内容同哈希（拖入与粘贴等价）、路径不存在
 /// E_NOT_FOUND；校验面表驱动——非白名单 mime、超 5MiB、魔数不过、非法
 /// base64、空会话 id、入口形态缺失/双填全部 E_INVALID_ARG；
@@ -38,7 +39,7 @@ fn attach_and_read_image_blob_semantics() {
     let second = attach_image_core(&app, "sess-1", Some(PNG_1X1), None, "image/png").unwrap();
     assert_eq!(first.blob_hash, second.blob_hash, "重复上传同图幂等去重");
     assert_eq!(first.blob_hash.len(), 32);
-    // 文件落在会话 imgblob 目录（§7.7 v1 路径口径）
+    // 文件落在会话 imgblob 目录（v1 路径口径）
     let path = app
         .store
         .root()

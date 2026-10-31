@@ -1,19 +1,19 @@
-//! 角色表测试（10 号票，FR-07-01）：7 角色清单、budgetSteps 钳制、
+//! 角色表测试：7 角色清单、budgetSteps 钳制、
 //! 白名单裁剪（三处同源纪律——工具可见面 = 执行许可）与 subagent 工具规格。
 
 use super::*;
 use crate::safety::tier::PermissionTier;
 
-// 断言：7 个内置角色、名字唯一、清单顺序与票面默认预算（§5.9）；
+// 断言：7 个内置角色、名字唯一、清单顺序与默认预算；
 // 未知角色查询返回 None（执行入口回喂 E_INVALID_ARG 的依据）且大小写
 // 敏感；budgetSteps 钳制（1–1000，None → 角色默认值）；只读角色的工具表
 // 不含写/命令工具（可见面 = 执行许可，注册表 ⊇ 白名单）；写入角色白名单
 // 与 plan 档过滤（filter_for_tier 同一实现裁剪）；任何角色的白名单都不含
-// subagent（Q13 仅主代理委派的第一道落实）；subagent 工具规格 description
+// subagent（仅主代理可委派的第一道落实）；subagent 工具规格 description
 // 内嵌 7 角色清单与职责一句话、schema 必填 role/task、role 枚举全表。
 #[test]
 fn roles_roster_budget_and_tool_whitelists() {
-    // 7 个内置角色、名字唯一、清单顺序（§5.9）。
+    // 7 个内置角色、名字唯一、清单顺序。
     let names: Vec<&str> = ROLES.iter().map(|r| r.name).collect();
     assert_eq!(
         names,
@@ -31,7 +31,7 @@ fn roles_roster_budget_and_tool_whitelists() {
     sorted.sort_unstable();
     sorted.dedup();
     assert_eq!(sorted.len(), names.len(), "角色名必须唯一");
-    // 票面默认预算：explore 40 / dev 90 / reviewer 45 / tester 60。
+    // 默认预算：explore 40 / dev 90 / reviewer 45 / tester 60。
     let budget_of = |name: &str| find_role(name).unwrap().default_budget_steps;
     assert_eq!(budget_of("explore"), 40);
     assert_eq!(budget_of("implementer"), 90);
@@ -45,7 +45,7 @@ fn roles_roster_budget_and_tool_whitelists() {
     assert!(find_role("").is_none());
     assert!(find_role("Explore").is_none(), "角色名大小写敏感");
 
-    // budgetSteps 钳制（票面：1–1000；None → 角色默认值）。
+    // budgetSteps 钳制（1–1000；None → 角色默认值）。
     let explore = find_role("explore").unwrap();
     assert_eq!(clamp_budget_steps(explore, None), 40);
     assert_eq!(clamp_budget_steps(explore, Some(500)), 500);
@@ -99,8 +99,8 @@ fn roles_roster_budget_and_tool_whitelists() {
     );
     assert!(plan_names.contains(&"read"), "只读工具保留");
 
-    // 子代理的角色边界：任何角色的白名单都不含 subagent（Q13 仅主代理
-    // 委派在工具表层面的第一道落实；执行入口拒绝由 executor 的
+    // 子代理的角色边界：任何角色的白名单都不含 subagent（仅主代理
+    // 可委派在工具表层面的第一道落实；执行入口拒绝由 executor 的
     // allowed_tools + subagents=None 承担）。
     for role in ROLES {
         assert!(

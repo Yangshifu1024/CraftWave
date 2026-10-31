@@ -1,6 +1,6 @@
 //! wire 重建的单元测试：文本/推理原样映射、toolCall 与 toolResult 按调用
 //! id 配对拆分、prompt 与 history 切分、系统级前缀注入（customPrompt 有/无
-//! 两态，03 号票）、非法形态（空序列/末条非 user/悬空 toolResult）拒绝。
+//! 两态）、非法形态（空序列/末条非 user/悬空 toolResult）拒绝。
 
 use rig::completion::Message;
 use rig::message::{ToolResultContent, UserContent};
@@ -204,7 +204,7 @@ fn tool_result_pairing_and_error_mapping_cases() {
     }
 }
 
-// ---- 压缩边界重建（§6.2【M2】，04 号票）----
+// ---- 压缩边界重建 ----
 
 use crate::backend::wire::{CompactionBoundary, split_prompt_with_boundary};
 
@@ -262,7 +262,7 @@ fn compaction_boundary_cases() {
     assert!(err.0.contains("压缩边界锚点"), "错误面：{err}");
 }
 
-// ---- image part 双形态重建（§6.2，17 号票）----
+// ---- image part 双形态重建 ----
 
 use crate::backend::wire::{
     ImageBlobData, ImageBlobMap, VisionPolicy, image_placeholder, rebuild_message_stream_visioned,
@@ -304,12 +304,12 @@ fn image_part() -> WirePart {
     }
 }
 
-/// 断言 image part 双形态重建与降级各面（Q30）：vision 模型 prompt 中
+/// 断言 image part 双形态重建与降级各面：vision 模型 prompt 中
 /// image 映射为多模态 content 块（base64 嵌入 + MIME）；非 vision 模型
 /// **历史**中的 image 降级为明确占位文本；**本次新附图**按参数错误拒绝
 /// （不能由前端把新图标成历史绕过检查）；blob 缺失降级为占位文本不拒绝
 /// （诚实降级）；旧调用面对 image part 仍按参数错误拒绝；visioned 重建流
-/// 中 assistant 侧 image part 照 runMarker 同类跳过（M2 无图片生成）。
+/// 中 assistant 侧 image part 照 runMarker 同类跳过（无图片生成能力）。
 #[test]
 fn vision_image_part_cases() {
     // ① vision：prompt 中 image 映射多模态块，文本 part 顺序保留
@@ -364,7 +364,7 @@ fn vision_image_part_cases() {
         image_placeholder(&"a".repeat(32))
     );
 
-    // ③ 非 vision：本次新附图按参数错误拒绝（Q30）
+    // ③ 非 vision：本次新附图按参数错误拒绝
     let entries = vec![user_parts(
         "u1",
         vec![
@@ -400,7 +400,7 @@ fn vision_image_part_cases() {
         Err(WireError(_))
     ));
 
-    // ⑥ visioned 重建流：assistant 侧 image part 跳过（M2 无图片生成）
+    // ⑥ visioned 重建流：assistant 侧 image part 跳过（无图片生成能力）
     let entry = MessageEntry {
         id: "a1".to_owned(),
         parent_id: None,
@@ -432,13 +432,13 @@ fn vision_image_part_cases() {
     ));
 }
 
-// ---- 系统级前缀注入（03 号票 customPrompt 两态 + 31 号票 ai_language）----
+// ---- 系统级前缀注入（customPrompt 两态 + ai_language）----
 
 /// 断言系统级前缀注入各面：有 customPrompt 注入为 history 首条 system
-/// 消息（§6.2 次序首位）；无/空白 customPrompt 零注入（不产生空 system
+/// 消息（次序首位）；无/空白 customPrompt 零注入（不产生空 system
 /// 消息）；带首尾空白的前缀按 trim 后注入（与 AppConfig.normalize 归一
 /// 口径双保险）；ai_language 三态（非空 → 自定义语言、空 → 跟随界面语言
-/// zh-CN/en-US）；层叠次序（§6.2 定稿）——customPrompt → 项目指令 →
+/// zh-CN/en-US）；层叠次序——customPrompt → 项目指令 →
 /// ai_language → 压缩 summary → 技能清单按传入序层叠，空层零注入。
 #[test]
 fn system_prefix_and_language_layer_cases() {
@@ -489,7 +489,7 @@ fn system_prefix_and_language_layer_cases() {
         "en 文案无 CJK"
     );
 
-    // ⑤ 层叠次序（§6.2 回写口径）：ai_language 层位于 customPrompt/项目
+    // ⑤ 层叠次序：ai_language 层位于 customPrompt/项目
     // 指令之后、压缩 summary 之前；空层零注入
     let ai = ai_language_layer(Some("English"), "zh-CN").unwrap();
     let history: Vec<_> = Vec::new();

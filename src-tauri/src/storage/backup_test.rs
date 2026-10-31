@@ -1,4 +1,4 @@
-//! 备份守卫与恢复保护序列测试（Q34/Q36/Q41，04 号票建立、33 号票扩展）。
+//! 备份守卫与恢复保护序列测试（建立、扩展）。
 //! 同型用例在单个 #[test] 内顺序合并，断言消息带用例标识。
 
 use super::{
@@ -11,7 +11,7 @@ use crate::util::atomic::write_atomic;
 
 // 断言：ensure_upgrade_backup 全守卫——有数据时首次调用创建备份目录 + 升级
 // 标记且权威数据完整可读；标记存在时幂等放行；全新安装直接写标记零负载；
-// Q36 全清单进备份且排除面（cache/logs/trust/workspace/ui-state 等）不进、
+// 全清单进备份且排除面（cache/logs/trust/workspace/ui-state 等）不进、
 // manifest/恢复说明/恢复标记三件齐备；unix 下凭据文件权限复制不放宽（0600）。
 #[test]
 fn ensure_upgrade_backup_manifest_and_guards() {
@@ -80,7 +80,7 @@ fn ensure_upgrade_backup_manifest_and_guards() {
     assert_eq!(count(root), 1, "不应产生第二份备份");
     assert_eq!(backup, second, "幂等路径一致");
 
-    // Q36 manifest/恢复说明/恢复标记：另起全新根，造全清单与排除面
+    // manifest/恢复说明/恢复标记：另起全新根，造全清单与排除面
     let dir = tempfile::tempdir().expect("tempdir");
     let root = dir.path();
     write_atomic(&root.join("config.json"), b"{\"schemaVersion\":2}").expect("config");
@@ -180,7 +180,7 @@ fn ensure_upgrade_backup_manifest_and_guards() {
 }
 
 // 断言：失败守卫与恢复保护序列——config.json 不可读时守卫失败、原数据未动、
-// 标记未写（暂停升级语义，unix 以 000 权限模拟）；Q41 恢复保护全序列：无标记
+// 标记未写（暂停升级语义，unix 以 000 权限模拟）；恢复保护全序列：无标记
 // 零动作，有标记时信任清空、遗留 mcp-tools 删除、外部授权清空、审批白名单
 // 清空、未暂停队列强制暂停（已暂停保持、损坏文件记账不静默）、标记删除且
 // 幂等不重复触发。

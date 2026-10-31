@@ -1,4 +1,4 @@
-//! 事件汇抽象（§3.5 事件定义）：Rust → 前端的单向事件（tauri event）。
+//! 事件汇抽象（事件定义）：Rust → 前端的单向事件（tauri event）。
 //!
 //! 事件汇（EventSink）：后端向前端界面"推送通知"的出口抽象——后端各处只
 //! 依赖本 trait 发事件，不直接耦合 tauri 运行时，测试可换成录音实现来断言。
@@ -11,10 +11,10 @@
 
 use std::sync::Mutex;
 
-/// 事件键常量（§3.5 P0 子集；17 号票前实装 5 键，本票补 run 终态三键与
+/// 事件键常量（P0 子集；前实装 5 键，此处补 run 终态三键与
 /// 通知/退出两键）。
 pub mod keys {
-    /// run 任务确认启动（§3.5 P0 键；06 号票实装——自动投递与手动
+    /// run 任务确认启动（P0 键；实装——自动投递与手动
     /// start_chat 都发，前端以它驱动自动投递新 run 的观察态接入）。
     pub const RUN_START: &str = "run:start";
     /// 询问/审批开启（AskPanel 弹出）。
@@ -23,52 +23,52 @@ pub mod keys {
     pub const ASK_CLOSED: &str = "ask:closed";
     /// plan 工具变更。
     pub const PLAN_UPDATE: &str = "plan:update";
-    /// suggest 生成完成（FR-06-09）。
+    /// suggest 生成完成。
     pub const RUN_SUGGESTIONS: &str = "run:suggestions";
-    /// 会话累计用量（FR-01-13 会话口径）。
+    /// 会话累计用量（会话口径）。
     pub const TOKENS_UPDATE: &str = "tokens:update";
-    /// run 正常终态（17 号票；系统通知触发点之一）。
+    /// run 正常终态（系统通知触发点之一）。
     pub const RUN_DONE: &str = "run:done";
     /// run 异常终态。
     pub const RUN_ERROR: &str = "run:error";
     /// run 用户取消终态。
     pub const RUN_CANCELLED: &str = "run:cancelled";
-    /// steer 被消费（§3.5 P0 键，06 号票实装：acceptedAtTurn + entryId/text）。
+    /// steer 被消费（P0 键，实装：acceptedAtTurn + entryId/text）。
     pub const RUN_INJECT: &str = "run:inject";
-    /// followUp 队列状态变化（§3.5【M2】增补键，06 号票：入队/出队/移除/
+    /// followUp 队列状态变化（增补键，：入队/出队/移除/
     /// 暂停/恢复即发；returned 仅清空返还时出现）。
     pub const RUN_QUEUE: &str = "run:queue";
-    /// 系统通知点击回跳（§9.6：payload 带 sessionId/runId/anchor）。
+    /// 系统通知点击回跳（payload 带 sessionId/runId/anchor）。
     pub const NOTIFY_ACTIVATE: &str = "notify:activate";
-    /// 退出请求待确认（存在活跃 run 的退出拦截，§9.6）。
+    /// 退出请求待确认（存在活跃 run 的退出拦截）。
     pub const APP_EXIT_REQUESTED: &str = "app:exit_requested";
-    /// 压缩开始（FR-03-05，04 号票：Composer 上方指示条）。
+    /// 压缩开始（Composer 上方指示条）。
     pub const RUN_COMPACTING: &str = "run:compacting";
     /// 压缩完成（载荷 { sessionId, tokensBefore, tokensAfter }）。
     pub const RUN_COMPACTED: &str = "run:compacted";
-    /// 压缩失败（载荷 { sessionId }；失败兜底规则见 §6.2）。
+    /// 压缩失败（载荷 { sessionId }；失败兜底规则）。
     pub const RUN_COMPACT_FAILED: &str = "run:compact_failed";
-    /// MCP 连接池状态变化（§3.5【M2】增补键，08 号票：payload
+    /// MCP 连接池状态变化（增补键，：payload
     /// { scope, name, state: "starting"|"ready"|"stopped"|"error", detail? }）。
     pub const MCP_STATUS: &str = "mcp:status";
-    /// 子代理委派启动（§3.5【M2】增补键，10 号票：payload
+    /// 子代理委派启动（增补键，：payload
     /// { sessionId, runId, subId, role }，跨 Tab Inspector 订阅）。
     pub const SUB_SPAWN: &str = "sub:spawn";
-    /// 子代理步数推进（10 号票：payload { sessionId, runId, subId, turn }）。
+    /// 子代理步数推进（payload { sessionId, runId, subId, turn }）。
     pub const SUB_STEP: &str = "sub:step";
-    /// 子代理结构化汇报产出（10 号票：payload { sessionId, runId, subId, report }）。
+    /// 子代理结构化汇报产出（payload { sessionId, runId, subId, report }）。
     pub const SUB_REPORT: &str = "sub:report";
-    /// 子代理用量增量（10 号票：payload { sessionId, runId, subId, usage }；
+    /// 子代理用量增量（payload { sessionId, runId, subId, usage }；
     /// 仅子代理面板展示自身消耗，不重复累进会话累计——会话累计由 tokens:update
-    /// 单一出口承担，父级汇总只计一次，Q40）。
+    /// 单一出口承担，父级汇总只计一次）。
     pub const SUB_USAGE: &str = "sub:usage";
-    /// 子代理终态（10 号票：payload { sessionId, runId, subId, outcome }，
+    /// 子代理终态（payload { sessionId, runId, subId, outcome }，
     /// outcome ∈ report|partial|no_report|cancelled）。
     pub const SUB_DONE: &str = "sub:done";
-    /// 子代理异常终态（10 号票：payload { sessionId, runId, subId, code, message }）。
+    /// 子代理异常终态（payload { sessionId, runId, subId, code, message }）。
     pub const SUB_ERROR: &str = "sub:error";
-    /// 自动标题生成完成（§3.5 P0 键，27 号票实装：payload
-    /// { sessionId, title }；时机 = meta 行 + index 双写落盘之后，C-9 失败
+    /// 自动标题生成完成（P0 键，实装：payload
+    /// { sessionId, title }；时机 = meta 行 + index 双写落盘之后， 失败
     /// 静默——超时/失败走兜底标题也发本事件，只有"无标题可落"才不发）。
     pub const SESSION_TITLE: &str = "session:title";
 }

@@ -1,13 +1,13 @@
-//! 【32 号票】会话日志与脱敏 e2e（NFR-09「日志全链路脱敏」常驻 CI 面）：
+//! 会话日志与脱敏 e2e（「日志全链路脱敏」常驻 CI 面）：
 //! 本地 mock SSE 服务（tests/common），无网络、无真实 Key。
 //!
-//! 覆盖面（票面"测试"节 + 验收）：
+//! 覆盖面：
 //! - verbose（config.log.level=Debug）开 → start_chat_core 全链跑一轮
 //!   带工具（ask 问卷）与审批（ask 协议两端口）的 run → 会话日志文件含
 //!   run/llm/tool/approval 行，llm 含请求/响应原文行；
-//! - 全文 grep 无 API Key 明文（`sk-` 前缀密钥在请求面被脱敏，NFR-09）；
+//! - 全文 grep 无 API Key 明文（`sk-` 前缀密钥在请求面被脱敏）；
 //! - verbose 关（Info）→ 新日志不含请求/响应消息体行（只有元数据行）；
-//! - 删除会话 → 本会话日志及轮转副本不存在（Q43）。
+//! - 删除会话 → 本会话日志及轮转副本不存在。
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -151,7 +151,7 @@ fn log_text(root: &std::path::Path, session_id: &str) -> String {
     .unwrap_or_default()
 }
 
-/// ---- 1. verbose 全链：run/llm/tool/approval 行齐备 + 全链脱敏（NFR-09）----
+/// ---- 1. verbose 全链：run/llm/tool/approval 行齐备 + 全链脱敏 ----
 #[tokio::test]
 async fn verbose_run_logs_llm_tool_approval_and_redacts_keys() {
     let mock = MockOpenAI::start_with_turn1(turn1_with_ask()).await;
@@ -284,11 +284,11 @@ async fn verbose_run_logs_llm_tool_approval_and_redacts_keys() {
         "应有问卷收口行：{text}"
     );
 
-    // ④ NFR-09 红线：全文无 sk- 明文密钥（请求原文里的探针与 Provider
+    // ④ 红线：全文无 sk- 明文密钥（请求原文里的探针与 Provider
     //    配置的 api_key 都不得出现）
     assert!(
         !text.contains("sk-test1234567890abcdef"),
-        "日志不得出现 sk- 密钥明文（NFR-09）：{text}"
+        "日志不得出现 sk- 密钥明文：{text}"
     );
     assert!(!text.contains("sk-abcdef"), "日志不得出现其他 sk- 形态明文");
     assert!(
@@ -296,7 +296,7 @@ async fn verbose_run_logs_llm_tool_approval_and_redacts_keys() {
         "探针密钥应被替换为脱敏占位：{text}"
     );
 
-    // ⑤ 删除会话 → 本会话日志不存在（Q43；轮转副本同面）
+    // ⑤ 删除会话 → 本会话日志不存在（轮转副本同面）
     craftwave_lib::host::commands::session::delete_session_core(&app, &runs, &session_id)
         .expect("删除应成功");
     assert!(

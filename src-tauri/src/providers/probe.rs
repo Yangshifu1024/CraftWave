@@ -1,11 +1,11 @@
-//! 供应商连接探测（FR-02-09，19 号票建面；38 号票扩为三方言）：
+//! 供应商连接探测（建面；扩为三方言）：
 //! `test_provider` 命令的领域实现。
 //!
 //! 不依赖 Tauri（入参全是值类型），单测直接打本模块；`host/commands/
 //! provider.rs` 只是参数契约薄壳。探测请求走代理工厂提供的 client
 //! （providers/http.rs），与模型请求同一条代理语义。
 //!
-//! 探测策略（FR-02-09"models 列表拉取或最小补全"两策略皆合法，三方言
+//! 探测策略（"models 列表拉取或最小补全"两策略皆合法，三方言
 //! 都按两段走）：
 //! 1. **models 清单拉取**——OpenAI 系 `GET {base}/models`（Bearer），
 //!    Anthropic `GET {base}/v1/models`（`x-api-key` + `anthropic-version`，
@@ -18,7 +18,7 @@
 //!    `POST {base}/v1/messages`（max_tokens=1）——能收 2xx 即连通
 //!    （模型列表无从得知，models 字段缺省）。
 //!
-//! 错误分类复用 §11.3/§3.6 的供应商七类（auth/billing/rate_limited/
+//! 错误分类复用 的供应商七类（auth/billing/rate_limited/
 //! bad_request/server/protocol/network），错误消息脱敏：只带状态码与响应
 //! 体摘要（≤200 字符），永不含请求头（Key 不回显）。
 
@@ -28,34 +28,34 @@ use std::time::{Duration, Instant};
 
 use super::types::ApiFormat;
 
-/// 探测总预算（命令面收口；对齐 13 号票 search_test 的 30 秒口径）。
+/// 探测总预算（命令面收口；对齐 search_test 的 30 秒口径）。
 pub const PROBE_BUDGET: Duration = Duration::from_secs(30);
 
-/// 供应商七类错误（FR-03-04/§3.6 E_PROVIDER_* 的分类面）。
+/// 供应商七类错误（ E_PROVIDER_* 的分类面）。
 /// 序列化为 snake_case，前端据 code 映射人话文案。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum ProbeErrorKind {
-    /// 401/403：Key 无效或无权限（§11.3 auth 行）。
+    /// 401/403：Key 无效或无权限（auth 行）。
     Auth,
-    /// 402/配额尽：余额不足（§11.3 billing 行）。
+    /// 402/配额尽：余额不足（billing 行）。
     Billing,
-    /// 429：限流（§11.3 rate_limited 行）。
+    /// 429：限流（rate_limited 行）。
     RateLimited,
-    /// 400/404/422 等请求面拒绝：地址/模型参数有误（§11.3 bad_request 行）。
+    /// 400/404/422 等请求面拒绝：地址/模型参数有误（bad_request 行）。
     BadRequest,
-    /// 5xx：服务端错误（§11.3 server 行）。
+    /// 5xx：服务端错误（server 行）。
     Server,
-    /// 响应不可解析：状态/结构不符合协议预期（§11.3 protocol 行）。
+    /// 响应不可解析：状态/结构不符合协议预期（protocol 行）。
     Protocol,
-    /// 连接/超时/DNS：目标不可达（§11.3 network 行）。
+    /// 连接/超时/DNS：目标不可达（network 行）。
     Network,
 }
 
-// ProbeErrorKind 的分类码映射（§3.6 错误码注册表 E_PROVIDER_* 键面）。
+// ProbeErrorKind 的分类码映射（错误码注册表 E_PROVIDER_* 键面）。
 impl ProbeErrorKind {
-    /// §3.6 错误码（E_PROVIDER_ 前缀 + 分类大写）。
+    /// 错误码（E_PROVIDER_ 前缀 + 分类大写）。
     pub fn code(self) -> &'static str {
         match self {
             Self::Auth => "E_PROVIDER_AUTH",
@@ -78,7 +78,7 @@ pub struct ProbeError {
     pub message: String,
 }
 
-/// 探测结果（§3.3 #32 返回契约的领域面）。
+/// 探测结果（返回契约的领域面）。
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -154,7 +154,7 @@ fn parse_models(body: &str) -> Option<Vec<String>> {
     None
 }
 
-/// HTTP 状态码 → 七类（§11.3 表的探测面；404/405 不在此列——它们是
+/// HTTP 状态码 → 七类（表的探测面；404/405 不在此列——它们是
 /// "models 端点不支持"的回退信号，由调用方单独识别）。
 fn classify_status(status: u16, body: &str) -> ProbeErrorKind {
     match status {
@@ -181,7 +181,7 @@ fn body_digest(body: &str) -> String {
     format!("{cut}…（已截断）")
 }
 
-/// 把 reqwest 错误归七类：超时/连接/DNS → network（§11.3 network 行）；
+/// 把 reqwest 错误归七类：超时/连接/DNS → network（network 行）；
 /// reqwest 错误链里没有状态概念，全部按不可达处理（探测不走 SSRF
 /// resolver，无该侧错误源）。
 fn classify_reqwest(err: &reqwest::Error) -> ProbeErrorKind {
@@ -193,9 +193,9 @@ fn classify_reqwest(err: &reqwest::Error) -> ProbeErrorKind {
     }
 }
 
-/// 按方言探测（FR-02-09 分发入口，38 号票）：连接测试与实际对话走同一
-/// `ApiFormat` 选择（票面测试节——不出现"测试成功却因固定 openai_chat
-/// 限制无法聊天"）。`base_url` 为供应商基地址（草稿试连时传表单当前值）；
+/// 按方言探测（分发入口）：连接测试与实际对话走同一
+/// `ApiFormat` 选择（连接测试与实际对话同口径——不出现"测试成功却因固定
+/// openai_chat 限制无法聊天"）。`base_url` 为供应商基地址（草稿试连时传表单当前值）；
 /// `api_key` 可空（本地免 Key 服务/未填 Key 的探测：请求不带鉴权头，错误
 /// 按响应分类）。
 pub async fn probe(
@@ -211,7 +211,7 @@ pub async fn probe(
     }
 }
 
-/// 探测一个 OpenAI 方言端点（FR-02-09，19 号票）。`base_url` 为供应商基地址
+/// 探测一个 OpenAI 方言端点。`base_url` 为供应商基地址
 /// （已含 /v1 之类前缀的完整 base；剥尾部 `/` 后拼路径）——草稿试连时
 /// 传表单当前值（baseUrlOverride 语义，不落库）；`api_key` 可空（本地
 /// 免 Key 服务/未填 Key 的探测：请求不带 Authorization，错误按响应分类）。
@@ -223,7 +223,7 @@ pub async fn probe_openai_compatible(
     probe_two_stage(client, base_url, api_key, openai_chat_endpoints()).await
 }
 
-/// 探测一个 OpenAI Responses 方言端点（38 号票）：`GET {base}/models`
+/// 探测一个 OpenAI Responses 方言端点：`GET {base}/models`
 /// 与 chat 方言同端点同鉴权（Bearer）；回退段打 `POST {base}/responses`
 /// （Responses API 的参数名是 `max_output_tokens` 且最小 16）。
 pub async fn probe_responses_api(
@@ -234,7 +234,7 @@ pub async fn probe_responses_api(
     probe_two_stage(client, base_url, api_key, openai_responses_endpoints()).await
 }
 
-/// 探测一个 Anthropic Messages 方言端点（38 号票）：地址先按 rig
+/// 探测一个 Anthropic Messages 方言端点：地址先按 rig
 /// `normalize_base_url` 同款规则剥 `/v1`、`/messages`、`/v1/messages` 尾缀
 /// （用户常把端点路径一并粘进 baseUrl），再拼官方路径 `/v1/models` 与
 /// `/v1/messages`；鉴权头是 `x-api-key` + `anthropic-version`（对话请求

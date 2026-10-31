@@ -1,4 +1,4 @@
-//! 子代理委派集成测试（10 号票，§12.5 点名场景）：本地 OpenAI 兼容 mock
+//! 子代理委派集成测试（点名场景）：本地 OpenAI 兼容 mock
 //! SSE 服务驱动 `run_subagent` 全链——
 //! - 四象限各取代表（report / partial(E_SUB_BUDGET) / cancelled）；
 //! - 帧序不变量（subStarted 先于全部子帧、subDone 必收尾）；
@@ -321,14 +321,14 @@ async fn subagent_report_partial_and_cancel_outcomes() {
     let done_payload = &events.payloads_of(keys::SUB_DONE)[0];
     assert_eq!(done_payload["outcome"], "report");
 
-    // 用量归属（Q40）：会话累计已计入（tokens:update），只计一次
+    // 用量归属：会话累计已计入（tokens:update），只计一次
     let tokens = &events.payloads_of(keys::TOKENS_UPDATE);
     assert!(!tokens.is_empty(), "子代理用量计入会话累计");
     assert!(tokens[0]["usage"]["input"].as_u64().unwrap() > 0);
-    // 子 run 不占主 run 注册表（主任务次数仅主 run，Q40）
+    // 子 run 不占主 run 注册表（主任务次数仅主 run）
     assert!(app.runs.get("sess-r").is_none());
 
-    // 历史（FR-07-06）：meta + JSONL 落盘，load_subagent_history 可回看
+    // 历史：meta + JSONL 落盘，load_subagent_history 可回看
     let sub_id = spawn_payload["subId"].as_str().unwrap().to_owned();
     let messages = load_subagent_history_core(&app, "sess-r", &sub_id).expect("回看子代理历史");
     assert!(
@@ -477,8 +477,8 @@ async fn subagent_report_partial_and_cancel_outcomes() {
 }
 
 /// 断言三条拒绝路径（不发 subStarted、不启动子 run）：参数错误面表驱动
-/// （未知角色 / 空 task / 解析失败）；非 Git 项目写入子代理拒绝（Q7：修改
-/// 由主代理负责，子代理只读）；子环境公共操作边界（Q13：无委派面时绕过
+/// （未知角色 / 空 task / 解析失败）；非 Git 项目写入子代理拒绝（修改
+/// 由主代理负责，子代理只读）；子环境公共操作边界（无委派面时绕过
 /// 工具表直接调用也 E_TOOL_BLOCKED）与白名单外工具拦截（工具可见面 =
 /// 执行许可）。
 #[tokio::test]
@@ -510,7 +510,7 @@ async fn subagent_rejection_paths() {
     assert!(events.payloads_of(keys::SUB_SPAWN).is_empty());
     assert_eq!(app.subs.active_count(), 0);
 
-    // 2) 非 Git 项目写入子代理拒绝（Q7）。
+    // 2) 非 Git 项目写入子代理拒绝。
     // 临时会话的 project_root = <data>/workspace（非 git）
     let workspace = app.store.root().join("workspace");
     std::fs::create_dir_all(&workspace).unwrap();
@@ -526,7 +526,7 @@ async fn subagent_rejection_paths() {
     assert!(events.payloads_of(keys::SUB_SPAWN).is_empty());
     drop(dir);
 
-    // 3) 子环境公共操作边界（Q13）与白名单拦截。
+    // 3) 子环境公共操作边界与白名单拦截。
     let _ = std::fs::create_dir_all(std::env::temp_dir().join("cw-subagent-test"));
     let base_env = |allowed: Option<Vec<String>>| {
         let ctx = crate::tools::ToolsContext::new(
@@ -544,7 +544,7 @@ async fn subagent_rejection_paths() {
                 ask_log: None,
                 mcp: None,
                 skills: None,
-                // 子代理边界：无委派面（Q13 执行入口拒绝）
+                // 子代理边界：无委派面（执行入口拒绝）
                 subagents: None,
                 allowed_tools: allowed,
                 network: None,
@@ -616,7 +616,7 @@ async fn subagent_rejection_paths() {
 
 /// 断言 Git 项目的写入子代理（worktree 创建成功、无改动回收后清理干净——
 /// worktree 目录与 lease 消失、子 run 正常 report），以及子代理请求面两形态
-/// （§5.9 末行）与子历史 JSONL 转换：cleanContext=true（生产默认）→
+/// （task 末行）与子历史 JSONL 转换：cleanContext=true（生产默认）→
 /// [系统提示, task]；cleanContext=false → 父历史尾至多 6 条注入（8 条取尾 6），
 /// 尾条 = task 消息；JSONL → WireMessage：toolCall/toolResult 同条目配对、
 /// parent 链串行、End 行产出 report 条目、坏行忽略。

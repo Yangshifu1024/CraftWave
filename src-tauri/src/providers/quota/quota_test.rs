@@ -1,6 +1,6 @@
-//! 配额域单测（21 号票，FR-02-15）：全本地、不发真实网络请求。
+//! 配额域单测：全本地、不发真实网络请求。
 //!
-//! 覆盖面（票面「测试」节，同型用例在单个 #[test] 内顺序/表驱动合并）：
+//! 覆盖面（同型用例在单个 #[test] 内顺序/表驱动合并）：
 //! - host 匹配表驱动（白名单/伪冒域）与 host_of 剥离、展示名回退；
 //! - round1/clamp/sanitize 工具与六态失败归类判据；
 //! - 每家适配器 `parse_*` 纯解析（正常 + 代表性错误态）；
@@ -130,7 +130,7 @@ fn states(rows: &[QuotaSnapshot]) -> Vec<QuotaStatus> {
     rows.iter().map(|row| row.state).collect()
 }
 
-// ---------- 工具与判据（host 匹配表驱动收拢） ----------
+// ---------- 工具与判据（host 匹配表驱动收拢）----------
 
 // 断言：辅助函数全语义——host 白名单逐家正向命中（子域/端口大小写/多级子域）、
 // 自建中转与伪冒域（前缀粘连/后缀无关）一律不命中；host_of 剥端口/userinfo/
@@ -555,7 +555,7 @@ fn opencode_parser_normal_and_error() {
     assert!(opencode::parse_usage(&json!({"usage": {"rolling": {"status": "ok"}}})).is_err());
 }
 
-// ---------- fetch_json 的 HTTP 面（axum mock server） ----------
+// ---------- fetch_json 的 HTTP 面（axum mock server）----------
 
 /// axum mock：/balance 按场景回放状态码与响应体。
 async fn status_mock(status: u16, body: Value) -> std::net::SocketAddr {

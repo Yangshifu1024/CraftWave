@@ -1,5 +1,5 @@
 //! workspace 域命令测试（独立测试文件）：会话 roots 解析（临时/项目双形态，
-//! C-8 收窄后第二根 = 数据目录下 workspace/ 子目录，21 号票）、路径搜索、
+//! 第二根 = 数据目录下 workspace/ 子目录）、路径搜索、
 //! 预览读取（翻页/截断/拒绝面）、外部目录授权生命周期与恢复保护。
 
 use std::fs;
@@ -51,11 +51,11 @@ fn project_session(data: &std::path::Path) -> (AppState, tempfile::TempDir, Stri
 }
 
 /// 断言 roots 的三种形态（项目会话 project_root=项目主目录、data_root=数据
-/// 目录下 workspace/ 子目录——C-8 收窄 21 号票；临时会话两根同为 workspace
+/// 目录下 workspace/ 子目录——临时会话两根同为 workspace
 /// 子目录且数据目录本体不在 roots 内；未知会话按临时口径防御回退），以及
 /// 搜索语义：基名大小写不敏感、跳过 .git/node_modules、项目主目录下相对
-/// 路径、workspace 子目录命中绝对路径、数据目录本体文件不进命中（C-8 收窄
-/// 验收）；目录也命中（kind=dir）、limit 生效、空 query 返回空。
+/// 路径、workspace 子目录命中绝对路径、数据目录本体文件不进命中；
+/// 目录也命中（kind=dir）、limit 生效、空 query 返回空。
 #[test]
 fn resolve_roots_and_search_semantics() {
     let data = tempfile::tempdir().unwrap();
@@ -72,7 +72,7 @@ fn resolve_roots_and_search_semantics() {
     assert_eq!(
         fs::canonicalize(&roots.workspace_root).unwrap(),
         ws,
-        "第二根 = 数据目录下 workspace/（C-8 收窄）"
+        "第二根 = 数据目录下 workspace/ 子目录"
     );
 
     // 临时会话：两根同目录；数据目录本体（config.json 所在层）不在 roots 内。
@@ -109,7 +109,7 @@ fn resolve_roots_and_search_semantics() {
     fs::create_dir_all(home.path().join("node_modules/x")).unwrap();
     fs::write(home.path().join("node_modules/x/Button.js"), b"").unwrap();
     // 第二根（workspace 子目录）内条目命中且绝对路径返回；数据目录本体的
-    // 文件（如 config.json）不在 roots 内，不进命中（C-8 收窄，21 号票）
+    // 文件（如 config.json）不在 roots 内，不进命中
     fs::create_dir_all(data.path().join("workspace")).unwrap();
     fs::write(data.path().join("workspace/外部的Button.md"), b"").unwrap();
     fs::write(data.path().join("config.json"), b"{}").unwrap();
@@ -167,8 +167,8 @@ fn resolve_roots_and_search_semantics() {
 
 /// 预览读取的翻页与截断：全文、range 按行翻页（未读到尾即 truncated）、
 /// 512KB 字节上限按字符边界截断（文件落 workspace 子目录，临时会话相对
-/// 路径基准即 workspace）；以及拒绝面与 workspace 第二根放行（C-8 收窄
-/// 验收，21 号票）：前 8KB 含 NUL 判二进制拒绝、缺失文件 E_NOT_FOUND、
+/// 路径基准即 workspace）；以及拒绝面与 workspace 第二根放行：
+/// 前 8KB 含 NUL 判二进制拒绝、缺失文件 E_NOT_FOUND、
 /// `..` 越界拒绝、存储内部文件（config.json）双口径都不可达；workspace
 /// 子目录内文件可经绝对路径读取（第二根放行），数据目录本体绝对路径仍拒绝。
 #[test]
@@ -247,15 +247,15 @@ fn read_preview_paging_truncation_and_rejections() {
     assert_eq!(err.code, "E_PATH_OUTSIDE_ROOTS", "数据目录本体绝对路径拒绝");
 }
 
-// ---- 外部目录授权（§3.3 #33/#34，24 号票）----
+// ---- 外部目录授权 ----
 
-/// 外部目录授权（§3.3 #33/#34，24 号票）全链：授权生命周期三段（#33 三态 +
-/// #34 行为 + 读侧 PathGuard 联动）——初始两根内/未授权外部/授权目录内的
+/// 外部目录授权全链：授权生命周期三段（三态 +
+/// 行为 + 读侧 PathGuard 联动）——初始两根内/未授权外部/授权目录内的
 /// 判定；授权并入 SessionMeta 跨重启持久、roots 全集返回、重复授权幂等、
 /// 会话不存在 E_NOT_FOUND、目录不存在 E_INVALID_ARG；授权后预览放行、撤销
 /// 后重新拒绝、授权不跨会话延续（撤销幂等）；以及两道安全收口——禁区目标
 /// （文件系统根、家目录本身及祖先、宿主托管目录——数据目录本身/祖先/后代）
-/// 全部 E_INVALID_ARG 且不落授权（§9.9）；恢复保护序列（33 号票接线，Q41）：
+/// 全部 E_INVALID_ARG 且不落授权；恢复保护序列：
 /// 恢复标记存在时 apply_restore_protection 清空全部会话授权（普通重启不
 /// 调用——授权跨重启保留）。
 #[test]
@@ -269,13 +269,13 @@ fn external_grant_lifecycle_and_protection() {
     fs::write(ext_dir.join("note.md"), "外部资料").unwrap();
     let abs = ext_dir.join("note.md").to_string_lossy().into_owned();
 
-    // #33 三态：初始两根内 / 未授权外部。
+    // 三态：初始两根内 / 未授权外部。
     let r = check_external_path_core(&state, "s-1", "src/lib.rs").unwrap();
     assert!(r.allowed && r.inside_roots, "项目主目录内：{r:?}");
     let r = check_external_path_core(&state, "s-1", &ext_dir.to_string_lossy()).unwrap();
     assert!(!r.allowed && !r.inside_roots, "未授权外部：{r:?}");
 
-    // #34 行为：授权持久于索引、roots 全集、幂等、参数校验。
+    // 行为：授权持久于索引、roots 全集、幂等、参数校验。
     let r = allow_external_dir_core(&state, "s-1", ext_dir.to_str().unwrap()).unwrap();
     assert_eq!(r.roots.len(), 3, "两核心根 + 一个授权目录");
     let ext_canon = ext_dir
@@ -310,7 +310,7 @@ fn external_grant_lifecycle_and_protection() {
     .unwrap_err();
     assert_eq!(err.code, "E_INVALID_ARG");
 
-    // #33 三态收尾：授权后 allowed=true, insideRoots=false。
+    // 三态收尾：授权后 allowed=true, insideRoots=false。
     let r =
         check_external_path_core(&state, "s-1", &ext_dir.join("a.md").to_string_lossy()).unwrap();
     assert!(r.allowed && !r.inside_roots, "授权目录内：{r:?}");

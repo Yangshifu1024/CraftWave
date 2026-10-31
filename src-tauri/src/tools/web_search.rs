@@ -1,35 +1,33 @@
-//! web_search 工具（技术设计文档 §8.3 M2 表 web_search 行 / 附录 C-12
-//! 本地优先三通道定案，13 号票实装）。
+//! web_search 工具：本地优先三通道搜索。
 //!
 //! 对 AI 始终是同一个 `web_search` 工具：执行器按**钉死优先级**自动选通道，
 //! 用户按需配置、零配置也可用（默认通道 2 无需任何设置）：
 //! 1. **SearXNG 自托管元搜索**（通道 1，用户显式启用才参与）：调用
 //!    `GET {baseUrl}/search?q=…&format=json`。请求走本地回环、不经应用代理
 //!    （自托管服务无代理必要，走代理反而可能被规则拦掉回环地址），也**不经
-//!    SSRF 校验**——用户显式启用即信任该地址，而回环地址天然被 §9.2 防线
-//!    拒绝（例外依据见 §9.2 注记）。上游 SearXNG 的 settings.yml 需开
+//!    SSRF 校验**——用户显式启用即信任该地址，而回环地址天然被 SSRF 防线
+//!    拒绝。上游 SearXNG 的 settings.yml 需开
 //!    `format=json`，配置文档与错误提示都要引导这一点；
 //! 2. **内置直接抓取**（通道 2，默认兜底）：DuckDuckGo HTML 版
 //!    （`html.duckduckgo.com/html`）GET + 宽松解析结果列表（标题/URL/摘要）。
-//!    必须走应用代理（`AppConfig.proxy`）与 §9.2 SSRF 管线（复用 12 号票
+//!    必须走应用代理（`AppConfig.proxy`）与 SSRF 管线（复用
 //!    `safety/ssrf.rs` 的 build_client/fetch/节流）。引擎改版风险为已声明
 //!    取舍（个人自用口径）：解析出 0 条时做**空结果自检**——页面明确无结果
 //!    → 真空结果（成功返回空列表）；否则视为疑似改版/反爬页（告警并视为
 //!    通道失败，让优先级链继续）；
 //! 3. **Tavily 云搜索**（通道 3，BYOK 高级区，Key 已配才参与）：
 //!    `POST https://api.tavily.com/search`，Bearer Key，`search_depth=basic`
-//!    （1 credit/次）。Key 经 v2.5 现行存储协议随 config.json 0600 落盘
-//!    （§9.4；票面"钥匙串协议"按现行协议落 config.json，决议记录说明）。
-//!    大陆直连可用，仍统一走应用代理设置（C-12）。免费 1000 credits/月
+//!    （1 credit/次）。Key 经现行存储协议随 config.json 0600 落盘。
+//!    大陆直连可用，仍统一走应用代理设置。免费 1000 credits/月
 //!    用尽即当月停用（结构化错误分类，不重试）；429 带 Retry-After 单次
 //!    退避后重试一次；401/403 各给明确错误分类。
 //!
-//! 全部通道失败 → 结构化错误 `E_SEARCH_UNAVAILABLE`（§3.6）：error.message
+//! 全部通道失败 → 结构化错误 `E_SEARCH_UNAVAILABLE`：error.message
 //! 带逐层失败原因与配置引导（模型通道可读），detail 带结构化 attempts 数组
 //! （UI 通道，工具卡逐层展示），不崩不挂。
 //!
-//! [`SearchProvider`] trait 为 §8.3 定义的抽象面（Brave 留位不实现，MCP
-//! 搜索服务通道随 08 号票共存、不占内置位——见票面边界）。
+//! [`SearchProvider`] trait 为通道抽象面（Brave 留位不实现，MCP
+//! 搜索服务通道共存、不占内置位）。
 
 use std::pin::Pin;
 use std::sync::Arc;
@@ -57,14 +55,14 @@ use super::ToolSpec;
 
 // ---- 通道端点常量（测试经 SearchEnv 注入面覆盖）----
 
-/// DuckDuckGo HTML 版结果页端点（§8.3/C-12 通道 2）。
+/// DuckDuckGo HTML 版结果页端点（通道 2）。
 pub const DDG_HTML_ENDPOINT: &str = "https://html.duckduckgo.com/html/";
-/// Tavily 搜索 API 端点（§8.3/C-12 通道 3）。
+/// Tavily 搜索 API 端点（通道 3）。
 pub const TAVILY_ENDPOINT: &str = "https://api.tavily.com/search";
 
 /// SearXNG 通道专用超时（本地自托管服务理应毫秒级响应）：连接 3 秒、
 /// 总 15 秒——远短于公网通道的 10s/60s（build_client 兜底常量），让
-/// "服务挂了"快速落通道 2 而不是干等（实现细节，决议记录说明）。
+/// "服务挂了"快速落通道 2 而不是干等（实现细节）。
 const SEARXNG_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 const SEARXNG_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -75,7 +73,7 @@ const TAVILY_RETRY_CAP: Duration = Duration::from_secs(30);
 
 // ---- 结果数据形状（工具卡与模型通道共用）----
 
-/// 单条搜索结果（§8.3 web_search 行：结果带来源 URL）。
+/// 单条搜索结果（结果带来源 URL）。
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct SearchHit {
     /// 结果标题。
@@ -95,11 +93,11 @@ pub struct SearchPage {
     pub hits: Vec<SearchHit>,
 }
 
-// ---- SearchProvider trait（§8.3：Brave 留 trait 位）----
+// ---- SearchProvider trait（Brave 留 trait 位）----
 
-/// 搜索提供方抽象（§8.3 web_search 行 `SearchProvider` trait）：
+/// 搜索提供方抽象：
 /// 每个通道一个实现；返回的 future 为 boxed 以支持 dyn 分发。
-/// 取消令牌透传——通道内部请求以 `tokio::select!` 响应取消（§5.3）。
+/// 取消令牌透传——通道内部请求以 `tokio::select!` 响应取消。
 pub trait SearchProvider: Send + Sync {
     /// 通道标识（结果 channel 字段与逐层失败原因的键）。
     fn channel(&self) -> &'static str;
@@ -116,7 +114,7 @@ pub trait SearchProvider: Send + Sync {
 
 // ---- 通道 1：SearXNG（本地自托管，不经代理/不经 SSRF 校验）----
 
-/// SearXNG 通道（C-12 优先级①）：用户显式启用才装配进优先级链。
+/// SearXNG 通道（优先级①）：用户显式启用才装配进优先级链。
 pub struct SearxngProvider {
     /// SearXNG 配置（baseUrl/maxResults；enabled 判定在装配面完成）。
     pub config: SearxngConfig,
@@ -159,9 +157,9 @@ impl SearchProvider for SearxngProvider {
         token: &'a CancellationToken,
     ) -> Pin<Box<dyn Future<Output = Result<SearchPage, ToolError>> + Send + 'a>> {
         Box::pin(async move {
-            // 专用 client：本地回环直连（no_proxy，不经应用代理——C-12 定案）。
+            // 专用 client：本地回环直连（no_proxy，不经应用代理）。
             // 不走 SSRF 校验管线：用户显式启用即信任该地址，回环地址会被
-            // §9.2 全地址校验拒绝（SearXNG 默认地址就是 127.0.0.1:8888）。
+            // 全地址校验拒绝（SearXNG 默认地址就是 127.0.0.1:8888）。
             let client = reqwest::Client::builder()
                 .no_proxy()
                 .connect_timeout(self.connect_timeout)
@@ -171,7 +169,7 @@ impl SearchProvider for SearxngProvider {
                 .map_err(|e| ToolError::new("E_INTERNAL", format!("HTTP 客户端构建失败：{e}")))?;
             // baseUrl 归一化已剥尾 `/`，join 安全拼出 /search；查询串经
             // url crate 拼装（q 做 percent 编码；reqwest 的 .query() 需要未
-            // 启用的 feature，决议记录说明）
+            // 启用的 feature）
             let base = Url::parse(&self.config.base_url)
                 .map_err(|e| ToolError::invalid_arg(format!("SearXNG 地址非法：{e}")))?;
             let mut url = base
@@ -220,7 +218,7 @@ impl SearchProvider for SearxngProvider {
                 }
             };
             // 非 2xx：最常见的 403 = SearXNG settings.yml 未开 format=json
-            // （票面明确要求错误提示引导这一点）
+            // （错误提示要引导这一点）
             if !(200..300).contains(&status) {
                 return Err(ToolError::new(
                     "E_INTERNAL",
@@ -269,11 +267,11 @@ impl SearchProvider for SearxngProvider {
 
 // ---- 通道 2：DuckDuckGo HTML 直接抓取（默认兜底，走代理 + SSRF 管线）----
 
-/// DuckDuckGo HTML 通道（C-12 优先级②，默认兜底）。
+/// DuckDuckGo HTML 通道（优先级②，默认兜底）。
 pub struct DdgProvider {
-    /// SSRF 策略（§9.2，与 web_fetch 同源装配）。
+    /// SSRF 策略（与 web_fetch 同源装配）。
     pub policy: SsrfPolicy,
-    /// 应用代理配置（通道 2 必须走代理——C-12 定案）。
+    /// 应用代理配置（通道 2 必须走代理）。
     pub proxy: Option<ProxyConfig>,
     /// 进程级每 host 节流器。
     pub throttle: Arc<HostThrottle>,
@@ -299,7 +297,7 @@ impl SearchProvider for DdgProvider {
     ) -> Pin<Box<dyn Future<Output = Result<SearchPage, ToolError>> + Send + 'a>> {
         Box::pin(async move {
             // 走 build_client：SSRF 钉址 resolver + 按配置代理 + 超时兜底
-            //（§9.2 收敛点，与 web_fetch 同源）
+            //（与 web_fetch 同源）
             let client = build_client(self.policy, self.proxy.as_ref())?;
             let mut url = Url::parse(&self.endpoint)
                 .map_err(|e| ToolError::invalid_arg(format!("抓取端点非法：{e}")))?;
@@ -335,7 +333,7 @@ impl SearchProvider for DdgProvider {
                     hits: Vec::new(),
                 }),
                 // 解析出 0 条且页面没有无结果标志：疑似改版/反爬页——
-                // 空结果自检告警（票面），视为通道失败让优先级链继续
+                // 空结果自检告警，视为通道失败让优先级链继续
                 DdgParse::LikelyRedesign => Err(ToolError::new(
                     "E_INTERNAL",
                     "DuckDuckGo 页面解析出 0 条结果且无「无结果」标志：搜索引擎可能已改版或返回了反爬页",
@@ -345,7 +343,7 @@ impl SearchProvider for DdgProvider {
     }
 }
 
-/// DDG HTML 解析结论（空结果自检的三态，票面「解析器宽松 + 空结果自检告警」）。
+/// DDG HTML 解析结论（空结果自检的三态：解析器宽松 + 空结果自检告警）。
 pub(crate) enum DdgParse {
     /// 解析出结果（可能截断到 limit）。
     Hits(Vec<SearchHit>),
@@ -458,7 +456,7 @@ pub(crate) fn parse_ddg_html(html: &str, limit: usize) -> DdgParse {
     if !hits.is_empty() {
         return DdgParse::Hits(hits);
     }
-    // 空结果自检（票面）：页面明确无结果标志 → 真空结果。DDG HTML 版的
+    // 空结果自检：页面明确无结果标志 → 真空结果。DDG HTML 版的
     // 无结果页含 "did not match any documents" 提示；中文提示兜底匹配
     // 「没有找到」。命中标志 = NoResults；否则视为疑似改版/反爬页。
     let lower = html.to_ascii_lowercase();
@@ -473,13 +471,13 @@ pub(crate) fn parse_ddg_html(html: &str, limit: usize) -> DdgParse {
 
 // ---- 通道 3：Tavily（BYOK 云搜索，走应用代理 + SSRF 管线）----
 
-/// Tavily 通道（C-12 优先级③）：Key 已配才装配进优先级链。
+/// Tavily 通道（优先级③）：Key 已配才装配进优先级链。
 pub struct TavilyProvider {
-    /// Tavily API Key（Bearer；v2.5 存储协议随 config.json 落盘）。
+    /// Tavily API Key（Bearer；随 config.json 落盘）。
     pub api_key: String,
-    /// SSRF 策略（公网请求正常过 §9.2 管线）。
+    /// SSRF 策略（公网请求正常过 SSRF 管线）。
     pub policy: SsrfPolicy,
-    /// 应用代理配置（大陆直连可用，仍统一走代理设置——C-12）。
+    /// 应用代理配置（大陆直连可用，仍统一走代理设置）。
     pub proxy: Option<ProxyConfig>,
     /// 进程级每 host 节流器。
     pub throttle: Arc<HostThrottle>,
@@ -756,9 +754,9 @@ pub struct SearchEnv {
     /// 通道 3 Key：未配（None/空白）不参与。
     pub tavily_api_key: Option<String>,
     /// 工具未带 limit 参数时的缺省结果条数（`search.searxng.maxResults`
-    /// 配置透出，§3.2 search 组口径：各通道共用同一缺省）。
+    /// 配置透出：各通道共用同一缺省）。
     pub max_results_default: u32,
-    /// SSRF 策略（通道 2/3 共用，§9.2）。
+    /// SSRF 策略（通道 2/3 共用）。
     pub policy: SsrfPolicy,
     /// 应用代理配置（通道 2 必经；通道 3 统一走代理设置）。
     pub proxy: Option<ProxyConfig>,
@@ -807,7 +805,7 @@ impl SearchEnv {
     }
 }
 
-/// web_search 参数（§8.3：`{ query, limit? }`）。
+/// web_search 参数：`{ query, limit? }`。
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WebSearchArgs {
@@ -844,7 +842,7 @@ pub async fn execute(
             "搜索关键词为空",
         )));
     }
-    // limit：显式参数 > 配置缺省 > 常量 10；clamp 1..=30（§3.2 search 组）
+    // limit：显式参数 > 配置缺省 > 常量 10；clamp 1..=30（search 组配置）
     let limit = args
         .limit
         .unwrap_or(max_results_default)
@@ -977,8 +975,7 @@ fn success_outcome(query: &str, page: SearchPage, attempts: &[ChannelAttempt]) -
     .with_detail(serde_json::json!({ "attempts": attempts }))
 }
 
-/// web_search 工具规格（能力 Network：plan 档过滤、非 full_access 档审批；
-/// §8.3 web_search 行）。
+/// web_search 工具规格（能力 Network：plan 档过滤、非 full_access 档审批）。
 pub fn spec() -> ToolSpec {
     ToolSpec {
         name: "web_search".to_string(),

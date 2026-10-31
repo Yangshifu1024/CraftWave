@@ -3,18 +3,18 @@
 //! 1. 帧保真与 callId 同源：文本/思考/工具参数流 → RunLoop 生产路径（64ms
 //!    节流内聚）→ 帧序列（runStarted/stepStarted/delta/toolStarted/toolArgs/
 //!    toolResult/usage/runEnded），帧面三帧 callId 同源、seq 严格递增、
-//!    usage 累计、NFR-02（TTFT <100ms）与节流间隔断言；
+//!    usage 累计、TTFT <100ms 与节流间隔断言；
 //! 2. 取消全链：流中取消（<1s，runEnded(cancelled) 收齐后最后一帧）；
 //! 3. 取消收齐语义：工具批内已完成保留、未完成补 E_CANCELLED；
 //! 4. 审批挂起机制层：gate=Suspend 序列化挂起 → resume_run → 跑到 Done
-//!    （14 号票增量：批级预判零执行、DriveState 延续、callId 跨挂起同源）；
+//!    （增量：批级预判零执行、DriveState 延续、callId 跨挂起同源）；
 //! 5. start_chat_core 命令面：模型解析（config+keyring 注入）、同会话互斥
 //!    E_SESSION_RUNNING、RunManager 取消；
-//! 6. 审批门接线（14 号票）：confirm_each 挂起 → ask:opened → resolve(allow)
+//! 6. 审批门接线：confirm_each 挂起 → ask:opened → resolve(allow)
 //!    → 恢复 Done；resolve(deny) → 拒绝终态；围栏黑名单 Block 回喂不中断；
-//! 7. plan/ask/suggest（14 号票）：plan:update 事件 + approve_plan、
+//! 7. plan/ask/suggest：plan:update 事件 + approve_plan、
 //!    ask 问卷 resolve 回喂、suggest 后台小调用 run:suggestions + tokens:update；
-//! 8. 并行工具批（07 号票）：ask 混批互斥（Q35 只执行 ask、被跳过项不申请
+//! 8. 并行工具批：ask 混批互斥（只执行 ask、被跳过项不申请
 //!    审批）与源序回喂。
 
 mod common;
@@ -45,7 +45,7 @@ const TOOL_READ: &str = "read";
 const TOOL_COMMAND: &str = "command";
 const FULL_CHAIN_BUDGET: Duration = Duration::from_millis(1000);
 
-// —— 测试装配（与 spike common 解耦，产品化链路自包含） ——
+// —— 测试装配（与 tests/common 解耦，产品化链路自包含） ——
 
 /// 指向 mock 的 rig Chat 模型。
 fn mock_model(mock: &MockOpenAI) -> rig::driver::Model<rig::providers::openai::wire::Chat> {
@@ -54,7 +54,7 @@ fn mock_model(mock: &MockOpenAI) -> rig::driver::Model<rig::providers::openai::w
     config.client().chat("gpt-4o-mock".to_owned())
 }
 
-/// 工具定义（read：mock 脚本点名；command：S5 长命令载体）。
+/// 工具定义（read：mock 脚本点名；command：长命令载体）。
 fn tool_def(name: &str) -> Arc<rig::completion::request::ToolDefinition> {
     Arc::new(rig::completion::request::ToolDefinition::new(
         rig::message::ToolName::new(name.to_owned()).expect("tool name"),
@@ -74,7 +74,7 @@ struct TimedFrame {
 /// - `FrameSink`：RunLoop 直驱路径（`drive_run`）——出口填 seq（本实现按
 ///   到达序自填）；
 /// - `SequencedSink`：`start_chat_core` 命令面路径——seq 由 `FrameHub`
-///   统一递增后下发（§5.8，05 号票），本实现原样收帧。
+///   统一递增后下发，本实现原样收帧。
 #[derive(Default, Clone)]
 struct SharedSink(Arc<Mutex<Vec<TimedFrame>>>);
 
@@ -163,7 +163,7 @@ fn new_run(prompt: &str) -> AgentRun {
     AgentRun::new(Message::user(prompt)).max_turns(4)
 }
 
-// —— 1. 帧保真 + callId 同源 + 节流 + NFR-02 ——
+// —— 1. 帧保真 + callId 同源 + 节流 + TTFT ——
 
 #[tokio::test]
 async fn e2e_frame_fidelity_call_id_same_origin_throttle_nfr02() {
@@ -182,7 +182,7 @@ async fn e2e_frame_fidelity_call_id_same_origin_throttle_nfr02() {
         &mut sink_handle,
         None,
         None,
-        None, // 每拍请求刷新源（测试直驱路径无，18 号票）
+        None, // 每拍请求刷新源（测试直驱路径无）
         std::time::Duration::from_secs(30),
     )
     .await
@@ -220,7 +220,7 @@ async fn e2e_frame_fidelity_call_id_same_origin_throttle_nfr02() {
     assert_eq!(reasoning, TURN1_REASONING);
     assert_eq!(args, TURN1_TOOL_ARG_PARTS.concat());
 
-    // —— callId 同源（§3.4）：toolStarted/toolArgs/toolResult 帧面同一 id ——
+    // —— callId 同源：toolStarted/toolArgs/toolResult 帧面同一 id ——
     let started_ids: Vec<String> = frames
         .iter()
         .filter_map(|t| match &t.frame.frame {
@@ -278,13 +278,9 @@ async fn e2e_frame_fidelity_call_id_same_origin_throttle_nfr02() {
             _ => None,
         })
         .collect();
-    assert_eq!(
-        usages,
-        vec![(120, 48), (240, 96)],
-        "usage 帧为运行累计口径（§10.5）"
-    );
+    assert_eq!(usages, vec![(120, 48), (240, 96)], "usage 帧为运行累计口径");
 
-    // —— NFR-02：TTFT（mock 首 chunk → 首个 delta 帧出槽）<100ms ——
+    // —— TTFT（mock 首 chunk → 首个 delta 帧出槽）<100ms ——
     let sent = mock.sent_chunks().await;
     let first_sent = sent.first().expect("mock 有发送记录").at;
     let first_delta = frames
@@ -295,7 +291,7 @@ async fn e2e_frame_fidelity_call_id_same_origin_throttle_nfr02() {
         .expect("有增量帧");
     let ttft_ms = first_delta.at.duration_since(first_sent).as_secs_f64() * 1000.0;
     println!("E2E TTFT = {ttft_ms:.2}ms");
-    assert!(ttft_ms < 100.0, "TTFT {ttft_ms:.1}ms 超出 NFR-02（<100ms）");
+    assert!(ttft_ms < 100.0, "TTFT {ttft_ms:.1}ms 超出预算（<100ms）");
 
     // —— 节流：相邻同型增量帧间隔 ≥64ms（55ms 容忍；上限放宽到轮次往返） ——
     let text_frames: Vec<&TimedFrame> = frames.iter().filter(|t| is_text(&t.frame.frame)).collect();
@@ -344,7 +340,7 @@ async fn e2e_cancel_midstream_run_ended_last_frame_latency() {
             &mut *sink_box,
             None,
             None,
-            None, // 每拍请求刷新源（测试直驱路径无，18 号票）
+            None, // 每拍请求刷新源（测试直驱路径无）
             std::time::Duration::from_secs(30),
         )
         .await
@@ -382,7 +378,7 @@ async fn e2e_cancel_midstream_run_ended_last_frame_latency() {
 /// 双工具执行器：read 立即完成；command spawn 真实进程树、select token 收割。
 /// 进程树与收割按平台分派：Unix `sh` + 进程组（SIGTERM→宽限→SIGKILL）、
 /// Windows PowerShell + Job Object（TerminateJobObject 整树）——同一 e2e
-/// 在三平台 CI 各自真实执行取消传播（19 号票：Windows 不再跳过）。
+/// 在三平台 CI 各自真实执行取消传播（Windows 不再跳过）。
 struct ReadThenCommandExecutor {
     spawned: tokio::sync::mpsc::UnboundedSender<u64>,
 }
@@ -561,7 +557,7 @@ async fn e2e_tool_batch_cancel_keep_completed_mark_rest() {
             &mut *sink_box,
             None,
             None,
-            None, // 每拍请求刷新源（测试直驱路径无，18 号票）
+            None, // 每拍请求刷新源（测试直驱路径无）
             std::time::Duration::from_secs(30),
         )
         .await
@@ -685,7 +681,7 @@ async fn e2e_approval_suspend_serialize_resume_done() {
         &mut sink1_handle,
         None,
         None,
-        None, // 每拍请求刷新源（测试直驱路径无，18 号票）
+        None, // 每拍请求刷新源（测试直驱路径无）
         std::time::Duration::from_secs(30),
     )
     .await
@@ -735,7 +731,7 @@ async fn e2e_approval_suspend_serialize_resume_done() {
         &mut sink2_handle,
         Some(state),
         None,
-        None, // 每拍请求刷新源（测试直驱路径无，18 号票）
+        None, // 每拍请求刷新源（测试直驱路径无）
         std::time::Duration::from_secs(30),
     )
     .await
@@ -773,7 +769,7 @@ async fn e2e_approval_suspend_serialize_resume_done() {
 
 // —— 5. start_chat_core 命令面 ——
 
-/// 多工具批的 turn1 脚本：正文 + 按序多个工具调用（07 号票并行批驱动面）。
+/// 多工具批的 turn1 脚本：正文 + 按序多个工具调用（并行批驱动面）。
 fn multi_tool_turn1(calls: &[(&str, &str, &str)]) -> Vec<(&'static str, String)> {
     let mut script: Vec<(&'static str, String)> = vec![content_delta("一次交代多件事。")];
     for (i, (id, name, args)) in calls.iter().enumerate() {
@@ -932,11 +928,11 @@ mod command_face {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
 
-        // 15 号票 NFR-06 锚：run 全链后磁盘有 canonical 条目（user 兜底 + turn
+        // 落盘锚：run 全链后磁盘有 canonical 条目（user 兜底 + turn
         // 文本 + marker）与 index.json 建档——「已提交历史零丢失」端到端。
         let tree = app.store.load_session_tree("sess-1").expect("史册应存在");
         let ids: Vec<&str> = tree.messages.iter().map(|m| m.id.as_str()).collect();
-        // 默认 mock 脚本 = 工具调用 turn + 文本 turn（§mock_openai）：共 5 条
+        // 默认 mock 脚本 = 工具调用 turn + 文本 turn（tests/common/mock_openai）：共 5 条
         assert_eq!(ids.len(), 5, "实际条目：{ids:?}");
         assert!(ids[0].starts_with("u-"), "user 兜底条目");
         assert!(ids[1].ends_with(":1"), "turn1 文本条目");
@@ -995,7 +991,7 @@ mod command_face {
         )
         .await
         .unwrap_err();
-        assert_eq!(err.code, "E_SESSION_RUNNING", "§3.3 #18 同会话互斥");
+        assert_eq!(err.code, "E_SESSION_RUNNING", "同会话互斥");
 
         // 取消收尾：置位后 run 终结摘除
         assert!(craftwave_lib::host::commands::chat::cancel_run_core(&runs, "sess-2").await);
@@ -1006,7 +1002,7 @@ mod command_face {
         assert_eq!(*reason, EndReason::Cancelled);
     }
 
-    // —— 6/7. 审批门接线 + plan/ask/suggest（14 号票） ——
+    // —— 6/7. 审批门接线 + plan/ask/suggest ——
 
     use craftwave_lib::backend::ask::AskAnswer;
     use craftwave_lib::util::events::RecordingEventSink;
@@ -1122,7 +1118,7 @@ mod command_face {
             unreachable!()
         };
         assert!(ok, "批准后命令执行成功");
-        // 已答 ask 再 resolve → E_NOT_FOUND（§3.3 #22）
+        // 已答 ask 再 resolve → E_NOT_FOUND
         let err = craftwave_lib::host::commands::chat::resolve_ask_core(
             &runs,
             &ask_id,
@@ -1173,7 +1169,7 @@ mod command_face {
         .await
         .unwrap();
 
-        // 拒绝 → 挂起调用补拒绝 toolResult + runEnded(cancelled)（§5.3）
+        // 拒绝 → 挂起调用补拒绝 toolResult + runEnded(cancelled)
         let ended = wait_ended(&sink, Duration::from_secs(5)).await;
         let ChatFrame::RunEnded { reason, .. } = &ended else {
             panic!("应为 runEnded")
@@ -1216,7 +1212,7 @@ mod command_face {
             &runs,
             "sess-fence".to_owned(),
             vec![user_entry("清理")],
-            // full_access 也拦（§8.5 灾难级任何档位不豁免）
+            // full_access 也拦（灾难级任何档位不豁免）
             run_config_tier(craftwave_lib::safety::tier::PermissionTier::FullAccess),
             Box::new(sink.clone()),
             false,
@@ -1268,18 +1264,18 @@ mod command_face {
         .await
         .unwrap();
 
-        // plan:update 事件（§3.5：items 全量）
+        // plan:update 事件（items 全量）
         let update = wait_event(&events, "plan:update", Duration::from_secs(5)).await;
         assert_eq!(update["sessionId"], "sess-plan");
         assert_eq!(update["items"].as_array().unwrap().len(), 2);
         assert_eq!(update["items"][0]["status"], "in_progress");
 
-        // run 活跃期间批准 → 快照冻结（approve_plan 命令面，25 号票起同键
+        // run 活跃期间批准 → 快照冻结（approve_plan 命令面，同键
         // 补发 plan:update 全量计划态）
         let events_dyn: std::sync::Arc<dyn craftwave_lib::util::events::EventSink> = events.clone();
         craftwave_lib::host::commands::chat::approve_plan_core(&runs, "sess-plan", &events_dyn)
             .expect("活跃 run 上批准成功");
-        // 25 号票：批准后的 plan:update 全量态（第二条——首条是 plan 工具
+        // 批准后的 plan:update 全量态（第二条——首条是 plan 工具
         // 执行发的；前端计划卡/Inspector 基线标记的数据面）
         let deadline = Instant::now() + Duration::from_secs(5);
         let approved_update = loop {
@@ -1315,11 +1311,11 @@ mod command_face {
         assert_eq!(err.code, "E_NOT_FOUND");
     }
 
-    // ---- 用量统计落账与面板数据面（20 号票，Q37/Q39/Q40/Q43 e2e） ----
+    // ---- 用量统计落账与面板数据面 e2e ----
 
     /// 落账→查询→重启恢复→删除保留→缓存降级 全链：真实 mock SSE run +
-    /// suggest 后台小调用后，三面（stats/*.json、usage.json、index.db）与
-    /// #52/#59k 读面同源一致；重启后四口径恢复；删除会话保留匿名聚合；
+    /// suggest 后台小调用后，三面（stats/*.json、usage.json、index.db）读面
+    /// 同源一致；重启后四口径恢复；删除会话保留匿名聚合；
     /// 删库后降级直读数字不丢。
     #[tokio::test]
     async fn usage_stats_ledger_e2e_record_recover_delete_degrade() {
@@ -1338,7 +1334,7 @@ mod command_face {
         let runs = RunManager::new();
         let sink = SharedSink::default();
 
-        // ① 真实 run + suggest（C-9 后台小调用）
+        // ① 真实 run + suggest（后台小调用）
         craftwave_lib::host::commands::chat::start_chat_core(
             &app,
             &runs,
@@ -1360,17 +1356,17 @@ mod command_face {
         ));
         wait_event(&events, "run:suggestions", Duration::from_secs(10)).await;
 
-        // ② 日/模型聚合（Q39/Q40）：两拍 run（240/96）+ suggest（120/48）
+        // ② 日/模型聚合：两拍 run（240/96）+ suggest（120/48）
         //    = 360/144；runs 只计主 run 一次（子 run/辅助不计，suggest 属 aux）
         let today = craftwave_lib::host::usage::local_today();
         let day = app.ledger.stats.read_day(&today);
         let m1 = day.models.get("model-1").expect("model-1 聚合条目");
-        assert_eq!(m1.input, 360, "run 两拍 + suggest 全部计入当日（Q39）");
+        assert_eq!(m1.input, 360, "run 两拍 + suggest 全部计入当日");
         assert_eq!(m1.output, 144);
-        assert_eq!(m1.runs, 1, "runs 仅主 run（suggest 辅助不计次，Q40）");
+        assert_eq!(m1.runs, 1, "runs 仅主 run（suggest 辅助不计次）");
         assert_eq!(m1.model_name, "gpt-4o-mock", "显示名快照随落账");
 
-        // ③ run/会话明细（Q37）：sessionTotal 与聚合同源；main/aux 分明
+        // ③ run/会话明细：sessionTotal 与聚合同源；main/aux 分明
         let detail = app.ledger.detail.load("sess-stats");
         assert_eq!(detail.session_total.input, 360);
         assert_eq!(detail.session_total.output, 144);
@@ -1385,11 +1381,11 @@ mod command_face {
             .expect("主 run 条目");
         assert!(
             main_run.by_model.contains_key("model-1"),
-            "按实际执行模型归属（Q37）"
+            "按实际执行模型归属"
         );
         assert!(main_run.ended_at.is_some(), "run 收口补写 endedAt");
 
-        // ④ #52 stats_token 与实时面同源一致（验收：聚合数字与 Inspector
+        // ④ stats_token 与实时面同源一致（验收：聚合数字与 Inspector
         //    会话累计同源）；tokens:update 带 modelId（前端增量修正依据）
         let stats = craftwave_lib::host::commands::stats::stats_token_core(
             &app,
@@ -1411,16 +1407,16 @@ mod command_face {
         assert_eq!(last_tokens["modelId"], "model-1", "事件带实际执行模型");
         assert_eq!(last_tokens["usage"]["input"], 360);
 
-        // ⑤ #59k 内存读面（活跃会话）
+        // ⑤ 内存读面（活跃会话）
         let live = craftwave_lib::host::commands::stats::session_usage_core(&app, "sess-stats");
         assert_eq!(live.usage.input, 360);
 
-        // ⑥ Q37 重启恢复：新 AppState（同数据目录）从明细文件恢复四口径
+        // ⑥ 重启恢复：新 AppState（同数据目录）从明细文件恢复四口径
         let events2 = Arc::new(RecordingEventSink::new());
         let app2 = AppState::new_in(root.clone(), events2);
         let restored =
             craftwave_lib::host::commands::stats::session_usage_core(&app2, "sess-stats");
-        assert_eq!(restored.usage.input, 360, "重启后四口径恢复（Q37）");
+        assert_eq!(restored.usage.input, 360, "重启后四口径恢复");
         assert_eq!(restored.usage.output, 144);
         assert_eq!(restored.legacy_total_tokens, None);
         let stats2 = craftwave_lib::host::commands::stats::stats_token_core(
@@ -1431,7 +1427,7 @@ mod command_face {
         .expect("stats_token 重启后");
         assert_eq!(stats2.total.input, 360, "重启后日聚合数字不丢");
 
-        // ⑦ Q43 删除会话：明细不可查询、日/模型匿名数字保留、缓存重建不复活
+        // ⑦ 删除会话：明细不可查询、日/模型匿名数字保留、缓存重建不复活
         craftwave_lib::host::commands::session::delete_session_core(&app2, &runs, "sess-stats")
             .expect("删除会话");
         assert!(
@@ -1440,7 +1436,7 @@ mod command_face {
         );
         let after_delete =
             craftwave_lib::host::commands::stats::session_usage_core(&app2, "sess-stats");
-        assert_eq!(after_delete.usage.input, 0, "删除后明细不可查询（Q43）");
+        assert_eq!(after_delete.usage.input, 0, "删除后明细不可查询");
         let stats3 = craftwave_lib::host::commands::stats::stats_token_core(
             &app2,
             &craftwave_lib::host::commands::stats::StatsTokenArgs { range: None },
@@ -1464,7 +1460,7 @@ mod command_face {
         assert_eq!(stats4.total.runs, 1, "回填不重复增减 runs");
     }
 
-    // ---- 帧重放与热重连（05 号票，§5.8/D16）：中途 attach 续流 / 终态空重放 /
+    // ---- 帧重放与热重连：中途 attach 续流 / 终态空重放 /
     // 快照对账 / 审批挂起中 attach 与待审批恢复查询 / 窗口耗尽摘要帧 ----
 
     /// 等待帧数达到 n（命令面任务异步产帧）。
@@ -1547,23 +1543,19 @@ mod command_face {
         ));
         let old_after = old_sink.frames().len();
         tokio::time::sleep(Duration::from_millis(200)).await;
-        assert_eq!(
-            old_sink.frames().len(),
-            old_after,
-            "热切换后旧端断流（§5.8）"
-        );
+        assert_eq!(old_sink.frames().len(), old_after, "热切换后旧端断流");
         let new_frames = new_sink.frames();
         assert!(
             new_frames.len() > replayed as usize,
             "新端 = 重放 + 续流增量"
         );
-        // 帧序严格递增无重复（§3.4 排序规则：重放帧先于新帧）
+        // 帧序严格递增无重复（重放帧先于新帧）
         for (i, t) in new_frames.iter().enumerate() {
             assert_eq!(t.frame.seq, i as u64, "新端帧序连续：位置 {i}");
         }
 
         // —— run 结束（收尾摘除）后 attach：空重放 + runId 省略 + 快照 null
-        //    （§3.3 #57/#20 幂等查询语义）；未知 sessionId 同语义 ——
+        //    （幂等查询语义）；未知 sessionId 同语义 ——
         let deadline = Instant::now() + Duration::from_secs(2);
         while runs.get(session).is_some() {
             assert!(Instant::now() < deadline, "run 应收尾摘除");
@@ -1645,7 +1637,7 @@ mod command_face {
             "runId 对上注册表"
         );
 
-        // —— 待审批恢复查询（§5.6 #59c）：原始操作及参数随行 ——
+        // —— 待审批恢复查询：原始操作及参数随行 ——
         let pending = craftwave_lib::host::commands::chat::session_pending_ask_core(&runs, session)
             .expect("挂起中的审批应可查");
         assert_eq!(pending.ask_id, ask_id);
@@ -1706,12 +1698,12 @@ mod command_face {
         assert_eq!(err.code, "E_NOT_FOUND", "过期请求操作被拒绝");
     }
 
-    // ---- 上下文压缩（04 号票，FR-03-05）：跨阈值自动压缩 / 失败兜底 /
+    // ---- 上下文压缩：跨阈值自动压缩 / 失败兜底 /
     // 手动命令 / 超预算暂停 ----
 
     /// 压缩 e2e 的配置面：把激活模型窗口改小让第二条消息必然跨 0.6 阈值
-    ///（估算面含 32768 回复预留 > 0.6 × 44000）。窗口取 44000（13 号票从
-    /// 40000 上调）：工具注册表每增一工具都会抬高请求固定估算面，40000 的
+    ///（估算面含 32768 回复预留 > 0.6 × 44000）。窗口取 44000：工具注册表
+    /// 每增一工具都会抬高请求固定估算面，40000 的
     /// 硬预算线（×0.9=36000）已被 web_search 挤破（固定面 36058），40000
     /// 失去「第一次发送达阈值但硬预算内可容纳」的设计前提；44000 的硬预算
     /// 39600 恢复该区间，且 32768 预留 > 0.6×44000 的跨阈值前提不变。
@@ -1731,7 +1723,7 @@ mod command_face {
 
     /// 断言：长会话跨阈值自动压缩——compactDone 帧 + run:compacted 事件 +
     /// 史册 compaction 条目（原始消息全保留）+ 后续请求 wire 只含 summary
-    /// 注入与本次输入（cutEntryId 之前的历史被裁）+ 摘要用量计入会话（C-9）。
+    /// 注入与本次输入（cutEntryId 之前的历史被裁）+ 摘要用量计入会话。
     #[tokio::test]
     async fn auto_compaction_across_threshold_frame_event_wire_and_metering() {
         let mock = MockOpenAI::start().await;
@@ -1744,7 +1736,7 @@ mod command_face {
         let session = "sess-comp";
 
         // 第一次发送（无历史）：达阈值但无可压内容 → run:compact_failed 事件
-        // + 原上下文可容纳 → run 照常完成（§6.2 失败兜底）
+        // + 原上下文可容纳 → run 照常完成（失败兜底）
         craftwave_lib::host::commands::chat::start_chat_core(
             &app,
             &runs,
@@ -1779,7 +1771,7 @@ mod command_face {
         let first = user_entry(&long_text);
         let second = user_entry("第二条内容消息"); // 字节数不同 → id 不撞车
         // 前端协议模拟：长历史条目先经 save_session_tree 落盘（挂第一次
-        // run 的链尾），start_chat 只对末条 user 做幂等兜底（§7.3）
+        // run 的链尾），start_chat 只对末条 user 做幂等兜底
         {
             let tree = app.store.load_session_tree(session).unwrap();
             let tail = tree.active_leaf_id.clone().unwrap();
@@ -1850,7 +1842,7 @@ mod command_face {
             .collect();
         let last_stream = streaming.last().expect("应有流式请求");
         let messages = last_stream["messages"].as_array().unwrap();
-        // 31 号票 §6.2 新次序：ai_language 层在压缩 summary 之前——
+        // 注入次序：ai_language 层在压缩 summary 之前——
         // messages[0] = ai_language 注入行（空偏好跟随界面语言 zh-CN）、
         // messages[1] = 压缩摘要
         assert_eq!(
@@ -1872,7 +1864,7 @@ mod command_face {
         );
         assert!(joined.contains("第二条内容消息"), "本次输入保留：{joined}");
 
-        // 计量面（C-9）：摘要用量计入会话（tokens:update 照发）
+        // 计量面：摘要用量计入会话（tokens:update 照发）
         assert!(
             !events.payloads_of("tokens:update").is_empty(),
             "压缩摘要用量应计入会话累计"
@@ -1924,12 +1916,12 @@ mod command_face {
         assert!(runs.get("sess-overflow").is_none(), "run 不应启动");
     }
 
-    // —— 8. steer / followUp 队列（06 号票，§5.5）——
+    // —— 8. steer / followUp 队列 ——
 
     use craftwave_lib::host::commands::chat::{InjectMode, inject_run_message_core};
     use craftwave_lib::storage::MessageRole;
 
-    /// run 正常完成后的两连发场景（06 号票 e2e）：
+    /// run 正常完成后的两连发场景：
     /// 空闲时 followUp 入队 → run1 正常完成 → 队列头自动投递开 run2（走同一
     /// start_chat_core 入口、DetachedSink 帧只入环）→ 队列空 + run2 的 user
     /// 条目与产物落盘 + run:queue 事件随行。
@@ -1951,7 +1943,7 @@ mod command_face {
         assert!(injected.queued);
         assert_eq!(injected.mode, Some(InjectMode::FollowUp));
         assert_eq!(app.followups.snapshot("sess-fu").size, 1);
-        // 入队即落盘（§7.7）
+        // 入队即落盘
         assert!(
             app.store
                 .root()
@@ -2166,11 +2158,11 @@ mod command_face {
         assert!(has_steer, "第 2 轮请求应含插话 user 条目：{tool_round}");
     }
 
-    // —— 07 号票：ask 混批互斥（Q35/Q42，命令面）——
+    // —— ask 混批互斥（命令面）——
 
     const ASK_ARGS: &str = r#"{"title":"选方案","questions":[{"id":"q1","text":"用哪个方案？","options":[{"id":"a","label":"方案A"},{"id":"b","label":"方案B"}],"allowFreeText":false}]}"#;
 
-    /// Q35：ask 与其他工具同批——只执行 ask，其余调用明确返回未执行
+    /// ask 与其他工具同批——只执行 ask，其余调用明确返回未执行
     /// （E_TOOL_SKIPPED）；confirm_each 档下被跳过的命令**不申请审批**
     /// （ask:opened 恰一次且 kind=question）；回答后由模型重新决定。
     #[tokio::test]
@@ -2260,7 +2252,7 @@ mod command_face {
         );
     }
 
-    // ---- 自动起名全链（27 号票，FR-01-09：start_chat_core 触发判定 → 后台标题任务） ----
+    // ---- 自动起名全链（start_chat_core 触发判定 → 后台标题任务） ----
 
     use common::mock_openai::NONSTREAM_TEXT;
 
@@ -2284,7 +2276,7 @@ mod command_face {
     }
 
     /// 全链：新会话首条消息 run 完成后自动得名——session:title 事件 +
-    /// index/meta 双写（事件时点已落盘）+ C-9 计量（`:title` aux 明细 +
+    /// index/meta 双写（事件时点已落盘）+ 计量（`:title` aux 明细 +
     /// tokens:update 照发）。
     #[tokio::test]
     async fn auto_title_full_chain_first_message() {
@@ -2341,7 +2333,7 @@ mod command_face {
             "meta 行应带新标题"
         );
 
-        // C-9 计量：run 两拍（240/96）+ suggest（120/48）+ 标题（120/48）
+        // 计量：run 两拍（240/96）+ suggest（120/48）+ 标题（120/48）
         // = 480/192；明细面有 `:title` aux 条目
         wait_event(&events, "run:suggestions", Duration::from_secs(10)).await;
         let deadline = Instant::now() + Duration::from_secs(10);
@@ -2375,7 +2367,7 @@ mod command_face {
     }
 }
 
-// —— 8b. 灰区命令审计（36 号票，§8.7）：三态 + 失败转人工 + 恢复不重复审计 ——
+// —— 8b. 灰区命令审计：三态 + 失败转人工 + 恢复不重复审计 ——
 
 mod command_audit {
     use super::command_face::{
@@ -2593,7 +2585,7 @@ mod command_audit {
     }
 }
 
-// ---- 图片输入与模型读图（17 号票，§6.2 image part 双形态端到端） ----
+// ---- 图片输入与模型读图（image part 双形态端到端） ----
 
 mod image_face {
     use super::*;
@@ -2804,7 +2796,7 @@ mod image_face {
         assert!(err.message.contains("不支持图片输入"));
         assert!(mock.request_bodies().await.is_empty(), "拒绝路径零模型请求");
 
-        // ② 历史带图 + 纯文字 prompt：照常运行（Q30），历史图在请求中是占位文本
+        // ② 历史带图 + 纯文字 prompt：照常运行，历史图在请求中是占位文本
         let history_img = user_with_image("u1", "看这张图", &blob_hash);
         let prompt = MessageEntry {
             id: "u2".to_owned(),
@@ -2834,7 +2826,7 @@ mod image_face {
             panic!("应为 runEnded");
         };
         assert_eq!(*reason, EndReason::Done, "error 面：{error:?}");
-        // 占位文本面（§6.2 逐字格式）出现在请求 history
+        // 占位文本面（逐字格式）出现在请求 history
         let placeholder = craftwave_lib::backend::wire::image_placeholder(&blob_hash);
         let contents = user_contents(&mock).await;
         assert!(
@@ -2858,7 +2850,7 @@ mod image_face {
     }
 }
 
-// —— 8. 计划范围门链路（25 号票，FR-06-03/§8.6）——
+// —— 8. 计划范围门链路 ——
 
 /// 范围门直驱全链：已批准计划（基线 src/a.rs）下模型写范围外路径 →
 /// RunExit::Suspended 载荷带 plan_scope（run_loop 集成面：GateVerdict::

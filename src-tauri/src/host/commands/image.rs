@@ -1,8 +1,8 @@
-//! 图片附件承载命令（§3.3 #59h `attach_image` / #59i `read_image_blob`，
-//! 17 号票）：会话图片 blob 的上传与读取。
+//! 图片附件承载命令（`attach_image` / `read_image_blob`，
+//! ）：会话图片 blob 的上传与读取。
 //!
-//! 职责边界（§2.2）：本模块只做参数校验与转调（校验在 `storage::imgblob`），
-//! 数据落在会话专属目录 `sessions/<sid>.imgblob/<hash>.bin`（§7.7 v1 口径：
+//! 职责边界：本模块只做参数校验与转调（校验在 `storage::imgblob`），
+//! 数据落在会话专属目录 `sessions/<sid>.imgblob/<hash>.bin`（v1 口径：
 //! 内容寻址 + 写入去重 + 会话删除时随目录整体删除）。root 归属：仅本会话
 //! imgblob 可读（`read_image_blob` 按调用方给的 sessionId 定位目录，跨会话
 //! 哈希查不到即 NotFound——blob 不跨会话共享）。
@@ -18,7 +18,7 @@ use crate::host::AppState;
 use crate::host::IpcError;
 use crate::util::errors::{E_NOT_FOUND, E_STORAGE_IO};
 
-/// `attach_image` 参数契约（§3.3 #59h）：`dataBase64` 与 `filePath` 二选一
+/// `attach_image` 参数契约：`dataBase64` 与 `filePath` 二选一
 /// （附件按钮/粘贴传字节；拖拽入口只有绝对路径，传 filePath 由后端读取）。
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -34,7 +34,7 @@ pub struct AttachImageArgs {
     /// 图片绝对路径（与 dataBase64 二选一；Tauri 拖拽事件的入口形态——
     /// HTML 拖放被 webview 原生接管时前端拿不到字节）。后端读取后照走
     /// 魔数嗅探与 5MiB 校验；**不做 roots 校验**：用户显式拖入与文件选择器
-    /// 选图等价（v1 决策，§3.3 注记），模型侧文件可见性仍由 read 管线把关。
+    /// 选图等价，模型侧文件可见性仍由 read 管线把关。
     #[serde(default)]
     #[cfg_attr(test, ts(optional))]
     pub file_path: Option<String>,
@@ -43,7 +43,7 @@ pub struct AttachImageArgs {
     pub mime_type: String,
 }
 
-/// `attach_image` 返回契约（§3.3 #59h）：内容寻址哈希（SHA-256 前 32 hex）。
+/// `attach_image` 返回契约：内容寻址哈希（SHA-256 前 32 hex）。
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -54,7 +54,7 @@ pub struct AttachImageResult {
 /// MIME 白名单（与 `storage::imgblob::sniff_image_mime` 同一份口径）。
 const MIME_WHITELIST: [&str; 4] = ["image/png", "image/jpeg", "image/gif", "image/webp"];
 
-/// 上传图片附件（§3.3 #59h）：dataBase64 解码或 filePath 读取 → 白名单与
+/// 上传图片附件：dataBase64 解码或 filePath 读取 → 白名单与
 /// 字节数校验 → 内容寻址落盘（同哈希幂等去重）。返回 blobHash 供消息 part
 /// 引用。会话日志不记图片字节（spec 日志纪律：仅元数据可入日志面）。
 pub fn attach_image_core(
@@ -102,7 +102,7 @@ pub fn attach_image_core(
     Ok(AttachImageResult { blob_hash })
 }
 
-/// `attach_image` 命令（§3.3 #59h）。
+/// `attach_image` 命令。
 #[tauri::command]
 pub(crate) async fn attach_image(
     app: State<'_, AppState>,
@@ -127,7 +127,7 @@ pub(crate) async fn attach_image(
     )
 }
 
-/// `read_image_blob` 参数契约（§3.3 #59i）。
+/// `read_image_blob` 参数契约。
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -136,7 +136,7 @@ pub struct ReadImageBlobArgs {
     pub blob_hash: String,
 }
 
-/// `read_image_blob` 返回契约（§3.3 #59i）：base64 字节 + 嗅探出的 MIME。
+/// `read_image_blob` 返回契约：base64 字节 + 嗅探出的 MIME。
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -145,7 +145,7 @@ pub struct ReadImageBlobResult {
     pub mime_type: String,
 }
 
-/// 读取图片 blob（§3.3 #59i）：前端 `<img>` 渲染与历史恢复的取数通道。
+/// 读取图片 blob：前端 `<img>` 渲染与历史恢复的取数通道。
 /// root 归属：仅本会话 imgblob 可读；blob 缺失（会话目录被清等）按
 /// E_NOT_FOUND 拒绝（前端据此灰显占位）。
 pub fn read_image_blob_core(
@@ -169,7 +169,7 @@ pub fn read_image_blob_core(
     })
 }
 
-/// `read_image_blob` 命令（§3.3 #59i）。
+/// `read_image_blob` 命令。
 #[tauri::command]
 pub(crate) async fn read_image_blob(
     app: State<'_, AppState>,

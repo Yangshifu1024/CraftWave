@@ -1,6 +1,6 @@
-//! `edit` 工具（FileWrite，§8.4 算法）：oldText/newText 唯一匹配替换，
+//! `edit` 工具（FileWrite）：oldText/newText 唯一匹配替换，
 //! version? 乐观锁，三级匹配绝不猜，结果含 lineChanges{add,del}；
-//! EOL 保持；落盘一律 UTF-8（C-10：原非 UTF-8 文件编辑后转 UTF-8 为接受副作用）。
+//! EOL 保持；落盘一律 UTF-8（原非 UTF-8 文件编辑后转 UTF-8 为接受副作用）。
 
 use serde::Deserialize;
 use serde_json::json;
@@ -104,7 +104,7 @@ pub fn run(ctx: &ToolsContext, args: &EditArgs) -> ToolOutcome {
     // 若 oldText 仍能唯一匹配则降级为警告继续执行（见下方 warning 分支）。
     let stale = args.version.as_ref().is_some_and(|v| *v != actual_version);
 
-    // 共用解码器（C-10）+ EOL 检测。归一为 LF 域做匹配与替换，写回前还原。
+    // 共用解码器 + EOL 检测。归一为 LF 域做匹配与替换，写回前还原。
     let decoded = decode_text(&bytes);
     let has_crlf = decoded.text.contains("\r\n");
     let file_norm = decoded.text.replace("\r\n", "\n");
@@ -168,8 +168,8 @@ pub fn run(ctx: &ToolsContext, args: &EditArgs) -> ToolOutcome {
     if let Err(e) = atomic_write_utf8(&resolved, final_text.as_bytes()) {
         return ToolOutcome::from(e);
     }
-    // 写后完整性自检（22 号票）：重读比对哈希 + 严格 UTF-8 + EOL 保持实证
-    // （§8.4 步骤 6 口径）。失败 → ok=false 回喂 E_INTERNAL。
+    // 写后完整性自检：重读比对哈希 + 严格 UTF-8 + EOL 保持实证。
+    // 失败 → ok=false 回喂 E_INTERNAL。
     if let Err(f) = crate::tools::postcheck::verify_written(
         &resolved,
         final_text.as_bytes(),
@@ -209,7 +209,7 @@ pub fn run(ctx: &ToolsContext, args: &EditArgs) -> ToolOutcome {
     outcome
 }
 
-/// 同批同文件多个 edit 的合并结论：预演槽位（§8.4 步骤 4）。
+/// 同批同文件多个 edit 的合并结论：预演槽位。
 /// 一个可合并成员 = 在归一化 LF 域上的替换区间 + 替换文本 + 结果面字段。
 struct GroupEditSlot {
     /// 成员在组内的下标（结果按源序对位回填）。
@@ -241,7 +241,7 @@ fn line_start_offsets(text: &str) -> Vec<usize> {
     offsets
 }
 
-/// 同批同文件多个 edit 的合并原子提交（§8.4 步骤 4/5，Q32，07 号票）。
+/// 同批同文件多个 edit 的合并原子提交（预演 + 一次 rename 生效）。
 ///
 /// 流程：读原文件 → 全员基于同一原内容预演（三级匹配 → 字节区间）→
 /// 区间重叠的后续成员拒绝（E_INVALID_ARG，源序前者保留）→ 接受成员按
@@ -286,7 +286,7 @@ pub(crate) fn apply_edit_group(
     let file_norm = decoded.text.replace("\r\n", "\n");
     let offsets = line_start_offsets(&file_norm);
 
-    // —— 预演：全员基于同一原内容算替换区间（§8.4 步骤 4）——
+    // —— 预演：全员基于同一原内容算替换区间 ——
     let mut slots: Vec<GroupEditSlot> = Vec::new();
     let mut demote = false; // 任一成员匹配失败 → 整组降级独立执行
     for (index, args) in members.iter().enumerate() {
@@ -344,7 +344,7 @@ pub(crate) fn apply_edit_group(
         accepted.push(slot);
     }
 
-    // —— 应用：按 start 降序在归一化文本上替换（防止偏移失效，§8.4 步骤 5）——
+    // —— 应用：按 start 降序在归一化文本上替换（防止偏移失效）——
     accepted.sort_by_key(|s| std::cmp::Reverse(s.start));
     let mut replaced = file_norm.clone();
     for slot in &accepted {
@@ -389,7 +389,7 @@ pub(crate) fn apply_edit_group(
     };
     match commit() {
         Ok(()) => {
-            // 写后完整性自检（22 号票）：合并提交是一次 rename 生效，
+            // 写后完整性自检：合并提交是一次 rename 生效，
             // 校验挂在其出口——重读比对哈希 + 严格 UTF-8 + EOL 保持。
             // 失败 → 整组接受成员以失败收口回喂（E_INTERNAL，含阶段）。
             let postcheck = crate::tools::postcheck::verify_written(
@@ -444,9 +444,9 @@ pub(crate) fn apply_edit_group(
         .collect()
 }
 
-/// 三级匹配（§8.4 步骤 3）：每级仅接受唯一命中，绝不猜。
+/// 三级匹配：每级仅接受唯一命中，绝不猜。
 /// 某级 0 命中 → 降级；≥2 命中 → AMBIGUOUS（更宽的下一级只会更多命中）。
-/// `pub(crate)`：同批 edit 合并预演（07 号票批次事务）复用同一匹配实现。
+/// `pub(crate)`：同批 edit 合并预演复用同一匹配实现。
 pub(crate) fn match_three_levels(file: &str, old: &str) -> EditMatch {
     // L1 精确匹配。
     match find_unique(file, old) {
@@ -505,7 +505,7 @@ enum IndentMatch {
     Ambiguous,
 }
 
-/// L2：old 整体去掉公共缩进后，试每种缩进回填；收集全部命中（§8.4 L2）。
+/// L2：old 整体去掉公共缩进后，试每种缩进回填；收集全部命中。
 /// old 以换行结尾时把该换行并入替换区间（文件中必须确实存在）。
 fn indent_shift_match(file: &str, old: &str) -> IndentMatch {
     let old_lines: Vec<&str> = old.lines().collect();
@@ -626,7 +626,7 @@ pub(crate) fn line_changes(old: &str, new: &str) -> (u64, u64) {
     (count(new), count(old))
 }
 
-/// sha256(文件字节) 前 16 hex（§8.4 version 口径）。
+/// sha256(文件字节) 前 16 hex（version 乐观锁指纹口径）。
 pub(crate) fn version_hex(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
     digest

@@ -1,4 +1,4 @@
-//! append-only 分段 JSONL 读写器（技术设计文档 §7.2 分段与封口、§7.3 落盘纪律、§7.4 原子写）。
+//! append-only 分段 JSONL 读写器（分段与封口、 落盘纪律、 原子写）。
 //!
 //! 术语解释：「append-only（只追加）」指日志只允许在末尾追加新行，永不改写或
 //! 删除已有内容；「分段」指把一个会话的全部日志切成多个编号递增的小文件
@@ -8,13 +8,13 @@
 //! 对不上；「segmeta」指段清单文件 `.segmeta.json`，记录每段的统计信息和整条
 //! 追加链的指纹。数据落盘位置：每个会话一个目录，段文件与 segmeta 都在该目录内。
 //!
-//! 纪律（复刻 rig-session/4，D12）：
+//! 纪律（复刻 rig-session/4）：
 //! - 条目按追加顺序线性排列，永不改写/截断既有段；封口仅在写完一批后的安全点判定。
 //! - 封口条件：条目数 ≥200 或字节数 ≥512KB；封口即原子写 `.segmeta.json`
 //!   （段清单 + 每段 head 条目哈希 + 全会话追加链指纹）。
 //! - 指纹 = 追加链 h₀=SHA256("")、hₙ=SHA256(hex(hₙ₋₁)||行字节)；恢复时校验
 //!   segmeta 覆盖前缀的指纹，不匹配只新增新段、绝不截断既有段。
-//! - 损坏尾段容错（§7.3「无半行」）：仅最后一段容忍——无换行收尾的半行与
+//! - 损坏尾段容错（「无半行」）：仅最后一段容忍——无换行收尾的半行与
 //!   首个非法 JSON 行起的内容全部跳过；非最后一段损坏属真实数据损伤，直接报错。
 //!   为什么这么设计：进程随时可能崩溃，崩溃时最后写入的那一行可能只写了一半
 //!   （没有换行符收尾），丢弃它是安全的；但中间某段损坏说明磁盘数据被外部破坏，
@@ -31,16 +31,16 @@ use sha2::{Digest, Sha256};
 use super::entries::StoredEntry;
 use crate::util::atomic::write_atomic;
 
-/// 封口条件：条目数 ≥200（§7.2）。
+/// 封口条件：条目数 ≥200。
 pub const SEGMENT_MAX_ENTRIES: usize = 200;
-/// 封口条件：字节数 ≥512KB（§7.2）。
+/// 封口条件：字节数 ≥512KB。
 pub const SEGMENT_MAX_BYTES: usize = 512 * 1024;
-/// 段文件扩展名（§7.1：0001.jsonl …）。
+/// 段文件扩展名（0001.jsonl …）。
 pub const SEGMENT_EXT: &str = "jsonl";
-/// 段清单文件（§7.1：.segmeta.json）。
+/// 段清单文件（.segmeta.json）。
 pub const SEGMETA_FILE: &str = ".segmeta.json";
 
-/// 段信息（segmeta 的清单元素；§7.1 `{file,count,bytes,headHash}`）：
+/// 段信息（segmeta 的清单元素； `{file,count,bytes,headHash}`）：
 /// 一段的文件名、条目数、字节数与末行哈希。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -52,7 +52,7 @@ pub struct SegmentInfo {
     pub head_hash: String,
 }
 
-/// 段清单与全会话指纹（§7.1：`{segments:[…], headFingerprint}`）。
+/// 段清单与全会话指纹（`{segments:[…], headFingerprint}`）。
 /// 「全会话指纹」指把所有条目行串起来算出的链式哈希，用于检测历史行是否被改动。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -81,7 +81,7 @@ pub struct SessionLog {
     segments: Vec<SegmentState>,
     /// 当前段已封口（或不可续写），下次追加必须开新段。
     sealed: bool,
-    /// 读取时跳过了最后一段的损坏尾行（§7.3 崩溃半行）。
+    /// 读取时跳过了最后一段的损坏尾行（崩溃半行）。
     corrupt_tail_skipped: bool,
     /// segmeta 指纹校验结果（无 segmeta 视为通过）。
     fingerprint_matched: bool,
@@ -198,7 +198,7 @@ impl SessionLog {
                     break; // 文件以换行收尾，干净 EOF
                 }
                 if is_file_tail {
-                    // 无换行收尾 = 崩溃半行：内容不可信，跳过（§7.3）
+                    // 无换行收尾 = 崩溃半行：内容不可信，跳过
                     log.corrupt_tail_skipped = true;
                     break;
                 }
@@ -246,7 +246,7 @@ impl SessionLog {
                 && chain_at_prefix == expected;
         }
 
-        // 最后一段可否续写：未封口且无损坏尾行且指纹通过；否则下次追加开新段（§7.2）
+        // 最后一段可否续写：未封口且无损坏尾行且指纹通过；否则下次追加开新段
         let last = log.segments.last().expect("files 非空则 segments 非空");
         log.sealed = log.corrupt_tail_skipped
             || !log.fingerprint_matched
@@ -284,8 +284,8 @@ impl SessionLog {
         &self.fingerprint
     }
 
-    /// 追加一批条目（一个落盘点，批末一次 fsync，§7.3）。
-    /// 批内逐行检查封口条件（§7.2），满段即原子写 segmeta 并滚动新段；
+    /// 追加一批条目（一个落盘点，批末一次 fsync）。
+    /// 批内逐行检查封口条件，满段即原子写 segmeta 并滚动新段；
     /// 当前段不可续写（封口/损坏尾/指纹失配）时自动开新段。
     pub fn append(&mut self, batch: &[StoredEntry]) -> io::Result<()> {
         if batch.is_empty() {
@@ -324,11 +324,11 @@ impl SessionLog {
             file.write_all(line.as_bytes())?;
             file.write_all(b"\n")?;
         }
-        file.sync_all()?; // §7.3：落盘点 fsync
+        file.sync_all()?; // ：落盘点 fsync
         Ok(())
     }
 
-    /// 封口当前段：原子写 `.segmeta.json`（段清单 + head 哈希 + 全会话指纹，§7.2/§7.4）。
+    /// 封口当前段：原子写 `.segmeta.json`（段清单 + head 哈希 + 全会话指纹）。
     fn seal(&mut self) -> io::Result<()> {
         let meta = Segmeta {
             segments: self

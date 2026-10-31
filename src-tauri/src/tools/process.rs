@@ -1,16 +1,15 @@
-//! 进程组 / Job Object 收割原语（§8.8 命令输出治理 + §5.3 取消传播）。
+//! 进程组 / Job Object 收割原语（命令输出治理 + 取消传播）。
 //!
-//! 产品化自 S5 spike（`spike/cancel.rs` 的收割段，原型冻结保留）；本票先把
-//! 原语落位——command 工具属工具系统后续票，落地时直接接入：
+//! 取消传播原型验证的收割逻辑在此产品化落位，command 工具直接接入：
 //! - Unix：spawn 即 `process_group(0)`（子进程为组长），取消/超时
-//!   SIGTERM → 宽限轮询 → SIGKILL 整组（孙进程随组消亡，S5 实测 6–8ms）；
+//!   SIGTERM → 宽限轮询 → SIGKILL 整组（孙进程随组消亡，实测 6–8ms）；
 //! - Windows：Job Object（`KILL_ON_JOB_CLOSE` 兜底 + `TerminateJobObject`
-//!   整树），MSVC target 可编译性已验（S5），运行行为由三平台 CI 覆盖。
+//!   整树），MSVC target 可编译性已验，运行行为由三平台 CI 覆盖。
 
 use std::time::Duration;
 
 /// 收割宽限期：SIGTERM 后等待子进程自行退出，超时 SIGKILL。
-/// 预算约束：取消全链 <1s，宽限只允许占小头（§8.8 命令治理）。
+/// 预算约束：取消全链 <1s，宽限只允许占小头。
 pub const REAP_GRACE: Duration = Duration::from_millis(200);
 
 // —— Unix：进程组收割（macOS 实测路径） ——
@@ -20,13 +19,13 @@ mod unix_reap {
     use std::time::{Duration, Instant};
 
     /// 子进程落在独立进程组（组长，pgid = 子 pid）：
-    /// cancel/超时时 `kill(-pgid)` 一并收割其派生的整棵进程树（§8.8）。
+    /// cancel/超时时 `kill(-pgid)` 一并收割其派生的整棵进程树。
     pub fn enable_process_group(cmd: &mut tokio::process::Command) {
         cmd.process_group(0);
     }
 
     /// 收割整个进程组：SIGTERM → 宽限轮询 → SIGKILL，并等待直接子进程退出。
-    /// 组内孙进程随组消亡（由 S5 真实进程树测试验证）。
+    /// 组内孙进程随组消亡（由真实进程树测试验证）。
     pub async fn reap_process_group(
         child: &mut tokio::process::Child,
         grace: Duration,
@@ -59,15 +58,14 @@ mod unix_reap {
 #[cfg(unix)]
 pub use unix_reap::{enable_process_group, pid_alive, reap_process_group};
 
-// —— Windows：Job Object 整树收割（cfg 隔离保证可编译；语义注释同 S5 票） ——
+// —— Windows：Job Object 整树收割（cfg 隔离保证可编译） ——
 
 #[cfg(windows)]
 mod win_job {
     use std::time::Duration;
 
     /// Job Object 守护句柄：KILL_ON_JOB_CLOSE 兜底 + TerminateJobObject 整树收割。
-    /// 落地要点（spawn→assign 后代逃逸窗口以 CREATE_SUSPENDED 归零等）见
-    /// 08 号票 Answer 第 4 节；command 工具落地时接入。
+    /// 落地要点：spawn→assign 后代逃逸窗口以 CREATE_SUSPENDED 归零等。
     pub struct JobGuard {
         handle: windows_sys::Win32::Foundation::HANDLE,
     }

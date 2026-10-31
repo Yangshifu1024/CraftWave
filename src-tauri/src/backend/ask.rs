@@ -1,4 +1,4 @@
-//! 询问与审批协议（技术设计文档 §3.2 的 AskPayload/AskAnswer）。
+//! 询问与审批协议（AskPayload/AskAnswer）。
 //!
 //! 名词解释：ask（询问）指模型向用户发起的提问，必须等用户回答后 run
 //! 才能继续；审批是询问的一种，特指模型要执行敏感操作（写文件、执行命令）
@@ -6,20 +6,19 @@
 //!
 //! 两条使用路径共用同一套协议与 [`AskSlot`]（ask 槽 = 存放当前未决询问的
 //! 共享单元）：
-//! - **审批门**（§5.4 第 ④ 步）：ApprovalGate 判定需要挂起 → 宿主命令层
+//! - **审批门**（门控第 ④ 步）：ApprovalGate 判定需要挂起 → 宿主命令层
 //!   构造 `kind:"approval"` 载荷（含改动预览 diff，或命令与围栏原因；
 //!   围栏 = 命令工具的硬性安全底线）→ 暂停整个 run 等待应答；
-//! - **ask 工具**（§8.3 交互类工具）：执行器构造 `kind:"question"` 载荷 →
+//! - **ask 工具**（交互类工具）：执行器构造 `kind:"question"` 载荷 →
 //!   注册到槽位等待应答，用户的回答作为工具结果回喂给模型。
 //!
-//! 两条路径的应答都经 `resolve_ask` 命令（§3.3 第 22 条）进入，通过
+//! 两条路径的应答都经 `resolve_ask` 命令进入，通过
 //! oneshot 通道（只能发送一次消息的异步通道）唤醒等待方。
 
 use tokio::sync::oneshot;
 
-/// 询问/审批载荷（§3.2；08 号票起实装 question/approval/mcpTrust 三形态，
-/// projectTrust 项目资源信任随 09 号票实装，externalDir 外部目录授权随
-/// 24 号票实装）。
+/// 询问/审批载荷（question/approval/mcpTrust/projectTrust/externalDir
+/// 五种形态）。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(
@@ -51,22 +50,22 @@ pub enum AskPayload {
         #[serde(skip_serializing_if = "Option::is_none")]
         #[cfg_attr(test, ts(optional))]
         fence_reason: Option<String>,
-        /// HTML 预览全文（FR-12-04，14 号票）：write/edit 的目标为 .html/.htm
+        /// HTML 预览全文：write/edit 的目标为 .html/.htm
         /// 且内容 ≤50,000 字符时由宿主审批载荷附带——审批卡「查看预览」入口
         /// 以 render_html 同款沙箱渲染（不落盘不解析，同工具约定）。
         #[serde(skip_serializing_if = "Option::is_none")]
         #[cfg_attr(test, ts(optional))]
         preview_html: Option<String>,
-        /// 计划范围门的计划外写路径（FR-06-03，§8.6，25 号票）：Some =
+        /// 计划范围门的计划外写路径：Some =
         /// 范围门询问——选项三枚 allow_once/always_session/deny，
-        /// always_session 把写目标父目录以目录范围并入会话基线扩展（§8.6；
-        /// 会话级不持久化），allow_once 不扩大基线；载荷无推荐项，不参与
+        /// always_session 把写目标父目录以目录范围并入会话基线扩展
+        /// （会话级不持久化），allow_once 不扩大基线；载荷无推荐项，不参与
         /// autoConfirm 自动批准（计划范围须用户明确同意）。None = 非范围门
         /// 审批。
         #[serde(skip_serializing_if = "Option::is_none")]
         #[cfg_attr(test, ts(optional))]
         plan_scope: Option<String>,
-        /// 灰区命令审计结论（§3.2/§8.7，36 号票）：审计已出结论但须人工
+        /// 灰区命令审计结论：审计已出结论但须人工
         /// 确认时随审批卡展示——ask = 模型审计建议询问用户；manual = 审计
         /// 失败/超时/输出无效转人工（reason = 失败原因）。allow/block 不
         /// 产生审批卡（直接放行/拒绝收场，结论经 toolAudit 帧展示）；范围
@@ -77,7 +76,7 @@ pub enum AskPayload {
         /// 用户可选的操作列表（如仅本次允许/拒绝）。
         options: Vec<AskOption>,
     },
-    /// MCP 启动信任（TOFU，§9.7/§3.2 字段级逐字；08 号票）：首次连接未
+    /// MCP 启动信任（TOFU）：首次连接未
     /// 信任服务器前的确认。应答走 [`AskAnswer::Approval`]（optionId = 选项
     /// id：allow_once/remember/deny）——协议面不新增应答形态。
     McpTrust {
@@ -93,25 +92,25 @@ pub enum AskPayload {
         /// 三选项（allow_once / remember / deny）。
         options: Vec<AskOption>,
     },
-    /// 项目资源信任（§9.8 字段级，09 号票实装）：首次使用未信任技能
-    /// （SKILL.md 及随附脚本、模板整体，Q21）前的确认。应答同走
+    /// 项目资源信任（字段级）：首次使用未信任技能
+    /// （SKILL.md 及随附脚本、模板整体）前的确认。应答同走
     /// [`AskAnswer::Approval`]（optionId = allow_session/remember/deny）。
     ProjectTrust {
-        /// 资源名（技能名或项目指令文件名；24 号票起两挂接点共用本形态）。
+        /// 资源名（技能名或项目指令文件名；两挂接点共用本形态）。
         resource_name: String,
         /// 信任作用域（"global" | "project"；内置技能豁免不询问）。
         scope: SkillTrustScope,
-        /// 整目录版本指纹（Q21 [`crate::knowledge::skills::version_fingerprint`]，
+        /// 整目录版本指纹（[`crate::knowledge::skills::version_fingerprint`]，
         /// 展示前 16 位）。
         fingerprint: String,
         /// 三选项（allow_session / remember / deny）。
         options: Vec<AskOption>,
     },
-    /// 外部目录授权（§9.9 字段级，24 号票实装）：工具访问会话 roots 外
-    /// 路径前的「始终允许」确认（FR-05-12）。应答同走
+    /// 外部目录授权（字段级）：工具访问会话 roots 外
+    /// 路径前的「始终允许」确认。应答同走
     /// [`AskAnswer::Approval`]（optionId = allow/deny）；允许后宿主经
-    /// `allow_external_dir`（#34）把该目录并入会话 roots 快照（粒度 =
-    /// 该目录及子目录的读/写/列，授权仅本会话有效，§9.9）。
+    /// `allow_external_dir` 把该目录并入会话 roots 快照（粒度 =
+    /// 该目录及子目录的读/写/列，授权仅本会话有效）。
     ExternalDir {
         /// 授权目标目录（canonical 绝对路径）。
         path: String,
@@ -120,7 +119,7 @@ pub enum AskPayload {
     },
 }
 
-/// 项目资源信任的作用域（§9.8：全局 `~/.craftwave/skills/` 与项目
+/// 项目资源信任的作用域（全局 `~/.craftwave/skills/` 与项目
 /// `<home>/.craftwave/skills/` 均属信任资源；内置豁免）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -132,7 +131,7 @@ pub enum SkillTrustScope {
     Project,
 }
 
-/// 应用级询问槽（AppState.app_asks 的元素；09 号票由 08 号票的 MCP 专用
+/// 应用级询问槽（AppState.app_asks 的元素；由 MCP 专用
 /// `mcp_asks`/`PendingTrustAsk` 泛化而来——应用级询问不属任何 run，统一挂
 /// 本槽表，`resolve_ask` 命令在 run 槽未命中时落到这里）：ask_id → 原始
 /// 载荷 + 应答通道（oneshot 一次性通道）。
@@ -143,7 +142,7 @@ pub struct AppAskSlot {
     pub tx: oneshot::Sender<AskAnswer>,
 }
 
-/// MCP 传输方式（§3.2 mcpTrust.transport："stdio" | "http"）。
+/// MCP 传输方式（mcpTrust.transport："stdio" | "http"）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "lowercase")]
@@ -154,7 +153,7 @@ pub enum McpTransportKind {
     Http,
 }
 
-/// 单个问题（§3.2 question.questions 元素）。
+/// 单个问题（question.questions 元素）。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -182,7 +181,7 @@ pub struct AskChoice {
     pub label: String,
 }
 
-/// 审批选项（§3.2 approval.options 元素）。
+/// 审批选项（approval.options 元素）。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -208,7 +207,7 @@ pub struct AskOption {
 pub enum AskMode {
     /// 仅本次放行。
     AllowOnce,
-    /// 本会话内总是放行（23 号票实装：命令类审批且 approval.sessionMemoryEnabled
+    /// 本会话内总是放行（命令类审批且 approval.sessionMemoryEnabled
     /// 开启时下发该选项；选中后宿主恢复循环登记会话级免批签名，同签名命令
     /// 跨 run 免批——记忆进程内不持久化，新会话/备份恢复后须重新确认）。
     AlwaysSession,
@@ -216,7 +215,7 @@ pub enum AskMode {
     Deny,
 }
 
-/// 灰区命令审计结论（§3.2 approval.audit，36 号票，§8.7）：审计已出结论
+/// 灰区命令审计结论（approval.audit）：审计已出结论
 /// 但须人工确认时随审批卡展示的注记。
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -229,7 +228,7 @@ pub struct AuditNote {
     pub reason: String,
 }
 
-/// 审计注记的结论形态（§3.2 approval.audit.state）。
+/// 审计注记的结论形态（approval.audit.state）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
@@ -240,7 +239,7 @@ pub enum AuditNoteState {
     Manual,
 }
 
-/// 改动预览（§3.2 approval.diff；write = 新文件全部为新增行，edit = 单段替换）。
+/// 改动预览（approval.diff；write = 新文件全部为新增行，edit = 单段替换）。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -288,10 +287,10 @@ pub enum DiffLineKind {
 
 /// AskPayload 的固有方法实现。
 impl AskPayload {
-    /// 推荐选项的 id（自动确认超时时选它，§5.4）；问卷形态没有推荐选项，
+    /// 推荐选项的 id（自动确认超时时选它）；问卷形态没有推荐选项，
     /// 返回 None。mcpTrust/projectTrust/externalDir 同样返回 None——启动
     /// 信任、项目资源信任与外部目录授权不参与 autoConfirm 自动批准（高危
-    /// 外部资源永远过人，FR-08-04 同精神）。
+    /// 外部资源永远过人）。
     pub fn recommended_option_id(&self) -> Option<&str> {
         match self {
             AskPayload::Question { .. }
@@ -306,7 +305,7 @@ impl AskPayload {
     }
 }
 
-/// 询问/审批应答（§3.2 AskAnswer）。
+/// 询问/审批应答（AskAnswer）。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(
@@ -329,11 +328,11 @@ pub enum AskAnswer {
     },
 }
 
-/// 未决 ask 槽（§5.1 中 RunHandle.ask 存放的元素）：记录询问的元信息，
+/// 未决 ask 槽（RunHandle.ask 存放的元素）：记录询问的元信息，
 /// 并持有 oneshot 通道的发送端（一次性异步通道的发送侧），应答到达时
 /// 用它唤醒等待中的 run。`payload` 留存开启时的原始载荷——WebView 重连
-/// 后的待审批/询问恢复查询（§5.6，§3.3 #59c `session_pending_ask`）据此
-/// 展示原始操作及参数（05 号票）。
+/// 后的待审批/询问恢复查询（`session_pending_ask`）据此
+/// 展示原始操作及参数。
 #[derive(Debug)]
 pub struct AskSlot {
     /// 本次询问的唯一 id（resolve_ask 命令按它路由应答）。

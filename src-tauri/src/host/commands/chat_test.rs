@@ -1,5 +1,5 @@
-//! 审批 AskPayload 构造与 suggest 上下文提取的纯逻辑单测（14 号票）；
-//! 27 号票增补自动起名纯函数（触发三态表 / 标题归一 / prompt 截断）与
+//! 审批 AskPayload 构造与 suggest 上下文提取的纯逻辑单测；
+//! 增补自动起名纯函数（触发三态表 / 标题归一 / prompt 截断）与
 //! 标题后台任务直驱（剧本假模型 + 录音事件汇 + 临时数据根）。
 
 use crate::backend::ask::{AskMode, AskPayload, DiffLineKind};
@@ -35,9 +35,9 @@ macro_rules! approval_of {
 
 /// 断言三类工具的审批载荷形状：write 新文件 diff 全为新增行（标题含路径、
 /// 选项固定允许/拒绝两项）；edit 旧文本逐行删除 + 新文本逐行新增拼成替换块；
-/// command 命令行原文随载荷、围栏原因透传、不带 diff，且 ③ 会话内记忆开
-/// 关控制 always_session 选项的有无（23 号票）；计划范围卡载荷（25 号票，
-/// FR-06-03/§8.6）——write 范围卡 title 固定「计划范围确认」、planScope 带
+/// command 命令行原文随载荷、围栏原因透传、不带 diff，且会话内记忆开
+/// 关控制 always_session 选项的有无；计划范围卡载荷——write 范围卡
+/// title 固定「计划范围确认」、planScope 带
 /// 计划外路径、fenceReason 带基线对照、选项固定三枚且无推荐项（不参与
 /// autoConfirm 自动批准），command 范围卡附命令行原文并吸收围栏原因；
 /// suggest 上下文提取优先取最后一条 assistant 的正文、没有 assistant 时退
@@ -108,11 +108,11 @@ fn approval_plan_scope_and_suggest_payload_semantics() {
     assert!(diff.is_none(), "命令不走 diff");
     assert!(title.contains("命令"));
     // ③ 开：允许 / 始终允许（本会话）/ 拒绝 三项，always_session 非推荐项
-    assert_eq!(options.len(), 3, "命令类审批三选项（23 号票）");
+    assert_eq!(options.len(), 3, "命令类审批三选项");
     assert_eq!(options[1].id, "always_session");
     assert_eq!(options[1].mode, Some(AskMode::AlwaysSession));
     assert_eq!(options[1].recommended, None, "非推荐项不参与自动确认");
-    // ③ 关：不出该选项（M1 两项口径不变）
+    // ③ 关：不出该选项（两项口径不变）
     approval_of!(build_approval_payload(&p, false, None, None), { options });
     assert_eq!(options.len(), 2, "③ 关闭时保持允许/拒绝两项");
     assert!(!options.iter().any(|o| o.id == "always_session"));
@@ -144,7 +144,7 @@ fn approval_plan_scope_and_suggest_payload_semantics() {
     // 全空：空串（suggest 静默不发）
     assert_eq!(context_tail(&[]), "");
 
-    // ---- 计划范围卡载荷（25 号票，FR-06-03/§8.6）：write 范围卡 title 固定
+    // ---- 计划范围卡载荷：write 范围卡 title 固定
     // ---- 「计划范围确认」、选项三枚无推荐项；command 范围卡附命令行原文。
     // write 范围卡。
     let mut p = pending("write", r#"{"path":"src/b.rs","content":"x"}"#);
@@ -192,27 +192,27 @@ fn approval_plan_scope_and_suggest_payload_semantics() {
     assert!(reason.contains("写目标"), "吸收围栏原因：{reason}");
 }
 
-// ---- 自动起名纯函数（27 号票，FR-01-09）----
+// ---- 自动起名纯函数 ----
 
 /// 断言触发判定三态表与标题归一表：默认标题 + 恰好一条 user → 触发；已改名
-/// （#17）→ 不触发；非首条 → 不触发；索引缺失防御不触发。归一：trim + 首个
+/// → 不触发；非首条 → 不触发；索引缺失防御不触发。归一：trim + 首个
 /// 非空行 + ≤30 字符截断（多字节安全）+ 全空白空串兜底。另钉死默认标题
 /// 常量字面值（create_session 与三态判定同源，漂移即永久失配）。以及 prompt
 /// 组装与首条消息提取：prompt 含指令骨架 + 消息正文、超长输入截 2000 字符；
 /// first_user_text 取第一条 user（忽略 assistant）的 Text parts 拼接，纯图片
 /// / 无 user → 空串（调用方放弃起名）；标题任务的辅助调用 runId 后缀
-/// `:title`（Q37/Q40，与 suggest/compact 同族命名防漂移）。
+/// `:title`（与 suggest/compact 同族命名防漂移）。
 #[test]
 fn title_trigger_normalize_prompt_and_first_user_text() {
     const DEFAULT: &str = crate::host::commands::session::DEFAULT_SESSION_TITLE;
-    // 触发判定三态（票面）。
+    // 触发判定三态。
     assert!(
         title_should_trigger(Some(DEFAULT), 1),
         "默认标题 + 仅一条 user 应触发"
     );
     assert!(
         !title_should_trigger(Some("我的调试会话"), 1),
-        "用户 rename_session 改过名（#17）不触发"
+        "用户 rename_session 改过名不触发"
     );
     assert!(
         !title_should_trigger(Some(DEFAULT), 2),
@@ -291,11 +291,11 @@ fn title_trigger_normalize_prompt_and_first_user_text() {
         "无 user：空串"
     );
 
-    // 标题辅助调用身份钉死（Q37/Q40）。
+    // 标题辅助调用身份钉死。
     assert_eq!(format!("{}:title", "run-1"), "run-1:title");
 }
 
-// ---- 标题后台任务直驱（27 号票：剧本假模型 + 录音事件汇 + 临时数据根）----
+// ---- 标题后台任务直驱（剧本假模型 + 录音事件汇 + 临时数据根）----
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -419,8 +419,8 @@ fn meta_title_on_disk(root: &std::path::Path, session_id: &str) -> Option<String
     })
 }
 
-/// 标题后台任务直驱全链（票面）：成功路径——生成标题 → meta 行 + index 双写
-/// （事件时点已落盘）→ C-9 计量（aux 明细 + tokens:update 照发 + runs 不增）
+/// 标题后台任务直驱全链：成功路径——生成标题 → meta 行 + index 双写
+/// （事件时点已落盘）→ 计量（aux 明细 + tokens:update 照发 + runs 不增）
 /// → session:title 事件；三条兜底路径（失败与超时共用兜底臂）——剧本错误 →
 /// 标题 = 首条消息首行截断、无 tokens:update（无 usage 不伪造）、无重试、
 /// `session:title` 照常发出，超时（悬空 transport + 短超时确定性触发）→ 同
@@ -445,7 +445,7 @@ async fn title_task_success_fallback_and_concurrency_guards() {
     assert_eq!(payload["sessionId"], "sess-title-ok");
     assert_eq!(payload["title"], "修复登录页超时");
 
-    // 事件顺序锚（票面：事件在落盘之后发）：事件已到 ⇒ index 与 meta 行均已写
+    // 事件顺序锚（事件在落盘之后发）：事件已到 ⇒ index 与 meta 行均已写
     let meta = app
         .store
         .index()
@@ -459,7 +459,7 @@ async fn title_task_success_fallback_and_concurrency_guards() {
         "meta 行 title 应已落盘"
     );
 
-    // C-9 计量：tokens:update 照发（含 modelId）且 run 明细有 `:title` aux 条目
+    // 计量：tokens:update 照发（含 modelId）且 run 明细有 `:title` aux 条目
     let tokens = events.payloads_of("tokens:update");
     assert_eq!(tokens.len(), 1, "标题任务恰好一个 tokens:update");
     assert_eq!(tokens[0]["usage"]["input"], 120);
@@ -472,7 +472,7 @@ async fn title_task_success_fallback_and_concurrency_guards() {
         .expect("明细应有 run-1:title 条目");
     assert_eq!(title_run.kind, "aux", "辅助调用 kind=aux");
     assert_eq!(title_run.by_model["model-1"].input, 120);
-    // Q40：辅助调用不增主 run 次数
+    // 辅助调用不增主 run 次数
     let day = crate::host::usage::local_today();
     let daily = app.ledger.stats.read_day(&day);
     assert_eq!(

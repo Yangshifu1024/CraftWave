@@ -1,11 +1,11 @@
-//! 供应商连接探测测试（19 号票建面；38 号票扩为三方言）：全本地 fixture
+//! 供应商连接探测测试（建面；扩为三方言）：全本地 fixture
 //! （127.0.0.1 axum mock + 手写最小 SOCKS5 转发器），不连真实外网。
 //!
-//! 覆盖面（票面"测试"节，同型用例在单个 #[test] 内顺序/表驱动合并）：
+//! 覆盖面（同型用例在单个 #[test] 内顺序/表驱动合并）：
 //! - models 拉取成功、/models 404 → 回退最小补全、双 404 与状态码七类分类、
 //!   不可达 network、延迟计量与错误脱敏、模型清单三形状解析；
 //! - 三方言（chat/responses/anthropic）各自的回退端点与鉴权头、分发路由；
-//! - 代理 manual socks5 经本地转发器可达、none 直连恢复（FR-02-10 验收的
+//! - 代理 manual socks5 经本地转发器可达、none 直连恢复（验收的
 //!   自动化等价面）。
 
 use std::sync::Arc;
@@ -288,7 +288,7 @@ async fn probe_openai_success_classification_and_sanitization() {
     assert_eq!(parse_models("{}"), None);
 }
 
-// 断言：三方言分发与鉴权（38 号票）——openai_responses 方言 /models 404 回退
+// 断言：三方言分发与鉴权——openai_responses 方言 /models 404 回退
 // 打 /responses（最小补全体 input + max_output_tokens=16）；anthropic_messages
 // 方言鉴权头为 x-api-key + anthropic-version（Bearer 不适用）、/v1/models 404
 // 回退 /v1/messages；anthropic baseUrl 粘 /v1、/messages 等尾缀归一后仍连通；
@@ -525,12 +525,12 @@ async fn probe_dialects_dispatch_and_anthropic_headers() {
     );
 }
 
-// 断言（FR-02-10 验收第一条的自动化等价面）：manual socks5 模式——探测请求
+// 断言（验收第一条的自动化等价面）：manual socks5 模式——探测请求
 // 经本地 SOCKS5 转发器到达 mock 端点（计数器证明走了代理）；切 none 直连
 // 恢复（不经转发器）。工厂 reload 换代后 client 即用新配置。
 #[tokio::test]
 async fn socks5_manual_proxy_reaches_mock_then_none_bypasses() {
-    // mock 只提供补全端点（/v1/models 404 → 探测回退最小补全）——经 socks5
+    // mock 只提供补全端点（v1/models 404 → 探测回退最小补全）——经 socks5
     // 隧道跑的是 chat/completions 请求（对话请求面），贴合"经本地代理实测
     // 对话成功"的验收语义
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

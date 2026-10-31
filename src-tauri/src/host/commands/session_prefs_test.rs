@@ -1,4 +1,4 @@
-//! 会话偏好命令测试（18 号票，§3.3 #24/#25）：存在性校验、merge/清除语义、
+//! 会话偏好命令测试：存在性校验、merge/清除语义、
 //! 与 prefs 存储面的联通、RunConfig 旧载荷兼容。
 
 use std::sync::Arc;
@@ -42,11 +42,11 @@ fn app_with_session(tag: &str) -> (tempfile::TempDir, AppState, String) {
     (dir, app, sid)
 }
 
-/// 断言 #24/#25 偏好读写落盘语义全链：未设置 → 空偏好；预置存储读回一致；
+/// 断言偏好读写落盘语义全链：未设置 → 空偏好；预置存储读回一致；
 /// merge（只传的字段被改，未传字段保持）；null 清除（modelId/thinking 清回
 /// 默认，前端「跟随默认」的落盘形态）；空白 modelId 归一为清除（宽容前端
 /// 空串，与 null 等价）；会话不存在 → E_NOT_FOUND（读与写同拒绝）；
-/// RunConfig 旧载荷兼容（§3.2 18 号票回写）：无 thinking 字段的旧前端
+/// RunConfig 旧载荷兼容（回写）：无 thinking 字段的旧前端
 /// start_chat 载荷照常解析（serde default → None）；新载荷带 thinking 同样解析。
 #[test]
 fn prefs_read_merge_clear_and_run_config_compat() {
@@ -148,7 +148,7 @@ fn prefs_read_merge_clear_and_run_config_compat() {
     .unwrap_err();
     assert_eq!(err.code, E_NOT_FOUND);
 
-    // RunConfig 旧载荷兼容（§3.2 18 号票回写）。
+    // RunConfig 旧载荷兼容（回写）。
     let config: super::super::chat::RunConfig =
         serde_json::from_str(r#"{"tier":"autoEdit","maxTurns":24,"steer":false}"#)
             .expect("旧载荷应可解析");

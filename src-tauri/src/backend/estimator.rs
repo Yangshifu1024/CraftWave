@@ -1,4 +1,4 @@
-//! 请求 token 估算器（技术设计文档 §6.2 每请求预算检查的估算面，Q18/04 号票）。
+//! 请求 token 估算器（每请求预算检查的估算面）。
 //!
 //! 名词解释：token（词元）是模型处理文本的最小单位；上下文窗口（context
 //! window）是单次请求能装下的 token 总量上限。每次向模型发请求前，后端要
@@ -7,18 +7,18 @@
 //!
 //! 为什么用启发式而不是精确分词器：精确 tokenizer（tiktoken 等）体积大、
 //! 按供应商分化，而预算检查的语义是"宁可高估提前压缩，不可低估导致超长
-//! 报错"——启发式只要系统性偏高就是安全的。口径（§6.2 定稿）：
+//! 报错"——启发式只要系统性偏高就是安全的。口径：
 //! - CJK 字符（中日韩统一表意/扩展/兼容区 + 全角标点）每字按 1.5 token 计
 //!   （主流分词器对中文约 0.75–1.5 token/字，取上沿）；
 //! - 其他字符（拉丁字母、空白、JSON 结构等）每 4 字符按 1 token 计；
 //! - 两组分别上取整后求和。
 //!
-//! 最近 usage 帧仅作校准参考（Q18：不能以无 usage 为由跳过检查——估算
+//! 最近 usage 帧仅作校准参考（不能以无 usage 为由跳过检查——估算
 //! 面完全本地，首轮请求即可判定）。
 
 use crate::storage::{MessageEntry, WirePart};
 
-/// 单段文本的 token 估算（§6.2 口径）。
+/// 单段文本的 token 估算。
 pub fn estimate_text_tokens(text: &str) -> u64 {
     let mut cjk: u64 = 0;
     let mut other: u64 = 0;
@@ -73,10 +73,10 @@ fn estimate_parts_tokens(parts: &[WirePart]) -> u64 {
                 ));
             }
             WirePart::PlanSnapshot { .. } | WirePart::RunMarker { .. } => {
-                // wire 重建跳过（§6.2）：不占模型请求面
+                // wire 重建跳过：不占模型请求面
             }
             WirePart::Image { blob_hash, .. } => {
-                // 图片（17 号票）：视觉 token 随供应商与分辨率分化，无法从
+                // 图片：视觉 token 随供应商与分辨率分化，无法从
                 // 字节数估算；按宁高勿低给常数 2048 token/张（对应主流
                 // 视觉模型一张中分辨率图的实际消耗上沿），加占位文本面
                 //（非 vision 模型收到的占位与摘要块都含哈希文本）。
@@ -96,7 +96,7 @@ pub fn estimate_entries_tokens(entries: &[MessageEntry]) -> u64 {
 }
 
 /// 工具定义表（名称 + 描述 + 参数 schema 文本）的 token 估算。
-/// 工具表每次请求都随请求广播给模型（§6.2 预算覆盖面）。
+/// 工具表每次请求都随请求广播给模型（预算覆盖面）。
 pub fn estimate_tool_tokens(tools: &[(String, String, String)]) -> u64 {
     tools
         .iter()
@@ -106,7 +106,7 @@ pub fn estimate_tool_tokens(tools: &[(String, String, String)]) -> u64 {
         .sum()
 }
 
-/// 一次请求的完整预算估算（§6.2 字段级规则）：
+/// 一次请求的完整预算估算：
 /// 系统前缀（customPrompt/摘要）+ history + prompt + 工具表 + 回复预留。
 pub fn estimate_request_tokens(
     system_prefixes: &[&str],
@@ -127,7 +127,7 @@ pub fn estimate_request_tokens(
         + reply_reserve
 }
 
-/// 自动压缩判定（§6.2：占用 ≥ 窗口 × threshold）。
+/// 自动压缩判定（占用 ≥ 窗口 × threshold）。
 pub fn should_auto_compact(estimated_tokens: u64, context_window: u64, threshold: f64) -> bool {
     if context_window == 0 {
         return false;
@@ -136,7 +136,7 @@ pub fn should_auto_compact(estimated_tokens: u64, context_window: u64, threshold
     estimated_tokens >= budget
 }
 
-/// 硬预算判定（§6.2 wire 预算超限线：占用 > 窗口 × 0.9）。
+/// 硬预算判定（wire 预算超限线：占用 > 窗口 × 0.9）。
 pub fn is_over_wire_budget(estimated_tokens: u64, context_window: u64) -> bool {
     if context_window == 0 {
         return false;

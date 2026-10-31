@@ -1,5 +1,5 @@
-//! 审批门（技术设计文档 §5.4 步骤①–④ × §8.5 权限矩阵 × §8.7 围栏 × §8.6
-//! 计划门）：主循环 `ToolGate` 接口的生产策略实现。
+//! 审批门（门控步骤①–④ × 权限矩阵 × 围栏 × 计划门）：主循环 `ToolGate`
+//! 接口的生产策略实现。
 //!
 //! 名词解释：审批门 = 工具执行前的安全判定，结论有三种——放行（直接执行）、
 //! 挂起（暂停整个 run 等用户批准）、硬拦（直接拒绝并把错误回喂给模型）。
@@ -8,49 +8,49 @@
 //! 命令任何档位都拦）；计划门 = "已批准的计划全部完成后不允许继续写文件"
 //! 的约束。
 //!
-//! 判定顺序（首个命中即出结论；23 号票起禁区分两层前置）：
-//! 0. **内部状态硬拒（23 号票，FR-05-08/§9.3）**：FileWrite 工具路径与
+//! 判定顺序（首个命中即出结论；内部状态禁区检查两层前置）：
+//! 0. **内部状态硬拒**：FileWrite 工具路径与
 //!    command 写目标命中禁区（config/凭据/MCP 配置/索引/锁面等宿主内部
 //!    状态）→ E_INTERNAL_STATE 硬拦——置于全部放行路径之前，任何权限档、
 //!    白名单、自动确认、审批总开关与已批准签名都不豁免（禁区调用不可能
 //!    曾获放行，签名放行前再查一道是防御纵深）；
-//! 0.5. **外部目录授权（24 号票，FR-05-12/§9.9）**：文件类工具访问会话
+//! 0.5. **外部目录授权**：文件类工具访问会话
 //!    roots（含已授权目录）外路径 → 挂起「始终允许该目录」询问（授权目标
 //!    属整体放行禁区 → E_INVALID_ARG 硬拦）；置于签名放行之前——恢复重放
 //!    时授权已并入判定集，签名放行语义不变；
-//! 0.6. **git 写策略 Block（26 号票，FR-11-03）**：`git add`/`stage`/
-//!    `commit` 在 §3.2 `gitAllowStageCommit` 关（默认）时、`git merge`/
+//! 0.6. **git 写策略 Block**：`git add`/`stage`/
+//!    `commit` 在 `gitAllowStageCommit` 关（默认）时、`git merge`/
 //!    `git rebase` 任何配置下、`git push --force` 任何配置下 →
 //!    E_FENCE_BLOCKED 硬拦；先于签名放行（策略铁律不因历史签名复活）；
 //! 1. 已批准签名：本 run 内同"工具名 + 参数 JSON"的调用此前已批准，或该
-//!    签名在本会话「始终允许」桶内（23 号票 always_session 升域，跨 run
+//!    签名在本会话「始终允许」桶内（always_session 升域，跨 run
 //!    生效）→ 放行（挂起恢复后主循环会原样重放挂起批，按签名放行避免
 //!    再次挂起死循环）；
 //!
-//! 步骤 1.5 **git 写策略 Confirm（26 号票）**：`git push` 恒挂起确认（任何
+//! 步骤 1.5 **git 写策略 Confirm**：`git push` 恒挂起确认（任何
 //! 配置不豁免）；开关放开后的 add/stage/commit 挂围栏卡（白名单/总开关豁免
 //! 口径与围栏一致）——置于签名放行之后（恢复重放按签名放行）。
 //!
 //! 2. 围栏（command 专属）：Block → E_FENCE_BLOCKED 硬拦（任何档位不豁
 //!    免，白名单也不豁免黑名单）先于一切挂起；Confirm → 记为待决——例外
-//!    两条：命令命中 commandAllowlist 且非 plan 档时免除（23 号票白名单
+//!    两条：命令命中 commandAllowlist 且非 plan 档时免除（白名单
 //!    消费）；审批总开关关闭且非 plan 档时免除（① 开关，plan 档的只读
 //!    围栏是档位语义不属审批弹窗，保留）；
-//! 3. **计划三门（25 号票，§8.6，内部顺序固定）**：硬门（approval.
+//! 3. **计划三门（内部顺序固定）**：硬门（approval.
 //!    requirePlan 开启且无已批准计划 → E_PLAN_REQUIRED 硬拦，默认关）→
-//!    过期门（已批准计划全部 completed 仍写 → E_PLAN_STALE，M1 既有）→
+//!    过期门（已批准计划全部 completed 仍写 → E_PLAN_STALE，既有语义）→
 //!    **范围门**（FileWrite 路径与 command AST 写目标在批准基线外 → 挂起
 //!    范围询问：允许/本会话始终允许（父目录入基线）/拒绝）——范围门命中
 //!    时待决的围栏 Confirm 一并附上（一次交互覆盖本次调用全部审批，恢复
 //!    重放按签名放行）；范围门未命中才挂围栏卡（步骤 2 待决落点）；
-//! 4. 权限矩阵（§8.5 的单一实现 `decide_gate`）：Filtered → E_TOOL_BLOCKED
+//! 4. 权限矩阵（单一实现 `decide_gate`）：Filtered → E_TOOL_BLOCKED
 //!    硬拦；NeedsApproval → 挂起（白名单命中或审批总开关关闭且非 plan 档
 //!    时放行，豁免口径同上）；
-//! 5. **MCP 动态工具分支**（08 号票，§8.5 注 + §9.7）：MCP 工具未声明
-//!    read_only（用户配置）且无 Q44 许可（三元组 = 服务器启动指纹 + 原始
+//! 5. **MCP 动态工具分支**：MCP 工具未声明
+//!    read_only（用户配置）且无许可三元组核验（三元组 = 服务器启动指纹 + 原始
 //!    工具名 + 已确认输入 schema 全等；来源为审批「始终允许」或服务器级
 //!    always_allow 的同步自动授权）时——**即便 full_access 也挂起确认**
-//!    （FR-08-04 高危外部调用永远过人，审批总开关不豁免本分支）。read_only
+//!    （高危外部调用永远过人，审批总开关不豁免本分支）。read_only
 //!    声明的 MCP 工具按 ReadOnly 能力走矩阵放行；plan 档已由
 //!    filter_for_tier 全过滤。
 //!
@@ -73,7 +73,7 @@ use crate::util::errors::{
 
 use super::run_loop::{GateVerdict, ToolGate};
 
-/// 审批策略快照（23 号票，§3.2 approval 四开关中由门消费的两项）：run
+/// 审批策略快照（approval 开关中由门消费的两项）：run
 /// 装配时从 AppConfig.approval 读取（宿主侧构造），判定面只见快照——
 /// save_config 后下一次 start_chat 应用，进行中 run 不变。
 ///
@@ -92,16 +92,16 @@ pub struct ApprovalPolicy {
     pub allowlist_enabled: bool,
     /// 命令白名单条目快照（匹配语义见 [`allowlist_hit`]）。
     pub command_allowlist: Vec<String>,
-    /// 严格计划硬门（25 号票 FR-06-02，§8.6；§3.2 approval.requirePlan，
+    /// 严格计划硬门（approval.requirePlan，
     /// 缺省 false）：true 且无已批准计划时 FileWrite/Network 直接
     /// E_PLAN_REQUIRED 硬拦（不挂起）。缺省关保证既有装配零行为漂移。
     pub require_plan: bool,
-    /// git 写策略白名单（26 号票 FR-11-03，§3.2 approval.gitAllowStageCommit
+    /// git 写策略白名单（approval.gitAllowStageCommit
     /// 缺省 false）：false = `git add`/`git stage`/`git commit` 经策略层
     /// E_FENCE_BLOCKED 硬拦（默认 AI 禁止），`git merge`/`git rebase` 恒禁；
     /// true = add/stage/commit 降为围栏 Confirm（审批放行后可执行）。
     /// `git push` 恒 Confirm（任何配置不豁免）；push --force 恒 Block。
-    /// 缺省关 = 默认配置下 AI 不能 commit（FR-11-03 原文口径）。
+    /// 缺省关 = 默认配置下 AI 不能 commit。
     pub git_allow_stage_commit: bool,
 }
 
@@ -117,15 +117,15 @@ impl Default for ApprovalPolicy {
     }
 }
 
-/// git 写策略的判定结论（26 号票，FR-11-03 + §8.7 git 分类表细化）：
-/// 以 22 号票 AST 分类面（`git_classify`）为判定输入，按子命令细分成
+/// git 写策略的判定结论（git 分类面细化）：
+/// 以 AST 分类面（`git_classify`）为判定输入，按子命令细分成
 /// 「恒禁 / 默认禁 / 恒确认 / 开关后确认」四类结论。
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum GitPolicyHit {
     /// 不触发策略（非 git 命令 / git 只读子命令）。
     None,
     /// 策略硬禁（E_FENCE_BLOCKED 硬拦）：默认开关关时的 add/stage/commit，
-    /// 任何开关下的 merge/rebase（spec 定案「merge/rebase 仍禁」），以及
+    /// 任何开关下的 merge/rebase（定案「merge/rebase 仍禁」），以及
     /// push --force（黑名单先行 Block，此处双保险——绕过黑名单正则形态
     /// 也不漏）。先于签名放行判定：策略铁律不因历史签名复活。
     Block(String),
@@ -138,10 +138,10 @@ enum GitPolicyHit {
 }
 
 /// 单段 argv 的 git 策略归类（子命令细分；非 git 段返回 None）。
-/// 22 号票 `git_classify` 只回答三分（ReadOnly/Write/Destructive），本票
+/// `git_classify` 只回答三分（ReadOnly/Write/Destructive），本层
 /// 在其上按子命令字面细分——只认明确清单，未登记子命令维持既有面
 /// （AST 写目标判定 + 矩阵），不做额外策略（宁窄勿宽，防误伤）。
-/// `allow_stage_commit` = §3.2 approval.gitAllowStageCommit 快照。
+/// `allow_stage_commit` = approval.gitAllowStageCommit 快照。
 fn git_subcommand_policy(argv: &[String], allow_stage_commit: bool) -> Option<GitPolicyHit> {
     let head = argv.first().map(|s| {
         std::path::Path::new(s)
@@ -168,12 +168,12 @@ fn git_subcommand_policy(argv: &[String], allow_stage_commit: bool) -> Option<Gi
         ));
     }
     match sub.as_str() {
-        // 恒禁：merge/rebase 在任何配置下都不放开（spec 定案「merge/rebase
+        // 恒禁：merge/rebase 在任何配置下都不放开（定案「merge/rebase
         // 仍禁」——历史改写类操作只能由用户本人执行）。
         "merge" | "rebase" => Some(GitPolicyHit::Block(
             "默认 AI 禁止 git merge/rebase（版本历史只能由你推动；此限制不随配置放开）".to_owned(),
         )),
-        // 默认禁、开关开后降为确认：提交与暂存（FR-11-03）。
+        // 默认禁、开关开后降为确认：提交与暂存。
         "commit" | "add" | "stage" => {
             if allow_stage_commit {
                 Some(GitPolicyHit::ConfirmExemptible(format!(
@@ -199,9 +199,9 @@ fn git_subcommand_policy(argv: &[String], allow_stage_commit: bool) -> Option<Gi
 /// 复杂度，语义见 [`ApprovalMemory`] 与 [`SessionApprovalBucket`]）。
 type SignatureSet = Arc<Mutex<HashSet<(String, String)>>>;
 
-/// 会话级审批记忆（23 号票，§3.2 always_session 升域）：全部活跃会话的
+/// 会话级审批记忆（always_session 升域）：全部活跃会话的
 /// 「始终允许（本会话）」签名桶表。进程内单例（AppState 持有，Arc 共享），
-/// **不持久化**——应用退出即清、恢复旧备份不复活（Q41：审批记忆须重新
+/// **不持久化**——应用退出即清、恢复旧备份不复活（审批记忆须重新
 /// 确认）；会话删除随清（`forget`）。同一会话的主 run 与子代理共用会话桶。
 #[derive(Debug, Default, Clone)]
 pub struct ApprovalMemory {
@@ -240,7 +240,7 @@ impl ApprovalMemory {
             .insert((name.to_owned(), args_json.to_owned()));
     }
 
-    /// 会话删除/关闭即清（Q41：记忆不跨会话生命周期）。
+    /// 会话删除/关闭即清（记忆不跨会话生命周期）。
     pub fn forget(&self, session_id: &str) {
         self.sessions
             .lock()
@@ -248,8 +248,8 @@ impl ApprovalMemory {
             .remove(session_id);
     }
 
-    /// 全部清空（33 号票备份恢复流程的接线面：恢复后一律重新确认，
-    /// Q41「审批记忆不因恢复复活」——内存记忆随恢复动作显式失效）。
+    /// 全部清空（备份恢复流程的接线面：恢复后一律重新确认——内存记忆随
+    /// 恢复动作显式失效）。
     pub fn clear_all(&self) {
         self.sessions
             .lock()
@@ -289,12 +289,12 @@ impl SessionApprovalBucket {
     }
 }
 
-/// 会话级计划基线扩展桶（25 号票，§8.6 范围门"本会话始终允许"）：全部
+/// 会话级计划基线扩展桶（范围门"本会话始终允许"）：全部
 /// 活跃会话的用户授权目录范围表（canonical 绝对路径；目录范围含其子路径）。
 /// 进程内单例（AppState 持有，Arc 共享），**不持久化**——应用退出即清、
-/// 恢复旧备份不复活（Q41 精神：明确授权不跨生命周期）、会话删除随清
-/// （`forget`）。同一会话的主 run 与子代理共享（范围门判定与 23 号票
-/// 审批记忆同桶语义）。
+/// 恢复旧备份不复活（明确授权不跨生命周期）、会话删除随清
+/// （`forget`）。同一会话的主 run 与子代理共享（范围门判定与审批
+/// 记忆同桶语义）。
 ///
 /// 批准冻结基线（PlanState.baselinePaths）挂在 run 的共享计划状态上；本桶
 /// 承载 always_session 的**跨 run 会话级扩展**——判定时两者取并集。
@@ -325,7 +325,7 @@ impl PlanScopeMemory {
         SessionPlanScope { dirs: entry }
     }
 
-    /// 会话删除/关闭即清（Q41：授权不跨会话生命周期）。
+    /// 会话删除/关闭即清（授权不跨会话生命周期）。
     pub fn forget(&self, session_id: &str) {
         self.sessions
             .lock()
@@ -333,7 +333,7 @@ impl PlanScopeMemory {
             .remove(session_id);
     }
 
-    /// 全部清空（33 号票备份恢复流程的接线面：恢复后一律重新确认，Q41）。
+    /// 全部清空（备份恢复流程的接线面：恢复后一律重新确认）。
     pub fn clear_all(&self) {
         self.sessions
             .lock()
@@ -371,8 +371,8 @@ impl SessionPlanScope {
     }
 }
 
-/// 命令白名单的词序列前缀匹配（23 号票字段级定义，回写 §3.2 approval
-/// 注记）：条目与命令都按空白切词，条目词序列是命令词序列的前缀（逐词
+/// 命令白名单的词序列前缀匹配（审批配置的字段级定义）：
+/// 条目与命令都按空白切词，条目词序列是命令词序列的前缀（逐词
 /// 相等）即命中。`git status` 匹配 `git status --short`，不匹配
 /// `git statusx`（词边界）；条目为空不命中。不做大小写归一（shell 命令
 /// 名大小写敏感，保守方向宁多审不放行）；复合命令（`cd x && git status`）
@@ -383,14 +383,14 @@ pub fn allowlist_hit(command: &str, entry: &str) -> bool {
     !entry.is_empty() && cmd.len() >= entry.len() && cmd[..entry.len()] == entry[..]
 }
 
-/// MCP 工具身份的判定视图（Q44 三元组 + 门控输入；08 号票）。
-/// backend 层自定义的窄结构——审批门不依赖 mcp 模块（依赖方向 §2.2：
+/// MCP 工具身份的判定视图（许可三元组 + 门控输入）。
+/// backend 层自定义的窄结构——审批门不依赖 mcp 模块（依赖方向纪律：
 /// host 装配时注入实现，依赖倒置与「tools/agent 经接口交互」同精神）。
 #[derive(Debug, Clone)]
 pub struct McpToolView {
     /// 配置里的服务器名（审批标题展示）。
     pub server_name: String,
-    /// 服务器启动指纹（Q44 许可三元组第一元）。
+    /// 服务器启动指纹（许可三元组第一元）。
     pub server_fingerprint: String,
     /// 原始工具名（许可三元组第二元）。
     pub original_name: String,
@@ -404,7 +404,7 @@ pub struct McpToolView {
 pub trait McpGateView: Send + Sync {
     /// 归一名 → 工具身份视图（非 MCP 归一名返回 None）。
     fn view(&self, normalized_name: &str) -> Option<McpToolView>;
-    /// Q44 许可三元组是否命中（serverFingerprint + originalName + schemaHash
+    /// 许可三元组是否命中（serverFingerprint + originalName + schemaHash
     /// 全等 → 免审批）。
     fn license_hit(&self, view: &McpToolView) -> bool;
 }
@@ -422,12 +422,12 @@ impl McpGateView for NoopMcpGate {
     }
 }
 
-/// 围栏 AST 判定的工作区上下文（22 号票，§8.7 四象限）：canonical 后的
+/// 围栏 AST 判定的工作区上下文（四象限）：canonical 后的
 /// roots + 相对路径默认基准（项目主目录）。装配后围栏对写目标做
 /// Allow/Confirm/Block 判界；未装配时退化为「有写目标即 Confirm」。
 #[derive(Debug, Clone)]
 pub struct GateWorkspace {
-    /// canonical 后的允许根集合（项目主目录 + workspace 子目录，§9.1）。
+    /// canonical 后的允许根集合（项目主目录 + workspace 子目录）。
     pub roots: Vec<PathBuf>,
     /// canonical 后的项目主目录（command 的 cwd 缺省基准）。
     pub base: PathBuf,
@@ -437,7 +437,7 @@ pub struct GateWorkspace {
 pub struct ApprovalGate {
     /// 当前会话的权限档。
     tier: PermissionTier,
-    /// 命令围栏判定器（黑名单 / AST 写目标分析，22 号票起 v0.2）。
+    /// 命令围栏判定器（黑名单 / AST 写目标分析，v0.2 起）。
     fence: Fence,
     /// 本 run 内已批准的（工具名, 参数 JSON）签名集（resolve_ask 放行后登记）。
     approved: Mutex<HashSet<(String, String)>>,
@@ -447,36 +447,36 @@ pub struct ApprovalGate {
     mcp: Option<Arc<dyn McpGateView>>,
     /// 围栏 AST 判定的工作区上下文（None = 未装配，退化为有写目标即 Confirm）。
     workspace: Option<GateWorkspace>,
-    /// 内部状态禁区判定面（23 号票 FR-05-08/§9.3）：None = 未装配（headless
+    /// 内部状态禁区判定面：None = 未装配（headless
     /// 测试缺省不拦），装配后对 FileWrite 工具路径与 command 写目标做禁区
     /// 硬拒（E_INTERNAL_STATE）。
     internal: Option<InternalStateGuard>,
-    /// 会话级免批签名桶（23 号票 always_session 升域）：None = 未装配。
+    /// 会话级免批签名桶（always_session 升域）：None = 未装配。
     session_memory: Option<SessionApprovalBucket>,
-    /// 审批策略快照（23 号票四开关中由门消费的 ①④ + 白名单条目；
-    /// 缺省 = 审批开、白名单关——最保守，M1 既有行为零漂移）。
+    /// 审批策略快照（approval 开关中由门消费的 ①④ + 白名单条目；
+    /// 缺省 = 审批开、白名单关——最保守，既有行为零漂移）。
     policy: ApprovalPolicy,
-    /// 外部目录授权扩展 roots（24 号票，§9.9）：run 装配时 = 会话已授权
+    /// 外部目录授权扩展 roots：run 装配时 = 会话已授权
     /// 目录的 canonical 集（SessionMeta 快照）；恢复循环在用户授权后经
     /// [`Self::grant_external_dir`] 热追加（重放调用由此放行）。空 = 未
     /// 装配/无授权（外部目录判定仍生效——workspace 装配了就判）。
     external_dirs: Mutex<Vec<PathBuf>>,
-    /// 宿主数据目录（24 号票禁授权目标判定的输入：「整体放行」禁区 =
+    /// 宿主数据目录（禁授权目标判定的输入：「整体放行」禁区 =
     /// 文件系统根/家目录/`~/.craftwave`；None = 未装配，外部挂起不查禁区，
     /// 禁区校验由 allow_external_dir 命令面兜底）。
     data_dir: Option<PathBuf>,
-    /// 会话级计划基线扩展（25 号票，§8.6 范围门 always_session）：本 run
+    /// 会话级计划基线扩展（范围门 always_session）：本 run
     /// 内热追加面（恢复循环授权后经 [`Self::grant_plan_scope`] 并入，重放
     /// 调用放行）+ 跨 run 会话桶（SessionPlanScope，None = 未装配）。
     /// 判定时与批准冻结基线（PlanState.baselinePaths）取并集。
     plan_scope_granted: Mutex<Vec<PathBuf>>,
     plan_scope_memory: Option<SessionPlanScope>,
-    /// 审计放行单槽（36 号票，§8.7/§5.4 执行绑定）：灰区命令审计 Allow 的
+    /// 审计放行单槽（执行绑定）：灰区命令审计 Allow 的
     /// (工具名, 参数 JSON) 签名——宿主在审计放行后经 [`Self::grant_audit`]
     /// 置位，恢复重放的判定在签名放行同位命中并**消费即清**（单次语义：
     /// 同一待决调用不重复审计；同 run 内后续同参数新调用不继承旧结论，
     /// 重新走灰区路径）。独立于既有 `approved` 签名批准缓存——模型审计
-    /// 结论不经人批缓存承载（票面硬约束）；槽的来源唯一（audit_class 为
+    /// 结论不经人批缓存承载（硬约束）；槽的来源唯一（audit_class 为
     /// 真的挂起才可能置位），恒确认面（git 策略）不产生槽。
     audit_grant: Mutex<Option<(String, String)>>,
 }
@@ -484,7 +484,7 @@ pub struct ApprovalGate {
 /// ApprovalGate 的登记与辅助判定。
 impl ApprovalGate {
     /// 构造：给定权限档与共享计划状态（围栏与签名集内部自建）。MCP 视图
-    /// 可后续经 [`Self::with_mcp`] 装配（M1 测试零改动）。
+    /// 可后续经 [`Self::with_mcp`] 装配（既有测试零改动）。
     pub fn new(tier: PermissionTier, plan: Arc<Mutex<Option<PlanState>>>) -> Self {
         Self {
             tier,
@@ -504,13 +504,13 @@ impl ApprovalGate {
         }
     }
 
-    /// 装配 MCP 判定视图（08 号票：MCP 分支判定与 Q44 许可核验）。
+    /// 装配 MCP 判定视图（MCP 分支判定与许可核验）。
     pub fn with_mcp(mut self, mcp: Arc<dyn McpGateView>) -> Self {
         self.mcp = Some(mcp);
         self
     }
 
-    /// 装配围栏 AST 判定的工作区上下文（22 号票）：roots/base 须传
+    /// 装配围栏 AST 判定的工作区上下文：roots/base 须传
     /// canonical 后路径（词法与 canonical 同域比较的前提）；装配失败
     /// （canonicalize 失败）不调用本方法即可，围栏自动走保守退化面。
     pub fn with_workspace(mut self, workspace: GateWorkspace) -> Self {
@@ -518,28 +518,28 @@ impl ApprovalGate {
         self
     }
 
-    /// 装配内部状态禁区判定面（23 号票 FR-05-08）：宿主以会话的数据目录
+    /// 装配内部状态禁区判定面：宿主以会话的数据目录
     /// 根 + 项目主目录构造（两根 canonical 与否由 guard 自行尽力解析）。
     pub fn with_internal_guard(mut self, guard: InternalStateGuard) -> Self {
         self.internal = Some(guard);
         self
     }
 
-    /// 装配会话级免批签名桶（23 号票 always_session）：同会话主 run 与
+    /// 装配会话级免批签名桶（always_session）：同会话主 run 与
     /// 子代理传同一桶（[`ApprovalMemory::bucket`]）。
     pub fn with_session_memory(mut self, bucket: SessionApprovalBucket) -> Self {
         self.session_memory = Some(bucket);
         self
     }
 
-    /// 装配审批策略快照（23 号票四开关 ①④ + 白名单条目，宿主按 run 从
+    /// 装配审批策略快照（approval 开关 ①④ + 白名单条目，宿主按 run 从
     /// AppConfig.approval 读取）。
     pub fn with_policy(mut self, policy: ApprovalPolicy) -> Self {
         self.policy = policy;
         self
     }
 
-    /// 装配外部目录授权的初始集合与宿主数据目录（24 号票，§9.9）：dirs
+    /// 装配外部目录授权的初始集合与宿主数据目录：dirs
     /// 传会话已授权目录的 canonical 集（run 装配时从 SessionMeta 读取）；
     /// data_dir 传数据目录根（禁授权目标判定输入）。
     pub fn with_external_dirs(mut self, dirs: Vec<PathBuf>, data_dir: PathBuf) -> Self {
@@ -560,7 +560,7 @@ impl ApprovalGate {
         }
     }
 
-    /// 装配会话级计划基线扩展桶（25 号票，§8.6 范围门）：同会话主 run 与
+    /// 装配会话级计划基线扩展桶（范围门）：同会话主 run 与
     /// 子代理传同一桶（[`PlanScopeMemory::bucket`]）。None = 未装配（仅
     /// 批准冻结基线参与判定——headless 测试缺省面）。
     pub fn with_plan_scope_memory(mut self, memory: SessionPlanScope) -> Self {
@@ -594,7 +594,7 @@ impl ApprovalGate {
             .insert((name.to_owned(), args_json.to_owned()));
     }
 
-    /// 置位审计放行单槽（36 号票，§5.4 执行绑定）：宿主恢复循环在灰区命令
+    /// 置位审计放行单槽（执行绑定）：宿主恢复循环在灰区命令
     /// 审计 Allow 后调用——恢复重放的判定在签名放行同位命中并放行。单槽
     /// （同一时刻至多一个待决调用），置位即覆盖。
     pub fn grant_audit(&self, name: &str, args_json: &str) {
@@ -620,7 +620,7 @@ impl ApprovalGate {
         hit
     }
 
-    /// 灰区审计资格判定（36 号票，§8.7）：挂起项是否属「确定性规则无法
+    /// 灰区审计资格判定：挂起项是否属「确定性规则无法
     /// 定性」的围栏灰区（审计对象）。判定 = 完整判定序重放返回围栏 Confirm
     /// 挂起（`fence_reason` 有值且无外部目录/范围门），且排除：
     /// - git 策略确认类（push 恒确认 / add·stage·commit 开关后确认——明确
@@ -690,7 +690,7 @@ impl ApprovalGate {
         }
     }
 
-    /// 围栏判定（22 号票：AST 写目标分析 + 四象限）。
+    /// 围栏判定（AST 写目标分析 + 四象限）。
     fn fence_judge(&self, command: &str, args_json: &str) -> crate::safety::fence::FenceOutcome {
         let shell = ast::Shell::host_default();
         match &self.workspace {
@@ -712,7 +712,7 @@ impl ApprovalGate {
     }
 
     /// 计划是否"已过期"：存在已批准的计划且条目全部完成——此时继续写文件
-    /// 应被计划门拦下（§8.6）。
+    /// 应被计划门拦下。
     fn plan_stale(&self) -> bool {
         self.plan
             .lock()
@@ -721,11 +721,11 @@ impl ApprovalGate {
             .is_some_and(PlanState::approved_and_all_completed)
     }
 
-    /// 内部状态禁区命中判定（23 号票，§9.3）：FileWrite 静态工具（write/
-    /// edit）取 `path` 参数按项目主目录展开；command 取 AST 写目标（22 号
-    /// 票接缝）逐个判定。返回 `Some(人话原因)` = 命中禁区（E_INTERNAL_STATE
+    /// 内部状态禁区命中判定：FileWrite 静态工具（write/
+    /// edit）取 `path` 参数按项目主目录展开；command 取 AST 写目标（
+    /// 接缝）逐个判定。返回 `Some(人话原因)` = 命中禁区（E_INTERNAL_STATE
     /// 的 message）。未装配 guard / 目标含未解析变量（Opaque——值未知不猜，
-    /// 交围栏字面量掩码保守 Confirm + 36 号票审计）/ AST 解析失败（交围栏
+    /// 交围栏字面量掩码保守 Confirm + 灰区审计）/ AST 解析失败（交围栏
     /// fail-closed）均不命中。
     fn internal_state_hit(
         &self,
@@ -764,7 +764,7 @@ impl ApprovalGate {
                 .as_str()?
                 .to_owned();
             // write/edit 的相对路径基准与执行侧 PathGuard 一致 = 项目主目录
-            // （§9.1 roots[0]）；未装配工作区时无基准（headless 测试缺省面，
+            // （roots[0]）；未装配工作区时无基准（headless 测试缺省面，
             // 相对路径无从展开——交执行层 safe_join 兜底）。
             let base = self.workspace.as_ref()?.base.clone();
             let lexical = lexical_abs(&path, &base);
@@ -785,7 +785,7 @@ impl ApprovalGate {
                 .any(|entry| allowlist_hit(command, entry))
     }
 
-    /// 外部目录授权命中判定（24 号票，FR-05-12/§9.9）：静态文件类工具的
+    /// 外部目录授权命中判定：静态文件类工具的
     /// 路径参数经 safe_join 同款归一后落在会话 roots（含已授权目录）之外
     /// → 返回 Some(授权目标目录)。授权目标按参数语义取：文件类工具
     /// （read/write/edit/batch_read）= 路径的父目录；目录类工具
@@ -862,7 +862,7 @@ impl ApprovalGate {
         None
     }
 
-    /// 授权目标是否属「整体放行」禁区（§9.9：文件系统根/家目录本身/宿主
+    /// 授权目标是否属「整体放行」禁区（文件系统根/家目录本身/宿主
     /// 托管目录及其上/下范围——与 host 侧 allow_external_dir 同口径，见
     /// workspace.rs [`is_protected_grant_target`] 的注释）。未装配
     /// data_dir（headless）不拦——命令面兜底校验。
@@ -893,13 +893,13 @@ impl ApprovalGate {
     }
 
     /// 白名单豁免与审批总开关豁免的公共前提：非 plan 档——plan 档的只读
-    /// 围栏与过滤是档位语义（FR-05-01），白名单与总开关都不解锁计划档写入。
+    /// 围栏与过滤是档位语义，白名单与总开关都不解锁计划档写入。
     fn exemptions_apply(&self) -> bool {
         self.tier != PermissionTier::Plan
     }
 
-    /// 计划是否已批准（§8.6 范围门/严格硬门的共同前提：无批准计划不守门
-    /// ——FR-06-02 默认"有计划即守门"，硬门关闭时未批准计划不阻写）。
+    /// 计划是否已批准（范围门/严格硬门的共同前提：无批准计划不守门
+    /// ——默认"有计划即守门"，硬门关闭时未批准计划不阻写）。
     fn plan_approved(&self) -> bool {
         self.plan
             .lock()
@@ -908,7 +908,7 @@ impl ApprovalGate {
             .is_some_and(PlanState::is_approved)
     }
 
-    /// 范围门基线的全量归一集合（§8.6，25 号票）：批准冻结基线
+    /// 范围门基线的全量归一集合：批准冻结基线
     /// （PlanState.baselinePaths 原始声明按项目主目录展开）∪ 本 run 热追加
     /// 授权（grant_plan_scope）∪ 会话级授权桶（跨 run）。条目归一失败
     /// （畸形路径）跳过——该条目不提供保护，不影响其余条目判定。
@@ -937,11 +937,11 @@ impl ApprovalGate {
         entries
     }
 
-    /// 范围门命中判定（25 号票，FR-06-03/§8.6）：已批准计划存在时，
+    /// 范围门命中判定：已批准计划存在时，
     /// FileWrite 工具（write/edit 的 `path`）与 command 的 AST 写目标
-    /// （22 号票 WriteTarget 同判；`TargetPath::Opaque` 值未知不猜——交
+    /// （WriteTarget 同判；`TargetPath::Opaque` 值未知不猜——交
     /// 围栏字面量掩码保守 Confirm，不在范围门判定）的目标若不在基线内
-    /// → 返回 Some(计划外路径展示文本)。基线为空 = 首写询问（§8.6：空
+    /// → 返回 Some(计划外路径展示文本)。基线为空 = 首写询问（空
     /// 范围不豁免）。未装配 workspace（headless 缺省）/未批准计划/参数无
     /// 路径/归一失败（交执行层回喂参数错误）→ None。
     fn plan_scope_hit(
@@ -1005,7 +1005,7 @@ impl ApprovalGate {
         None
     }
 
-    /// git 写策略判定（26 号票，FR-11-03）：command 的每段（复合命令按
+    /// git 写策略判定：command 的每段（复合命令按
     /// AST 分段）独立归类，取最严结论——Block > ConfirmAlways >
     /// ConfirmExemptible。AST 解析成功按段 argv 判定；解析失败时词法兜底
     /// （粗切段 + 空白切词取首词/子命令——防「解析失败 + 审批总开关豁免」
@@ -1051,7 +1051,7 @@ fn lexical_abs(literal: &str, base: &Path) -> PathBuf {
     }
 }
 
-/// 范围门路径归一（§8.6，25 号票）：词法绝对化后经 canonicalize_best_effort
+/// 范围门路径归一：词法绝对化后经 canonicalize_best_effort
 /// 解析（symlink 落点 / 不存在路径归到最长存在前缀）——与 safe_join 同款
 /// 归一，保证基线条目与写目标在同一比较域。归一失败（畸形）返回 None。
 fn resolve_scope_path(raw: &str, base: &Path) -> Option<PathBuf> {
@@ -1076,7 +1076,7 @@ impl ToolGate for ApprovalGate {
     /// 判定一次工具调用：返回放行/挂起/硬拦（各步骤见内部行注释）。
     fn judge(&self, name: &str, args_json: &str) -> GateVerdict {
         let spec = lookup_spec(name);
-        // (0) 内部状态硬拒（23 号票，FR-05-08/§9.3）：禁区写入直接拒绝——
+        // (0) 内部状态硬拒：禁区写入直接拒绝——
         // 置于全部放行路径之前，权限档/白名单/自动确认/审批总开关/已批准
         // 签名都不豁免（签名放行前再查一道属防御纵深：禁区调用不可能曾获
         // 批准，zone 清单在同会话内扩展时旧签名也不会复活写权）。
@@ -1086,7 +1086,7 @@ impl ToolGate for ApprovalGate {
                 message: reason,
             };
         }
-        // (0.5) 外部目录授权（24 号票，FR-05-12/§9.9）：文件类工具访问会话
+        // (0.5) 外部目录授权：文件类工具访问会话
         // roots（含已授权目录）外的路径 → 挂起弹「始终允许该目录」询问
         // （粒度 = 该目录及子目录的读/写/列）；授权目标属「整体放行」禁区
         // （根/家目录/宿主托管目录）→ E_INVALID_ARG 硬拦。置于签名放行之前：
@@ -1107,7 +1107,7 @@ impl ToolGate for ApprovalGate {
                 plan_scope: None,
             };
         }
-        // (0.6) git 写策略 Block（26 号票，FR-11-03）：默认开关关时的
+        // (0.6) git 写策略 Block：默认开关关时的
         // add/stage/commit 与任何开关下的 merge/rebase、push --force →
         // E_FENCE_BLOCKED 硬拦。先于签名放行：策略铁律不因历史签名复活
         // （开关切换后残留的会话免批签名不放行策略禁面——与黑名单同位阶）。
@@ -1127,7 +1127,7 @@ impl ToolGate for ApprovalGate {
             return GateVerdict::Allow;
         };
         // (1) 已批准签名：恢复重放的挂起调用放行；会话级「始终允许」桶
-        // 命中（23 号票 always_session，跨 run 生效）同样放行
+        // 命中（always_session，跨 run 生效）同样放行
         let approved_here = self
             .approved
             .lock()
@@ -1143,7 +1143,7 @@ impl ToolGate for ApprovalGate {
         // 白名单判定一次（围栏 Confirm 与矩阵 NeedsApproval 两处消费）
         let whitelisted = name == "command"
             && Self::command_of(args_json).is_some_and(|c| self.command_whitelisted(&c));
-        // (1.5) git 写策略 Confirm（26 号票）：push 恒确认不可豁免（白名单
+        // (1.5) git 写策略 Confirm：push 恒确认不可豁免（白名单
         // 与审批总开关都不放行——「push 永远确认」）；开关放开后的
         // add/stage/commit 按围栏 Confirm 豁免口径（白名单命中或总开关
         // 关闭且非 plan 档）。置于签名放行之后：挂起恢复的重放调用按签名
@@ -1167,9 +1167,9 @@ impl ToolGate for ApprovalGate {
             }
             _ => {}
         }
-        // (2) 围栏（command 专属，§5.4 ③；22 号票起 AST 写目标分析）：
+        // (2) 围栏（command 专属；AST 写目标分析）：
         // Block 硬拦（灾难级铁律，先于一切挂起）；Confirm → 记为待决——
-        // 25 号票范围门命中时优先弹范围卡（一次交互覆盖本次调用的全部
+        // 范围门命中时优先弹范围卡（一次交互覆盖本次调用的全部
         // 审批，恢复重放按签名放行），范围卡同时附带围栏原因；范围门未
         // 命中才挂围栏卡（原行为零漂移）。Confirm 在白名单命中（非 plan
         // 档）或审批总开关关闭（非 plan 档）时免除。
@@ -1199,7 +1199,7 @@ impl ToolGate for ApprovalGate {
                 FenceVerdict::Allow => {}
             }
         }
-        // (2a) 审计放行单槽（36 号票，§8.7/§5.4 执行绑定）：灰区命令审计
+        // (2a) 审计放行单槽（执行绑定）：灰区命令审计
         // Allow 的签名在恢复重放时于此命中并放行（消费即清）。检查点置于
         // 全部硬拒面之后（0 内部状态 / 0.5 外部目录 / 0.6 git 策略 Block /
         // 2 黑名单围栏 Block）：审计放行不可豁免任何硬拦与权限撤销重查；
@@ -1213,10 +1213,10 @@ impl ToolGate for ApprovalGate {
         if self.consume_audit_grant(name, args_json) {
             return GateVerdict::Allow;
         }
-        // (3) 计划硬门（25 号票，FR-06-02 严格模式，§8.6）：开关开启且无
+        // (3) 计划硬门（严格模式）：开关开启且无
         // 已批准计划 → FileWrite/Network 直接硬拦回喂（提示先建计划并等
         // 用户批准）。计划三门内部顺序固定：硬门 → E_PLAN_STALE → 范围门
-        // （票面口径），先于围栏 Confirm 挂起之外的矩阵/MCP 判定。
+        // （固定口径），先于围栏 Confirm 挂起之外的矩阵/MCP 判定。
         if self.policy.require_plan
             && !self.plan_approved()
             && matches!(
@@ -1232,7 +1232,7 @@ impl ToolGate for ApprovalGate {
                     .to_owned(),
             };
         }
-        // (3.5) 计划过期门（§8.6：FileWrite/Network 执行前校验，M1 既有）
+        // (3.5) 计划过期门（FileWrite/Network 执行前校验，既有语义）
         if matches!(
             spec.capability,
             crate::safety::tier::Capability::FileWrite | crate::safety::tier::Capability::Network
@@ -1243,9 +1243,9 @@ impl ToolGate for ApprovalGate {
                 message: "已批准的计划条目全部完成，继续写入前请先用 plan 工具更新计划".to_owned(),
             };
         }
-        // (3.6) 计划范围门（25 号票，FR-06-03/§8.6）：已批准计划基线外的
+        // (3.6) 计划范围门：已批准计划基线外的
         // 写目标 → 挂起询问（允许 / 本会话始终允许（父目录入基线）/ 拒绝）。
-        // 判定顺序在过期门之后（先判过期再判范围，票面口径）；命中时把
+        // 判定顺序在过期门之后（先判过期再判范围，固定口径）；命中时把
         // 待决的围栏 Confirm 原因一并附上（fenceReason 字段）。
         if let Some(outside) = self.plan_scope_hit(name, args_json, Some(&spec)) {
             return GateVerdict::Suspend {
@@ -1262,18 +1262,17 @@ impl ToolGate for ApprovalGate {
                 plan_scope: None,
             };
         }
-        // (4) MCP 动态工具分支（08 号票，§9.7 Q44）：未声明 read_only 且
+        // (4) MCP 动态工具分支：未声明 read_only 且
         // 无许可 → 即便 full_access 也挂起。放行条件二选一：
         //   a. 用户配置 read_only=true（spec.capability 已是 ReadOnly，落
         //      到 (5) 矩阵按 ReadOnly 放行）；
-        //   b. Q44 许可三元组命中（服务器启动指纹 + 原始工具名 + 输入
+        //   b. 许可三元组命中（服务器启动指纹 + 原始工具名 + 输入
         //      schema 全等）——来源是用户审批「始终允许（当前版本）」或
         //      服务器级 always_allow=true 的清单同步自动授权（schema 有
         //      未确认变更时不自动放行，见 mcp/pool 的 auto-grant）。
         //      许可判定与服务器级声明解耦：用户点「始终允许」后立即生效
-        //      （热更新，FR-08-04），不要求配置里另开开关。
-        //      本分支不受审批总开关/白名单豁免（FR-08-04 高危外部调用
-        //      永远过人，23 号票口径）。
+        //      （热更新），不要求配置里另开开关。
+        //      本分支不受审批总开关/白名单豁免（高危外部调用永远过人）。
         if spec.origin == ToolOrigin::Mcp
             && let Some(mcp) = &self.mcp
             && let Some(view) = mcp.view(name)
@@ -1286,9 +1285,9 @@ impl ToolGate for ApprovalGate {
                 plan_scope: None,
             };
         }
-        // (5) 权限矩阵（§8.5；plan 档 MCP 已被 filter_for_tier 全过滤，
-        // 兜底 E_TOOL_BLOCKED）。NeedsApproval 在白名单命中（非 plan 档，
-        // 23 号票）或审批总开关关闭（非 plan 档，①）时放行。
+        // (5) 权限矩阵（plan 档 MCP 已被 filter_for_tier 全过滤，
+        // 兜底 E_TOOL_BLOCKED）。NeedsApproval 在白名单命中（非 plan 档）
+        // 或审批总开关关闭（非 plan 档，①）时放行。
         match decide_gate(spec.capability, self.tier) {
             GateDecision::Filtered => GateVerdict::Blocked {
                 code: E_TOOL_BLOCKED,

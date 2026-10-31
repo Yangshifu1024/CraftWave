@@ -1,8 +1,8 @@
-//! plan 工具（§8.3 Meta 行 + §8.6 计划门）：计划条目的 set/update 纯逻辑。
+//! plan 工具：计划条目的 set/update 纯逻辑（Meta 能力 + 计划门）。
 //!
 //! 状态承载（PlanState）由 RunHandle 持有、executor 读写（工具是模型更新
 //! 计划的唯一入口）；批准快照（approvedSnapshot）与写范围基线（baselinePaths）
-//! 由 `approve_plan` 命令冻结（§8.6，25 号票），守门判定在 ApprovalGate。
+//! 由 `approve_plan` 命令冻结，守门判定在 ApprovalGate。
 
 use serde::Deserialize;
 
@@ -12,21 +12,21 @@ use crate::util::errors::ToolError;
 
 use super::{ToolAnnotations, ToolOutcome, ToolSpec};
 
-/// 单项上限（§8.3 plan 行：≤100 项）。
+/// 单项上限（≤100 项）。
 pub const MAX_ITEMS: usize = 100;
 
-/// 写范围声明上限（§8.3 plan 行 25 号票增补：paths ≤64 条）。
+/// 写范围声明上限（paths ≤64 条）。
 pub const MAX_PATHS: usize = 64;
 
-/// 计划状态（§8.6 PlanState，25 号票增范围字段）。
+/// 计划状态（含批准快照与写范围基线）。
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlanState {
     /// 当前计划条目（模型通过 plan 工具维护）。
     pub items: Vec<PlanItem>,
-    /// 模型声明的计划写范围（plan 工具 `paths` 参数，§8.3）：具体文件/目录
+    /// 模型声明的计划写范围（plan 工具 `paths` 参数）：具体文件/目录
     /// 路径字符串，随 `plan:update` 事件展示给用户——批准时冻结为基线。
-    /// 未声明 = 空（批准后首写也须范围门确认，§8.6）。
+    /// 未声明 = 空（批准后首写也须范围门确认）。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub paths: Vec<String>,
     /// 用户批准时冻结的快照（None = 未批准，不阻写）。
@@ -35,7 +35,7 @@ pub struct PlanState {
     /// 用户批准的时间戳（毫秒）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub approved_at: Option<i64>,
-    /// 用户批准时冻结的文件/目录范围（§8.6 基线，25 号票）：批准时刻
+    /// 用户批准时冻结的文件/目录范围（基线）：批准时刻
     /// `paths` 的快照副本；判定口径（目录含子路径、文件精确匹配、不自动
     /// 扩顶层目录）在 ApprovalGate（canonical 归一需要 workspace 基准）。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -43,7 +43,7 @@ pub struct PlanState {
 }
 
 impl PlanState {
-    /// 冻结批准快照（approve_plan 命令，§8.6）：条目快照 + 写范围基线同时
+    /// 冻结批准快照（approve_plan 命令）：条目快照 + 写范围基线同时
     /// 冻结（用户看到并批准的范围）。基线为空不豁免首写（范围门判定面）。
     pub fn approve(&mut self, now_ms: i64) {
         self.approved_snapshot = Some(self.items.clone());
@@ -51,7 +51,7 @@ impl PlanState {
         self.baseline_paths = self.paths.clone();
     }
 
-    /// 计划门守门条件（§8.6）：已批准且当前条目全部 completed。
+    /// 计划门守门条件：已批准且当前条目全部 completed。
     /// （调用方再按工具能力决定是否拦写。）
     pub fn approved_and_all_completed(&self) -> bool {
         self.approved_snapshot.is_some()
@@ -62,14 +62,14 @@ impl PlanState {
                 .all(|i| i.status == PlanItemStatus::Completed)
     }
 
-    /// 是否已批准（§8.6 范围门与硬门的共同前提：无批准计划不守门——
-    /// FR-06-02 默认"有计划即守门"）。
+    /// 是否已批准（范围门与硬门的共同前提：无批准计划不守门——
+    /// 缺省"有计划即守门"）。
     pub fn is_approved(&self) -> bool {
         self.approved_snapshot.is_some()
     }
 }
 
-/// plan 工具参数（§8.3，25 号票增 `paths` 写范围声明）。
+/// plan 工具参数（含 `paths` 写范围声明）。
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlanArgs {
@@ -105,7 +105,7 @@ pub fn apply(state: &mut PlanState, args: &PlanArgs) -> Result<Vec<PlanItem>, To
     if let Some(dup) = first_duplicate_id(&args.items) {
         return Err(ToolError::invalid_arg(format!("计划条目 id 重复：{dup}")));
     }
-    // paths 声明校验（§8.3 plan 行 25 号票增补：≤64 条、单条非空）。
+    // paths 声明校验（≤64 条、单条非空）。
     if args.paths.len() > MAX_PATHS {
         return Err(ToolError::invalid_arg(format!(
             "计划写范围声明超上限：{}（≤{MAX_PATHS}）",
@@ -147,7 +147,7 @@ pub fn apply(state: &mut PlanState, args: &PlanArgs) -> Result<Vec<PlanItem>, To
     Ok(state.items.clone())
 }
 
-/// 单 in_progress 校验（§8.3 plan 行）。
+/// 单 in_progress 校验。
 fn validate_single_in_progress(items: &[PlanItem]) -> Result<(), ToolError> {
     let in_progress = items
         .iter()

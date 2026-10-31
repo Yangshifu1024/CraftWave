@@ -1,4 +1,4 @@
-//! `list_files` 工具（ReadOnly，§8.3）：树形清单，上限 500 条目，
+//! `list_files` 工具（ReadOnly）：树形清单，上限 500 条目，
 //! respectGitignore 默认 true（ignore crate）。
 
 use serde::Deserialize;
@@ -7,7 +7,7 @@ use serde_json::json;
 use crate::safety::tier::Capability;
 use crate::tools::{ToolAnnotations, ToolOutcome, ToolSpec, ToolsContext};
 
-/// 条目上限（§8.3）。
+/// 条目上限。
 pub const MAX_ENTRIES: usize = 500;
 
 /// list_files 工具参数：起点目录 + 可选深度与 gitignore 开关。

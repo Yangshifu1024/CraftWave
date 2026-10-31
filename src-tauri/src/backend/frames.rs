@@ -1,4 +1,4 @@
-//! 帧协议全集与 64 毫秒节流合并器（技术设计文档 §3.4）。
+//! 帧协议全集与 64 毫秒节流合并器。
 //!
 //! 名词解释：帧（frame）是后端推送给前端的一条事件消息，是界面渲染的
 //! 最小数据单元（打字机文本、工具卡片、用量统计都由帧驱动）。本文件
@@ -7,9 +7,9 @@
 //! 每帧的公共基座为 `{ seq, type, ts?, ...各帧字段 }`：`seq`（全 run 递增
 //! 的流水号，前端按它排序）与 `ts`（出口时刻的 Unix 毫秒，供端到端延迟
 //! 统计与前后端对账）由 [`FrameSink`] 出口统一填写，构造帧的代码不感知
-//! 序号（§3.4）。
+//! 序号。
 //!
-//! `UsageTotal` 是 §3.2 共享类型在 Rust 侧的镜像（providers 模块的类型
+//! `UsageTotal` 是共享类型在 Rust 侧的镜像（providers 模块的类型
 //! 不混入帧面，帧协议自包含、不依赖 providers）。
 
 use std::collections::BTreeMap;
@@ -17,12 +17,12 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-/// 生产用的帧节流窗口时长（需求 FR-01-03：相邻两次增量出帧至少间隔 64 毫秒）。
+/// 生产用的帧节流窗口时长（相邻两次增量出帧至少间隔 64 毫秒）。
 pub const THROTTLE_INTERVAL: Duration = Duration::from_millis(64);
 
-/// §3.2 UsageTotal（帧面 usage 载荷，即模型的 token 用量统计；字段名的
-/// camelCase 由 serde 层统一转换）。20 号票：增 Deserialize——用量统计
-/// 权威明细（storage/stats.rs 的 SessionUsage）从磁盘读回时反序列化。
+/// UsageTotal（帧面 usage 载荷，即模型的 token 用量统计；字段名的
+/// camelCase 由 serde 层统一转换）。同时支持反序列化——用量统计
+/// 权威明细（storage/stats.rs 的 SessionUsage）从磁盘读回时需要。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -48,7 +48,7 @@ impl UsageTotal {
     }
 }
 
-/// ChatFrame：帧协议全集 9 帧（§3.4）。帧类型名与字段名均按 §3.1 契约：
+/// ChatFrame：帧协议全集 9 帧。帧类型名与字段名均按契约：
 /// type 值是 camelCase，字段名也是 camelCase。
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -75,7 +75,7 @@ pub enum ChatFrame {
         call_id: String,
         ok: bool,
         ui_summary: String,
-        /// 错误面（§3.4 `error?`）：被取消的工具补 E_CANCELLED（§5.3），
+        /// 错误面（`error?`）：被取消的工具补 E_CANCELLED，
         /// 其余情况为 None。
         #[serde(skip_serializing_if = "Option::is_none")]
         #[cfg_attr(test, ts(optional))]
@@ -84,7 +84,7 @@ pub enum ChatFrame {
     /// 用量统计（本轮收口与 run 累计值，可带输出速度）。
     Usage {
         usage: UsageTotal,
-        /// 输出速度，单位 token/秒（FR-01-13）；主循环按"本轮输出 token 数
+        /// 输出速度，单位 token/秒；主循环按"本轮输出 token 数
         /// ÷ 本轮流式调用耗时"计算。
         #[serde(skip_serializing_if = "Option::is_none")]
         #[cfg_attr(test, ts(optional))]
@@ -96,49 +96,49 @@ pub enum ChatFrame {
         duration_ms: u64,
         tool_count: u32,
         turn: u32,
-        /// 错误终态面（§3.4 `error?`）：reason=error 时承载（§11.3 的错误
-        /// 分类器属 provider 适配层的后续工单，本阶段以 E_INTERNAL 兜底）。
+        /// 错误终态面（`error?`）：reason=error 时承载（错误分类细化属
+        /// provider 适配层的后续工单，本阶段以 E_INTERNAL 兜底）。
         #[serde(skip_serializing_if = "Option::is_none")]
         #[cfg_attr(test, ts(optional))]
         error: Option<FrameError>,
     },
-    /// 压缩完成（§3.4【M2】增补帧，04 号票）：压缩边界与压缩前后上下文
+    /// 压缩完成（增补帧）：压缩边界与压缩前后上下文
     /// 占用估算。通知面（FrameBuffer 透传），不进打字机内容面。
     CompactDone {
         cut_entry_id: String,
         tokens_before: u64,
         tokens_after: u64,
     },
-    /// runState 摘要帧（§3.4【M2】增补帧，05 号票）：`attach_run` 重放窗口
-    /// 耗尽时补发一次，前端据此整体对账。负载对齐 §3.2 RunSnapshot 的运行中
+    /// runState 摘要帧（增补帧）：`attach_run` 重放窗口
+    /// 耗尽时补发一次，前端据此整体对账。负载对齐 RunSnapshot 的运行中
     /// 形态；不进环形缓冲（幂等对账辅助帧）。
     RunSnapshot {
         /// 展平注入帧基座（序列化后即 `{ type:"runSnapshot", status, …, lastSeq }`）。
         #[serde(flatten)]
         snapshot: RunSnapshot,
     },
-    /// 子代理委派开始（§3.4【M2】增补帧，10 号票）：告知前端本次委派的父
+    /// 子代理委派开始（增补帧）：告知前端本次委派的父
     /// 工具调用 id、子代理 id 与角色。帧序不变量：subStarted 必先于该子代理
-    /// 的全部 subFrame，subDone 必收尾（§5.9）。
+    /// 的全部 subFrame，subDone 必收尾。
     SubStarted {
         call_id: String,
         sub_id: String,
         role: String,
     },
-    /// 子代理帧透传（§3.4【M2】增补帧，10 号票）：主代理所派子代理 run 的
+    /// 子代理帧透传（增补帧）：主代理所派子代理 run 的
     /// 原始帧原样包装转发（子 run 的 seq 独立递增，与父 run 帧序互不干扰）；
-    /// M2 禁止子代理再委派（Q13，subFrame 内不会嵌套 SubStarted）。
+    /// 禁止子代理再委派（subFrame 内不会嵌套 SubStarted）。
     SubFrame {
         sub_id: String,
         /// 子 run 的原始帧（Box 折叠枚举尺寸；serde 序列化内联展开）。
         frame: Box<ChatFrame>,
     },
-    /// 子代理结构化汇报（§3.4【M2】增补帧，10 号票）：`<report>` 文本回父。
+    /// 子代理结构化汇报（增补帧）：`<report>` 文本回父。
     SubReport { sub_id: String, report: String },
-    /// 子代理终态（§3.4【M2】增补帧，10 号票）：四象限收口，必为该子代理
+    /// 子代理终态（增补帧）：四象限收口，必为该子代理
     /// 帧序列的最后一帧。
     SubDone { sub_id: String, outcome: SubOutcome },
-    /// 灰区命令审计状态（§3.4【M2】增补帧，36 号票）：审计五态（§8.7——
+    /// 灰区命令审计状态（增补帧）：审计五态（
     /// running 进行中 / allow 放行 / block 拒绝 / ask 建议人工确认 / manual
     /// 失败转人工）。帧序：同 callId 的 toolStarted/toolArgs 之后、toolResult
     /// 或审批卡开启之前；进环形缓冲（attach_run 重放可恢复审计状态展示）。
@@ -152,7 +152,7 @@ pub enum ChatFrame {
     },
 }
 
-/// 灰区命令审计状态五态（§3.4 toolAudit.state / §8.7，36 号票）。
+/// 灰区命令审计状态五态（toolAudit.state）。
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
@@ -170,7 +170,7 @@ pub enum AuditState {
     Manual,
 }
 
-/// 子代理终态四象限（§5.9，FR-07-02/09）：report=正常完成带汇报；
+/// 子代理终态四象限：report=正常完成带汇报；
 /// partial=预算耗尽（E_SUB_BUDGET）可能带部分汇报；no_report=异常结束
 /// 无汇报；cancelled=被取消（stop_subagent / 父取消级联）。
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -200,27 +200,27 @@ pub enum EndReason {
     Cancelled,
 }
 
-/// §3.2 RunSnapshot 的运行状态（本阶段实装恒为 Running——命令面无活跃 run
-/// 时返回 null 而非 idle 快照，Idle 变体按 §3.2 契约保留）。
+/// RunSnapshot 的运行状态（本阶段实装恒为 Running——命令面无活跃 run
+/// 时返回 null 而非 idle 快照，Idle 变体按契约保留）。
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum RunSnapshotStatus {
-    /// 空闲（无活跃 run；按 §3.3 #20 幂等语义由 null 承载，保留契约变体）。
+    /// 空闲（无活跃 run；按幂等语义由 null 承载，保留契约变体）。
     Idle,
     /// 运行中。
     Running,
 }
 
-/// §3.2 RunSnapshot（session_run_snapshot 返回与 runSnapshot 摘要帧负载，
-/// FR-03-08 对账用，05 号票实装）。
+/// RunSnapshot（session_run_snapshot 返回与 runSnapshot 摘要帧负载，
+/// 前后端状态对账用）。
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct RunSnapshot {
     /// 运行状态（命令面实装恒为 running，见 [`RunSnapshotStatus`]）。
     pub status: RunSnapshotStatus,
-    /// 本次 run 的唯一标识（§3.2 可选字段——idle 形态省略）。
+    /// 本次 run 的唯一标识（可选字段——idle 形态省略）。
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub run_id: Option<String>,
@@ -242,7 +242,7 @@ pub struct RunSnapshot {
     pub last_seq: u64,
 }
 
-/// 帧错误面（§3.4 `error?: { code, message }`，§3.6 错误码注册表）。
+/// 帧错误面（`error?: { code, message }`，错误码统一注册表）。
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -272,7 +272,7 @@ pub trait FrameSink: Send {
     fn send(&mut self, frame: ChatFrame);
 }
 
-/// 已序列化帧的下发端（§5.8 FrameHub 的续流/重放出口，05 号票）：收到的是
+/// 已序列化帧的下发端（FrameHub 的续流/重放出口）：收到的是
 /// 已填 seq/ts 的帧（序号由 FrameHub 统一递增）。生产适配器为 tauri
 /// `Channel`，测试用 [`SeqCollectingSink`]——抽成 trait 使 FrameHub 不依赖
 /// tauri 运行时。
@@ -310,7 +310,7 @@ impl SeqCollectingSink {
     }
 }
 
-/// 带序号与出口时刻的帧（序列化后即 §3.4 的 `{ seq, type, ts?, ...}` 基座）。
+/// 带序号与出口时刻的帧（序列化后即 `{ seq, type, ts?, ...}` 基座）。
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub struct SequencedFrame {
@@ -335,7 +335,7 @@ pub struct CollectingSink {
 /// 收集器对帧出口接口的实现（测试用）。
 impl FrameSink for CollectingSink {
     fn send(&mut self, frame: ChatFrame) {
-        // seq 由出口递增，保证「seq 严格递增且与发送顺序一致」（§3.4 排序规则）
+        // seq 由出口递增，保证「seq 严格递增且与发送顺序一致」（帧排序规则）
         let seq = self.frames.len() as u64;
         self.frames.push(SequencedFrame {
             seq,
@@ -345,7 +345,7 @@ impl FrameSink for CollectingSink {
     }
 }
 
-/// 64 毫秒节流合并器（§3.4 节流语义，经早期原型实测确定）：
+/// 64 毫秒节流合并器（节流语义，经早期原型实测确定）：
 /// "首个增量立即出帧，其后相邻两次出帧间隔不小于窗口时长"。
 ///
 /// - 合并语义：窗口（64ms）内到达的同型增量，在下次出帧时各自并成一帧；
@@ -354,7 +354,7 @@ impl FrameSink for CollectingSink {
 ///   发问到看见第一个字的延迟），之后无论事件多密集至多 64ms 一帧，
 ///   打字机节奏稳定且与驱动方式（外部定时器或推送时检查）无关；
 /// - 非增量帧（toolStarted/toolResult 等）不经节流器直通，保证 toolResult
-///   必晚于同 callId 的全部 toolArgs（§3.4 排序规则）。
+///   必晚于同 callId 的全部 toolArgs（帧排序规则）。
 #[derive(Default)]
 pub struct DeltaThrottler {
     /// 待出帧的正文文本增量（按轮次分组累积）。

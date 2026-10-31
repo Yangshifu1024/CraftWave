@@ -1,4 +1,4 @@
-//! 更新器支撑命令测试（33 号票）：update_status 禁用门、update_precheck
+//! 更新器支撑命令测试：update_status 禁用门、update_precheck
 //! 安装门三阻止面（活跃 run / 应用级未决询问 / 未暂停队列）、队列磁盘全量
 //! 扫描与 pause_followup_queue 主动暂停持久化。
 

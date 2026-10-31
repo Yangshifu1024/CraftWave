@@ -1,6 +1,6 @@
-//! search 域命令（§3.3 #59f，13 号票）：网络搜索通道的连通测试。
+//! search 域命令：网络搜索通道的连通测试。
 //!
-//! 对齐 08 号票 `mcp_test` 的「草稿试连」模式：不经保存直接用表单当前值
+//! 对齐 `mcp_test` 的「草稿试连」模式：不经保存直接用表单当前值
 //! 发起一次真实探测请求，返回 `{ ok, latencyMs?, error? }`——设置页
 //! 「连通测试」按钮的 IPC 承载面。SearXNG 测试 = GET
 //! `{baseUrl}/search?q=…&format=json`（本地回环直连，不经代理）；Tavily
@@ -23,7 +23,7 @@ use crate::util::errors::IpcError;
 /// 60s，命令面统一 30s 收口（超时按失败返回，不挂设置页）。
 const SEARCH_TEST_BUDGET: std::time::Duration = std::time::Duration::from_secs(30);
 
-/// `search_test` 参数契约（§3.3 #59f）：目标通道 + 草稿配置（不经保存）。
+/// `search_test` 参数契约：目标通道 + 草稿配置（不经保存）。
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -40,7 +40,7 @@ pub struct SearchTestArgs {
     pub tavily_api_key: Option<String>,
 }
 
-/// `search_test` 返回契约（§3.3 #59f）：ok + 时延或错误原因。
+/// `search_test` 返回契约：ok + 时延或错误原因。
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -58,7 +58,7 @@ pub struct SearchTestResult {
     pub error: Option<String>,
 }
 
-/// `search_test`（§3.3 #59f）：通道连通测试（草稿试连，不写配置、不落盘；
+/// `search_test`：通道连通测试（草稿试连，不写配置、不落盘；
 /// Tavily 测试会消耗 1 credit——设置页指引文案已注明）。
 #[tauri::command]
 pub async fn search_test(

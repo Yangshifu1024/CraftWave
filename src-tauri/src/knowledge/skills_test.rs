@@ -1,7 +1,7 @@
-//! 技能系统单测（09 号票）：frontmatter 解析（含 Claude 格式真实样例）、
-//! 三来源同名覆盖优先级、Q21 版本指纹、skills-state.json round-trip、
+//! 技能系统单测：frontmatter 解析（含 Claude 格式真实样例）、
+//! 三来源同名覆盖优先级、 版本指纹、skills-state.json round-trip、
 //! 渐进披露注入文本生成（断言不含正文）、skill 工具规格动态 description、
-//! run 快照查询面（Q20）。
+//! run 快照查询面。
 //!
 //! 独立 _test.rs 文件（仓库纪律：源码文件内不写测试）。
 
@@ -67,7 +67,7 @@ metadata:
 // 忽略、长 description 含冒号引号原样、正文剥离 frontmatter）；YAML 折叠
 // 标量换行折叠为单空格；畸形 frontmatter 全形态拒绝（无 frontmatter/
 // 结束符缺失/缺 name/缺 description/name 非法字符/name 超长/description
-// 纯空白/数组形态）；技能名合法集校验；Q21 版本指纹——正文变化、附属
+// 纯空白/数组形态）；技能名合法集校验；版本指纹——正文变化、附属
 // 资源变化都改变指纹，还原附属脚本指纹回到原值（内容寻址），名字参与
 // 指纹，同内容重算一致，symlink 不追随，目录缺失返回 None。
 #[test]
@@ -111,7 +111,7 @@ fn parse_validate_and_fingerprint_semantics() {
     assert!(!valid_skill_name("has space"));
     assert!(!valid_skill_name(&"x".repeat(65)));
 
-    // Q21 版本指纹：正文变化 → 指纹变化（SKILL.md 变化重核信任）。
+    // 版本指纹：正文变化 → 指纹变化（SKILL.md 变化重核信任）。
     let tmp = tempfile::tempdir().unwrap();
     let dir = make_skill(
         tmp.path(),
@@ -128,7 +128,7 @@ fn parse_validate_and_fingerprint_semantics() {
     .unwrap();
     let fp2 = version_fingerprint("demo", &dir).unwrap();
     assert_ne!(fp1, fp2, "SKILL.md 变化必须改变指纹");
-    // 附属脚本变化 → 指纹变化（Q21：附属资源同在信任覆盖内）。
+    // 附属脚本变化 → 指纹变化（附属资源同在信任覆盖内）。
     std::fs::write(
         dir.join("SKILL.md"),
         "---\nname: demo\ndescription: 简介\n---\n正文 v1",
@@ -160,9 +160,9 @@ fn parse_validate_and_fingerprint_semantics() {
 // 断言（三来源合并与注册表面）：同名三连项目胜（内置<全局<项目）、异名
 // 并存、只有两来源时全局覆盖内置；registry 装配三来源后同名覆盖生效、
 // 启停 round-trip 重扫不丢禁用态、不存在名字返回 false、状态文件形状 =
-// §7.7 schema；渐进披露仅 name + description（断言不含正文，FR-09-02）、
+// schema；渐进披露仅 name + description（断言不含正文）、
 // 空清单零注入；skill 工具规格动态列出启用技能名、禁用后下一 run 不再
-// 列出、空 registry 兜底文案；run 快照查询面（Q20）——快照持有正文全文，
+// 列出、空 registry 兜底文案；run 快照查询面——快照持有正文全文，
 // find/body_text/is_rejected 只读快照。
 #[test]
 fn merge_registry_disclosure_and_spec() {
@@ -245,14 +245,14 @@ fn merge_registry_disclosure_and_spec() {
     assert!(registry.set_enabled("hello", true));
     assert!(!registry.is_disabled("hello"));
     assert!(!registry.set_enabled("missing", false));
-    // 状态文件 round-trip（重启语义）：文件形状 = §7.7 schema。
+    // 状态文件 round-trip（重启语义）：文件形状 = schema。
     let state_bytes = std::fs::read(tmp.path().join("skills-state.json")).unwrap();
     let state: super::skills::SkillsState = serde_json::from_slice(&state_bytes).unwrap();
     assert_eq!(state.version, 1);
     assert!(state.disabled.is_empty());
 
-    // 渐进披露：仅 name + description，断言不含正文（FR-09-02）。
-    // 注入面基于 run 快照条目（Q20：description 与正文同版本）。
+    // 渐进披露：仅 name + description，断言不含正文。
+    // 注入面基于 run 快照条目（description 与正文同版本）。
     registry.set_enabled("hello", false);
     let snapshot_entries: Vec<SkillSnapshotEntry> = registry
         .enabled_entries()
@@ -309,7 +309,7 @@ fn merge_registry_disclosure_and_spec() {
     SkillRegistry::install_from(&SkillRegistry::default());
     assert!(skill_spec().description.contains("没有可用"));
 
-    // run 快照查询面（Q20）：快照持有正文全文，查询面只读快照。
+    // run 快照查询面：快照持有正文全文，查询面只读快照。
     let snapshot = SkillSnapshot {
         entries: vec![SkillSnapshotEntry {
             name: "demo".to_owned(),

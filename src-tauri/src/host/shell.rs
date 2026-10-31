@@ -1,11 +1,11 @@
-//! 宿主外壳（§2.1/§9.6，FR-13-06/07/10，17 号票）：托盘、关闭到托盘、
+//! 宿主外壳：托盘、关闭到托盘、
 //! 退出拦截、单实例唤起。
 //!
-//! 后台运行语义：主窗 close 请求一律拦截为隐藏（关闭到托盘默认开，配置
-//! 项随设置域打磨票）；真正的退出只经托盘菜单「退出」，且存在活跃 run
+//! 后台运行语义：主窗 close 请求一律拦截为隐藏（关闭到托盘默认开，可在
+//! 设置切换）；真正的退出只经托盘菜单「退出」，且存在活跃 run
 //! 时先经 `app:exit_requested` 事件征得前端确认，前端调
-//! `resolve_exit_request(ack)` 放行或取消（§9.6 退出拦截）；前端超时
-//! 未回执则到点兜底放行（19 号票，[`EXIT_CONFIRM_TIMEOUT`]）——用户退出
+//! `resolve_exit_request(ack)` 放行或取消（退出拦截）；前端超时
+//! 未回执则到点兜底放行（[`EXIT_CONFIRM_TIMEOUT`]）——用户退出
 //! 意图优先，活跃 run 数据由 append-only 崩溃恢复语义兜底。
 
 use serde_json::json;
@@ -21,13 +21,13 @@ use crate::util::events::keys;
 /// 主窗口标签（tauri.conf.json `app.windows[0].label`）。
 pub const MAIN_WINDOW: &str = "main";
 
-/// 退出确认超时（§9.6 + 19 号票）：`app:exit_requested` 发出后前端在此时限
+/// 退出确认超时：`app:exit_requested` 发出后前端在此时限
 /// 内未回执即兜底放行退出。用户退出意图优先——退出流程不能因前端无响应
 /// （webview 卡死/已崩溃）而永远退不出去；活跃 run 的数据安全由 append-only
-/// 崩溃恢复语义兜底（重启后标「已中断」，15/17 号票既有），而非靠拦截退出。
+/// 崩溃恢复语义兜底（重启后标「已中断」的既有行为），而非靠拦截退出。
 pub const EXIT_CONFIRM_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// 退出确认状态机（§9.6 挂起标志 + 19 号票超时兜底判定）。
+/// 退出确认状态机（挂起标志 + 超时兜底判定）。
 /// 纯逻辑：计时入参显式传入（request/timed_out 各自带 now），可确定性单测
 /// （见 shell_test.rs）；真实时间由 request_exit / resolve_exit_request 注入。
 pub struct ExitConfirm {
@@ -81,9 +81,9 @@ pub fn activate_main_window(app: &AppHandle) {
     }
 }
 
-/// 全局热键的 toggle 主窗（29 号票，FR-13-11）：可见即隐藏、隐藏即唤起
+/// 全局热键的 toggle 主窗：可见即隐藏、隐藏即唤起
 /// （show + unminimize + set_focus，复用 [`activate_main_window`]）。
-/// 活跃 run 不受隐藏影响（run 在 Rust 侧继续推进，§9.6 后台运行语义）。
+/// 活跃 run 不受隐藏影响（run 在 Rust 侧继续推进，后台运行语义）。
 pub fn toggle_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
         if window.is_visible().unwrap_or(false) {
@@ -96,7 +96,7 @@ pub fn toggle_main_window(app: &AppHandle) {
 
 /// 装配托盘（图标 + 「显示主窗口 / 退出」菜单）。
 ///
-/// 三平台行为对齐（19 号票口径）：左键单击唤起主窗、右键弹菜单——
+/// 三平台行为对齐：左键单击唤起主窗、右键弹菜单——
 /// `show_menu_on_left_click(false)` 关闭「左键弹菜单」，点击事件经
 /// `TrayIconEvent::Click`（Left + Up）走 [`activate_main_window`]。
 /// 平台注记（依据 tauri 2.12.5 / tray-icon 0.25.1 源码核实）：
@@ -149,7 +149,7 @@ pub fn install_tray(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-/// 当前界面语言（31 号票）：读配置缓存；读不出按 Language 缺省（中文）。
+/// 当前界面语言：读配置缓存；读不出按 Language 缺省（中文）。
 /// 托盘装配与 save_config 钩子（[`apply_tray_language`]）共用。
 fn current_ui_language(app: &AppHandle) -> crate::providers::types::Language {
     app.try_state::<crate::host::AppState>()
@@ -157,7 +157,7 @@ fn current_ui_language(app: &AppHandle) -> crate::providers::types::Language {
         .unwrap_or_default()
 }
 
-/// 托盘菜单按当前界面语言重建（31 号票，save_config 钩子调用）：语言切换
+/// 托盘菜单按当前界面语言重建（save_config 钩子调用）：语言切换
 /// 后右键菜单两项即时换语言。托盘未装配（如无图标环境）时静默跳过。
 pub fn apply_tray_language(app: &AppHandle) {
     let Some(tray) = app.tray_by_id("craftwave-tray") else {
@@ -186,8 +186,8 @@ pub fn apply_tray_language(app: &AppHandle) {
     }
 }
 
-/// 退出请求（§9.6）：无活跃 run 直接退出；有则挂起等待前端确认，并排定
-/// 超时兜底（19 号票：前端无响应 EXIT_CONFIRM_TIMEOUT 后自动放行）。
+/// 退出请求：无活跃 run 直接退出；有则挂起等待前端确认，并排定
+/// 超时兜底（前端无响应 EXIT_CONFIRM_TIMEOUT 后自动放行）。
 pub fn request_exit(app: &AppHandle) {
     let has_active = app
         .try_state::<RunManager>()

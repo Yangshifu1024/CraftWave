@@ -1,22 +1,22 @@
-//! 工具系统：注册表 + 各工具实现 + 批次调度（§8.1）。
+//! 工具系统：注册表 + 各工具实现 + 批次调度。
 //!
 //! 工具（tool）是模型可调用的能力单元（读文件、执行命令等）；工具注册表
 //! （registry，即 [`build_registry`] 返回的清单）在启动时集中登记全部工具
 //! 规格供模型选择。
 //!
-//! M1 第二切片（14 号票）：在五文件类工具（11 号票）之上接线
-//! command/plan/ask 三工具与 suggest 后台小调用（非模型工具，不进注册表，
-//! 由 host 在 run 收尾发起）。审批门与工具卡片 UI 接线同票落地。
+//! 在五文件类工具之上接线 command/plan/ask 三工具与 suggest 后台小调用
+//! （非模型工具，不进注册表，由 host 在 run 收尾发起）；审批门与工具卡片
+//! UI 一并接线。
 //!
-//! 双通道结果（§8.2）：工具返回 [`ToolOutcome`]，模型通道 compact 文本经
+//! 双通道结果：工具返回 [`ToolOutcome`]，模型通道 compact 文本经
 //! [`compact_text`] 生成（成功头 4KB + 尾 8KB 截断；失败 error code+message）。
 
 pub mod ask;
 pub mod batch_read;
 pub mod calculate;
 pub mod command;
-// 文档读取管线（16 号票，§8.9 读侧）：read 工具按扩展名分派 docx/xlsx/pdf
-// 解析；不设独立工具（§8.3 read 行），注册表清单不变。
+// 文档读取管线：read 工具按扩展名分派 docx/xlsx/pdf 解析；不设独立工具，
+// 注册表清单不变。
 pub mod doc;
 pub mod edit;
 pub mod glob;
@@ -44,35 +44,32 @@ use crate::safety::tier::{Capability, GateDecision, PermissionTier, decide_gate}
 use crate::util::errors::ToolError;
 
 /// 工具执行上下文：roots（项目主目录 + 数据目录）由调用方构造。
-/// M1 无 extra_roots（§9.1）；24 号票起可追加会话授权的外部目录
-/// （§9.9 会话 roots 快照）。
+/// 缺省无 extra_roots；可追加会话授权的外部目录（会话 roots 快照）。
 #[derive(Debug, Clone)]
 pub struct ToolsContext {
     /// 项目主目录（canonical），相对路径的解析基准与首个 root。
     pub project_root: PathBuf,
     /// 数据目录（canonical）。
     pub data_root: PathBuf,
-    /// 会话已授权的外部目录（§9.9，24 号票；canonical 绝对路径）。
-    /// 空 = 无授权（缺省）。
+    /// 会话已授权的外部目录（canonical 绝对路径）。空 = 无授权（缺省）。
     pub extra_roots: Vec<PathBuf>,
 }
 
-/// 网络工具执行环境（12 号票，web_fetch/http_request 共用；13 号票扩
-/// web_search）：SSRF 策略、代理配置与进程级节流器，外加搜索三通道的
+/// 网络工具执行环境（web_fetch/http_request/web_search 共用）：SSRF 策略、
+/// 代理配置与进程级节流器，外加搜索三通道的
 /// 配置装配面（[`web_search::SearchEnv`]）。由宿主按 `AppConfig` 装配注入
 /// 执行器（save_config 后下一次 start_chat 生效——与 watchdog/tools 组同
 /// 语义）；`throttle` 为进程级共享句柄（Arc）：跨会话/跨 run 对同一 host
-/// 的访问共同参与 1s 节流（§9.2）。
+/// 的访问共同参与 1s 节流。
 #[derive(Clone)]
 pub struct NetworkEnv {
     /// SSRF 策略（`network.allowPrivateNetwork` 的运行面，缺省拒绝私网）。
     pub policy: SsrfPolicy,
-    /// 代理配置（`AppConfig.proxy`；None = 未配置。19 号票 client 重建
-    /// 路径落地前按本配置直建，§9.2 收敛点注记）。
+    /// 代理配置（`AppConfig.proxy`；None = 未配置，按本配置直建客户端）。
     pub proxy: Option<ProxyConfig>,
     /// 进程级每 host 节流器（跨会话共享）。
     pub throttle: Arc<HostThrottle>,
-    /// web_search 三通道装配（13 号票，§8.3/C-12）：SearXNG 启用配置 +
+    /// web_search 三通道装配：SearXNG 启用配置 +
     /// Tavily Key + 测试注入端点；随本环境按 AppConfig 装配。
     pub search: web_search::SearchEnv,
 }
@@ -99,8 +96,8 @@ impl NetworkEnv {
 impl ToolsContext {
     /// 构造工具执行上下文（两个根目录应传 canonical 后的绝对路径）。
     /// `data_root` 语义为「第二根」：生产路径传
-    /// `resolve_session_roots` 收窄后的 `<data>/workspace/` 子目录
-    /// （C-8/21 号票），测试直接传临时目录。
+    /// `resolve_session_roots` 收窄后的 `<data>/workspace/` 子目录，
+    /// 测试直接传临时目录。
     pub fn new(project_root: PathBuf, data_root: PathBuf) -> Self {
         Self {
             project_root,
@@ -109,7 +106,7 @@ impl ToolsContext {
         }
     }
 
-    /// 追加会话授权的外部目录（§9.9，24 号票；run 装配时从 SessionMeta
+    /// 追加会话授权的外部目录（run 装配时从 SessionMeta
     /// 读取——授权跨 run 生效、跨会话不延续）。
     pub fn with_extra_roots(mut self, extra_roots: Vec<PathBuf>) -> Self {
         self.extra_roots = extra_roots;
@@ -147,8 +144,7 @@ pub struct ToolAnnotations {
     pub open_world_hint: bool,
 }
 
-/// 工具来源（08 号票，§8.1「MCP 动态工具并入 ToolServer 模式」）：
-/// 注册表分静态段（编译期内置 8 个）与动态段（MCP 服务器运行时注册）。
+/// 工具来源：注册表分静态段（编译期内置）与动态段（MCP 服务器运行时注册）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ToolOrigin {
@@ -158,14 +154,14 @@ pub enum ToolOrigin {
     Mcp,
 }
 
-/// 工具规格（§8.1）：注册表里的一个条目，描述工具名、能力分级与参数约束。
+/// 工具规格：注册表里的一个条目，描述工具名、能力分级与参数约束。
 /// `params_schema` 为 JSON Schema 对象，约束 `additionalProperties: false`。
-/// 08 号票：`name` 从 `&'static str` 放宽为 `String`（动态段归一名运行时
-/// 才定，票面定案走 String；静态段构造点均为常量字符串，无额外成本）。
+/// `name` 为 `String`：动态段归一名运行时才定；静态段构造点均为常量字符串，
+/// 无额外成本。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolSpec {
-    /// 合法字符 [a-z_][a-z0-9_]{0,63}（§8.1）。
+    /// 合法字符 [a-z_][a-z0-9_]{0,63}。
     pub name: String,
     /// 面向模型，≤800 字符。
     pub description: String,
@@ -201,7 +197,7 @@ impl ToolSpec {
     }
 }
 
-/// 工具结果（§3.2 ToolOutcomeJson 镜像）：一次工具调用的返回，
+/// 工具结果（ToolOutcomeJson 镜像）：一次工具调用的返回，
 /// 同时承载模型通道（data/error）与 UI 通道（ui_summary/detail）。
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize)]
@@ -219,13 +215,13 @@ pub struct ToolOutcome {
     pub error: Option<ToolError>,
     /// 一行人话（UI 通道，不进模型文本）。
     pub ui_summary: String,
-    /// 全量细节（toolres 边车；warnings 仅 UI 显示不进模型文本，§8.2）。
+    /// 全量细节（toolres 边车；warnings 仅 UI 显示不进模型文本）。
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub detail: Option<serde_json::Value>,
-    /// 截断标记（02 号票收编：toolres 超限占位载荷此前是绕过本结构体的
-    /// 手拼 JSON，字段收编后边车文件形状单一来源；正常结果恒 None 不序列化，
-    /// 线上字节不变）。
+    /// 截断标记：toolres 超限占位载荷统一走本字段（此前是绕过本结构体的
+    /// 手拼 JSON），边车文件形状单一来源；正常结果恒 None 不序列化，
+    /// 线上字节不变。
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub truncated: Option<bool>,
@@ -277,7 +273,7 @@ impl From<ToolError> for ToolOutcome {
     }
 }
 
-/// 模型通道 compact 文本（§8.2）：成功序列化 data（头 4KB + 尾 8KB 截断）；
+/// 模型通道 compact 文本：成功序列化 data（头 4KB + 尾 8KB 截断）；
 /// 失败输出 error code+message。warnings/detail 不进模型文本。
 pub fn compact_text(outcome: &ToolOutcome) -> String {
     if !outcome.ok {
@@ -294,14 +290,13 @@ pub fn compact_text(outcome: &ToolOutcome) -> String {
     truncate_middle(&body, COMPACT_HEAD_BYTES, COMPACT_TAIL_BYTES)
 }
 
-/// 模型通道截断的头/尾保留字节（§8.2：头 4KB + 尾 8KB）。
-/// 12 号票抽常量：web_fetch raw 模式的 HTML 截断复用同一口径。
+/// 模型通道截断的头/尾保留字节（头 4KB + 尾 8KB）；
+/// web_fetch raw 模式的 HTML 截断复用同一口径。
 pub const COMPACT_HEAD_BYTES: usize = 4 * 1024;
 pub const COMPACT_TAIL_BYTES: usize = 8 * 1024;
 
 /// 头 `head` + 尾 `tail` 字节截断，中间以省略标记连接。按 UTF-8 字符边界切。
-/// `pub(crate)`：backend 执行器（exec.rs）的 skill 工具分支复用同一 §8.2
-/// 截断口径（09 号票）。
+/// `pub(crate)`：backend 执行器（exec.rs）的 skill 工具分支复用同一截断口径。
 pub(crate) fn truncate_middle(s: &str, head: usize, tail: usize) -> String {
     if s.len() <= head + tail {
         return s.to_string();
@@ -327,19 +322,11 @@ fn floor_char_boundary(s: &str, mut index: usize) -> usize {
     index
 }
 
-/// 静态段工具名称与顺序钉死（§8.1：集成测试防漂移）。M1 注册表 8 个
-/// （§8.3 P0 9 个中的模型可见子集；suggest 仅 run 尾调用不开放模型）。
-/// 08 号票改名 STATIC_TOOL_NAMES：注册表分「静态段 + 动态段（MCP）」两段，
-/// 动态段运行时可变，钉死测试改为两断言（见 mod 的 compact_test 与
-/// ipc_manifest_test）。09 号票增 skill（§8.3 M2 表 Meta 行；description
-/// 动态列出启用技能名清单——build_registry 每次现读技能注册表，
-/// toggle/reload 后下一 run 生效）；10 号票增 subagent（§8.3 M2 表 Meta 行，
-/// 子代理委派入口）：静态 10 个。12 号票增 web_fetch/http_request
-/// （§8.3 M2 表 Network 两行，网页抓取与通用 HTTP）：静态 12 个。
-/// 13 号票增 web_search（§8.3 M2 表 Network 行，本地优先三通道搜索）：
-/// 静态 13 个。14 号票增 batch_read/glob/calculate/render_html（§8.3 M2
-/// 表四行：批量读、文件名模式检索、精确算术、沙箱 HTML 预览产出）：
-/// 静态 17 个。
+/// 静态段工具名称与顺序钉死（集成测试防漂移）。注册表分「静态段 +
+/// 动态段（MCP）」两段，动态段运行时可变，钉死测试改为两断言（见 mod 的
+/// compact_test 与 ipc_manifest_test）。skill 的 description 动态列出启用
+/// 技能名清单——build_registry 每次现读技能注册表，toggle/reload 后下一
+/// run 生效；subagent 为子代理委派入口。
 pub const STATIC_TOOL_NAMES: [&str; 17] = [
     "read",
     "write",
@@ -360,7 +347,7 @@ pub const STATIC_TOOL_NAMES: [&str; 17] = [
     "render_html",
 ];
 
-/// 静态注册表（§8.1：启动时构建）。顺序与 [`STATIC_TOOL_NAMES`] 一致。
+/// 静态注册表（启动时构建）。顺序与 [`STATIC_TOOL_NAMES`] 一致。
 pub fn build_registry() -> Vec<ToolSpec> {
     vec![
         read::spec(),
@@ -383,7 +370,7 @@ pub fn build_registry() -> Vec<ToolSpec> {
     ]
 }
 
-/// 全表查询（§8.1「三处同源过滤」的查找面，08 号票）：静态段 + MCP 动态段
+/// 全表查询（三处同源过滤的查找面）：静态段 + MCP 动态段
 /// （进程级 [`crate::mcp::tools::McpToolRegistry`] 单例快照）。动态段未装配
 /// 时等价于静态表。主循环策略门（is_interactive）、看门狗只读判定、审批门
 /// 与执行器 dispatch 都经本函数，避免各自直连 MCP 模块。
@@ -397,10 +384,9 @@ pub fn lookup_spec(name: &str) -> Option<ToolSpec> {
         .find(|s| s.name == name)
 }
 
-/// 三处同源过滤的单一实现（§8.1，FR-05-01）：按档位过滤工具表。
-/// 08 号票增 MCP 规则（§8.5 注）：plan 档 MCP 动态工具全过滤（不出现在
-/// 工具表）；其余档位保留，能力矩阵照旧——MCP 未声明 read_only 的审批在
-/// 门控执行（§9.7），不影响是否暴露给模型。
+/// 三处同源过滤的单一实现：按档位过滤工具表。
+/// plan 档 MCP 动态工具全过滤（不出现在工具表）；其余档位保留，能力矩阵
+/// 照旧——MCP 未声明 read_only 的审批在门控执行，不影响是否暴露给模型。
 pub fn filter_for_tier(specs: Vec<ToolSpec>, tier: PermissionTier) -> Vec<ToolSpec> {
     specs
         .into_iter()

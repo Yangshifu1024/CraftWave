@@ -1,10 +1,10 @@
-//! git 只读查询核心（FR-11-01，26 号票，§3.3 #37–#39）：git2-rs（libgit2）
+//! git 只读查询核心：git2-rs（libgit2）
 //! 纯本地只读绑定——status（工作区状态）/ diff（工作区 vs HEAD 聚合差异）/
 //! recent log（最近提交）与 user info（当前 git 用户名/邮箱）。
 //!
-//! 纪律（票面字段级口径）：
+//! 纪律：
 //! - **只读**：本模块绝不 commit/push/merge，绝不改写 index 暂存状态与
-//!   工作区文件——git 写操作只经 command 围栏走审批（FR-11-03）；
+//!   工作区文件——git 写操作只经 command 围栏走审批；
 //! - **非 git 仓库不报错**：仓库根解析失败（`Repository::discover` 找不到
 //!   `.git`）返回 `isRepo: false` 的空结果（前端据此显示「当前项目不是
 //!   git 仓库」空态）；
@@ -24,14 +24,14 @@ use super::{
 const MAX_DIFF_LINES_PER_FILE: usize = 3000;
 /// diff 文件数上限（防超大仓库一次拉全量拖垮 UI）。
 const MAX_DIFF_FILES: usize = 200;
-/// recent log 条数缺省值（§3.3 #39：默认 20）。
+/// recent log 条数缺省值（默认 20）。
 pub const DEFAULT_LOG_LIMIT: usize = 20;
 /// recent log 条数上限（防误传超大 limit 拖垮 UI）。
 pub const MAX_LOG_LIMIT: usize = 100;
 /// 状态文件条目数上限（防超大仓库全量扫描拖垮 UI；超出即截断）。
 const MAX_STATUS_FILES: usize = 2000;
 
-/// 状态值（§3.3 #37 字段级，随票定形）：`"M"` 修改 / `"A"` 新增（含已
+/// 状态值：`"M"` 修改 / `"A"` 新增（含已
 /// 暂存新文件）/ `"D"` 删除 / `"U"` 未合并（冲突）/ `"untracked"` 未跟踪。
 /// 一个文件同时存在暂存与工作区两类变化时按「冲突 > 删除 > 新增 > 修改 >
 /// 未跟踪」优先级取单一主状态（面板徽标一文件一枚）。
@@ -41,19 +41,19 @@ pub const STATUS_DELETED: &str = "D";
 pub const STATUS_CONFLICTED: &str = "U";
 pub const STATUS_UNTRACKED: &str = "untracked";
 
-/// 仓库根解析（票面：sessionId → 会话 roots → 项目主目录向上找 .git）：
+/// 仓库根解析（sessionId → 会话 roots → 项目主目录向上找 .git）：
 /// `Repository::discover` 从给定目录沿父目录向上查找——项目主目录本身或
 /// 其子目录是仓库内路径都命中；找不到 → None（非 git 仓库，前端空态）。
 pub fn discover_repo(root: &Path) -> Option<git2::Repository> {
     git2::Repository::discover(root).ok()
 }
 
-/// #37 `git_status` 主体：状态列表 + user info。
+/// `git_status` 主体：状态列表 + user info。
 ///
 /// - `files`：含 untracked（目录递归展开），尊重 .gitignore（不列忽略
 ///   文件），排除子模块；路径为仓库内相对路径；
-/// - `user`：仓库配置的 `user.name` / `user.email`（FR-11-01 的 user info；
-///   repo > global > system 叠加语义与 `git config` 一致），键缺失 → None。
+/// - `user`：仓库配置的 `user.name` / `user.email`
+///   （repo > global > system 叠加语义与 `git config` 一致），键缺失 → None。
 pub fn status_core(root: &Path) -> GitStatusResult {
     let Some(repo) = discover_repo(root) else {
         return GitStatusResult {
@@ -130,7 +130,7 @@ fn main_status(s: git2::Status) -> &'static str {
     STATUS_MODIFIED
 }
 
-/// user info（FR-11-01）：仓库配置快照（repo > global > system）读
+/// user info：仓库配置快照（repo > global > system）读
 /// user.name / user.email；键缺失或读取失败 → None 字段（绝不报错）。
 fn read_user(repo: &git2::Repository) -> Option<GitUser> {
     let Ok(config) = repo.config() else {
@@ -151,11 +151,11 @@ fn read_user(repo: &git2::Repository) -> Option<GitUser> {
     Some(GitUser { name, email })
 }
 
-/// #38 `git_diff` 主体：工作区（含 index 暂存）vs HEAD 的聚合差异。
+/// `git_diff` 主体：工作区（含 index 暂存）vs HEAD 的聚合差异。
 ///
 /// - HEAD 不存在（空仓库无首提交）→ 与空树对比 = 全部文件都是新增；
 /// - untracked 文件计入差异（内容行完整展示）；
-/// - `staged` 参数本票不支持（票面：staged 视图不做，参数忽略并注记）——
+/// - `staged` 参数不支持（staged 视图不做，参数忽略）——
 ///   返回的恒为「工作区 vs HEAD」聚合视图。
 pub fn diff_core(root: &Path, _staged: Option<bool>) -> GitDiffResult {
     let Some(repo) = discover_repo(root) else {
@@ -306,7 +306,7 @@ fn extract_hunks(diff: &git2::Diff, index: usize) -> (Vec<DiffHunk>, usize, usiz
     (hunks, add_lines, del_lines, truncated)
 }
 
-/// #39 `git_recent_log` 主体：HEAD 起按时间倒序的最近提交（sha 全量 40 位
+/// `git_recent_log` 主体：HEAD 起按时间倒序的最近提交（sha 全量 40 位
 /// 十六进制 / summary 首行 / time Unix 秒）。空仓库（无 HEAD）→ 空列表。
 pub fn log_core(root: &Path, limit: Option<usize>) -> GitLogResult {
     let Some(repo) = discover_repo(root) else {

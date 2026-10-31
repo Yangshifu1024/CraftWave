@@ -1,4 +1,4 @@
-//! 压缩编排纯逻辑测试（§6.2/Q31/Q38，04 号票）：
+//! 压缩编排纯逻辑测试：
 //! 压缩范围计算、条目文本化、分块装箱、id 规则。摘要调用编排（共用总超时、
 //! 全部用量计量、失败不推进边界）由 ScriptedBackend e2e 承载（tests/backend_e2e.rs）。
 
@@ -26,7 +26,7 @@ fn entry_ids(entries: &[MessageEntry]) -> Vec<&str> {
 }
 
 // 断言：压缩范围场景表——首次压缩（无旧摘要）范围 = 候选集全量（run 开始
-// 前场景调用方已剔除末条 prompt）、增量压缩（Q31）= 旧边界之后的新增内容
+// 前场景调用方已剔除末条 prompt）、增量压缩 = 旧边界之后的新增内容
 // 且旧摘要随行、空候选集 None、边界锚点缺失时从头保守压缩且保留旧摘要。
 #[test]
 fn compression_scope_cases() {
@@ -62,9 +62,9 @@ fn compression_scope_cases() {
     assert_eq!(scope.old_summary.as_deref(), Some("旧摘要"));
 }
 
-// 断言：条目文本化（Q38）——工具调用与结果带工具名/callId/来源标记转普通
+// 断言：条目文本化——工具调用与结果带工具名/callId/来源标记转普通
 // 文本、runMarker 不进摘要输入；分块装箱——多块超窗拆批、单块超窗按字符
-// 切段不丢字、空输入空批；compaction 条目 id 规则（§6.1 {owner}:compact:{n}）。
+// 切段不丢字、空输入空批；compaction 条目 id 规则（{owner}:compact:{n}）。
 #[test]
 fn entry_blocks_bucketing_and_id_cases() {
     // 文本化：角色/条目 id/工具名/callId/结果来源与成败标记
@@ -145,7 +145,7 @@ fn entry_blocks_bucketing_and_id_cases() {
     // 空输入 → 空批
     assert!(plan_blocks(Vec::new(), 10).is_empty());
 
-    // id 规则（§6.1 {owner}:compact:{n}）
+    // id 规则（{owner}:compact:{n}）
     assert_eq!(compaction_entry_id("run-abc", 1), "run-abc:compact:1");
     assert_eq!(compaction_entry_id("manual", 3), "manual:compact:3");
 }

@@ -1,7 +1,7 @@
-//! 会话生命周期域命令（§3.3 #13 `create_session` / #16 `delete_session` /
-//! #17 `rename_session`，16 号票；#14 `list_sessions` 在 session_tree.rs）。
+//! 会话生命周期域命令（`create_session` / `delete_session` /
+//! `rename_session`，`list_sessions` 在 session_tree.rs）。
 //!
-//! 会话双形态（FR-01-02）：projectId 缺省 = 临时会话（roots=数据目录）；
+//! 会话双形态：projectId 缺省 = 临时会话（roots=数据目录）；
 //! projectId 给定 = 项目会话（roots=项目主目录，创建时校验项目存在）。
 
 use serde::{Deserialize, Serialize};
@@ -13,10 +13,10 @@ use crate::host::IpcError;
 use crate::storage::SessionMeta;
 use crate::util::ids::new_uuid;
 
-/// 新会话默认标题（改名走 rename_session；自动起名属 M2）。
+/// 新会话默认标题（改名走 rename_session；自动起名由后台标题任务负责）。
 pub(crate) const DEFAULT_SESSION_TITLE: &str = "新会话";
 
-/// `create_session` 参数契约（§3.3 #13）。
+/// `create_session` 参数契约。
 #[derive(Debug, Clone, Default, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -34,7 +34,7 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
-/// 新建会话（§3.3 #13）：index.json 建条目；历史文件随首次 save 产生。
+/// 新建会话：index.json 建条目；历史文件随首次 save 产生。
 #[tauri::command]
 pub(crate) async fn create_session(
     app: State<'_, AppState>,
@@ -66,7 +66,7 @@ pub(crate) async fn create_session(
     Ok(meta)
 }
 
-/// `delete_session` 参数契约（§3.3 #16）。
+/// `delete_session` 参数契约。
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -74,8 +74,8 @@ pub struct DeleteSessionArgs {
     pub session_id: String,
 }
 
-/// 删除会话主体（公开给集成测试；命令体转调——Q43 用量联动在本函数）。
-/// 32 号票扩展（Q43 删除边界）：会话专属日志与轮转副本同步删除
+/// 删除会话主体（公开给集成测试；命令体转调——用量联动在本函数）。
+/// 删除边界：会话专属日志与轮转副本同步删除
 /// （`close_and_purge` 失败清单非空 = 有残留，**必须报告**，不得声称
 /// 全部删除成功）；followUp 队列文件、子代理历史目录一并盘点清理；
 /// 会话级内存桶（审批记忆/资源信任/计划范围授权）随删。
@@ -99,21 +99,21 @@ pub fn delete_session_core(
             "session not found: {session_id}"
         )));
     }
-    // 用量明细与内存累计摘除（Q43：删除后明细不可查询；stats_cache 与
+    // 用量明细与内存累计摘除（删除后明细不可查询；stats_cache 与
     // 聚合同构无会话身份，不需清理）
     app.ledger.detail.forget_session(session_id);
     app.session_usage
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .remove(session_id);
-    // 会话级审批记忆随删（23 号票，Q41：记忆不跨会话生命周期——删除后
+    // 会话级审批记忆随删（记忆不跨会话生命周期——删除后
     // 重建的同 id 会话须重新审批）
     app.approval_memory.forget(session_id);
-    // 会话级资源信任集与计划范围授权桶随删（Q43 盘点：进程内内存面，
-    // 删除后不残留——24/25 号票「本次会话允许」语义随会话销毁）
+    // 会话级资源信任集与计划范围授权桶随删（盘点：进程内内存面，
+    // 删除后不残留——「本次会话允许」语义随会话销毁）
     app.session_trust.forget(session_id);
     app.plan_scopes.forget(session_id);
-    // followUp 队列文件（06 号票，Q43 盘点：会话专属副本随删；队列文件
+    // followUp 队列文件（盘点：会话专属副本随删；队列文件
     // 不删会残留正文副本）
     let queue_file = app
         .store
@@ -131,13 +131,13 @@ pub fn delete_session_core(
             ));
         }
     }
-    // 子代理历史盘点清理（Q43/票面：`histories/subs/<parentRunId>/` 按
+    // 子代理历史盘点清理（`histories/subs/<parentRunId>/` 按
     // meta.json 的 sessionId 归属——命中即删整个父目录；meta 缺失/损坏
-    // 的目录不误删（保守：宁保留不误删，Q43 不误伤原则）。删除失败记账
+    // 的目录不误删（保守：宁保留不误删，不误伤原则）。删除失败记账
     // 汇入失败清单）
     let mut all_failures = app.session_log.close_and_purge(session_id);
     all_failures.extend(purge_sub_histories(app.store.root(), session_id));
-    // 删除失败必须报告（票面红线：不能声称全部删除成功）
+    // 删除失败必须报告（红线：不能声称全部删除成功）
     if !all_failures.is_empty() {
         return Err(IpcError::new(
             crate::util::errors::E_IO,
@@ -150,7 +150,7 @@ pub fn delete_session_core(
     Ok(())
 }
 
-/// 子代理历史目录的会话归属盘点（Q43）：遍历 `histories/subs/*/meta.json`，
+/// 子代理历史目录的会话归属盘点：遍历 `histories/subs/*/meta.json`，
 /// `session_id` 匹配则删除整个 `<parentRunId>/` 目录。返回失败清单
 /// （删除失败才报；目录不存在 = 没有子历史，静默）。
 fn purge_sub_histories(data_root: &std::path::Path, session_id: &str) -> Vec<String> {
@@ -177,11 +177,11 @@ fn purge_sub_histories(data_root: &std::path::Path, session_id: &str) -> Vec<Str
     failures
 }
 
-/// 删除会话（§3.3 #16）：运行中拒绝（E_SESSION_RUNNING）；index 条目 +
+/// 删除会话：运行中拒绝（E_SESSION_RUNNING）；index 条目 +
 /// histories/prefs/toolres 一并清除；不存在 → E_NOT_FOUND。
-/// 20 号票（Q43）：关联 run 用量明细（`<sid>.usage.json`）与内存累计表
+/// 关联 run 用量明细（`<sid>.usage.json`）与内存累计表
 /// 条目随删；日/模型匿名聚合（`stats/*.json`）保留——真实消耗数字不含
-/// 会话身份（§7.7 Q43 匿名化定案）。
+/// 会话身份（匿名化）。
 #[tauri::command]
 pub(crate) async fn delete_session(
     app: State<'_, AppState>,
@@ -193,7 +193,7 @@ pub(crate) async fn delete_session(
     delete_session_core(&app, &runs, &args.session_id)
 }
 
-/// `rename_session` 参数契约（§3.3 #17）。
+/// `rename_session` 参数契约。
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -202,7 +202,7 @@ pub struct RenameSessionArgs {
     pub title: String,
 }
 
-/// 重命名会话（§3.3 #17：返回 SessionMeta）：index 更新标题与 updatedAt。
+/// 重命名会话（返回 SessionMeta）：index 更新标题与 updatedAt。
 #[tauri::command]
 pub(crate) async fn rename_session(
     app: State<'_, AppState>,
@@ -225,9 +225,9 @@ pub(crate) async fn rename_session(
         .ok_or_else(|| IpcError::not_found(format!("session not found: {}", args.session_id)))
 }
 
-// ---- 会话偏好（§3.3 #24/#25，FR-14-05/FR-02-08，18 号票） ----
+// ---- 会话偏好 ----
 
-/// `get_session_prefs` 参数契约（§3.3 #24；文档命名锚点，命令形参按字段
+/// `get_session_prefs` 参数契约（文档命名锚点，命令形参按字段
 /// 平铺展开）。
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -236,7 +236,7 @@ pub struct SessionPrefsArgs {
     pub session_id: String,
 }
 
-/// 会话存在于索引的校验（#24/#25 共用；不存在 → E_NOT_FOUND）。
+/// 会话存在于索引的校验（共用；不存在 → E_NOT_FOUND）。
 fn ensure_session_exists(app: &AppState, session_id: &str) -> Result<(), IpcError> {
     let known = app.store.index().list().iter().any(|m| m.id == session_id);
     if known {
@@ -248,7 +248,7 @@ fn ensure_session_exists(app: &AppState, session_id: &str) -> Result<(), IpcErro
     }
 }
 
-/// `get_session_prefs` 返回契约（§3.3 #24）：modelId/thinking 未设置时省略
+/// `get_session_prefs` 返回契约：modelId/thinking 未设置时省略
 /// （前端按「跟随默认 / per-model reasoningEffort 回落」处理）。
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -258,16 +258,16 @@ pub struct GetSessionPrefsResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub model_id: Option<String>,
-    /// 会话 thinking 档（FR-02-08 五档）。
+    /// 会话 thinking 档（五档）。
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub thinking: Option<crate::providers::reasoning::ThinkingLevel>,
 }
 
-/// `set_session_prefs` 参数契约（§3.3 #25）：merge 语义——**只传的字段被改**
+/// `set_session_prefs` 参数契约：merge 语义——**只传的字段被改**
 /// （字段缺省 = 不动；`null` = 清除该字段回默认；设值 = 覆盖）。双 Option
 /// （`Option<Option<T>>`）区分「未传」与「传了 null」；权限档明确不持久化
-/// （FR-14-05，不在载荷面）。
+/// （不在载荷面）。
 #[derive(Debug, Clone, Default, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -280,7 +280,7 @@ pub struct SetSessionPrefsArgs {
     pub prefs: Option<SetSessionPrefsPayload>,
 }
 
-/// `set_session_prefs` 的覆盖载荷（§3.3 #25 `prefs` 字段；双 Option 语义见
+/// `set_session_prefs` 的覆盖载荷（`prefs` 字段；双 Option 语义见
 /// [`SetSessionPrefsArgs`]）。
 #[derive(Debug, Clone, Default, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -328,8 +328,8 @@ pub(crate) fn set_session_prefs_core(
         .map_err(|e| IpcError::internal(format!("session prefs write failed: {e}")))
 }
 
-/// 读取会话偏好（§3.3 #24）：文件缺失/损坏 → 空偏好（不阻塞会话加载，
-/// FR-14-05 容错口径）；会话不存在 → E_NOT_FOUND。
+/// 读取会话偏好：文件缺失/损坏 → 空偏好（不阻塞会话加载，
+/// 容错口径）；会话不存在 → E_NOT_FOUND。
 #[tauri::command]
 pub(crate) async fn get_session_prefs(
     app: State<'_, AppState>,
@@ -340,9 +340,9 @@ pub(crate) async fn get_session_prefs(
     get_session_prefs_core(&app, &args.session_id)
 }
 
-/// 设置会话偏好（§3.3 #25）：merge 语义（只传的字段被改），原子写落
-/// `<sid>.prefs.json`（§7.4）；写入即生效于运行中 run 的下一次模型请求
-/// （§11.1 每拍刷新，FR-02-07 修正案）。会话不存在 → E_NOT_FOUND。
+/// 设置会话偏好：merge 语义（只传的字段被改），原子写落
+/// `<sid>.prefs.json`；写入即生效于运行中 run 的下一次模型请求
+/// （每拍刷新，修正案）。会话不存在 → E_NOT_FOUND。
 #[tauri::command]
 pub(crate) async fn set_session_prefs(
     app: State<'_, AppState>,

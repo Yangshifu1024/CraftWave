@@ -1,27 +1,27 @@
-//! 子代理内置角色表（FR-07-01，技术设计文档 §5.9/§8.3 M2 表，10 号票）。
+//! 子代理内置角色表。
 //!
 //! 名词解释：角色（role）是主代理委派任务时可点名的"专职分身"——每个角色
 //! 是「系统提示文本 + 工具白名单 + 默认步数预算 + 工作区形态」的组合。
 //! 白名单是该角色可见、可执行的工具子集（三处同源纪律：工具可见面 =
-//! 执行许可 = 子代理边界，§8.1；白名单裁剪复用 [`crate::tools::filter_for_tier`]
+//! 执行许可 = 子代理边界；白名单裁剪复用 [`crate::tools::filter_for_tier`]
 //! 同一实现，先白名单过滤再档位过滤，plan 档写/联网工具照旧被过滤）。
 //!
 //! 预算（budgetSteps）：子代理最多进行的模型请求轮次；耗尽即以
-//! E_SUB_BUDGET 回喂父 run、终态 outcome=partial（§5.9 治理）。
+//! E_SUB_BUDGET 回喂父 run、终态 outcome=partial。
 //! 入参 `budgetSteps` 可覆盖默认值，钳制 1–1000。
 //!
-//! 工作区形态（§5.9 Q7）：只读角色直接读取当前工作区；写入角色在 Git
+//! 工作区形态：只读角色直接读取当前工作区；写入角色在 Git
 //! 项目中使用独立 worktree（ADR-0001），非 Git 项目禁止修改（由主代理
 //! 负责，工具表裁掉写工具后只读执行）。
 
 use crate::safety::tier::Capability;
 use crate::tools::{ToolAnnotations, ToolOrigin, ToolSpec};
 
-/// budgetSteps 入参的合法区间（票面：钳制 1–1000）。
+/// budgetSteps 入参的合法区间（钳制 1–1000）。
 pub const MIN_BUDGET_STEPS: u32 = 1;
 pub const MAX_BUDGET_STEPS: u32 = 1000;
 
-/// 子代理的工作区形态（§5.9 Q7，ADR-0001）。
+/// 子代理的工作区形态（ADR-0001）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkspaceKind {
     /// 只读：直接读取当前工作区（探索/评审/规划）。
@@ -30,7 +30,7 @@ pub enum WorkspaceKind {
     WriteWorkspace,
 }
 
-/// 内置角色（FR-07-01）：系统提示 + 工具白名单 + 默认预算 + 工作区形态。
+/// 内置角色：系统提示 + 工具白名单 + 默认预算 + 工作区形态。
 #[derive(Debug, Clone, Copy)]
 pub struct SubagentRole {
     /// 角色名（模型点名依据；与前端 `$角色` 菜单同名单）。
@@ -41,13 +41,13 @@ pub struct SubagentRole {
     pub system_prompt: &'static str,
     /// 工具白名单（⊆ 静态注册表；执行许可与可见面同源）。
     pub tools: &'static [&'static str],
-    /// 默认步数预算（§5.9：explore 40 / dev 90 / reviewer 45 / tester 60）。
+    /// 默认步数预算（explore 40 / dev 90 / reviewer 45 / tester 60）。
     pub default_budget_steps: u32,
     /// 工作区形态。
     pub workspace: WorkspaceKind,
 }
 
-/// 7 个内置角色（§5.9：explore/planner/implementer/reviewer/tester/
+/// 7 个内置角色（explore/planner/implementer/reviewer/tester/
 /// frontend-dev/backend-dev）。数组顺序即工具 description 与前端菜单顺序。
 pub const ROLES: &[SubagentRole] = &[
     SubagentRole {
@@ -131,16 +131,16 @@ pub fn find_role(name: &str) -> Option<&'static SubagentRole> {
     ROLES.iter().find(|r| r.name == name)
 }
 
-/// budgetSteps 入参钳制（票面：1–1000；None → 角色默认值）。
+/// budgetSteps 入参钳制（1–1000；None → 角色默认值）。
 pub fn clamp_budget_steps(role: &SubagentRole, budget_steps: Option<u32>) -> u32 {
     budget_steps
         .unwrap_or(role.default_budget_steps)
         .clamp(MIN_BUDGET_STEPS, MAX_BUDGET_STEPS)
 }
 
-/// subagent 工具的注册表规格（§8.3 M2 表 Meta 行，10 号票）：
+/// subagent 工具的注册表规格：
 /// 参数 `{ role, task, budgetSteps? }`；description 内嵌 7 角色清单与各自
-/// 职责一句话（模型点名的依据）。Meta 能力全档放行（§8.5 矩阵）。
+/// 职责一句话（模型点名的依据）。Meta 能力全档放行。
 pub fn subagent_spec() -> ToolSpec {
     let roster: String = ROLES
         .iter()
@@ -189,7 +189,7 @@ pub fn subagent_spec() -> ToolSpec {
     )
 }
 
-/// 角色白名单的工具规格裁剪（FR-05-01 三处同源：白名单过滤 + 档位过滤
+/// 角色白名单的工具规格裁剪（三处同源：白名单过滤 + 档位过滤
 /// 复用 [`crate::tools::filter_for_tier`] 同一实现）。
 /// 非工作区形态约束（非 Git 项目禁写）由装配层再裁——本函数只做
 /// 「白名单 ∩ 注册表 → 档位过滤」的静态面。

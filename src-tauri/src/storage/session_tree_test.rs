@@ -1,10 +1,10 @@
 //! 会话树存取引擎单元测试（独立测试文件，源码零测试）。
 //!
-//! 覆盖 §6.3/§6.4 语义：save/load 往返一致（roundtrip，指保存后读回逐字段相等）、
+//! 覆盖 语义：save/load 往返一致（roundtrip，指保存后读回逐字段相等）、
 //! 仅追加缺失节点、幂等全量同步、revision 乐观并发冲突、孤儿节点/未知活动叶/
-//! 非法会话 id 参数校验、NotFound；以及 15 号票的 canonical 追加、崩溃恢复
-//!（interrupted marker 修复）、索引与 toolres 边车往返、16 号票的会话删除清理、
-//! 04 号票的 compaction 条目与 Q34 升级备份守卫。同型用例在单个 #[test] 内
+//! 非法会话 id 参数校验、NotFound；以及 的 canonical 追加、崩溃恢复
+//!（interrupted marker 修复）、索引与 toolres 边车往返、的会话删除清理、
+//! 的 compaction 条目与 升级备份守卫。同型用例在单个 #[test] 内
 //! 表驱动合并，断言消息带用例标识。
 
 use std::fs;
@@ -214,7 +214,7 @@ fn save_load_roundtrip_and_append_discipline() {
     );
 }
 
-// ---- 参数校验与冲突（§6.4，表驱动） ----
+// ---- 参数校验与冲突（表驱动）----
 
 // 断言：save 的校验与冲突面——baseRevision 过期、同 id 内容漂移均报
 // RevisionConflict；孤儿消息、未知活动叶报 InvalidArg；路径穿越等非法会话
@@ -236,7 +236,7 @@ fn save_validation_errors() {
             expected: 99,
             actual: 1
         },
-        "§6.4：baseRevision 不等当前值 → E_SESSION_REV"
+        "：baseRevision 不等当前值 → E_SESSION_REV"
     );
 
     // 同 id 消息内容与已存版本不一致（内容漂移）→ E_SESSION_REV
@@ -245,7 +245,7 @@ fn save_validation_errors() {
         .unwrap_err();
     assert!(
         matches!(err, StorageError::RevisionConflict { .. }),
-        "§6.3：内容哈希变 → E_SESSION_REV"
+        "：内容哈希变 → E_SESSION_REV"
     );
 
     // 孤儿消息（父节点不存在）→ InvalidArg（导出序必须父先子后）
@@ -274,7 +274,7 @@ fn save_validation_errors() {
     assert_eq!(err, StorageError::NotFound("missing".to_string()));
 }
 
-// ---- 15 号票：canonical 追加 + 崩溃恢复 ----
+// ---- ：canonical 追加 + 崩溃恢复 ----
 
 // 构造 canonical 形态一轮对话中第 turn 条 assistant 消息（id 规则 `{runId}:{turn}`）。
 fn canonical_turn(run_id: &str, turn: u32, parent: Option<&str>, text: &str) -> MessageEntry {
@@ -403,7 +403,7 @@ fn canonical_append_and_crash_recovery() {
     );
 }
 
-// ---- 15/16 号票：index/toolres 边车 + 会话删除 + save 同步索引 ----
+// ---- ：index/toolres 边车 + 会话删除 + save 同步索引 ----
 
 // 断言：索引与删除面——index upsert/list 按 updatedAt 倒序；toolres 边车写后
 // 可读回（缺文件调用不在返回表）；save 落盘新消息同步索引（缺条目兜底建档、
@@ -546,9 +546,9 @@ fn index_toolres_delete_and_sync() {
     assert!(matches!(err, crate::storage::StorageError::InvalidArg(_)));
 }
 
-// ---- compaction 条目（§6.1【M2】/Q34，04 号票）----
+// ---- compaction 条目----
 
-/// 造一条 compaction 条目（id 规则 §6.1）。
+/// 造一条 compaction 条目。
 fn compaction_entry(cut: &str, summary: &str) -> StoredCompactionEntry {
     StoredCompactionEntry {
         id: format!("manual:compact:{cut}"),
@@ -562,7 +562,7 @@ fn compaction_entry(cut: &str, summary: &str) -> StoredCompactionEntry {
 /// 断言：compaction 全链路——条目 serde roundtrip（kind=compaction、camelCase）；
 /// append_compaction 落盘 + load 投影（messages 不含、compactions 按追加序、
 /// activeLeaf 不变、revision 推进、overview 取最近）+ camelCase 序列化面；
-/// Q34 备份守卫首次压缩创建可恢复备份、标记存在后不再重复备份。
+/// 备份守卫首次压缩创建可恢复备份、标记存在后不再重复备份。
 #[test]
 fn compaction_serde_projection_and_upgrade_backup() {
     // serde：行字节即契约
@@ -637,7 +637,7 @@ fn compaction_serde_projection_and_upgrade_backup() {
     assert_eq!(count, 2);
     assert_eq!(latest.expect("有最近条目").summary, "合并后摘要");
 
-    // Q34 备份守卫：首次 append_compaction 前建备份（histories/config/index），
+    // 备份守卫：首次 append_compaction 前建备份（histories/config/index），
     // 标记存在后不再重复备份
     let root = store_root_dir(&dir);
     let backups = root.join("backups");

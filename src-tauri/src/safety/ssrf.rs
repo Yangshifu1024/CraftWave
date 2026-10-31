@@ -1,5 +1,5 @@
-//! SSRF 防护共享层（技术设计文档 §9.2 五步防线，12 号票实装；13 号票
-//! web_search 复用本模块的校验与抓取原语）。
+//! SSRF 防护共享层（五步防线；web_fetch/http_request/web_search 复用本模块
+//! 的校验与抓取原语）。
 //!
 //! 名词解释：SSRF（Server-Side Request Forgery，服务端请求伪造）指模型诱导
 //! 宿主应用去请求内网/本机地址（如 `http://169.254.169.254/` 云元数据接口、
@@ -9,7 +9,7 @@
 //! 地址（钉址），不给「校验时看 A 地址、连接时换 B 地址」的空子（DNS
 //! rebinding，指攻击者控制域名让两次解析返回不同地址）。
 //!
-//! 五步防线（§9.2，逐条对应 [`check_url`] / [`SsrfResolver`] / 手动重定向
+//! 五步防线（逐条对应 [`check_url`] / [`SsrfResolver`] / 手动重定向
 //! 循环 / [`MAX_BODY_BYTES`]）：
 //! 1. URL 预校验：仅 http/https；host 为 IP 字面量时立即做地址校验
 //!    （IP 直连不经过 DNS，resolver 拦不到，必须请求前拦）；
@@ -23,10 +23,10 @@
 //! 5. 正文 ≤50MiB：Content-Length 预检 + 流式计数双保险。
 //!
 //! 另有每 host 1s 节流（[`HostThrottle`]，fetch 循环内执行，IP 直连也覆盖）；
-//! SSRF 拒绝统一错误码 `E_SSRF_BLOCKED`（§3.6，message 带命中类别）。
+//! SSRF 拒绝统一错误码 `E_SSRF_BLOCKED`（message 带命中类别）。
 //!
-//! 代理接线收敛点（§9.2 注记）：HTTP 客户端按 `AppConfig.proxy` 构建；19 号
-//! 票 client 重建路径落地前按 config.proxy 直建（每工具调用现建，无全局缓存）。
+//! 代理接线收敛点：HTTP 客户端按 `AppConfig.proxy` 构建（每工具调用现建，
+//! 无全局缓存）。
 
 use std::collections::HashMap;
 use std::error::Error;
@@ -41,23 +41,22 @@ use url::Url;
 use crate::providers::types::ProxyConfig;
 use crate::util::errors::ToolError;
 
-/// 正文大小上限：50MiB（§8.3 web_fetch 行 / §9.2 第 5 步）。
+/// 正文大小上限：50MiB（web_fetch 正文下载第 5 步防线）。
 pub const MAX_BODY_BYTES: usize = 50 * 1024 * 1024;
 
-/// 重定向跳数上限（§9.2 第 4 步：≤10 跳）。
+/// 重定向跳数上限（≤10 跳）。
 pub const MAX_REDIRECTS: usize = 10;
 
-/// 每 host 最小访问间隔（§9.2：每 host 1s 节流）。
+/// 每 host 最小访问间隔（每 host 1s 节流）。
 pub const HOST_THROTTLE_INTERVAL: Duration = Duration::from_secs(1);
 
-/// 连接超时（防御性兜底：不给 run 留无限挂死的可能；非票面字段，
-/// 决议记录说明）。
+/// 连接超时（防御性兜底：不给 run 留无限挂死的可能）。
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// 单请求总超时（含 body 下载；同上防御性兜底）。
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
-// ---- SSRF 拒绝类别（§3.6：message 带命中类别）----
+// ---- SSRF 拒绝类别（message 带命中类别）----
 
 /// SSRF 拒绝类别：错误码统一 `E_SSRF_BLOCKED`，类别由本枚举区分，
 /// [`SsrfCategory::label`] 给出中文类别名（进错误 message）。
@@ -83,7 +82,7 @@ pub enum SsrfCategory {
     HttpsDowngrade,
 }
 
-// SsrfCategory 的中文类别名（错误 message 用，§3.6「错误类别可读」）。
+// SsrfCategory 的中文类别名（错误 message 用，错误类别可读）。
 impl SsrfCategory {
     pub fn label(self) -> &'static str {
         match self {
@@ -134,13 +133,13 @@ impl fmt::Display for SsrfError {
 
 impl Error for SsrfError {}
 
-// ---- 地址判定（§9.2 第 2 步「全地址校验」的判定核）----
+// ---- 地址判定（第 2 步「全地址校验」的判定核）----
 
-/// SSRF 策略：`allow_private_network` 为 §3.2 network 组的设置例外——
+/// SSRF 策略：`allow_private_network` 为 network 组设置的例外——
 /// true 时跳过全部地址段判定（本地开发/内网部署场景；缺省 false 最保守）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SsrfPolicy {
-    /// 允许访问私网/回环/链路本地/CGNAT/ULA 地址（§3.2 network.allowPrivateNetwork）。
+    /// 允许访问私网/回环/链路本地/CGNAT/ULA 地址（network.allowPrivateNetwork）。
     pub allow_private_network: bool,
 }
 
@@ -273,7 +272,7 @@ pub fn check_ip(ip: IpAddr, policy: SsrfPolicy) -> Result<(), SsrfCategory> {
     }
 }
 
-/// URL 预校验（§9.2 第 1 步 + IP 字面量拦截）：仅 http/https；host 为
+/// URL 预校验（第 1 步防线 + IP 字面量拦截）：仅 http/https；host 为
 /// IP 字面量时立即做地址判定（IP 直连不触发 DNS，resolver 拦不到）。
 /// `detail` 供错误 message 拼装上下文（如「重定向目标」）。
 pub fn check_url(url: &Url, policy: SsrfPolicy, context: &str) -> Result<(), ToolError> {
@@ -313,7 +312,7 @@ pub fn check_url(url: &Url, policy: SsrfPolicy, context: &str) -> Result<(), Too
 }
 
 /// 批量地址校验（域名解析结果的全部地址逐一判定，任一命中即拒）。
-/// 独立成函数供测试与 13 号票复用（不依赖 reqwest）。
+/// 独立成函数供测试与各网络工具复用（不依赖 reqwest）。
 pub fn check_all_addresses(
     addrs: impl IntoIterator<Item = IpAddr>,
     policy: SsrfPolicy,
@@ -325,12 +324,12 @@ pub fn check_all_addresses(
     Ok(())
 }
 
-// ---- 每 host 节流（§9.2：每 host 1s）----
+// ---- 每 host 节流（每 host 1s）----
 
 /// 每 host 最小访问间隔的进程级节流器：`Mutex<HashMap<host, Instant>>` 起步
-/// （票面定案：够用不引库）。`reserve` 返回需要等待的时长（None = 立即可发），
-/// 等待动作由调用方执行——纯判定与等待分离，节流逻辑可用假时钟单测
-/// （票面测试要求「mock clock」）。
+/// （够用不引库）。`reserve` 返回需要等待的时长（None = 立即可发），
+/// 等待动作由调用方执行——纯判定与等待分离，节流逻辑可用假时钟
+/// （mock clock）单测。
 ///
 /// 连续调用逐次排队：第 2 次等 1 个间隔、第 3 次等 2 个间隔……登记值为
 /// 「上次放行时间 + 间隔」而非当前时刻，保证突发连发时请求间距恒 ≥ 间隔。
@@ -349,7 +348,7 @@ impl HostThrottle {
         }
     }
 
-    /// 生产节流器：每 host 1s（§9.2）。
+    /// 生产节流器：每 host 1s。
     pub fn production() -> Self {
         Self::new(HOST_THROTTLE_INTERVAL)
     }
@@ -396,11 +395,11 @@ impl HostThrottle {
     }
 }
 
-// ---- DNS 解析器（§9.2 第 2/3 步：全地址校验 + 钉址）----
+// ---- DNS 解析器（第 2/3 步防线：全地址校验 + 钉址）----
 
 /// SSRF 校验型 DNS 解析器：替换 reqwest 的默认解析器，每次解析先做全地址
 /// 校验，只把已校验地址交给连接层——校验与连接同源即「钉址」（防 DNS
-/// rebinding，§9.2 第 3 步）。域名每跳重定向自动重走本 resolver。
+/// rebinding，第 3 步防线）。域名每跳重定向自动重走本 resolver。
 pub struct SsrfResolver {
     policy: SsrfPolicy,
 }
@@ -434,20 +433,19 @@ impl Resolve for SsrfResolver {
     }
 }
 
-// ---- HTTP 客户端构建（代理接线收敛点，§9.2 注记）----
+// ---- HTTP 客户端构建（代理接线收敛点）----
 
 /// 按代理配置构建 SSRF 客户端：resolver 钉址 + 关自动重定向（fetch 手动
 /// 循环）+ 超时兜底 + UA。`proxy` 为 `AppConfig.proxy`（None = 未配置）。
-/// 代理段统一经 `providers::http::apply_proxy`（19 号票收敛点：三模式
-/// 装配单一事实源——本函数此前对 system 模式只有"reqwest 默认行为"的
-/// 字面表达，与模型请求侧语义对齐由共享装配函数保证）。
+/// 代理段统一经 `providers::http::apply_proxy`（三模式装配单一事实源，
+/// 与模型请求侧语义对齐由共享装配函数保证）。
 pub fn build_client(
     policy: SsrfPolicy,
     proxy: Option<&ProxyConfig>,
 ) -> Result<reqwest::Client, ToolError> {
     let builder = reqwest::Client::builder()
         .dns_resolver(SsrfResolver::new(policy))
-        // 重定向由 fetch 手动循环逐跳校验（§9.2 第 4 步），关闭自动重定向
+        // 重定向由 fetch 手动循环逐跳校验（第 4 步防线），关闭自动重定向
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(CONNECT_TIMEOUT)
         .timeout(REQUEST_TIMEOUT)
@@ -461,9 +459,9 @@ pub fn build_client(
         .map_err(|e| ToolError::new("E_INTERNAL", format!("HTTP 客户端构建失败：{e}")))
 }
 
-// ---- 手动重定向的抓取循环（§9.2 第 4/5 步）----
+// ---- 手动重定向的抓取循环（第 4/5 步防线）----
 
-/// 跨源时需要剥除的敏感头（§9.2 第 4 步：Authorization/Cookie 等不跨源携带；
+/// 跨源时需要剥除的敏感头（第 4 步防线：Authorization/Cookie 等不跨源携带；
 /// 保险起见对 http_request 用户自定义头同样生效——凭据只属于发源站点）。
 const SENSITIVE_HEADERS: [&str; 5] = [
     "authorization",
@@ -473,7 +471,7 @@ const SENSITIVE_HEADERS: [&str; 5] = [
     "www-authenticate",
 ];
 
-/// 重定向跳间判定（§9.2 第 4 步，纯函数供向量单测）：HTTPS 不降级
+/// 重定向跳间判定（第 4 步防线，纯函数供向量单测）：HTTPS 不降级
 /// （https→http 拒）；跨源（scheme://host:port 变化）剥敏感头。
 /// 返回剥头后的请求头（同源原样返回语义等价）。
 pub fn next_hop_allowed(
@@ -596,7 +594,7 @@ pub async fn fetch(
                     let next = url.join(&location).map_err(|e| {
                         ToolError::new("E_INTERNAL", format!("Location 解析失败（{location}）：{e}"))
                     })?;
-                    // 跳间判定（§9.2 第 4 步）：HTTPS 不降级 + 跨源剥敏感头
+                    // 跳间判定（第 4 步防线）：HTTPS 不降级 + 跨源剥敏感头
                     // （纯函数抽离，向量单测覆盖降级与剥头）
                     current.headers = next_hop_allowed(&url, &next, &current.headers)?;
                     // 浏览器语义：301/302/303 对非 GET/HEAD 转 GET 并剥 body；
@@ -670,8 +668,7 @@ fn origin_of(url: &Url) -> String {
 }
 
 /// 把 reqwest 错误映射为工具错误：source 链里找到 [`SsrfError`] →
-/// E_SSRF_BLOCKED（带类别）；其余网络失败 → E_INTERNAL 兜底（§3.6 无
-/// 通用网络码，决议记录说明）。
+/// E_SSRF_BLOCKED（带类别）；其余网络失败 → E_INTERNAL 兜底（无通用网络码）。
 pub fn classify_reqwest_error(err: &reqwest::Error) -> ToolError {
     let mut source: Option<&(dyn Error + 'static)> = Some(err);
     while let Some(s) = source {

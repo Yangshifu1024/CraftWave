@@ -1,4 +1,4 @@
-//! `grep` 工具（ReadOnly，§8.3）：内嵌 ripgrep 生态
+//! `grep` 工具（ReadOnly）：内嵌 ripgrep 生态
 //! （grep-regex + grep-searcher + ignore），命中行上下文 ±0，maxResults 截断。
 
 use serde::Deserialize;
@@ -8,7 +8,7 @@ use crate::safety::tier::Capability;
 use crate::tools::{ToolAnnotations, ToolOutcome, ToolSpec, ToolsContext};
 use crate::util::errors::ToolError;
 
-/// maxResults 缺省值（§8.3 未定默认，实现自定，票 Answer 已记录）。
+/// maxResults 缺省值（规格未定默认，实现自定）。
 pub const DEFAULT_MAX_RESULTS: usize = 100;
 /// maxResults 硬上限。
 pub const MAX_RESULTS_CAP: usize = 1000;

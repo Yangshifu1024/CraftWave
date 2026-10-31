@@ -1,8 +1,8 @@
-//! 用量统计域命令（§3.3 #52 `stats_token` / #59k `session_usage`，20 号票）。
+//! 用量统计域命令（`stats_token` / `session_usage`）。
 //!
-//! - `stats_token`：按日/按模型聚合查询（FR-02-13/FR-15-02 面板数据源）；
-//!   优先 `stats_cache`（§7.8，缺日回填），库降级直读 `stats/*.json` 真相面。
-//! - `session_usage`：会话累计四口径查询（Q37 恢复读面）——明细文件缺失时
+//! - `stats_token`：按日/按模型聚合查询（面板数据源）；
+//!   优先 `stats_cache`（缺日回填），库降级直读 `stats/*.json` 真相面。
+//! - `session_usage`：会话累计四口径查询（恢复读面）——明细文件缺失时
 //!   回退 index.json 的 totalTokens 标量，不伪造旧记录的四口径拆分。
 
 use serde::{Deserialize, Serialize};
@@ -13,7 +13,7 @@ use crate::host::AppState;
 use crate::host::IpcError;
 use crate::util::errors::E_INVALID_ARG;
 
-/// `stats_token` 的范围参数（§3.3 #52；闭区间本地日期，缺省 = 全部保留期）。
+/// `stats_token` 的范围参数（闭区间本地日期，缺省 = 全部保留期）。
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -22,7 +22,7 @@ pub struct StatsRange {
     pub to: String,
 }
 
-/// `stats_token` 参数契约（§3.3 #52）。
+/// `stats_token` 参数契约。
 #[derive(Debug, Clone, Default, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -32,7 +32,7 @@ pub struct StatsTokenArgs {
     pub range: Option<StatsRange>,
 }
 
-/// byDay 元素（§3.3 #52 字段级）：单日四口径合计（total = 四口径之和）。
+/// byDay 元素（字段级）：单日四口径合计（total = 四口径之和）。
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -45,8 +45,8 @@ pub struct DayUsage {
     pub total: u64,
 }
 
-/// byModel 元素（§3.3 #52 字段级）：模型维度聚合——modelName 为调用时
-/// 显示名快照；runs 仅主 run（含队列自动发起）计入（Q40）。
+/// byModel 元素（字段级）：模型维度聚合——modelName 为调用时
+/// 显示名快照；runs 仅主 run（含队列自动发起）计入。
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -61,7 +61,7 @@ pub struct ModelUsage {
     pub runs: u64,
 }
 
-/// total 元素（§3.3 #52 字段级）：范围合计（含 runs 合计）。
+/// total 元素（字段级）：范围合计（含 runs 合计）。
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -74,7 +74,7 @@ pub struct TotalUsage {
     pub runs: u64,
 }
 
-/// `stats_token` 返回契约（§3.3 #52）。
+/// `stats_token` 返回契约。
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -179,7 +179,7 @@ pub fn stats_token_core(
     })
 }
 
-/// 用量统计查询（§3.3 #52，FR-02-13）：按日/按模型聚合（四口径 + 缓存
+/// 用量统计查询：按日/按模型聚合（四口径 + 缓存
 /// 命中率的前置数字 + 主 run 次数），范围缺省 = 全部保留期。
 #[tauri::command]
 pub(crate) async fn stats_token(
@@ -191,7 +191,7 @@ pub(crate) async fn stats_token(
     stats_token_core(&app, &args, &crate::host::usage::local_today())
 }
 
-/// `session_usage` 返回契约（§3.3 #59k）：usage = 会话累计四口径（主/子/
+/// `session_usage` 返回契约：usage = 会话累计四口径（主/子/
 /// 辅助总和）；legacyTotalTokens = 旧版标量回落（明细文件缺失且 index.json
 /// 有历史总量时带出，前端合计行回落显示——不伪造四口径拆分）。
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
@@ -205,7 +205,7 @@ pub struct SessionUsageResult {
     pub legacy_total_tokens: Option<u64>,
 }
 
-/// `session_usage` 参数契约（§3.3 #59k）。
+/// `session_usage` 参数契约。
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -214,8 +214,8 @@ pub struct SessionUsageArgs {
 }
 
 /// `session_usage` 主体（公开给集成测试）：内存表（活跃会话实时面）>
-/// 明细文件 sessionTotal（Q37 权威面）> index.json totalTokens 标量回落
-/// > 全零。已删除会话查不到任何面 → 全零（Q43：明细不可再查）。
+/// 明细文件 sessionTotal（权威面）> index.json totalTokens 标量回落
+/// > 全零。已删除会话查不到任何面 → 全零（明细不可再查）。
 pub fn session_usage_core(app: &AppState, session_id: &str) -> SessionUsageResult {
     // ① 内存表优先（活跃会话：帧面增量已实时推进，与明细文件同一落账双写）
     let in_memory = *app
@@ -231,7 +231,7 @@ pub fn session_usage_core(app: &AppState, session_id: &str) -> SessionUsageResul
             legacy_total_tokens: None,
         };
     }
-    // ② 明细文件（Q37 权威恢复面）
+    // ② 明细文件（权威恢复面）
     let detail = app.ledger.detail.load(session_id);
     if detail.session_total != UsageTotal::default() {
         return SessionUsageResult {
@@ -254,7 +254,7 @@ pub fn session_usage_core(app: &AppState, session_id: &str) -> SessionUsageResul
     }
 }
 
-/// 会话累计用量查询（§3.3 #59k，Q37 恢复读面）：前端会话打开时拉取回填
+/// 会话累计用量查询（恢复读面）：前端会话打开时拉取回填
 /// runMetrics.sessionUsage（tokens:update 同款 replace 语义），四口径与
 /// 缓存命中率跨重启恢复。
 #[tauri::command]

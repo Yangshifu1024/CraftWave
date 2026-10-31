@@ -1,5 +1,5 @@
-//! storage/index_db.rs 的单元测试（20 号票）：建库校验、损坏/版本不符
-//! 重建、写穿 upsert、范围查询与全量回填、降级路径（§7.8 三铁律）。
+//! storage/index_db.rs 的单元测试：建库校验、损坏/版本不符
+//! 重建、写穿 upsert、范围查询与全量回填、降级路径（三铁律）。
 //! 全生命周期合并为单个 #[test]，断言消息带阶段标识。
 
 use std::fs;
@@ -57,7 +57,7 @@ fn index_db_lifecycle() {
             |r| r.get(0),
         )
         .expect("runs 列存在");
-    assert_eq!(runs_type, "INTEGER", "runs 列存在（20 号票回写）");
+    assert_eq!(runs_type, "INTEGER", "runs 列存在（回写）");
     drop(db);
 
     // 损坏重建：垃圾字节库被丢弃，重建后可写可查

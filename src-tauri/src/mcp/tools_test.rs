@@ -1,15 +1,15 @@
-//! mcp/tools.rs 的单测（08 号票）：工具名归一（FR-08-06 合法集）、碰撞
-//! 后缀、反向映射还原、glob 过滤、Q44 身份三元组。
+//! mcp/tools.rs 的单测：工具名归一（合法集）、碰撞
+//! 后缀、反向映射还原、glob 过滤、 身份三元组。
 
 use super::config::{McpScope, McpServerConfig};
 use super::tools::{ConnKey, McpToolRegistry, normalize_tool_name};
 use crate::tools::ToolOrigin;
 
-// 断言：归一化合法集 [a-z_][a-z0-9_]{0,63}（§8.1）——大写小写化、非法
+// 断言：归一化合法集 [a-z_][a-z0-9_]{0,63}——大写小写化、非法
 // 字符替换 _、首字符数字加前缀、超长截断、空名兜底；同 server 内注册名
 // 与静态段/其他 server 的碰撞：`__2` 序号后缀 + 反向映射还原（归一名 →
 // (连接键, 原名)，跨 server 不串）；重复同步（tools/list_changed 热更新）
-// 保留既有归一名不抖动；deny glob 过滤优先于 allow；能力标注与 Q44 身份
+// 保留既有归一名不抖动；deny glob 过滤优先于 allow；能力标注与 身份
 // 三元组（read_only 配置 → ReadOnly，未声明 → Network；fingerprint/原名/
 // schema 哈希/timeout 随身份带出）；断开移除后动态段即时收窄。
 #[test]
@@ -93,7 +93,7 @@ fn normalize_collision_identity_and_lifecycle() {
     );
     assert!(registry.identity("echo").is_some(), "重同步保留自己占用名");
 
-    // 能力标注与 Q44 身份 + glob 过滤。
+    // 能力标注与 身份 + glob 过滤。
     let key = ConnKey {
         scope: McpScope::Global,
         project_id: None,

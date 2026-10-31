@@ -1,4 +1,4 @@
-//! 会话偏好存取测试（18 号票）：roundtrip / 损坏兜底 / 缺失默认 / 原子写。
+//! 会话偏好存取测试：roundtrip / 损坏兜底 / 缺失默认 / 原子写。
 //! 全链路合并为单个 #[test]，断言消息带阶段标识。
 
 use std::fs;
@@ -14,9 +14,9 @@ fn temp_root(tag: &str) -> tempfile::TempDir {
         .expect("建临时目录失败")
 }
 
-// 断言：会话偏好全链路——完整 roundtrip（文件落在 §7.1 布局锚点、原样读回）；
+// 断言：会话偏好全链路——完整 roundtrip（文件落在 布局锚点、原样读回）；
 // 部分字段文件形态（未设置键整段省略）；文件缺失 → 空偏好不报错；损坏文件 →
-// 空偏好兜底且再次写入自愈（票面定案：不阻塞会话加载）；非法档位值（反序列化
+// 空偏好兜底且再次写入自愈（定案：不阻塞会话加载）；非法档位值（反序列化
 // 失败）→ 空偏好兜底（宁可丢偏好不炸会话）。
 #[test]
 fn prefs_roundtrip_and_fallbacks() {
@@ -27,7 +27,7 @@ fn prefs_roundtrip_and_fallbacks() {
         thinking: Some(ThinkingLevel::High),
     };
     save_prefs(root.path(), "sess-1", &prefs).expect("写偏好失败");
-    // 文件落在 sessions/<sid>.prefs.json（§7.1 布局锚点）
+    // 文件落在 sessions/<sid>.prefs.json（布局锚点）
     assert!(prefs_path(root.path(), "sess-1").is_file());
     assert_eq!(load_prefs(root.path(), "sess-1"), prefs, "原样读回");
 

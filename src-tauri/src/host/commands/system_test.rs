@@ -1,4 +1,4 @@
-//! open_dir 白名单校验的表驱动测试（03 号票，FR-14-07，§3.3 #3）。
+//! open_dir 白名单校验的表驱动测试。
 //!
 //! 只测校验面 [`resolve_open_dir`]（headless、无系统副作用）：合法目录放行、
 //! 白名单外拒绝（E_PATH_OUTSIDE_ROOTS）、非目录/不存在拒绝（E_NOT_FOUND）、

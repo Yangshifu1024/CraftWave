@@ -1,5 +1,5 @@
-//! mcp/commands.rs 的 headless 测试（08 号票）：TOFU 三路径（allow_once/
-//! remember/deny）与信任决策连带撤销工具许可（Q44）。
+//! mcp/commands.rs 的 headless 测试：TOFU 三路径（allow_once/
+//! remember/deny）与信任决策连带撤销工具许可。
 
 use std::sync::Arc;
 
@@ -67,11 +67,11 @@ async fn answer_mcp_trust(app: Arc<AppState>, events: Arc<RecordingEventSink>, o
 }
 
 // 断言（TOFU 指纹信任全链）：mcp_connect 首连弹出 mcpTrust 询问、载荷
-// 字段逐字（§3.2：server/transport/16 位指纹/commandOrUrl）——deny →
+// 字段逐字（server/transport/16 位指纹/commandOrUrl）——deny →
 // E_CANCELLED 不连接且不产生信任记录；allow_once → 连接 Ready、信任表
 // 无记录（下次再问）；remember → trust/mcp.json 落盘，同指纹免问重连；
-// mcp_set_launch_trust 的 revoke 连带撤销该服务器全部工具许可（Q44：
-// 服务器身份不可信 → 许可不延续）。
+// mcp_set_launch_trust 的 revoke 连带撤销该服务器全部工具许可
+// （服务器身份不可信 → 许可不延续）。
 #[tokio::test(flavor = "current_thread")]
 async fn tofu_three_paths_and_revoke_cascade() {
     // 进程级注册表单例的互斥面（与 pool_test 共享同一把锁）
@@ -97,7 +97,7 @@ async fn tofu_three_paths_and_revoke_cascade() {
             .any(|p| p["answered"] == true),
         "ask:closed 在案"
     );
-    // 载荷字段逐字（§3.2 mcpTrust：server/transport/fingerprint/commandOrUrl）
+    // 载荷字段逐字（mcpTrust：server/transport/fingerprint/commandOrUrl）
     let opened = events
         .payloads_of(keys::ASK_OPENED)
         .into_iter()
@@ -176,7 +176,7 @@ async fn tofu_three_paths_and_revoke_cascade() {
             .entries()
             .iter()
             .any(|e| e.decision == "remember"),
-        "remember 写 trust/mcp.json（§7.7 trust 域）"
+        "remember 写 trust/mcp.json（trust 域）"
     );
     // 第二次连接：无询问（信任命中），直接到 Ready
     mcp_disconnect_core(&app, McpScope::Global, "tofu-remember").expect("断开");
@@ -192,7 +192,7 @@ async fn tofu_three_paths_and_revoke_cascade() {
     );
     mcp_disconnect_core(&app, McpScope::Global, "tofu-remember").expect("断开");
 
-    // —— set_launch_trust：revoke 连带撤销该服务器全部工具许可（Q44）——
+    // —— set_launch_trust：revoke 连带撤销该服务器全部工具许可——
     let (app, _dir, _events) = headless_app();
     app.mcp
         .licenses

@@ -1,10 +1,10 @@
-//! 写入子代理的独立 worktree 管理（ADR-0001，技术设计文档 §5.9 Q7–Q12，10 号票）。
+//! 写入子代理的独立 worktree 管理（ADR-0001）。
 //!
 //! 名词解释：worktree（工作树）是 git 的原生能力——同一个仓库可以同时检出
 //! 多个工作目录，各自独立修改互不影响。写入子代理在自己的 worktree 里改
 //! 文件、跑局部测试，与主工作区（用户正在用的目录）天然隔离。
 //!
-//! 生命周期（Q9/Q10/Q11）：
+//! 生命周期：
 //! - **派发起点**：子代理获得派发时主工作区的当前文件状态——以 HEAD 提交为
 //!   基线建 worktree，再把主工作区相对 HEAD 的全部差异（已暂存/未暂存修改
 //!   与未被忽略的新文件；不含被忽略文件）以文件为单位复制进 worktree。
@@ -20,7 +20,7 @@
 //!   abandoned），重启不自动续跑、不自动汇回；成功汇回并验证后才清理
 //!   （prune + 删目录 + 删 lease）。
 //!
-//! 依赖准备（Q12）：子代理在 worktree 内按项目现有方式安装依赖、生成构建
+//! 依赖准备：子代理在 worktree 内按项目现有方式安装依赖、生成构建
 //! 产物；宿主不批量复制主工作区被忽略的文件（node_modules/target 等由模型
 //! 按需在 worktree 内重建），缺失本地配置由模型在汇报中交回主代理协调。
 
@@ -32,7 +32,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::safety::safe_join::PathGuard;
 
-/// worktree 存储根（§7.7 生命周期目录）：`<数据目录>/worktrees/`。
+/// worktree 存储根（生命周期目录）：`<数据目录>/worktrees/`。
 pub fn worktrees_dir(data_root: &Path) -> PathBuf {
     data_root.join("worktrees")
 }
@@ -47,7 +47,7 @@ pub fn worktree_root(data_root: &Path, sub_id: &str) -> PathBuf {
     worktrees_dir(data_root).join(sub_id)
 }
 
-/// lease 的生命周期状态（§7.7：恢复索引用；重启后仍可按 lease 找回成果）。
+/// lease 的生命周期状态（恢复索引用；重启后仍可按 lease 找回成果）。
 pub const LEASE_ACTIVE: &str = "active";
 /// 已成功汇回（含验证）并清理前的终态标注（清理后 lease 文件一并删除）。
 pub const LEASE_RECOVERED: &str = "recovered";
@@ -70,7 +70,7 @@ fn wt_err(context: impl Into<String>, e: impl std::fmt::Display) -> WorktreeErro
     WorktreeError(format!("{}：{e}", context.into()))
 }
 
-/// 派发起点租约（§7.7 恢复索引）：记录 worktree 位置、基线提交与起点差量
+/// 派发起点租约（恢复索引）：记录 worktree 位置、基线提交与起点差量
 /// 快照（相对 HEAD 的路径 → HEAD blob 指纹；新增文件无基线记空串）。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -99,7 +99,7 @@ pub struct WorktreeLease {
     pub outcome: Option<String>,
 }
 
-/// 差量回收报告（§5.9 Q10）：applied=直接应用的文件；deleted=子代理删除且
+/// 差量回收报告：applied=直接应用的文件；deleted=子代理删除且
 /// 主工作区未动、已同步删除的文件；conflicts=冲突文件清单（子版本已写到
 /// 冲突副本路径，主代理负责解决并验证）。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -135,7 +135,7 @@ pub fn load_lease(data_root: &Path, sub_id: &str) -> Result<Option<WorktreeLease
         .map_err(|e| wt_err("worktree lease 解析失败", e))
 }
 
-/// 写 lease 元数据（原子写，§7.4）。
+/// 写 lease 元数据（原子写）。
 pub fn save_lease(lease: &WorktreeLease, data_root: &Path) -> Result<(), WorktreeError> {
     let path = lease_path(data_root, &lease.sub_id);
     let value = serde_json::to_vec_pretty(lease).map_err(|e| wt_err("lease 序列化失败", e))?;
@@ -144,7 +144,7 @@ pub fn save_lease(lease: &WorktreeLease, data_root: &Path) -> Result<(), Worktre
 }
 
 /// 列出数据目录下全部 lease（重启后的恢复索引：保留的 worktree 成果据此
-/// 可找回；不自动续跑、不自动汇回——Q11）。
+/// 可找回；不自动续跑、不自动汇回）。
 pub fn list_leases(data_root: &Path) -> Vec<WorktreeLease> {
     let mut out = Vec::new();
     let Ok(entries) = std::fs::read_dir(worktrees_dir(data_root)) else {
@@ -190,7 +190,7 @@ fn worktree_name(sub_id: &str) -> String {
     )
 }
 
-/// 创建派发快照（Q9，§5.9）：返回 lease。失败直接报错——不静默退回旧 HEAD。
+/// 创建派发快照：返回 lease。失败直接报错——不静默退回旧 HEAD。
 ///
 /// 步骤：HEAD 基线 worktree → checkout HEAD 内容 → 复制主工作区相对 HEAD
 /// 的全部差异（含未忽略新文件、含删除差异）→ 起点 blob 指纹快照 → lease
@@ -265,7 +265,7 @@ pub fn create_lease(
         };
         let current = project_root.join(&rel);
         let status = entry.status();
-        // 冲突判定基准（Q9）= 派发时主工作区内容的指纹：回收时主工作区
+        // 冲突判定基准 = 派发时主工作区内容的指纹：回收时主工作区
         // 仍等于起点内容 → 直接应用子代理版本；否则视为冲突保留双方。
         // 起点已删除/不存在的文件记空串（基线 = 不存在）。
         let base_hex = if status.is_wt_deleted() || status.is_index_deleted() {
@@ -329,7 +329,7 @@ fn join_repo_prefix(prefix: &str, rel: &str) -> String {
     }
 }
 
-/// 差量回收（Q10，§5.9）：把 worktree 相对起点的改动汇回主工作区。
+/// 差量回收：把 worktree 相对起点的改动汇回主工作区。
 /// 冲突保留双方：主工作区文件不动，子代理版本写到 `*.cw-conflict-<sub8>`。
 /// 不自动 commit/push、不改暂存状态（直接写工作区文件）。
 pub fn recover(lease: &WorktreeLease) -> Result<RecoveryReport, WorktreeError> {
@@ -361,7 +361,7 @@ pub fn recover(lease: &WorktreeLease) -> Result<RecoveryReport, WorktreeError> {
         };
         let status = entry.status();
         let target_in_wt = wt_path.join(&rel);
-        // 冲突判定基准（Q9）：起点内容指纹。快照有记录 → 用快照值（空串 =
+        // 冲突判定基准：起点内容指纹。快照有记录 → 用快照值（空串 =
         // 起点不存在）；快照无记录（起点相对 HEAD 无差异的文件）→ 基线 =
         // HEAD 内容（worktree 的 HEAD 即基线提交）。
         let rel_to_repo = join_repo_prefix(&lease.repo_rel_prefix, &rel);

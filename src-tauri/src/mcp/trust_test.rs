@@ -1,5 +1,5 @@
-//! mcp/trust.rs 的单测（08 号票）：TOFU 指纹计算与稳定性/敏感性、信任存
-//! 储的 decide/is_trusted、Q44 许可三元组命中与撤销。
+//! mcp/trust.rs 的单测：TOFU 指纹计算与稳定性/敏感性、信任存
+//! 储的 decide/is_trusted、 许可三元组命中与撤销。
 
 use super::config::McpScope;
 use super::trust::{
@@ -9,10 +9,10 @@ use super::trust::{
 use crate::mcp::config::McpScope as Scope;
 
 // 断言：TOFU 指纹稳定（同输入同指纹）且字段级敏感（config 内容/名称/
-// 路径/作用域任一变化 → 指纹变化，§9.7 元组逐字段），指纹是 64 位 hex；
-// schema 哈希同 schema 同哈希、输入 schema 变化 → 哈希变化（Q44：不继承
+// 路径/作用域任一变化 → 指纹变化， 元组逐字段），指纹是 64 位 hex；
+// schema 哈希同 schema 同哈希、输入 schema 变化 → 哈希变化（不继承
 // 旧免审批许可的判定输入）；信任存储 remember 后同指纹免问、revoke 后
-// 重新询问（状态机 Pending/Trusted/Revoked）；Q44 许可三元组全等命中、
+// 重新询问（状态机 Pending/Trusted/Revoked）； 许可三元组全等命中、
 // 任一元变化不命中、revoke_server 按指纹清全部工具许可。
 #[test]
 fn fingerprint_trust_and_license_semantics() {
@@ -38,8 +38,8 @@ fn fingerprint_trust_and_license_semantics() {
     s.server_name = "fetch2".into();
     assert_ne!(launch_fingerprint(&s), f1);
 
-    // canonical 路径变化（worktree 副本路径不同 → 指纹变；归一身份随
-    // 24 号票收敛，本票按 §9.7 字面元组）
+    // canonical 路径变化（worktree 副本路径不同 → 指纹变；归一身份按
+    // 字面元组参与哈希）
     let mut s = base.clone();
     s.canonical_config_path = "/worktree/.craftwave/mcp.json".into();
     assert_ne!(launch_fingerprint(&s), f1);
@@ -77,7 +77,7 @@ fn fingerprint_trust_and_license_semantics() {
     assert!(!store.is_trusted("fp1"));
     assert_eq!(store.status_of("fp1"), super::trust::TrustStatus::Revoked);
 
-    // Q44 许可三元组：全等命中；任一元变化不命中；revoke_server 按指纹
+    // 许可三元组：全等命中；任一元变化不命中；revoke_server 按指纹
     // 清全部工具许可。
     let dir = tempfile::tempdir().expect("临时目录");
     let store = ToolLicenseStore::new(dir.path());
@@ -87,7 +87,7 @@ fn fingerprint_trust_and_license_semantics() {
     assert!(store.is_licensed("srv_fp", "orig_tool", "schema_hash_1"));
     // 工具名变化（碰撞后缀漂移的展示名）不命中
     assert!(!store.is_licensed("srv_fp", "orig_tool__2", "schema_hash_1"));
-    // schema 变化（Q44：输入 schema 变化不继承旧许可）不命中
+    // schema 变化（输入 schema 变化不继承旧许可）不命中
     assert!(!store.is_licensed("srv_fp", "orig_tool", "schema_hash_2"));
     // 服务器身份变化（配置指纹变）不命中
     assert!(!store.is_licensed("srv_fp2", "orig_tool", "schema_hash_1"));

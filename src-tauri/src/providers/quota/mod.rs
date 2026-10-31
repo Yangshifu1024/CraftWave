@@ -1,4 +1,4 @@
-//! 订阅/余额适配器（FR-02-15，§11.5，21 号票）：Inspector 配额卡的数据面。
+//! 订阅/余额适配器：Inspector 配额卡的数据面。
 //!
 //! 分层（与 CodeWave 同构，凭据链按 CraftWave v2.5 口径改写）：
 //! - 本模块承载**数据模型 + 主机路由 + 行态分类 + 快照主流程**；
@@ -7,17 +7,17 @@
 //!   单测无网络无时钟）；
 //! - 密钥源 = config.json `ProviderConfig.apiKey`（v2.5 口径：Key 明文随
 //!   0600 配置落盘，无 keyring——CodeWave 的 CredentialStore 链在移植时
-//!   去除，`invalid` 态随之失去稳定触发路径，保留为枚举位，§11.5 注记）；
+//!   去除，`invalid` 态随之失去稳定触发路径，保留为枚举位）；
 //! - 请求走调用方传入的 `reqwest::Client`（生产 = 代理工厂客户端，
 //!   providers/http.rs，与模型请求同一条代理语义）。
 //!
-//! 设计约束（FR-02-15 逐条）：
+//! 设计约束（逐条）：
 //! - **按行态返回**（六态 `ok/error/invalid/rejected/no_key/unsupported`）：
 //!   每一家配置过的供应商都有一行，未适配显示占位不报错；
 //! - 单家失败不影响其余：需发请求的全并发（`join_all`），每家独立 10s 超时；
 //! - **失败静默降级**：错误只进行态与 warn 日志（脱敏），不 emit 事件、
 //!   不弹提示，永不阻塞聊天；
-//! - 「曾经成功过」记在全局数据目录 `quota.json`（§7.7 快照，原子写）：
+//! - 「曾经成功过」记在全局数据目录 `quota.json`（快照，原子写）：
 //!   失败行带历史明细与 `lastOkAt`（离线兜底 = 显示最近快照与获取时间）。
 
 pub mod deepseek;
@@ -47,7 +47,7 @@ pub const REASON_NO_ADAPTER: &str = "no_adapter";
 /// `unsupported` 的 reason：baseUrl 为空/空白。
 pub const REASON_EMPTY_BASE_URL: &str = "empty_base_url";
 
-// ---- 数据模型（§3.3 #53 / §7.7 quota.json 行，D14 camelCase）----
+// ---- 数据模型（ quota.json 行， camelCase）----
 
 /// 一行额度事实：百分比行（`usedPercent`/`remainingPercent`）或数值行
 /// （`valueText`，余额类），二者必居其一。
@@ -153,11 +153,11 @@ pub struct QuotaData {
     pub key_source: Option<String>,
 }
 
-/// 供应商行态（六态，§11.5；wire 名 snake_case，前端按此渲染）：
+/// 供应商行态（六态；wire 名 snake_case，前端按此渲染）：
 /// - `Ok` 取数成功；
 /// - `Error` 其它失败（超时/连接失败/5xx/429/解析失败，或曾成功过的 401/403/404）；
 /// - `Invalid` 密钥形态不可用（CodeWave 定义为 keyring 回读失败；CraftWave
-///   无 keyring——**保留枚举位**，当前无稳定触发路径，§11.5 注记）；
+///   无 keyring——**保留枚举位**，当前无稳定触发路径）；
 /// - `Rejected` 401/403/404 且该家从未成功过（密钥/套餐被拒，重试无用）；
 /// - `NoKey` 命中适配器但 apiKey 缺失；
 /// - `Unsupported` 无法查询（主机未命中白名单 / baseUrl 为空）。
@@ -180,12 +180,12 @@ impl QuotaStatus {
     }
 }
 
-/// 一家供应商的额度快照行（§3.3 #53 元素 / §7.7 `quota.json` 行，同构）。
+/// 一家供应商的额度快照行（元素 / `quota.json` 行，同构）。
 ///
-/// `lastOkAt`（票面增补，§7.7 回写）：上次成功取数时刻——区分「刚才还好
+/// `lastOkAt`（回写增补字段）：上次成功取数时刻——区分「刚才还好
 /// 好的」与「从来没成功过」；本轮成功即本轮时刻，失败行带历史值，从未成功
 /// 恒 None。失败行**保留历史 data**（最近一次成功的明细）：断网/失效后
-/// 前端仍能显示最近快照，以 `lastOkAt` 标注数据时点（FR-02-15 离线兜底）。
+/// 前端仍能显示最近快照，以 `lastOkAt` 标注数据时点（离线兜底）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase", default)]
@@ -336,7 +336,7 @@ pub(crate) fn text(value: &serde_json::Value, key: &str) -> Option<String> {
 }
 
 /// 抹除文本里的密钥（长度 >= 8 才替换，避免把普通词替换掉），并压缩空白 +
-/// 截断 160 字符——错误消息绝不回显 Key（FR-02-15 日志脱敏纪律）。
+/// 截断 160 字符——错误消息绝不回显 Key（日志脱敏纪律）。
 pub(crate) fn sanitize(text: &str, secret: &str) -> String {
     let redacted = if secret.len() >= 8 {
         text.replace(secret, "[redacted]")
@@ -421,12 +421,12 @@ struct Pending {
     key: String,
 }
 
-/// 全部配置过的供应商的额度快照（生产入口，§3.3 #53 数据面）：
+/// 全部配置过的供应商的额度快照（生产入口， 数据面）：
 /// 逐家按 baseUrl 主机路由适配器，需发请求的全并发实时拉取，一家失败不
 /// 影响其余；批次末把「有请求结果的行」合并进 `quota.json`（离线兜底面）。
 ///
 /// 结果顺序 = 排序规则（配置序、可查询类在前、unsupported 殿后）；前端
-/// 「当前会话所用 provider 置顶」的展示编排由前端完成（#53 契约无参数）。
+/// 「当前会话所用 provider 置顶」的展示编排由前端完成（契约无参数）。
 pub async fn snapshots(
     config: &crate::providers::types::AppConfig,
     data_dir: &Path,
@@ -506,7 +506,7 @@ pub(crate) async fn snapshots_with(
             ));
             continue;
         };
-        // ③ 只有一枚 Key（§11.2 Key 池 M1 单 Key 直用），入并发队列
+        // ③ 只有一枚 Key（Key 池 M1 单 Key 直用），入并发队列
         pending.push(Pending {
             index,
             kind,
@@ -545,7 +545,7 @@ pub(crate) async fn snapshots_with(
             },
             Err(failure) => {
                 // 失败静默：日志一行（消息已脱敏，不含 Key），不 emit 事件
-                // 不弹提示（FR-02-15「静默降级，不阻塞任何功能」）
+                // 不弹提示（「静默降级，不阻塞任何功能」）
                 eprintln!(
                     "[craftwave] 配额查询失败（provider={}）：{}",
                     provider.id, failure.message

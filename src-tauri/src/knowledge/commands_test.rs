@@ -1,7 +1,7 @@
-//! knowledge/commands.rs 的 headless 测试（09 号票）：#48–51 四命令链路
+//! knowledge/commands.rs 的 headless 测试：–51 四命令链路
 //! （多来源合并 / 启停持久化 / 重扫感知新增 / 正文预览与错误码）+
 //! ensure_skills_snapshot 的信任三路径（deny / allow_session / remember）与
-//! Q21 整体版本重核、内置豁免、拒绝后 E_PROJECT_UNTRUSTED 面。
+//! 整体版本重核、内置豁免、拒绝后 E_PROJECT_UNTRUSTED 面。
 //!
 //! 进程级注册表单例的互斥面：技能测试共享 [`REGISTRY_TEST_LOCK`]
 //! （knowledge/mod.rs 的 cfg(test) 锁），避免并行测试互相改写 global。
@@ -223,12 +223,12 @@ async fn answer_project_trust(
     panic!("projectTrust 询问未出现");
 }
 
-// 断言（信任三路径 + Q21 版本重核，验收第 5 条后端面 + 红线「指纹变更
+// 断言（信任三路径 + 版本重核，验收第 5 条后端面 + 红线「指纹变更
 // 重问」）：deny → 快照 rejected 含该技能、disclosure 零注入（拒绝 → 不
-// 注入清单），询问载荷字段级（§9.8 resourceName/scope/options）；allow_
+// 注入清单），询问载荷字段级（resourceName/scope/options）；allow_
 // session → 本会话内免问（第二次调用不弹询问）且 trust/project.json 不
 // 产生记录；remember → trust/project.json 落盘（跨会话新 run 免问）；
-// Q21：SKILL.md 或随附资源变化（指纹变）→ 记住过的技能重新询问。
+// ：SKILL.md 或随附资源变化（指纹变）→ 记住过的技能重新询问。
 #[tokio::test(flavor = "current_thread")]
 #[allow(clippy::await_holding_lock)]
 async fn trust_three_paths_and_version_recheck() {
@@ -257,7 +257,7 @@ async fn trust_three_paths_and_version_recheck() {
     assert!(run.snapshot.entries.is_empty(), "拒绝后不进清单");
     assert!(run.snapshot.is_rejected("guard"), "拒绝后进 rejected 面");
     assert!(run.disclosure.is_none(), "拒绝 → 不注入清单");
-    // 询问载荷形状（§9.8 字段级）
+    // 询问载荷形状（字段级）
     let opened = events
         .payloads_of(keys::ASK_OPENED)
         .into_iter()
@@ -293,7 +293,7 @@ async fn trust_three_paths_and_version_recheck() {
         "allow_session 同会话免问"
     );
 
-    // —— remember：落盘免问（新会话也免） ——
+    // —— remember：落盘免问（新会话也免）——
     let answer_app = app.clone();
     let answer_events = events.clone();
     tokio::spawn(async move {
@@ -315,7 +315,7 @@ async fn trust_three_paths_and_version_recheck() {
         "remember 后跨会话免问"
     );
 
-    // —— Q21：附属资源变化（指纹变）→ 重新询问 ——
+    // —— ：附属资源变化（指纹变）→ 重新询问 ——
     std::fs::write(
         home.join(".craftwave/skills/guard/attached.sh"),
         b"echo changed",

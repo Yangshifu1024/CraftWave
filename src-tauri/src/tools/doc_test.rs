@@ -1,5 +1,5 @@
-//! 文档读取管线测试（16 号票，§8.9 读侧）：三类格式端到端中文解析、
-//! Markdown 表格结构化、docx 降级路径（#873/#933）、畸形/加密 PDF 的
+//! 文档读取管线测试：三类格式端到端中文解析、
+//! Markdown 表格结构化、docx 降级路径、畸形/加密 PDF 的
 //! catch_unwind 兜底、页码门槛与窗口上限、512KB 截断与续读指引、
 //! 大小/路径守卫，以及 read 工具的扩展名分派。矩阵化合并为
 //! docx / xlsx / pdf / 截断守卫与分派四个用例。
@@ -56,14 +56,14 @@ fn json_bool(v: bool) -> serde_json::Value {
     serde_json::json!(v)
 }
 
-// 断言：docx 解析矩阵（验收①②，#933/#873）——中文 writer 样本端到端
+// 断言：docx 解析矩阵（含首选与降级路径）——中文 writer 样本端到端
 //（段落中文 + 表格结构化 Markdown + 计数）、真实世界导出样本集（macOS
 // textutil/Cocoa 导出）逐一解析且中文不乱码、嵌套表格展平带标注、
 // 非默认命名空间前缀触发降级路径（warnings 只进 detail 不进 data）、
 // 损坏 zip 给结构化错误不 panic、kind:image 对文档扩展名误用拒绝。
 #[test]
 fn docx_parsing_matrix() {
-    // 验收①：中文 docx 端到端解析。
+    // 中文 docx 端到端解析。
     let ws = TestWorkspace::new();
     let path = copy_fixture(&ws, "sample_zh_writer.docx");
     let outcome = run_doc(&ws.ctx(), &doc_args(&path));
@@ -91,7 +91,7 @@ fn docx_parsing_matrix() {
     assert_eq!(data["paragraphCount"], 4);
     assert!(outcome.ui_summary.contains("docx"));
 
-    // 验收①（15 号票回归要求）：真实世界导出样本集逐一解析成功。
+    // 真实世界导出样本集逐一解析成功（回归要求）。
     let ws = TestWorkspace::new();
     for name in [
         "export_report.docx",
@@ -124,7 +124,7 @@ fn docx_parsing_matrix() {
         }
     }
 
-    // 验收①：嵌套表格展平为独立 Markdown 表并带标注行。
+    // 嵌套表格展平为独立 Markdown 表并带标注行。
     let ws = TestWorkspace::new();
     let path = copy_fixture(&ws, "sample_nested_table.docx");
     let outcome = run_doc(&ws.ctx(), &doc_args(&path));
@@ -145,12 +145,15 @@ fn docx_parsing_matrix() {
     );
     assert_eq!(data["tableCount"], 2);
 
-    // 验收②：#933 形态（非默认命名空间前缀）触发降级路径，warnings 仅进
-    // detail 不进 data（§8.2）。
+    // 非默认命名空间前缀形态触发降级路径，warnings 仅进
+    // detail 不进 data。
     let ws = TestWorkspace::new();
     let path = copy_fixture(&ws, "sample_ns_prefix.docx");
     let outcome = run_doc(&ws.ctx(), &doc_args(&path));
-    assert!(outcome.ok, "#933 形态应经降级路径成功解析：{outcome:?}");
+    assert!(
+        outcome.ok,
+        "命名空间前缀形态应经降级路径成功解析：{outcome:?}"
+    );
     let data = outcome.data.expect("data");
     let content = data["content"].as_str().expect("content");
     assert!(
@@ -169,7 +172,7 @@ fn docx_parsing_matrix() {
     );
     assert!(data.get("warnings").is_none(), "warnings 泄入 data");
 
-    // 验收②（#873 形态）：解 zip 失败的损坏 docx 给结构化错误，不 panic。
+    // 解 zip 失败的损坏 docx 给结构化错误，不 panic。
     let ws = TestWorkspace::new();
     let path = ws.project_file("broken.docx");
     let mut f = File::create(&path).expect("建文件");
@@ -262,13 +265,13 @@ fn xlsx_sheet_matrix() {
     );
 }
 
-// 断言：pdf 读取矩阵（验收①③④）——中文 PDF 按页提取（头部「提取可能
-// 不完整」标注，#103 已知形态不锚定逐字还原）；pages 窗口正常工作；>10 页
+// 断言：pdf 读取矩阵——中文 PDF 按页提取（头部「提取可能
+// 不完整」标注，中文 CMap 限制的已知形态不锚定逐字还原）；pages 窗口正常工作；>10 页
 // 无页码拒绝；窗口 >20 页拒绝；page/pages 互斥、页码 0 拒绝、页码超界返回
 // 空窗口；畸形 PDF 走 catch_unwind 兜底；加密 PDF 在解析前识别并给明确话术。
 #[test]
 fn pdf_page_and_error_matrix() {
-    // 验收④：>10 页的 PDF 无显式页码被拒（话术带总页数与用法）。
+    // >10 页的 PDF 无显式页码被拒（话术带总页数与用法）。
     let ws = TestWorkspace::new();
     let path = copy_fixture(&ws, "sample_zh_12pages.pdf");
     let outcome = run_doc(&ws.ctx(), &doc_args(&path));
@@ -278,8 +281,8 @@ fn pdf_page_and_error_matrix() {
     assert!(err.message.contains("12 页"), "错误应带总页数：{err:?}");
     assert!(err.message.contains("page"), "错误应带用法指引：{err:?}");
 
-    // 验收①：中文 PDF 按页提取；输出头部带「提取可能不完整」标注。
-    // 已知限制（#103 的实测形态）：CoreGraphics 导出的 CID 键控中文 PDF 无
+    // 中文 PDF 按页提取；输出头部带「提取可能不完整」标注。
+    // 已知限制（中文 CMap 限制的实测形态）：CoreGraphics 导出的 CID 键控中文 PDF 无
     // 完整 ToUnicode 映射，部分字会映射为 CJK 部首变体（如「页」→「⻚」）。
     // 断言只锚定我们自己的输出结构（页标记/标注）与「提到了 CJK 内容」。
     let args = DocArgs {
@@ -297,7 +300,7 @@ fn pdf_page_and_error_matrix() {
         content.starts_with("（PDF 线性文本提取"),
         "头部标注缺失：{content}"
     );
-    assert!(content.contains("提取可能不完整"), "#103 标注缺失");
+    assert!(content.contains("提取可能不完整"), "头部标注缺失");
     assert!(content.contains("--- 第 2 页 ---"), "页标记缺失：{content}");
     assert!(content.contains("第 2"), "页码文本缺失：{content}");
     assert!(
@@ -309,7 +312,7 @@ fn pdf_page_and_error_matrix() {
     );
     assert_eq!(data["truncated"], json_bool(false));
 
-    // 验收④：pages 窗口正常工作（英文 25 页样本，pages=[3,5] 输出 3 页）。
+    // pages 窗口正常工作（英文 25 页样本，pages=[3,5] 输出 3 页）。
     let ws = TestWorkspace::new();
     let path = copy_fixture(&ws, "sample_25pages.pdf");
     let args = DocArgs {
@@ -324,7 +327,7 @@ fn pdf_page_and_error_matrix() {
     assert!(content.contains("Page 5 of 25"));
     assert!(!content.contains("Page 6 of 25"), "窗口外内容不应出现");
 
-    // 验收④：页码窗口 >20 页被拒。
+    // 页码窗口 >20 页被拒。
     let args = DocArgs {
         pages: Some((1, 21)),
         ..doc_args(&path)
@@ -361,7 +364,7 @@ fn pdf_page_and_error_matrix() {
     assert_eq!(data["content"], "");
     assert_eq!(data["truncated"], json_bool(false));
 
-    // 验收③：畸形 PDF 不崩（catch_unwind 生效），返回友好结构化错误。
+    // 畸形 PDF 不崩（catch_unwind 生效），返回友好结构化错误。
     let ws = TestWorkspace::new();
     let path = copy_fixture(&ws, "corrupted.pdf");
     let outcome = run_doc(&ws.ctx(), &doc_args(&path));
@@ -373,7 +376,7 @@ fn pdf_page_and_error_matrix() {
         "错误话术应说明可能损坏或加密：{err:?}"
     );
 
-    // 验收③：加密 PDF 在解析前被识别（trailer /Encrypt），返回明确话术的
+    // 加密 PDF 在解析前被识别（trailer /Encrypt），返回明确话术的
     // 结构化错误（口令不在工具参数面，弱加密解出的内容亦不可信）。
     let ws = TestWorkspace::new();
     let path = copy_fixture(&ws, "sample_encrypted.pdf");
@@ -384,7 +387,7 @@ fn pdf_page_and_error_matrix() {
     assert!(err.message.contains("加密"), "错误话术应说明加密：{err:?}");
 }
 
-// 断言：截断、守卫与分派矩阵（验收⑤）——超 512KB 的 docx 内容按整行边界
+// 断言：截断、守卫与分派矩阵——超 512KB 的 docx 内容按整行边界
 // 截断 + truncated + 续读指引（帕累托：截断而非整体为空）；50MiB 上限的
 // 超大文件本体在读取前拒绝；detect_format 扩展名家族覆盖与大小写不敏感；
 // read 工具按扩展名把文档分派进文档管线、普通文本不受影响。

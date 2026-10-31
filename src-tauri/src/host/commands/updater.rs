@@ -1,23 +1,23 @@
-//! 更新器支撑命令（33 号票，FR-16-03/§12.4 更新器骨架，§3.3 #59m/#59n/#59o）。
+//! 更新器支撑命令。
 //!
 //! 三命令分工：
-//! - `update_status`（#59m）：更新入口的**禁用门**——tauri.conf.json 的
+//! - `update_status`：更新入口的**禁用门**——tauri.conf.json 的
 //!   `plugins.updater.pubkey` 是构建装配面（HITL 提供密钥后才实配），不是
 //!   用户配置（AppConfig），所以不复用 get_config 而单独查询；pubkey 为
-//!   占位空串期间前端把「检查更新」入口整体禁用（票内取舍 Answer：骨架
+//!   占位空串期间前端把「检查更新」入口整体禁用（骨架
 //!   先行，secrets 未配时以配置开关 + 构建面双门兜底，不为占位值放行）。
-//! - `update_precheck`（#59n）：安装/重启的**运行门**（2026-10-29 用户决策
+//! - `update_precheck`：安装/重启的**运行门**（2026-10-29 用户决策
 //!   ——运行时可检查下载，安装重启前须无活跃任务/待审批请求、待发队列须
 //!   明确暂停）。后端权威面判定（RunManager 注册表 + 应用级询问槽 + 磁盘
 //!   全量队列扫描），`reasons` 为人话阻止原因清单供前端直接展示。检查与
 //!   下载不受本门限制；安装前与重启前均须重新调用。
-//! - `pause_followup_queue`（#59o）：用户**主动暂停**待发队列（更新门配套
+//! - `pause_followup_queue`：用户**主动暂停**待发队列（更新门配套
 //!   ——「有待发队列时，用户须先明确暂停并持久保留队列才能更新」；暂停
 //!   写 queue.json 持久化，更新重启后仍等待用户明确继续）。
 //!
 //! 更新本体（check/downloadAndInstall/relaunch）不经本仓自定义命令：前端
 //! 直用官方 `@tauri-apps/plugin-updater` / `@tauri-apps/plugin-process` JS
-//! API（插件命令经 capabilities 最小权限放行，NFR-10），插件在 lib.rs 注册。
+//! API（插件命令经 capabilities 最小权限放行），插件在 lib.rs 注册。
 
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -25,7 +25,7 @@ use tauri::State;
 use crate::host::AppState;
 use crate::host::IpcError;
 
-/// `update_status` 返回契约（§3.3 #59m）。
+/// `update_status` 返回契约。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -49,7 +49,7 @@ pub(crate) fn update_status_core(
     }
 }
 
-/// `update_status` 命令（§3.3 #59m）：读 tauri 装配配置（tauri.conf.json）
+/// `update_status` 命令：读 tauri 装配配置（tauri.conf.json）
 /// 的 plugins.updater 原始 JSON——`AppHandle::config()` 是 tauri 构建期生成
 /// 的只读装配面，运行时稳定可查。插件配置缺失（未写 plugins.updater）= 全
 /// 空结果（pubkeyConfigured=false，入口禁用兜底）。
@@ -76,7 +76,7 @@ pub(crate) async fn update_status(app: tauri::AppHandle) -> Result<UpdateStatusR
     ))
 }
 
-/// `update_precheck` 返回契约（§3.3 #59n）。
+/// `update_precheck` 返回契约。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -91,16 +91,16 @@ pub struct UpdatePrecheckResult {
     pub pending_ask_count: usize,
     /// 未暂停的待发队列数（磁盘全量扫描，含从未打开过界面的会话）。
     pub running_queue_count: usize,
-    /// 已暂停的待发队列数（更新重启后仍保持暂停等待用户明确继续，Q41）。
+    /// 已暂停的待发队列数（更新重启后仍保持暂停等待用户明确继续）。
     pub paused_queue_count: usize,
 }
 
-/// `update_precheck` 判定主体（§3.3 #59n；headless 可测——纯读面，无系统
+/// `update_precheck` 判定主体（headless 可测——纯读面，无系统
 /// 副作用）。判定口径：
 /// - 活跃 run（任一会话，审批挂起中算活跃）→ 阻止；
 /// - 应用级未决询问（app_asks 槽非空）→ 阻止；
 /// - 未暂停的待发队列 → 阻止（已暂停队列不阻止——持久保留在 queue.json，
-///   更新重启后仍等待用户明确继续，Q41）。
+///   更新重启后仍等待用户明确继续）。
 pub(crate) fn update_precheck_core(
     running_count: usize,
     pending_ask_count: usize,
@@ -137,7 +137,7 @@ pub(crate) fn update_precheck_core(
     }
 }
 
-/// `update_precheck` 命令（§3.3 #59n）：后端权威面实时判定（安装前与重启前
+/// `update_precheck` 命令：后端权威面实时判定（安装前与重启前
 /// 均须重新调用——下载完成后新出现的活跃 run 仍能阻止安装）。
 #[tauri::command]
 pub(crate) async fn update_precheck(
@@ -155,7 +155,7 @@ pub(crate) async fn update_precheck(
     ))
 }
 
-/// `pause_followup_queue` 参数契约（§3.3 #59o）。
+/// `pause_followup_queue` 参数契约。
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -163,7 +163,7 @@ pub struct PauseFollowupQueueArgs {
     pub session_id: String,
 }
 
-/// `pause_followup_queue` 返回契约（§3.3 #59o）：变更后队列快照（size =
+/// `pause_followup_queue` 返回契约：变更后队列快照（size =
 /// 待发条数；paused 恒 true）。
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -173,7 +173,7 @@ pub struct PauseFollowupQueueResult {
     pub paused: bool,
 }
 
-/// `pause_followup_queue` 主体（§3.3 #59o）：置暂停态并持久化（queue.json
+/// `pause_followup_queue` 主体：置暂停态并持久化（queue.json
 /// 即权威，FollowUpManager.set_paused 原子写）。公开给集成测试。空 sessionId
 /// 拒绝（E_INVALID_ARG，与 resume 同款守门）。
 pub(crate) fn pause_followup_queue_core(
@@ -190,9 +190,9 @@ pub(crate) fn pause_followup_queue_core(
     })
 }
 
-/// `pause_followup_queue` 命令（§3.3 #59o）：用户主动暂停待发队列（更新门
-/// 配套）。前端收到 run:queue 事件同款形状，队列条与暂停横幅状态复用 06 号
-/// 票接缝（queuePaused 桶）。
+/// `pause_followup_queue` 命令：用户主动暂停待发队列（更新门
+/// 配套）。前端收到 run:queue 事件同款形状，队列条与暂停横幅状态复用
+/// queuePaused 桶接缝。
 #[tauri::command]
 pub(crate) async fn pause_followup_queue(
     app: State<'_, AppState>,

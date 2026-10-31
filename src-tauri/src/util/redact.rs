@@ -1,4 +1,4 @@
-//! 日志脱敏（32 号票，D12 复刻点 / NFR-09「日志全链路脱敏」）。
+//! 日志脱敏（对齐 rig `redact` 的本项目自有实现）。
 //!
 //! 本模块是日志落盘前的最后一道闸：任何进入会话日志或应用日志的
 //! JSON 载荷，必须先经过 [`redact_json`]（密钥脱敏）与
@@ -9,18 +9,18 @@
 //! 2. **图片红线**：日志任何位置不出现图片本体字节（base64 或二进制），
 //!    图片只记实际可用路径、内容哈希、格式与大小。
 //!
-//! 设计对齐 rig `redact` 的复刻要求（§13 D12「落盘前 JSON redact 脱敏」），
-//! 但按票面口径为**本项目自有实现**（rig 依赖内不复刻、不引第三方）：
-//! - rig `redact::json` 只扫字符串值；本模块在此基础上按票面增加
+//! 设计对齐 rig `redact` 的复刻要求（「落盘前 JSON redact 脱敏」），
+//! 但为**本项目自有实现**（rig 依赖内不复刻、不引第三方）：
+//! - rig `redact::json` 只扫字符串值；本模块在此基础上增加
 //!   **对象 key 名单替换**（敏感命名的键，其值无论形态一律替换 `"***"`）；
-//! - 字符串兜底只做票面点名的两类头模式（`Bearer <…>` / `sk-…`），
+//! - 字符串兜底只做两类头模式（`Bearer <…>` / `sk-…`），
 //!   不追求覆盖全部厂商密钥形态（名单硬编码、攻击面最小化）。
 
 use base64::Engine as _;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-/// 敏感值替换后的统一占位（票面口径 `"***"`）。
+/// 敏感值替换后的统一占位。
 pub const REDACTED: &str = "***";
 
 /// 敏感键名单的精确段（小写比较）。键名（小写化后）等于其中之一即视为敏感。
@@ -37,7 +37,7 @@ const SENSITIVE_KEYS_EXACT: &[&str] = &[
 ];
 
 /// 敏感键名单的结尾模式（小写比较）：键名（小写化后）以下列片段**结尾**
-/// 即视为敏感（票面「含 key/token 结尾类子串」口径）。例如 `tavilyApiKey`
+/// 即视为敏感（「含 key/token 结尾类子串」口径）。例如 `tavilyApiKey`
 /// `access_token` `client_secret` 都被覆盖。
 const SENSITIVE_KEY_SUFFIXES: &[&str] = &[
     "apikey",
@@ -68,7 +68,7 @@ pub fn is_sensitive_key(key: &str) -> bool {
 /// 判定一个字符串值是否携带「以该位置开始的密钥头模式」并返回
 /// `(替换段结束位置, 替换文本)`。
 ///
-/// 兜底两类（票面点名）：
+/// 兜底两类：
 /// - `Bearer <非空白 ≥8 字符>`：Authorization 头值的常见形态（如
 ///   `Bearer sk-…`、`Bearer eyJ…`）——令牌段替换为 `***`、`Bearer `
 ///   前缀保留（日志可读：能看出这是一条鉴权头，但看不出值）；
@@ -124,7 +124,7 @@ pub fn redact_string(input: &str) -> Option<String> {
     })
 }
 
-/// JSON 载荷密钥脱敏（票面点名入口）：递归遍历——
+/// JSON 载荷密钥脱敏（密钥红线入口）：递归遍历——
 /// - 对象键命中敏感名单 → 值整体替换 `***`（无论原值形态；键名保留）；
 /// - 字符串值 → [`redact_string`] 兜底（`Bearer`/`sk-` 头模式）；
 /// - 数组逐元素递归；其余标量零破坏。
@@ -193,7 +193,7 @@ fn image_placeholder(format: &str, hash: &str, size: usize) -> String {
 ///
 /// 防漏兜底：头部确认是图片但全量解码失败（混合字母表等异常形态）时，
 /// 仍以 `format="unknown"` 返回摘要（哈希/大小按原始 base64 文本字节计，
-/// 编码后口径）——脱敏方向宁可误替换、不可漏本体（NFR-09）。
+/// 编码后口径）——脱敏方向宁可误替换、不可漏本体。
 fn image_summary_of_base64(text: &str) -> Option<(&'static str, String, usize)> {
     // 头部对齐解码：base64 每 4 字符产 3 字节，取前 128 个字符（≥96 字节）
     // 足够判魔数；长度不足 4 倍数时截到对齐边界。
@@ -269,7 +269,7 @@ fn replace_image_segments(input: &str) -> Option<String> {
     })
 }
 
-/// 图片本体摘要化（票面图片日志口径的落盘闸）：递归遍历 JSON 载荷——
+/// 图片本体摘要化（图片红线落盘闸）：递归遍历 JSON 载荷——
 ///
 /// - 每个字符串值按 [`replace_image_segments`] 扫描，命中的超长 base64
 ///   图片段替换为 `[image <格式> sha256:<哈希> size=<字节>B 已省略本体]`

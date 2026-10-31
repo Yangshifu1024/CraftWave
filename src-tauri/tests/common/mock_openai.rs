@@ -1,4 +1,4 @@
-//! 【S2+S3 Spike】本地 OpenAI 兼容 mock SSE 服务：脚本化输出混合事件序列
+//! 本地 OpenAI 兼容 mock SSE 服务：脚本化输出混合事件序列
 //! （文本 delta / reasoning delta / 工具参数增量含半截 JSON），无网络、无 API key。
 //! 仅测试编译单元（tests/）可见，不进产物。
 
@@ -50,10 +50,10 @@ pub struct MockOpenAI {
     pub sent: Arc<Mutex<Vec<SentChunk>>>,
     /// mock 收到的每个补全请求体（轮次与回喂断言用）。
     pub requests: Arc<Mutex<Vec<Value>>>,
-    /// 非流式请求失败注入（04 号票压缩摘要失败的 e2e 面）：置 true 后
+    /// 非流式请求失败注入（压缩摘要失败 e2e 面）：置 true 后
     /// 非流式补全一律返回 500，流式脚本不受影响。
     pub fail_nonstream: Arc<std::sync::atomic::AtomicBool>,
-    /// 非流式响应文本旋钮（36 号票审计 e2e 面）：Some(text) 时非流式补全
+    /// 非流式响应文本旋钮（审计 e2e 面）：Some(text) 时非流式补全
     /// 返回该文本作为 assistant content（None = 默认 NONSTREAM_TEXT）。
     pub nonstream_text: Arc<std::sync::Mutex<Option<String>>>,
     shutdown: Option<tokio::sync::oneshot::Sender<()>>,
@@ -64,12 +64,12 @@ pub struct MockOpenAI {
 pub type ScriptEvent = (&'static str, String);
 
 impl MockOpenAI {
-    /// 启动 mock（随机端口），chunk 间隔 30ms，默认 S2/S3 脚本。
+    /// 启动 mock（随机端口），chunk 间隔 30ms，默认脚本。
     pub async fn start() -> Self {
         Self::start_with_gap(CHUNK_GAP).await
     }
 
-    /// 启动 mock，第 1 轮脚本换成调用方给的序列（S5：长流 / 双工具）；
+    /// 启动 mock，第 1 轮脚本换成调用方给的序列（长流 / 双工具）；
     /// 带 tool_result 的第 2 轮请求仍走默认答复脚本。chunk 间隔 30ms。
     pub async fn start_with_turn1(turn1: Vec<ScriptEvent>) -> Self {
         Self::start_scripts(CHUNK_GAP, turn1).await
@@ -132,7 +132,7 @@ impl MockOpenAI {
             .store(on, std::sync::atomic::Ordering::SeqCst);
     }
 
-    /// 设置非流式响应文本（36 号票审计 e2e：审计模型的三态结论 JSON）；
+    /// 设置非流式响应文本（审计 e2e：审计模型的三态结论 JSON）；
     /// None 恢复默认文本。
     pub fn set_nonstream_text(&self, text: Option<&str>) {
         *self
@@ -199,7 +199,7 @@ fn usage_chunk() -> String {
     )
 }
 
-// —— 脚本组合子（公开：S5 测试自造 turn1 脚本用） ——
+// —— 脚本组合子（公开：测试自造 turn1 脚本用） ——
 
 /// 一条正文 delta chunk。
 pub fn content_delta(text: &str) -> ScriptEvent {

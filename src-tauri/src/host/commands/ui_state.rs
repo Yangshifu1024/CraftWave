@@ -1,7 +1,7 @@
-//! UI 状态域命令（§3.3 #30 `get_ui_state` / #31 `set_ui_state`，16 号票）。
+//! UI 状态域命令（`get_ui_state` / `set_ui_state`）。
 //!
 //! ui-state.json 承载 Tab 布局等前端自管状态（载荷 Json 原样存取，
-//! §3.3：结构由前端定义；写侧防抖由前端负责）。
+//! 结构由前端定义；写侧防抖由前端负责）。
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -19,13 +19,13 @@ impl ConfigPayload for Value {
     }
 }
 
-/// `get_ui_state` 参数契约（§3.3 #30：`{}`）。
+/// `get_ui_state` 参数契约（`{}`）。
 #[derive(Debug, Clone, Default, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct GetUiStateArgs {}
 
-/// 读取 UI 状态（§3.3 #30：Json 原样；从未保存过 → null）。
+/// 读取 UI 状态（Json 原样；从未保存过 → null）。
 #[tauri::command]
 pub(crate) async fn get_ui_state(app: State<'_, AppState>) -> Result<Value, IpcError> {
     // 契约命名单一事实源：文档契约结构占位（空参命令）
@@ -33,7 +33,7 @@ pub(crate) async fn get_ui_state(app: State<'_, AppState>) -> Result<Value, IpcE
     Ok(app.ui_state.load()?.as_ref().clone())
 }
 
-/// `set_ui_state` 参数契约（§3.3 #31：`{ state: unknown }`）。
+/// `set_ui_state` 参数契约（`{ state: unknown }`）。
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -41,8 +41,8 @@ pub struct SetUiStateArgs {
     pub state: Value,
 }
 
-/// 保存 UI 状态（§3.3 #31：整份替换；防抖由前端负责）。
-/// 顺带提取 `activeId` 更新活跃会话标识（17 号票：系统通知防打扰精判）。
+/// 保存 UI 状态（整份替换；防抖由前端负责）。
+/// 顺带提取 `activeId` 更新活跃会话标识（系统通知防打扰精判）。
 #[tauri::command]
 pub(crate) async fn set_ui_state(app: State<'_, AppState>, state: Value) -> Result<(), IpcError> {
     let args = SetUiStateArgs { state };

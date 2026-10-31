@@ -1,37 +1,37 @@
-//! 首次存储格式升级前的可恢复备份守卫与恢复保护序列（技术设计文档 §7.7
-//! Q34/Q36/Q41，04 号票建立、33 号票扩展为通用守卫）。
+//! 首次存储格式升级前的可恢复备份守卫与恢复保护序列
+//! （先建立、后扩展为通用守卫）。
 //!
 //! 名词解释：「存储格式升级」指新版应用在旧数据文件里写入旧版本读不懂的
-//! 新格式（首个实例：compaction 条目，§6.1）——升级一旦落盘，旧版应用就无法
+//! 新格式（首个实例：compaction 条目）——升级一旦落盘，旧版应用就无法
 //! 再完整读取这些数据。「守卫」指在第一次写入新格式之前强制先做一次完整
 //! 备份：备份成功才放行写入；备份失败就暂停升级并报错，原数据一个字节
 //! 都不动。这样用户在任何时候都能退回旧版本或手动恢复到升级前的时点。
 //!
-//! 通用守卫（33 号票扩展）：任何新格式写入点都调用
+//! 通用守卫（扩展）：任何新格式写入点都调用
 //! [`ensure_upgrade_backup`] 并携带自己的 `reason` 标识（如 `compaction`），
 //! 幂等标记 `.upgrade-<reason>.done` 保证一个 reason 只备一次。守卫位于
 //! storage 层的存储写入入口，自动更新与手动安装走同一条写入路径——
-//! Q34「自动更新和手动安装共用存储入口守卫」由「守卫在 storage 层、不在
-//! 更新器层」保证（04 号票 compaction 条目是首个使用方，调用面不变）。
+//! 「自动更新和手动安装共用存储入口守卫」由「守卫在 storage 层、不在
+//! 更新器层」保证（compaction 条目是首个使用方，调用面不变）。
 //!
-//! 备份范围（Q36 33 号票字段级定稿，见 §7.7）：被迁移的权威数据 + 恢复
+//! 备份范围（字段级定稿）：被迁移的权威数据 + 恢复
 //! 必需的关联文件——`config.json`（含凭据）、`histories/`（会话日志与子代理
 //! 历史）、`sessions/`（索引/偏好/用量明细/队列/toolres 边车/图片 blob）、
 //! `projects/`（项目注册表）、`mcp.json`（全局 MCP 配置）、`stats/`（日模型
 //! 用量聚合）、`skills-state.json`（技能启停）。排除可重建缓存（`cache/`、
 //! `quota.json`）、日志（`logs/`）、可丢界面状态（`ui-state.json`、
 //! `window-state.json`）、用户工作区（`workspace/`，非被迁移的存储格式数据）
-//! 与备份目录自身（不递归备份已有备份）。`trust/` 不备份：Q41 规定恢复后
+//! 与备份目录自身（不递归备份已有备份）。`trust/` 不备份： 规定恢复后
 //! 信任必须重新确认，备份它反而诱导旧许可复活——不备份天然达成重核。
 //! 备份保存在数据目录独立的 `backups/` 子目录，不进入 agent 可见根集
-//! （§6.2 workspace 收窄天然覆盖）；含凭据文件保持原有严格权限，复制不放宽。
+//! （workspace 收窄天然覆盖）；含凭据文件保持原有严格权限，复制不放宽。
 //!
-//! 恢复流程（Q36/Q41，33 号票字段级）：备份目录内生成
+//! 恢复流程（字段级）：备份目录内生成
 //! [`BACKUP_MANIFEST_FILE`]（机器可读清单，恢复验证对照面）、
 //! [`RESTORE_GUIDE_FILE`]（人话恢复步骤）与 [`RESTORE_PENDING_NAME`]（恢复
 //! 待处理标记）。用户关闭应用后按说明把清单项复制回数据目录，并把
 //! `.restore-pending.json` 一并复制回数据目录根——下次启动时
-//! [`apply_restore_protection`] 检测到标记即执行 Q41 保护序列（信任清空、
+//! [`apply_restore_protection`] 检测到标记即执行 保护序列（信任清空、
 //! 外部目录授权清空、审批白名单清空、全部队列强制暂停），保护完成后删除
 //! 标记。普通重启（无标记）不触碰上述任何面。
 //!
@@ -48,7 +48,7 @@ use crate::storage::config_store::ConfigStore;
 use crate::storage::index_store::SessionIndex;
 use crate::storage::trust::{FileTrustStore, TrustStore};
 
-/// 备份根目录（§7.7：数据目录独立的 `backups/` 子目录）。
+/// 备份根目录（数据目录独立的 `backups/` 子目录）。
 pub fn backups_dir(root: &Path) -> PathBuf {
     root.join("backups")
 }
@@ -60,13 +60,13 @@ fn marker_path(root: &Path, reason: &str) -> PathBuf {
 
 /// 备份清单文件名（备份目录内；`backup-manifest.json`）。
 pub const BACKUP_MANIFEST_FILE: &str = "backup-manifest.json";
-/// 人话恢复步骤文件名（备份目录内；33 号票 Q36「手动恢复步骤」承载面）。
+/// 人话恢复步骤文件名（备份目录内； 「手动恢复步骤」承载面）。
 pub const RESTORE_GUIDE_FILE: &str = "恢复说明.txt";
 /// 恢复待处理标记名：备份目录内的空标记，用户按说明复制回数据目录根，
-/// 下次启动驱动 [`apply_restore_protection`] 执行 Q41 保护序列。
+/// 下次启动驱动 [`apply_restore_protection`] 执行 保护序列。
 pub const RESTORE_PENDING_NAME: &str = ".restore-pending.json";
 
-/// 权威数据备份清单（§7.7 33 号票字段级定稿）：目录项与文件项混合，
+/// 权威数据备份清单（字段级定稿）：目录项与文件项混合，
 /// 存在才复制。顺序即恢复说明里的复制清单顺序。
 pub const BACKUP_ITEMS: &[&str] = &[
     "histories",         // 目录：会话日志 + 子代理历史（权威正文）
@@ -117,7 +117,7 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// 人话恢复步骤文本（Q36：关闭应用手动恢复、仅回备份时点、升级后新增
+/// 人话恢复步骤文本（关闭应用手动恢复、仅回备份时点、升级后新增
 /// 内容须另行保留、关联文件须一并恢复不能只拷会话正文）。
 fn restore_guide_text(reason: &str) -> String {
     format!(
@@ -141,7 +141,7 @@ fn restore_guide_text(reason: &str) -> String {
     )
 }
 
-/// 首次格式升级前的备份守卫（§7.7 Q34/Q36）。
+/// 首次格式升级前的备份守卫。
 ///
 /// - `reason`：升级原因标识（如 `compaction`），用于标记文件与备份目录命名；
 /// - 升级标记已存在 → 直接放行（读标记里记录的备份目录名原样返回，幂等）；
@@ -171,7 +171,7 @@ pub fn ensure_upgrade_backup(root: &Path, reason: &str) -> Result<PathBuf, std::
     let target = backups_dir(root).join(&dir_name);
     fs::create_dir_all(&target)?;
 
-    // 权威数据复制（Q36 清单，§7.7 33 号票字段级）：存在才复制，
+    // 权威数据复制（清单，字段级）：存在才复制，
     // 全部命中失败即 Err（原数据不动）。
     let mut copied: Vec<String> = Vec::new();
     for item in BACKUP_ITEMS {
@@ -202,7 +202,7 @@ pub fn ensure_upgrade_backup(root: &Path, reason: &str) -> Result<PathBuf, std::
     let manifest_bytes = serde_json::to_vec_pretty(&manifest)
         .map_err(|e| std::io::Error::other(format!("备份清单序列化失败：{e}")))?;
     fs::write(target.join(BACKUP_MANIFEST_FILE), manifest_bytes)?;
-    // 人话恢复步骤（Q36 手动恢复说明）与恢复待处理标记（Q41 保护序列驱动面）
+    // 人话恢复步骤（手动恢复说明）与恢复待处理标记（保护序列驱动面）
     fs::write(target.join(RESTORE_GUIDE_FILE), restore_guide_text(reason))?;
     fs::write(
         target.join(RESTORE_PENDING_NAME),
@@ -238,12 +238,12 @@ fn fsync_dir_recursive(dir: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Q41 恢复保护序列的执行报告（启动序记账面：`app.log` 逐条落账）。
+/// 恢复保护序列的执行报告（启动序记账面：`app.log` 逐条落账）。
 #[derive(Debug, Default, PartialEq)]
 pub struct RestoreProtectionReport {
     /// 是否检测到恢复标记并执行了保护（false = 普通重启，未触碰任何面）。
     pub applied: bool,
-    /// 已执行的保护动作（人话，逐条对应 Q41 各面）。
+    /// 已执行的保护动作（人话，逐条对应 各面）。
     pub actions: Vec<String>,
     /// 失败面（人话）。保护序列尽力而为、不阻塞启动，但失败必须记账，
     /// 不静默——用户据此知道哪些面可能残留旧许可。
@@ -255,7 +255,7 @@ pub fn restore_pending_path(root: &Path) -> PathBuf {
     root.join(RESTORE_PENDING_NAME)
 }
 
-/// 单个 queue.json 文件的强制暂停（Q41：全部待发队列保持暂停，等待用户
+/// 单个 queue.json 文件的强制暂停（全部待发队列保持暂停，等待用户
 /// 明确继续）。直接改磁盘文件——调用时机在启动序早期，FollowUpManager 的
 /// 内存队列表尚未惰性加载任何会话，磁盘即权威。
 fn force_pause_queue_file(path: &Path) -> Result<bool, String> {
@@ -276,13 +276,13 @@ fn force_pause_queue_file(path: &Path) -> Result<bool, String> {
     Ok(true)
 }
 
-/// Q41 恢复保护序列（33 号票，§7.7 字段级）：数据目录根存在
+/// 恢复保护序列（字段级）：数据目录根存在
 /// `.restore-pending.json`（用户按恢复说明复制回）即视为「发生了恢复」，
 /// 执行保护后再进入正常服务：
 ///
 /// ① 统一信任存储 `trust/project.json` 清空（项目资源信任 + MCP 启动信任
 ///    全部重新确认，FileTrustStore::clear_all）；
-/// ② MCP 工具级许可 `trust/mcp-tools.json` 删除（Q44 审批记忆面，不复活
+/// ② MCP 工具级许可 `trust/mcp-tools.json` 删除（审批记忆面，不复活
 ///    旧许可）；
 /// ③ 会话索引全部条目的 `authorizedExternalDirs` 清空（外部目录授权须
 ///    重新授权）；
@@ -318,7 +318,7 @@ pub fn apply_restore_protection(
             .push(format!("清空信任存储失败（旧信任可能残留）：{e}")),
     }
 
-    // ② MCP 工具级许可删除（Q44 审批记忆）
+    // ② MCP 工具级许可删除（审批记忆）
     let mcp_tools = root
         .join(crate::storage::trust::TRUST_DIR)
         .join("mcp-tools.json");

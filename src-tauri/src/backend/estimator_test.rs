@@ -1,4 +1,4 @@
-//! token 估算器测试（§6.2 每请求预算检查，Q18）。
+//! token 估算器测试（每请求预算检查）。
 
 use super::{
     estimate_request_tokens, estimate_text_tokens, is_over_wire_budget, should_auto_compact,

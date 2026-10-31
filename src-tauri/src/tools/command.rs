@@ -1,8 +1,8 @@
-//! command 工具（§8.3 Network* 行 + §8.8 命令输出治理）。
+//! command 工具（命令执行 + 命令输出治理）。
 //!
 //! - 承载：Unix `sh -c` / Windows `powershell -NoProfile -Command`；
 //! - 收割：spawn 即入独立进程组（Unix）/Job Object（Windows），超时与取消
-//!   时整树收割（`tools::process` 原语，S5 实证 6–8ms）；
+//!   时整树收割（`tools::process` 原语，实测 6–8ms）；
 //! - 输出治理：stdout+stderr 合流 → ANSI/OSC 清洗 → >96KB 全量 spill 至
 //!   `<data>/logs/spill/<callId>.txt`，工具结果只带尾部 16KB + spill 路径
 //!   （24h lazy 清理，best-effort）；
@@ -28,19 +28,19 @@ use crate::util::errors::ToolError;
 
 use super::{ToolAnnotations, ToolOutcome, ToolSpec, ToolsContext};
 
-/// 超时默认与区间（§8.3：1–600s 默认 120）。
+/// 超时默认与区间（1–600s 默认 120）。
 pub const DEFAULT_TIMEOUT_SEC: u32 = 120;
 pub const MIN_TIMEOUT_SEC: u32 = 1;
 pub const MAX_TIMEOUT_SEC: u32 = 600;
 
-/// 全量输出 spill 阈值与结果保留尾部（§8.8：>96KB spill，尾部 16KB）。
+/// 全量输出 spill 阈值与结果保留尾部（>96KB spill，尾部 16KB）。
 pub const SPILL_THRESHOLD: usize = 96 * 1024;
 pub const TAIL_BYTES: usize = 16 * 1024;
 
-/// spill 保留时长（§8.8：24h 清理；每次执行 lazy 清理过期文件）。
+/// spill 保留时长（24h 清理；每次执行 lazy 清理过期文件）。
 pub const SPILL_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 
-/// command 工具参数（§8.3）。
+/// command 工具参数。
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommandArgs {
@@ -314,13 +314,13 @@ async fn run_prepared(
     }))
 }
 
-/// ANSI/OSC 转义清洗（§8.8）。anstream 的 strip 适配器（纯 Rust）。
+/// ANSI/OSC 转义清洗。anstream 的 strip 适配器（纯 Rust）。
 fn strip_ansi(s: &str) -> String {
     anstream::adapter::strip_str(s).to_string()
 }
 
 /// 尾部 `tail` 字节（UTF-8 字符边界安全）。`pub(crate)`：http_request 的
-/// §8.8 响应治理复用（12 号票）。
+/// 响应治理复用。
 pub(crate) fn tail_of(s: &str, tail: usize) -> &str {
     if s.len() <= tail {
         return s;
@@ -332,13 +332,13 @@ pub(crate) fn tail_of(s: &str, tail: usize) -> &str {
     &s[start..]
 }
 
-/// spill 目录（§7.1：`<data>/logs/spill`）。
+/// spill 目录（`<data>/logs/spill`）。
 fn spill_dir(ctx: &ToolsContext) -> PathBuf {
     ctx.data_root.join("logs").join("spill")
 }
 
-/// 全量输出落盘；返回落盘路径字符串。`pub(crate)`：http_request 的 §8.8
-/// 响应治理复用同一原语与目录（12 号票）。
+/// 全量输出落盘；返回落盘路径字符串。`pub(crate)`：http_request 的
+/// 响应治理复用同一原语与目录。
 pub(crate) fn spill_full(
     ctx: &ToolsContext,
     call_id: &str,
@@ -357,7 +357,7 @@ fn spill(ctx: &ToolsContext, call_id: &str, full: &str) -> Result<String, std::i
     Ok(path.display().to_string())
 }
 
-/// 24h lazy 清理（§8.8）：删除过期 spill 文件，best-effort。
+/// 24h lazy 清理：删除过期 spill 文件，best-effort。
 fn cleanup_spill(ctx: &ToolsContext, now: Instant) {
     let dir = spill_dir(ctx);
     let Ok(entries) = std::fs::read_dir(&dir) else {

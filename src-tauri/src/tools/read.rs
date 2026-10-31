@@ -1,7 +1,7 @@
-//! `read` 工具（ReadOnly，§8.3）：文本按行窗口（默认 2000 行，offset/limit）；
+//! `read` 工具（ReadOnly）：文本按行窗口（默认 2000 行，offset/limit）；
 //! kind:"image" 走 base64（≤3MiB）；文本解码与 read_workspace_file 共用
-//! util::encoding（C-10）。16 号票：.docx/.xlsx/.pdf 按扩展名分派进
-//! tools/doc.rs 文档管线（§8.9 读侧），参数 page/pages（pdf 分页）与
+//! util::encoding。.docx/.xlsx/.pdf 按扩展名分派进
+//! tools/doc.rs 文档管线，参数 page/pages（pdf 分页）与
 //! sheet（xlsx 选表）随分派传入。
 
 use base64::Engine;
@@ -13,9 +13,9 @@ use crate::tools::{ToolAnnotations, ToolOutcome, ToolSpec, ToolsContext};
 use crate::util::encoding::{MAX_RESPONSE_BYTES, decode_text, is_probably_binary};
 use crate::util::errors::ToolError;
 
-/// 默认行窗口（§8.3）。
+/// 默认行窗口。
 pub const DEFAULT_LINE_LIMIT: u64 = 2000;
-/// 图片单文件上限（§8.3）。
+/// 图片单文件上限。
 pub const MAX_IMAGE_BYTES: usize = 3 * 1024 * 1024;
 
 /// read 工具参数：目标路径 + 可选行窗口与读取类型（文档扩展名时附带
@@ -31,7 +31,7 @@ pub struct ReadArgs {
     pub limit: Option<u64>,
     /// 缺省 text；kind:"image" 对文档扩展名是误用（明确拒绝）。
     pub kind: Option<ReadKind>,
-    /// pdf 单页页码（1-based，文档管线，16 号票 §8.3/§8.9）。
+    /// pdf 单页页码（1-based，文档管线）。
     pub page: Option<u32>,
     /// pdf 页码窗口 [起, 止]（1-based 闭区间，单次 ≤20 页）。
     pub pages: Option<(u32, u32)>,
@@ -50,10 +50,10 @@ pub enum ReadKind {
 }
 
 /// 执行 read。headless 纯逻辑：vision 模型前置校验在执行器分发面完成
-/// （backend/exec.rs 按 ProviderModel.vision 拒绝非视觉模型的 kind:"image"，
-/// 17 号票），本函数只做大小与格式校验。
+/// （backend/exec.rs 按 ProviderModel.vision 拒绝非视觉模型的 kind:"image"），
+/// 本函数只做大小与格式校验。
 pub fn run(ctx: &ToolsContext, args: &ReadArgs) -> ToolOutcome {
-    // 文档分派（16 号票，§8.3/§8.9）：.docx/.xlsx/.pdf 等扩展名走文档管线
+    // 文档分派：.docx/.xlsx/.pdf 等扩展名走文档管线
     // （tools/doc.rs），与文本/图片路径并列；kind:"image" 对文档是误用。
     if crate::tools::doc::detect_format(&args.path).is_some() {
         if args.kind == Some(ReadKind::Image) {
@@ -81,9 +81,9 @@ pub fn run(ctx: &ToolsContext, args: &ReadArgs) -> ToolOutcome {
     }
 }
 
-/// 文本行窗口读取结果（read 与 batch_read 共用的内部形状，14 号票抽出）。
+/// 文本行窗口读取结果（read 与 batch_read 共用的内部形状）。
 pub(crate) struct TextWindow {
-    /// 解码判定出的编码名（BOM / UTF-8 / 探测结果，C-10）。
+    /// 解码判定出的编码名（BOM / UTF-8 / 探测结果）。
     pub encoding: String,
     /// 文件总行数。
     pub total_lines: u64,
@@ -102,13 +102,13 @@ pub(crate) struct TextWindow {
     pub next_offset: Option<u64>,
 }
 
-/// 文本行窗口读取的核心实现（read 工具与 batch_read 共用，14 号票抽出）：
-/// 读字节 → 二进制检查（前 8KB 含 NUL 判二进制，C-10）→ 解码 → 行窗口
+/// 文本行窗口读取的核心实现（read 工具与 batch_read 共用）：
+/// 读字节 → 二进制检查（前 8KB 含 NUL 判二进制）→ 解码 → 行窗口
 /// 切片 → `budget` 字节预算内按整行边界截断。
 ///
 /// `display` 为报错与结果展示用的路径原文（相对/绝对保持调用方传入的形态）；
 /// `budget` 为本次允许返回的最大内容字节数（read 单文件 = 512KB 上限；
-/// batch_read 传批内剩余预算，14 号票共享上限语义）。
+/// batch_read 传批内剩余预算，共享同一上限语义）。
 pub(crate) fn read_text_window(
     resolved: &std::path::Path,
     display: &str,
@@ -123,7 +123,7 @@ pub(crate) fn read_text_window(
             _ => ToolError::new("E_INTERNAL_STATE", format!("读取 {display} 失败：{e}")),
         }
     })?;
-    // 前 8KB 含 NUL 判二进制 → 报错不支持文本预览（C-10）。
+    // 前 8KB 含 NUL 判二进制 → 报错不支持文本预览。
     if is_probably_binary(&bytes) {
         return Err(ToolError::invalid_arg(format!(
             "二进制文件不支持文本读取：{display}（图片请用 read 的 kind:\"image\"）"
@@ -145,7 +145,7 @@ pub(crate) fn read_text_window(
             .collect()
     };
 
-    // 响应预算（C-10 单次 ≤512KB；batch_read 为批内剩余预算）：超限按整行
+    // 响应预算（read 单次 ≤512KB；batch_read 为批内剩余预算）：超限按整行
     // 边界截断。
     let mut content = String::new();
     let mut taken = 0usize;
@@ -216,7 +216,7 @@ fn read_text(ctx: &ToolsContext, args: &ReadArgs) -> ToolOutcome {
 
 /// 图片读取：魔数嗅探校验格式（png/jpeg/gif/webp 四种白名单，其余按参数
 /// 错误拒绝）与大小校验（≤3MiB）后 base64 编码返回（供视觉模型消费）。
-/// vision 前置校验由执行器分发面完成（backend/exec.rs，17 号票）——本函数
+/// vision 前置校验由执行器分发面完成（backend/exec.rs）——本函数
 /// 保持 headless 纯逻辑。
 fn read_image(ctx: &ToolsContext, args: &ReadArgs) -> ToolOutcome {
     let resolved = match ctx.guard().and_then(|g| g.resolve(&args.path)) {
@@ -227,7 +227,7 @@ fn read_image(ctx: &ToolsContext, args: &ReadArgs) -> ToolOutcome {
         Ok(b) => b,
         Err(e) => return ToolOutcome::from(ToolError::from(e)),
     };
-    // 17 号票：mime 由文件头魔数嗅探（不信任扩展名——改扩展名伪装的文本
+    // mime 由文件头魔数嗅探（不信任扩展名——改扩展名伪装的文本
     // 文件在写入 blob/读取两条通道都被同一白名单拦下）。
     let Some(mime) = crate::storage::sniff_image_mime(&bytes) else {
         return ToolOutcome::failure(
@@ -265,8 +265,8 @@ fn read_image(ctx: &ToolsContext, args: &ReadArgs) -> ToolOutcome {
     )
 }
 
-/// read 工具规格（能力 ReadOnly，全档放行）。16 号票：params_schema 增
-/// 文档参数（page/pages/sheet，§8.3 read 行回写），描述补文档分派语义；
+/// read 工具规格（能力 ReadOnly，全档放行）。params_schema 含
+/// 文档参数（page/pages/sheet），描述补文档分派语义；
 /// 文档参数 schema 片段单一来源在 doc::params_schema_properties()。
 pub fn spec() -> ToolSpec {
     let mut params_schema = json!({

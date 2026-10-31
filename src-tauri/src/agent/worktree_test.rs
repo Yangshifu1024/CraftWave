@@ -1,4 +1,4 @@
-//! worktree 管理测试（10 号票，ADR-0001 / §5.9 Q9–Q12）：派发起点快照
+//! worktree 管理测试（ADR-0001）：派发起点快照
 //! （含已暂存/未暂存修改与未忽略新文件）、主工作区变化不自动同步、差量
 //! 回收（新增/修改/删除）、冲突保留双方、不自动 commit、不改暂存状态、
 //! 生命周期保留（abandoned 跨重启索引）与成功清理。
@@ -81,7 +81,7 @@ impl WtFixture {
     }
 }
 
-// 断言（派发起点快照，Q9/Q12）：快照含已暂存+未暂存修改与未跟踪新文件
+// 断言（派发起点快照）：快照含已暂存+未暂存修改与未跟踪新文件
 // （基线 = 派发时主工作区内容指纹，worktree 内容与主工作区当前文件状态
 // 逐字节一致，基线 commit = 派发时 HEAD）；被忽略文件不进快照不进
 // worktree；派发后主工作区变化不自动同步；非 git 目录判定为非 git（写入
@@ -150,7 +150,7 @@ fn dispatch_snapshot_semantics() {
     );
     assert_eq!(lease.base_commit, head_id(&repo), "基线 = 派发时 HEAD");
 
-    // 被忽略文件不进快照（Q12：不批量复制主工作区忽略文件）。
+    // 被忽略文件不进快照（不批量复制主工作区忽略文件）。
     let fx = WtFixture::new();
     let root = fx.project_root();
     let repo = init_git_repo(&root);
@@ -167,7 +167,7 @@ fn dispatch_snapshot_semantics() {
     );
     assert!(lease.snapshot.is_empty(), "忽略文件不进起点快照");
 
-    // 派发后主工作区变化不自动同步到 worktree（Q9：后续不自动同步）。
+    // 派发后主工作区变化不自动同步到 worktree（后续不自动同步）。
     let fx = WtFixture::new();
     let root = fx.project_root();
     init_git_repo(&root);
@@ -190,7 +190,7 @@ fn dispatch_snapshot_semantics() {
     init_git_repo(&root);
     assert!(project_is_git(&root), "init 后判定为 git 仓库");
 
-    // 快照创建失败不静默退回旧 HEAD（Q9）：空仓库（无提交）直接报错。
+    // 快照创建失败不静默退回旧 HEAD：空仓库（无提交）直接报错。
     let fx = WtFixture::new();
     let root = fx.project_root();
     git2::Repository::init(&root).expect("init 空仓库（无任何提交）");
@@ -199,7 +199,7 @@ fn dispatch_snapshot_semantics() {
     assert!(err.0.contains("提交"), "错误信息说明原因：{err}");
 }
 
-// 断言（差量回收与生命周期，Q10/Q11）：worktree 的新增/修改/删除按文件
+// 断言（差量回收与生命周期）：worktree 的新增/修改/删除按文件
 // 汇回主工作区；创建与回收都不自动 commit、不改用户已有暂存状态（回收只
 // 写工作区文件，index 内容原样，相对 index 呈现未暂存修改）；回收标注后
 // 清理成功（worktree 目录与 lease 一并消失）；失败/取消的 worktree 保留
@@ -276,7 +276,7 @@ fn recover_applies_add_modify_delete_and_lifecycle() {
     assert!(load_lease(&fx.data_root(), "sub-4").unwrap().is_none());
     assert_eq!(head_id(&repo), before_head, "清理也不 commit");
 
-    // 生命周期（Q11）：失败/取消的 worktree 保留未汇回修改并标注未完成；
+    // 生命周期：失败/取消的 worktree 保留未汇回修改并标注未完成；
     // 重启（重新 list_leases）仍可找回，且不自动汇回主工作区。
     let fx = WtFixture::new();
     let root = fx.project_root();
@@ -317,7 +317,7 @@ fn recover_applies_add_modify_delete_and_lifecycle() {
     cleanup(&lease_after, &fx.data_root()).unwrap();
 }
 
-// 断言（冲突保留双方，Q10）：主工作区在子代理运行期间被改过 → 主文件
+// 断言（冲突保留双方）：主工作区在子代理运行期间被改过 → 主文件
 // 不动，子版本写到带 `.cw-conflict-` 标记的冲突副本，未冲突文件正常回收；
 // 主工作区在子代理删除同名文件期间被用户改过 → 冲突保留（不执行删除）。
 #[test]

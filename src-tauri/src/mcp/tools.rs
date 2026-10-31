@@ -1,17 +1,17 @@
-//! MCP 工具清单动态同步与注册表（FR-08-06，§8.1/§9.7；08 号票）。
+//! MCP 工具清单动态同步与注册表。
 //!
 //! 三个职责：
-//! 1. **工具名归一**（FR-08-06）：MCP 工具名不保证满足本仓工具名合法集
-//!    `[a-z_][a-z0-9_]{0,63}`（§8.1）——归一化（小写化 + 非法字符替换
+//! 1. **工具名归一**：MCP 工具名不保证满足本仓工具名合法集
+//!    `[a-z_][a-z0-9_]{0,63}`——归一化（小写化 + 非法字符替换
 //!    `_` + 首字符数字加前缀 + 截断 64），跨 server 与静态段冲突时加
 //!    `__2` 序号后缀，并维护「归一名 → (连接键, 原始名)」反向映射供调用
 //!    还原（调用仍发原始名给 server）；
 //! 2. **注册表**：连接池拉到 tools/list 后经 [`McpToolRegistry::sync`]
 //!    热更新（`tools/list_changed` 通知 → 重拉清单 → 再 sync），模型工具
 //!    表 = 静态段 + 本注册表动态段快照（[`crate::tools::lookup_spec`]）；
-//! 3. **Q44 许可身份**：免审批判定所需的身份三元组（服务器启动指纹 +
+//! 3. **许可身份**：免审批判定所需的身份三元组（服务器启动指纹 +
 //!    原始工具名 + 输入 schema 哈希）从这里取——展示名不参与许可绑定
-//!    （碰撞后缀会漂移，票面明文）。
+//!    （碰撞后缀会漂移，展示名不作身份）。
 
 use std::sync::{Mutex, OnceLock};
 
@@ -21,7 +21,7 @@ use super::config::{McpScope, McpServerConfig, McpToolFilter};
 use crate::safety::tier::Capability;
 use crate::tools::{ToolAnnotations, ToolOrigin, ToolSpec};
 
-/// 连接键（§9.7 连接池 key 逐字段）：`(scope, projectId, name,
+/// 连接键（连接池 key 逐字段）：`(scope, projectId, name,
 /// canonicalPath)`。放 config 域（纯数据，tools/pool/commands 共用）。
 /// `project_id` 全局作用域为 None；`canonical_path` 为该作用域 mcp.json
 /// 的 canonical 路径。
@@ -48,14 +48,14 @@ impl ConnKey {
     }
 }
 
-/// 审批门与调用还原所需的工具身份（Q44 三元组 + 门控输入）。
+/// 审批门与调用还原所需的工具身份（三元组 + 门控输入）。
 #[derive(Debug, Clone)]
 pub struct McpToolIdentity {
     /// 归属连接键（调用还原面）。
     pub conn_key: ConnKey,
     /// 配置里的服务器名（审批标题展示）。
     pub server_name: String,
-    /// 服务器启动指纹（Q44 许可三元组第一元）。
+    /// 服务器启动指纹（许可三元组第一元）。
     pub server_fingerprint: String,
     /// 原始工具名（server 侧名单名；调用还原与许可三元组第二元）。
     pub original_name: String,
@@ -82,7 +82,7 @@ struct ServerEntry {
 
 /// MCP 动态工具注册表（进程级单例 + Arc 共享）。
 ///
-/// 单例化理由（§8.1「MCP 动态工具并入 ToolServer 模式」）：主循环策略门
+/// 单例化理由（「MCP 动态工具并入 ToolServer 模式」）：主循环策略门
 /// （is_interactive）、看门狗只读判定（make_record）、审批门（judge）与
 /// 执行器（dispatch）都查「静态段 + 动态段」全表，而这些调用点分散在
 /// 不同模块且部分无 AppState 入参（watchdog 纯函数）——进程级单例让
@@ -152,7 +152,7 @@ impl McpToolRegistry {
     /// → 热更新动态段）。返回注册的归一名列表（事件/日志面）。
     ///
     /// `list` 元组 = (原始工具名, 描述, 输入 schema, annotations 只读提示
-    /// 等四 hints)。Q44：schema 变化不删除旧许可记录——免审批判定按三元组
+    /// 等四 hints)。：schema 变化不删除旧许可记录——免审批判定按三元组
     /// 现算（schema_hash 变了自然不命中），记录留存无副作用。
     #[allow(clippy::too_many_arguments)]
     pub fn sync(
@@ -254,7 +254,7 @@ impl McpToolRegistry {
         Some(hasher.finish())
     }
 
-    /// 池快照（§3.3 #47 mcp_snapshot 的 toolCount 面）。
+    /// 池快照（mcp_snapshot 的 toolCount 面）。
     pub fn tool_count(&self, key: &ConnKey) -> usize {
         self.inner
             .lock()
@@ -265,7 +265,7 @@ impl McpToolRegistry {
             .unwrap_or(0)
     }
 
-    /// 某连接下全部工具的（原始名, schema 哈希）列表（Q44 always_allow
+    /// 某连接下全部工具的（原始名, schema 哈希）列表（always_allow
     /// 自动授权面：清单同步后由连接池批量授予/刷新许可）。
     pub fn tool_identities_of(&self, key: &ConnKey) -> Vec<(String, String)> {
         self.inner
@@ -283,7 +283,7 @@ impl McpToolRegistry {
     }
 }
 
-/// 单次工具调用超时缺省（秒；§9.7 字段级定案，设计文档已回写）。
+/// 单次工具调用超时缺省（秒； 字段级定案，设计文档已回写）。
 pub const DEFAULT_CALL_TIMEOUT_SECS: u64 = 60;
 
 /// glob 过滤判定：deny 优先（命中即拒）；allow 非空时须命中其一；其余放行。
@@ -302,7 +302,7 @@ fn filter_admits(filter: &McpToolFilter, raw_name: &str) -> bool {
             .any(|pat| glob::Pattern::new(pat).is_ok_and(|p| p.matches(raw_name)))
 }
 
-/// 工具名归一（FR-08-06）：合法集 `[a-z_][a-z0-9_]{0,63}`。
+/// 工具名归一：合法集 `[a-z_][a-z0-9_]{0,63}`。
 /// 非 ASCII/大写字符小写化后仍非法的替换 `_`；首字符数字加 `_` 前缀；
 /// 超 64 截断；空结果用 `_`。
 pub fn normalize_tool_name(raw: &str) -> String {
@@ -343,7 +343,7 @@ fn allocate_name(taken: &mut std::collections::HashSet<String>, raw: &str) -> St
     unreachable!("u32 后缀空间耗尽不可达");
 }
 
-/// 描述截断（≤800 字符，§8.1；缺省描述 = "MCP 工具 <原名>"）。
+/// 描述截断（≤800 字符；缺省描述 = "MCP 工具 <原名>"）。
 fn clamp_description(description: &str, raw_name: &str) -> String {
     let text = if description.trim().is_empty() {
         format!("MCP 工具 {raw_name}")

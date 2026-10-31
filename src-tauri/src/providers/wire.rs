@@ -1,8 +1,8 @@
-//! 三协议方言的统一 wire 防腐层（FR-02-01，38 号票，§11.1 模型解析）。
+//! 三协议方言的统一 wire 防腐层（模型解析）。
 //!
 //! 名词解释：wire 是 rig 0.45 里"一种 API 方言的请求编码 + 回复解码"的
 //! 实现单元（[`rig::wire::Wire`]）；方言（dialect）指同一件事在 CraftWave
-//! 语境下的叫法（§3.2 `ProviderConfig.apiFormat`）。三个方言在 rig 中是
+//! 语境下的叫法（`ProviderConfig.apiFormat`）。三个方言在 rig 中是
 //! 三种 wire 实现：
 //! - `openai_chat` → `POST {base}/chat/completions`（rig `Chat`）；
 //! - `openai_responses` → `POST {base}/responses`（rig `Responses`）；
@@ -11,8 +11,8 @@
 //! rig 自己已用 [`OpenAiWire`] 枚举统一了 Chat / Responses 两条 OpenAI
 //! 路线（按 `Route` 配置分派）；本模块照同款先例再包一层，把 Anthropic
 //! Messages 也收进来，得到 [`DialectWire`]——`start_chat` 全链
-//! （TurnDriver / drive_run，37 号票已泛型化为 `Model<W, T>`）由此以单一
-//! 生产类型贯穿，方言差异收敛在本文件（防腐层原则 §4.1：rig 升级只应
+//! （TurnDriver / drive_run，已泛型化为 `Model<W, T>`）由此以单一
+//! 生产类型贯穿，方言差异收敛在本文件（防腐层原则 ：rig 升级只应
 //! 改到 backend/ 与 providers/）。
 //!
 //! 三个 wire 的请求载荷（`Encoded`）与回复帧（`WireFrame`）同形，因此
@@ -180,9 +180,9 @@ impl Reassemble<DialectEvent> for DialectReassembler {
 
 impl rig::wire::document::Serves<Completion> for DialectReassembler {}
 
-/// 按方言构造统一的 completion wire（§11.1 模型解析的方言装配面）。
+/// 按方言构造统一的 completion wire（模型解析的方言装配面）。
 ///
-/// - 地址：`base_url` 为空时取该方言的官方缺省地址（§3.2 注记）；Anthropic
+/// - 地址：`base_url` 为空时取该方言的官方缺省地址；Anthropic
 ///   面的 `/v1`、`/messages`、`/v1/messages` 尾缀由 rig
 ///   `AnthropicConfig::with_base_url` 归一（防"地址已含端点路径"产生
 ///   `/v1/messages/v1/messages`）；OpenAI 系原样使用（兼容端点地址即 base）。
@@ -190,7 +190,7 @@ impl rig::wire::document::Serves<Completion> for DialectReassembler {}
 ///   官方 dialect 的缺省路线是 Responses，不显式强制会让 openai_chat 打错
 ///   端点；反之 responses 方言也不能落回 Chat。
 /// - Key：调用方已按 `ProviderConfig` 装配（本地服务以占位值过 rig 必填
-///   面，§11.1 回写口径）。
+///   面，回写口径）。
 pub fn dialect_wire(
     api_format: ApiFormat,
     base_url: &str,
@@ -217,7 +217,7 @@ pub fn dialect_wire(
     }
 }
 
-/// 按方言构造挂好代理 HTTP 客户端的模型端点（§11.1 传输注入口径的方言
+/// 按方言构造挂好代理 HTTP 客户端的模型端点（传输注入口径的方言
 /// 收口）：`http` 为 providers/http.rs 代理工厂快照包装出的 rig 传输句柄，
 /// 模型请求、连接探测与网络工具共用同一条代理语义。
 pub fn dialect_model(

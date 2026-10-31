@@ -1,10 +1,10 @@
-//! web_fetch 工具测试（12 号票）：readability 正文提取快照（中/英文）+
+//! web_fetch 工具测试：readability 正文提取快照（中/英文）+
 //! 空文档拒绝 + 参数反序列化缺省面。
 //!
-//! 快照入库说明（票面「两份真实网页 HTML 快照（含中文正文页）」）：测试
+//! 快照入库说明（两份真实网页 HTML 快照，含中文正文页）：测试
 //! 资产为按真实新闻页结构手工构造的仿真快照（`fixtures/news_article_*.html`，
 //! 含导航/头部/正文四段/相关推荐/评论区/页脚/脚本等典型噪声块），不走外网
-//! 抓取（map.md 站定偏好：测试一律本地 fixture，不连真实外网）。
+//! 抓取（测试一律本地 fixture，不连真实外网）。
 
 use super::web_fetch::{WebFetchArgs, WebFetchFormat, extract_readability};
 

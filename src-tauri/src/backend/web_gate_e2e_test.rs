@@ -1,7 +1,7 @@
-//! web 工具审批链 e2e（12 号票）：confirm_each 档 web_fetch 挂起 → 用户
+//! web 工具审批链 e2e：confirm_each 档 web_fetch 挂起 → 用户
 //! allow → 放行全链（真实抓取本地 fixture）。
 //!
-//! 复用 M1 14 号票审批 e2e 模式（37 号票定稿的 drive_run 剧本驱动）：
+//! 复用审批 e2e 模式（drive_run 剧本驱动）：
 //! 剧本假模型 + 真 ApprovalGate（confirm_each 档）+ 真 ToolsetExecutor
 //! （装配 NetworkEnv）+ 本地 axum fixture（127.0.0.1 零外网）。两次驱动：
 //! 第一次门控挂起（批内零执行——fixture 未收到任何请求）；宿主按
@@ -109,7 +109,7 @@ fn assemble(
             },
             proxy: None,
             throttle: Arc::new(HostThrottle::new(Duration::ZERO)),
-            // 13 号票 web_search 三通道环境：本 e2e 只验 web_fetch 审批门，
+            // web_search 三通道环境：本 e2e 只验 web_fetch 审批门，
             // 搜索通道保持零装配（未启用 + 未配 Key = 不可用面）
             search: crate::tools::web_search::SearchEnv {
                 searxng: None,

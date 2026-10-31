@@ -1,4 +1,4 @@
-//! storage 模块（技术设计文档 §2.2/§7）：CraftWave 全部本地数据落盘能力的入口。
+//! storage 模块：CraftWave 全部本地数据落盘能力的入口。
 //!
 //! 这里统一管理几类磁盘数据（术语解释：「条目」指会话日志里的一行记录；
 //! 「JSONL」指每行一个 JSON 对象的文本文件格式；「分段」指把一个会话的日志
@@ -23,7 +23,7 @@
 //! `crate::storage::…` 引用，不必关心具体藏在哪个子文件里。
 
 pub mod backup;
-// 产物登记（28 号票，§7.7 sessions/<sid>.artifacts.json）：write/edit 成功
+// 产物登记（sessions/<sid>.artifacts.json）：write/edit 成功
 // 落盘的路径登记面（去重计数 + 存在探测查询）。
 pub mod artifacts;
 pub mod config_store;
@@ -38,7 +38,7 @@ pub mod segment;
 pub mod session_tree;
 pub mod stats;
 pub mod toolres;
-// 统一信任存储（24 号票，§7.7 trust/project.json）：项目资源 + MCP 启动
+// 统一信任存储（trust/project.json）：项目资源 + MCP 启动
 // 信任两类记录收敛为单一文件单一实现（TrustStore trait + FileTrustStore）。
 pub mod trust;
 

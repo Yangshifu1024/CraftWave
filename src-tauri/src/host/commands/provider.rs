@@ -1,8 +1,8 @@
-//! provider 域命令（§3.3 #8/#9/#32）：save_provider / delete_provider /
+//! provider 域命令：save_provider / delete_provider /
 //! test_provider。
 //!
 //! 薄壳：save/delete 转调 providers::service；test_provider 转调
-//! providers::probe（连接探测领域面，19 号票，FR-02-09）。
+//! providers::probe（连接探测领域面）。
 
 use serde::Deserialize;
 use serde::Serialize;
@@ -14,7 +14,7 @@ use crate::providers::service;
 use crate::providers::types::ProviderConfig;
 use crate::util::errors::{E_NOT_FOUND, IpcError};
 
-/// `save_provider` 参数契约（§3.3 #8；文档命名锚点，命令形参按字段平铺展开）。
+/// `save_provider` 参数契约（文档命名锚点，命令形参按字段平铺展开）。
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -24,7 +24,7 @@ pub struct SaveProviderArgs {
     pub new_key: Option<String>,
 }
 
-/// `delete_provider` 参数契约（§3.3 #9；文档命名锚点，命令形参按字段平铺展开）。
+/// `delete_provider` 参数契约（文档命名锚点，命令形参按字段平铺展开）。
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -32,8 +32,8 @@ pub struct DeleteProviderArgs {
     pub provider_id: String,
 }
 
-/// §3.3 #8：保存供应商；newKey 有值时写入 apiKey（明文随 config.json 0600
-/// 落盘，§9.4 改写）。返回归一化后的供应商。
+/// 保存供应商；newKey 有值时写入 apiKey（明文随 config.json 0600
+/// 落盘）。返回归一化后的供应商。
 #[tauri::command]
 pub async fn save_provider(
     state: State<'_, AppState>,
@@ -45,7 +45,7 @@ pub async fn save_provider(
     service::save_provider(&state.config, args.provider, args.new_key)
 }
 
-/// §3.3 #9：删除供应商（Key 随配置一并消失）。
+/// 删除供应商（Key 随配置一并消失）。
 #[tauri::command]
 pub async fn delete_provider(
     state: State<'_, AppState>,
@@ -56,7 +56,7 @@ pub async fn delete_provider(
     service::delete_provider(&state.config, &args.provider_id)
 }
 
-/// `test_provider` 参数契约（§3.3 #32，19 号票）：目标供应商 + 可选地址覆写
+/// `test_provider` 参数契约：目标供应商 + 可选地址覆写
 /// （草稿试连语义——表单里改了还没保存的 baseUrl 直接探测，不落库）。
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -68,7 +68,7 @@ pub struct TestProviderArgs {
     pub base_url_override: Option<String>,
 }
 
-/// `test_provider` 返回契约（§3.3 #32）：`{ ok, latencyMs?, models?, error? }`
+/// `test_provider` 返回契约：`{ ok, latencyMs?, models?, error? }`
 /// （error = `{ code, message }` 脱敏，code 为供应商七类之一）。
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -86,8 +86,8 @@ pub struct TestProviderResult {
     pub error: Option<probe::ProbeError>,
 }
 
-/// §3.3 #32：保存供应商前的连通性测试（FR-02-09）。探测请求走代理工厂
-/// 当前客户端（与模型请求同一条代理语义）；按方言两段探测（38 号票接通
+/// 保存供应商前的连通性测试。探测请求走代理工厂
+/// 当前客户端（与模型请求同一条代理语义）；按方言两段探测（接通
 /// 三协议：openai_chat 与 openai_responses 共用 /models + Bearer，回退段
 /// 各自打 chat/completions 或 responses；anthropic_messages 用 x-api-key +
 /// anthropic-version 鉴权，路径 /v1/models → /v1/messages）——连接测试与
@@ -118,14 +118,14 @@ pub(crate) async fn test_provider_core(
     provider: &ProviderConfig,
     base_url_override: Option<&str>,
 ) -> Result<TestProviderResult, IpcError> {
-    // 地址优先级：草稿覆写 > 已存 baseUrl > 官方缺省（§3.2 注记）
+    // 地址优先级：草稿覆写 > 已存 baseUrl > 官方缺省
     let base_url = base_url_override
         .map(str::to_string)
         .or_else(|| provider.base_url.clone())
         .unwrap_or_else(|| provider.api_format.official_base_url().to_owned());
     // Key：已存的 Key 参与探测（本地供应商按 local 标记免 Key——不携带）；
     // 草稿里改了但没保存的 Key 无法参与（契约面只有 baseUrlOverride，
-    // 票面口径：草稿测试只覆写地址，Key 仍按已存值）。
+    // 口径：草稿测试只覆写地址，Key 仍按已存值）。
     let api_key = if provider.local {
         None
     } else {

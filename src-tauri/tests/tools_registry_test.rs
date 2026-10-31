@@ -1,4 +1,4 @@
-//! 工具注册表契约测试（§8.1）：名称清单与顺序钉死（防漂移）、
+//! 工具注册表契约测试：名称清单与顺序钉死（防漂移）、
 //! spec 完整性（名称合法字符、描述长度、schema 形态）、三处同源过滤。
 
 use craftwave_lib::safety::tier::{Capability, GateDecision, PermissionTier};
@@ -10,14 +10,12 @@ fn registry_names_and_order_are_pinned() {
     let names: Vec<String> = registry.iter().map(|s| s.name.clone()).collect();
     assert_eq!(names, STATIC_TOOL_NAMES.to_vec());
     // 顺序钉死（追加新工具在尾部，不重排既有顺序；suggest 仅 run 尾调用
-    // 不开放模型，不在注册表——M1 14 号票；skill 随 09 号票 §8.3 M2 表进
-    // 静态段尾部，description 动态列出启用技能名；subagent 随 10 号票
-    // §8.3 M2 表 Meta 行进静态段尾部，description 内嵌 7 角色清单；
-    // web_fetch/http_request 随 12 号票 §8.3 M2 表 Network 两行进静态段
-    // 尾部，抓取面经 SSRF 五步防线，§9.2；web_search 随 13 号票 §8.3 M2
-    // 表 Network 行进静态段尾部，本地优先三通道 C-12；batch_read/glob/
-    // calculate/render_html 随 M2 14 号票 §8.3 M2 表小工具包四行进静态段
-    // 尾部——批量读、文件名模式检索、精确算术、沙箱 HTML 预览产出）。
+    // 不开放模型，不在注册表；skill 进静态段尾部，description 动态列出
+    // 启用技能名；subagent 进静态段尾部，description 内嵌 7 角色清单；
+    // web_fetch/http_request 进静态段尾部，抓取面经 SSRF 五步防线；
+    // web_search 进静态段尾部，本地优先三通道；batch_read/glob/
+    // calculate/render_html 进静态段尾部——批量读、文件名模式检索、
+    // 精确算术、沙箱 HTML 预览产出）。
     assert_eq!(
         names,
         [
@@ -99,22 +97,22 @@ fn capabilities_match_design() {
     assert_eq!(cap_of("command"), Capability::Network);
     assert_eq!(cap_of("plan"), Capability::Meta);
     assert_eq!(cap_of("ask"), Capability::Interactive);
-    // skill（09 号票，§8.3 M2 表）：Meta 能力——全档放行（加载技能正文
-    // 是无副作用操作，信任控制在技能面自身，§9.8）。
+    // skill：Meta 能力——全档放行（加载技能正文
+    // 是无副作用操作，信任控制在技能面自身）。
     assert_eq!(cap_of("skill"), Capability::Meta);
-    // subagent（10 号票，§8.3 M2 表）：Meta 能力——全档放行（委派面的
-    // 权限控制在子代理工具表/白名单与并发闸，§5.9）。
+    // subagent：Meta 能力——全档放行（委派面的
+    // 权限控制在子代理工具表/白名单与并发闸）。
     assert_eq!(cap_of("subagent"), Capability::Meta);
-    // web_fetch / http_request（12 号票，§8.3 M2 表）：Network 能力——
-    // plan 档过滤、confirm_each/auto_edit 档审批、full_access 放行（§8.5）。
+    // web_fetch / http_request：Network 能力——
+    // plan 档过滤、confirm_each/auto_edit 档审批、full_access 放行。
     assert_eq!(cap_of("web_fetch"), Capability::Network);
     assert_eq!(cap_of("http_request"), Capability::Network);
-    // web_search（13 号票，§8.3 M2 表）：Network 能力——同上；通道选择
-    // 与 SSRF/代理在执行面（§9.2 复用 + SearXNG 本地回环例外）。
+    // web_search：Network 能力——同上；通道选择
+    // 与 SSRF/代理在执行面（复用 SSRF 共享层 + SearXNG 本地回环例外）。
     assert_eq!(cap_of("web_search"), Capability::Network);
-    // 小工具包四件（14 号票，§8.3 M2 表）：batch_read/glob/calculate 均为
+    // 小工具包四件：batch_read/glob/calculate 均为
     // ReadOnly（无副作用读与纯求值）；render_html 为 ReadOnly*（只读但
-    // 产物可见——渲染全在前端沙箱，后端不落盘不解析），全档放行（§8.5）。
+    // 产物可见——渲染全在前端沙箱，后端不落盘不解析），全档放行。
     assert_eq!(cap_of("batch_read"), Capability::ReadOnly);
     assert_eq!(cap_of("glob"), Capability::ReadOnly);
     assert_eq!(cap_of("calculate"), Capability::ReadOnly);
@@ -123,7 +121,7 @@ fn capabilities_match_design() {
 
 #[test]
 fn filter_for_tier_matches_matrix() {
-    // plan 档：FileWrite/Network 过滤，只读/交互/Meta 保留（§8.5）。
+    // plan 档：FileWrite/Network 过滤，只读/交互/Meta 保留。
     let plan: Vec<String> = filter_for_tier(build_registry(), PermissionTier::Plan)
         .iter()
         .map(|s| s.name.to_string())

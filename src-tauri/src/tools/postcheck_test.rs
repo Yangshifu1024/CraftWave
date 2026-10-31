@@ -1,4 +1,4 @@
-//! 写后完整性自检测试（22 号票）：正常写、故障注入（重读不一致）、
+//! 写后完整性自检测试：正常写、故障注入（重读不一致）、
 //! CRLF 保持、拒绝写二进制、错误回喂构造（矩阵化合并）。
 
 use std::path::Path;
@@ -88,7 +88,7 @@ fn verify_written_pass_and_failure_matrix() {
         message: "内容不一致".to_string(),
     };
     let err = postcheck_error("src/main.rs", &failure);
-    assert_eq!(err.code, "E_INTERNAL", "错误码用 E_INTERNAL（§3.6 兜底）");
+    assert_eq!(err.code, "E_INTERNAL", "错误码用 E_INTERNAL（通用兜底）");
     assert!(
         err.message.contains("src/main.rs"),
         "message 含路径：{}",

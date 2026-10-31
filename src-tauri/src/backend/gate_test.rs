@@ -49,7 +49,7 @@ fn matrix_verdicts_by_tier() {
             PermissionTier::ConfirmEach,
             "suspend",
         ),
-        // 写信号命令挂起且带围栏原因（§8.7 退化语义：有写目标即 Confirm）
+        // 写信号命令挂起且带围栏原因（退化语义：有写目标即 Confirm）
         (
             "command",
             command_args("echo hi > out.txt"),
@@ -128,10 +128,10 @@ fn matrix_verdicts_by_tier() {
 }
 
 /// 断言围栏硬面：黑名单命令在任何权限档位都被 E_FENCE_BLOCKED 硬拦（红线：
-/// 任何档位不豁免）；装配工作区上下文后对写目标做 §8.7 四象限判定——
+/// 任何档位不豁免）；装配工作区上下文后对写目标做四象限判定——
 /// roots 内写 fence Allow（落矩阵合成，挂起无围栏原因）、symlink 逃逸与
 /// 变量写路径挂起并带具体原因、界外删除硬拦 E_FENCE_BLOCKED、解析失败
-/// fail-closed 保守挂起（不 fail-open）。22 号票。
+/// fail-closed 保守挂起（不 fail-open）。
 #[cfg(unix)]
 #[test]
 fn fence_blacklist_and_workspace_quadrants() {
@@ -150,7 +150,7 @@ fn fence_blacklist_and_workspace_quadrants() {
         assert_eq!(*code, "E_FENCE_BLOCKED");
     }
 
-    // 四象限判定（22 号票）
+    // 四象限判定
     use crate::backend::gate::GateWorkspace;
 
     let dir = tempfile::tempdir().expect("临时目录");
@@ -221,12 +221,11 @@ fn fence_blacklist_and_workspace_quadrants() {
 }
 
 /// 断言计划门顺序（红线）：已批准计划全部完成后再写文件被 E_PLAN_STALE
-/// 拦截且提示更新计划、只读工具不受计划门约束（M1 零回归）；E_PLAN_STALE
-/// 优先于范围门——计划全部完成后范围外写是过期硬拦而非范围卡挂起（25 号
-/// 票 FR-06-02）。
+/// 拦截且提示更新计划、只读工具不受计划门约束（零回归）；E_PLAN_STALE
+/// 优先于范围门——计划全部完成后范围外写是过期硬拦而非范围卡挂起。
 #[test]
 fn plan_stale_gate_order() {
-    // M1：全部完成后写被 E_PLAN_STALE 拦、只读不受约束
+    // 全部完成后写被 E_PLAN_STALE 拦、只读不受约束
     let (gate, plan) = gate_with_plan(PermissionTier::AutoEdit);
     {
         let mut state = plan.lock().unwrap();
@@ -281,7 +280,7 @@ fn plan_stale_gate_order() {
 
 /// 断言审批签名与会话记忆：已批准签名不再重复挂起、不同签名不连带放行；
 /// always_session 记忆跨 run 免批（新 ApprovalGate 挂同一会话桶）、其他
-/// 会话不延续、forget 与 clear_all 生效（Q41：删除/恢复后须重新确认）；
+/// 会话不延续、forget 与 clear_all 生效（删除/恢复后须重新确认）；
 /// 记忆句柄与登记写入口同源（bucket 取出的句柄在 remember 之后即时可见）。
 #[test]
 fn approved_signature_and_session_memory_cases() {
@@ -357,14 +356,14 @@ fn approved_signature_and_session_memory_cases() {
         ),
         "forget 后须重新确认"
     );
-    // Q41 接线面：恢复备份清全部（33 号票恢复流程调用 clear_all）
+    // 接线面：恢复备份清全部（恢复流程调用 clear_all）
     memory.remember(session, "command", &args);
     memory.clear_all();
     assert_eq!(memory.len_of(session), 0, "clear_all 清全部");
 }
 
-/// MCP 动态工具判定表（08 号票，Q44/§9.7）：read_only × 许可三元组 × tier
-/// ——未声明 read_only 即便 full_access 也挂起（FR-08-04）；审批「始终允许」
+/// MCP 动态工具判定表：read_only × 许可三元组 × tier
+/// ——未声明 read_only 即便 full_access 也挂起（高危外部调用过人）；审批「始终允许」
 /// 授予的许可三元组命中即放行（热生效，与服务器级 always_allow 开关解耦）；
 /// 输入 schema 变更 → 三元组不命中 → 重新挂起（新版本首次调用重确认）；
 /// read_only 声明的工具按 ReadOnly 能力全档放行。真实许可存储驱动（与生产
@@ -511,7 +510,7 @@ fn mcp_license_gate_matrix() {
     );
 }
 
-// ---- 23 号票：内部状态保护 + 审批记忆 + 命令白名单 + 审批四开关 ----
+// ---- 内部状态保护 + 审批记忆 + 命令白名单 + 审批四开关 ----
 
 use crate::backend::gate::{ApprovalPolicy, allowlist_hit};
 use crate::safety::internal_state::InternalStateGuard;
@@ -555,7 +554,7 @@ fn assert_internal_blocked(verdict: &GateVerdict, context: &str) {
     );
 }
 
-/// 断言禁区篡改向量全硬拦（红线，票面验收①）：write 工具直写数据侧
+/// 断言禁区篡改向量全硬拦（红线，验收①）：write 工具直写数据侧
 /// config.json、命令重定向覆盖全局 mcp.json、改 .segmeta.json（段元数据）、
 /// 改项目侧 .craftwave/project.json、写 sessions/ 会话存储——全部
 /// E_INTERNAL_STATE，且任何权限档都不豁免（含 full_access）；工作区内
@@ -629,13 +628,13 @@ fn tamper_vectors_all_hard_blocked() {
     }
 }
 
-/// 断言禁区判定不误拦的边界：读不禁（C-8 已声明风险）——读命令即使目标
-/// 是禁区文件也不因内部状态硬拒（24 号票适配：roots 外路径落外部目录授权
-/// 挂起 §9.9，「读不禁」语义保持为非 Blocked）；既有 workspace 写不受禁区
+/// 断言禁区判定不误拦的边界：读不禁（已声明风险）——读命令即使目标
+/// 是禁区文件也不因内部状态硬拒（roots 外路径落外部目录授权
+/// 挂起，「读不禁」语义保持为非 Blocked）；既有 workspace 写不受禁区
 /// 判定影响（confirm_each 挂起、full_access 放行）；未装配禁区判定面
 ///（with_internal_guard 缺省）不拦——headless 测试与旧装配面零漂移；目标
 /// 含未解析变量（Opaque）不做硬拒——值未知不猜，交围栏字面量掩码保守
-/// Confirm + 36 号票审计（挂起而非 E_INTERNAL_STATE，票面边界）。
+/// Confirm + 灰区审计（挂起而非 E_INTERNAL_STATE，边界语义）。
 #[test]
 fn internal_guard_no_overblock_cases() {
     // ① 读不禁：confirm_each 的 cat 与 full_access 的 read 均非 Blocked
@@ -658,7 +657,7 @@ fn internal_guard_no_overblock_cases() {
         !matches!(verdict, GateVerdict::Blocked { .. }),
         "读不禁内部状态硬拒：{verdict:?}"
     );
-    // roots 外路径挂外部目录授权（24 号票判定层接管，非权限矩阵 Allow）
+    // roots 外路径挂外部目录授权（判定层接管，非权限矩阵 Allow）
     assert!(
         matches!(
             &verdict,
@@ -710,8 +709,8 @@ fn internal_guard_no_overblock_cases() {
     }
 }
 
-/// 断言命令白名单与审批开关面（23 号票四开关，票面验收③④）：
-/// 词序列前缀匹配表（23 号票字段级语义）；白名单命中免除围栏 Confirm 与
+/// 断言命令白名单与审批开关面（审批四开关，验收③④）：
+/// 词序列前缀匹配表（字段级语义）；白名单命中免除围栏 Confirm 与
 /// 矩阵 NeedsApproval（前缀命中、未命中仍挂起）、黑名单 Block 永不豁免、
 /// ④ 关闭不豁免、plan 档不豁免（档位只读铁律）；审批总开关关闭后
 /// confirm_each 档不再弹审批（矩阵 NeedsApproval 与围栏 Confirm 直接放行）、
@@ -804,7 +803,7 @@ fn allowlist_and_switch_cases() {
     let reason = fence_reason.as_ref().expect("plan 档挂起带原因");
     assert!(reason.contains("plan 档只读白名单"), "原因：{reason}");
 
-    // ---- 审批总开关（票面验收④①）：关闭后 confirm_each 档不再弹审批 ----
+    // ---- 审批总开关（验收④①）：关闭后 confirm_each 档不再弹审批 ----
     let policy_off = ApprovalPolicy {
         enabled: false,
         allowlist_enabled: false,
@@ -856,13 +855,13 @@ fn allowlist_and_switch_cases() {
     assert_internal_blocked(&gate_zone.judge("command", &args), "禁区命中@总开关关");
 }
 
-// ---- 外部目录授权判定（24 号票，§9.9）----
+// ---- 外部目录授权判定----
 
 /// 断言外部目录授权判定全流程：文件类工具访问 roots 外路径 → Suspend 且
 /// external_dir = 目标父目录（read/write/edit）、目录型工具（list_files/
 /// glob/grep）授权目标 = 路径本身、非文件工具不判；授权后 grant_external_dir
 /// → 重放放行（「目录及子目录」粒度），其他目录仍逐个询问；禁授权目标
-///（§9.9 整体放行禁区）——托管目录本身与家目录 → E_INVALID_ARG 硬拦；
+///（整体放行禁区）——托管目录本身与家目录 → E_INVALID_ARG 硬拦；
 /// batch_read 多路径——首个越界路径的父目录作为授权目标，授权后其余越界
 /// 目录在重放时继续逐个询问（签名放行不吞并未授权路径——外部判定在签名前）。
 #[test]
@@ -946,7 +945,7 @@ fn external_dir_grant_flow_cases() {
 
     // 禁授权目标：数据目录本身（托管目录）——workspace 是核心根内不触发
     // 外部判定；托管目录下非 workspace 的路径 = 禁区（读路径不触及内部
-    // 状态硬拒（23 号票只拦写），但授权目标 = 托管目录 → E_INVALID_ARG）
+    // 状态硬拒（只拦写），但授权目标 = 托管目录 → E_INVALID_ARG）
     let verdict = gate.judge(
         "read",
         &serde_json::json!({"path": data.join("config.json").to_string_lossy()}).to_string(),
@@ -1004,7 +1003,7 @@ fn external_dir_grant_flow_cases() {
     ));
 }
 
-// ---- 计划范围门与硬门（25 号票，FR-06-02/03/§8.6）----
+// ---- 计划范围门与硬门----
 
 use crate::backend::gate::{PlanScopeMemory, SessionPlanScope};
 use crate::storage::entries::PlanItem as PlanItemEntry;
@@ -1040,12 +1039,12 @@ fn scoped_gate(baseline: &[&str]) -> (ApprovalGate, std::path::PathBuf, tempfile
     (gate, project, dir)
 }
 
-/// 断言计划范围门判定表（基线匹配语义 + command 写目标同判，22/25 号票）：
+/// 断言计划范围门判定表（基线匹配语义 + command 写目标同判）：
 /// 文件基线——范围外写挂范围卡（plan_scope 带计划外路径、与外部目录授权
 /// 互斥、纯范围卡无围栏原因）、基线内写不触发、文件范围不自动扩成顶层
 /// 目录（子路径仍询问）；目录基线——含其子路径（任意深度免问）、基线外
-/// 兄弟路径仍询问；空基线——首次写入也须确认（§8.6 空范围不豁免）；无
-/// 已批准计划不守门（FR-06-02 默认"有计划即守门"）；command 的写目标走
+/// 兄弟路径仍询问；空基线——首次写入也须确认（空范围不豁免）；无
+/// 已批准计划不守门（默认"有计划即守门"）；command 的写目标走
 /// AST WriteTarget 同判——基线外重定向纯范围卡、词法越界的基线外重定向
 /// （围栏 Confirm 待决）被范围卡一并吸收围栏原因（一次交互覆盖本次调用）、
 /// 基线内重定向落矩阵放行、Opaque 不判范围（值未知不猜）。
@@ -1137,7 +1136,7 @@ fn plan_scope_baseline_judgement_cases() {
         "无批准计划不触发范围门：{verdict:?}"
     );
 
-    // ---- command 写目标走 AST WriteTarget 同判（22 号票接缝）----
+    // ---- command 写目标走 AST WriteTarget 同判----
     let (gate, project, _keep) = scoped_gate(&["src/a.rs"]);
     // 基线外重定向（roots 内）：范围门命中、围栏四象限 Allow → 纯范围卡
     let verdict = gate.judge("command", &command_args("echo x > src/b.rs"));
@@ -1296,7 +1295,7 @@ fn plan_scope_grant_and_session_bucket_cases() {
     );
 }
 
-/// 严格硬门（FR-06-02）：默认关（require_plan=false 无计划写放行）；开启
+/// 严格硬门：默认关（require_plan=false 无计划写放行）；开启
 /// 后无批准计划的写 E_PLAN_REQUIRED 硬拦；已批准计划不拦；只读工具不受
 /// 硬门影响。
 #[test]
@@ -1316,7 +1315,7 @@ fn plan_hard_gate_default_off_and_on() {
                 ..ApprovalPolicy::default()
             })
     };
-    // 默认关：无计划写放行（FR-06-02 默认策略锚定）
+    // 默认关：无计划写放行（默认策略锚定）
     let gate = make(Arc::new(Mutex::new(None)), false);
     let verdict = gate.judge(
         "write",
@@ -1355,9 +1354,9 @@ fn plan_hard_gate_default_off_and_on() {
     );
 }
 
-// ---- git 写策略矩阵（26 号票，FR-11-03 / §8.7 git 分类表细化）----
+// ---- git 写策略矩阵（git 分类表细化）----
 //
-// 票面验收口径逐项钉住：默认关 commit Block / 开后 stage+commit Confirm /
+// 验收口径逐项钉住：默认关 commit Block / 开后 stage+commit Confirm /
 // push 任何配置恒 Confirm / push --force 恒 Block / merge-rebase 恒禁 /
 // 只读子命令任何配置不触发策略 / 复合命令逐段取最严 / 策略 Block 不被
 // 会话级签名放行复活。
@@ -1383,12 +1382,12 @@ fn assert_blocked(verdict: &GateVerdict, why: &str) {
     assert_eq!(*code, "E_FENCE_BLOCKED", "{why}：错误码应为围栏 Block");
 }
 
-/// 断言 git 写策略分类表（26 号票，FR-11-03/§8.7）：
+/// 断言 git 写策略分类表：
 /// 默认关——add/stage/commit 全部硬拦（缺省构造同样默认禁，安全缺省口径）；
 /// 开关开后——add/stage/commit 降为挂起审批（fenceReason 带原因），且受
 /// 审批总开关豁免（总开关关 → 放行，用户自担）；push（非 force）任何配置
 /// 恒挂起确认（总开关关也不豁免），已批准签名放行（否则恢复死循环）；
-/// merge/rebase 恒禁（spec 定案「仍禁」，总开关关闭也不豁免，策略铁律位阶
+/// merge/rebase 恒禁（定案「仍禁」，总开关关闭也不豁免，策略铁律位阶
 /// 同黑名单）；push --force 恒 Block（黑名单正则先行 + 策略层双保险，开关
 /// 状态无关）；只读子命令任何配置不触发策略（走既有围栏/矩阵面）；复合
 /// 命令逐段取最严（默认关 add+commit 硬拦、开后挂起一次审批覆盖、只读段
@@ -1563,9 +1562,9 @@ fn git_policy_classification_cases() {
     );
 }
 
-// ---- 灰区命令审计（36 号票，§8.7）：资格判定 + 审计放行单槽 ----
+// ---- 灰区命令审计：资格判定 + 审计放行单槽 ----
 
-/// 断言灰区审计各面（36 号票，§8.7）：
+/// 断言灰区审计各面：
 /// 资格判定表——围栏 Confirm 灰区命中（词法越界写目标、安装类信号、Opaque
 /// 字面量掩码）；git 策略确认/plan 档/矩阵人批/非 command 工具不命中；硬拒
 /// 不进挂起面天然不判。灰区命令样例用重定向写目标（touch 不在 AST 写目标
@@ -1601,7 +1600,7 @@ fn audit_gate_cases() {
             "write",
             r#"{"path":"/tmp/x","content":"y"}"#.to_owned().as_str(),
         ),
-        "非 command 工具不在审计范围（M2 仅覆盖 command）"
+        "非 command 工具不在审计范围（审计仅覆盖 command）"
     );
     // git 策略确认类（明确人批）不进审计。
     let gate_git = ApprovalGate::new(PermissionTier::FullAccess, Arc::new(Mutex::new(None)));

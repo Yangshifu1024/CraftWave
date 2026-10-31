@@ -1,5 +1,5 @@
-//! util/errors.rs 单测（31 号票）：错误 message 英文化口径——io 映射默认
-//! 文案、IpcError 语义化构造器、session 域代表报错点均无 CJK（错误面 §3.6
+//! util/errors.rs 单测：错误 message 英文化口径——io 映射默认
+//! 文案、IpcError 语义化构造器、session 域代表报错点均无 CJK（错误面
 //! 定案：E_* 机器面不变，message 归一为英文技术串；前端按错误码映射本地化）。
 
 use super::*;

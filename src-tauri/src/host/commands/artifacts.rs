@@ -1,8 +1,8 @@
-//! 产物面板与编辑器打开（§3.3 #59l `list_artifacts` + #35 `list_editors` +
-//! #36 `open_in_editor`，28 号票）。
+//! 产物面板与编辑器打开（`list_artifacts` + `list_editors` +
+//! `open_in_editor`）。
 //!
 //! 产物读取：`SessionStore::list_artifacts`（持会话锁读 `<sid>.artifacts.json`
-//! + 存在探测，§7.7）。
+//! + 存在探测）。
 //!
 //! 编辑器探测：PATH 上常见 CLI（VS Code 系 / Sublime / Zed）优先，macOS 补
 //! `open -a` 候选（/Applications 下 .app 存在性）；打开拉起不经 open crate
@@ -10,8 +10,8 @@
 //! open crate 只会丢失行号定位）。
 //!
 //! 路径校验：open_in_editor 走 safe_join 白名单 = 数据目录 + 全部注册项目
-//! 主目录（会话 roots 的超集——产物只可能落在这里，03 号票 open_dir 的
-//! 白名单体系同款）；越界 E_PATH_OUTSIDE_ROOTS（§9.1）。
+//! 主目录（会话 roots 的超集——产物只可能落在这里，open_dir 的
+//! 白名单体系同款）；越界 E_PATH_OUTSIDE_ROOTS。
 
 use std::path::{Path, PathBuf};
 
@@ -22,7 +22,7 @@ use crate::host::AppState;
 use crate::host::IpcError;
 use crate::safety::safe_join::PathGuard;
 
-/// `list_artifacts` 参数契约（§3.3 #59l）。
+/// `list_artifacts` 参数契约。
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -30,7 +30,7 @@ pub struct ListArtifactsArgs {
     pub session_id: String,
 }
 
-/// `list_artifacts` 命令（§3.3 #59l，28 号票增补）：返回本会话产物清单
+/// `list_artifacts` 命令：返回本会话产物清单
 /// （存在探测就地完成；排序 = 存在优先 + lastSeenAt 倒序——已删除灰显
 /// 置底由排序天然达成）。会话未知/无登记文件 → 空清单（幂等查询语义）。
 #[tauri::command]
@@ -45,7 +45,7 @@ pub(crate) async fn list_artifacts(
     })
 }
 
-/// 编辑器条目（§3.3 #35：`{ name, path }`）：name = 展示名；path = CLI
+/// 编辑器条目（`{ name, path }`）：name = 展示名；path = CLI
 /// 可执行文件全路径（CLI 探测命中）或 macOS 应用名（open -a 候选）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -63,7 +63,7 @@ pub(crate) struct EditorCandidate {
     pub style: LineStyle,
 }
 
-/// 行号定位参数风格（§3.3 #36「按编辑器拼 CLI 参数」）：
+/// 行号定位参数风格（按编辑器拼 CLI 参数）：
 /// - DashG：VS Code 系 `--goto file:line`（-g 短参等价）；
 /// - ColonSuffix：Sublime `file:line` 直接路径语法；
 /// - None：不支持行号定位（Zed v1 忽略行号，尽力打开）。
@@ -174,7 +174,7 @@ pub(crate) fn probe_editors() -> Vec<(EditorCandidate, PathBuf)> {
     found
 }
 
-/// `list_editors` 命令（§3.3 #35，28 号票实装）：探测结果全量返回
+/// `list_editors` 命令：探测结果全量返回
 /// （前端产物页「打开」按钮的可用性提示面；打开动作不依赖本清单——
 /// open_in_editor 每次现探取首个可用）。
 #[tauri::command]
@@ -188,7 +188,7 @@ pub(crate) async fn list_editors() -> Result<Vec<EditorEntry>, IpcError> {
         .collect())
 }
 
-/// `open_in_editor` 参数契约（§3.3 #36）：line 缺省 / 0 = 不带行号定位。
+/// `open_in_editor` 参数契约：line 缺省 / 0 = 不带行号定位。
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -199,7 +199,7 @@ pub struct OpenInEditorArgs {
     pub line: Option<u32>,
 }
 
-/// open_in_editor 的路径白名单（§9.1 safe_join；03 号票 open_dir 体系同款）：
+/// open_in_editor 的路径白名单（safe_join；open_dir 体系同款）：
 /// 数据目录整根（含 workspace/ 代理工作区——临时会话产物落点）+ 全部注册
 /// 项目主目录（项目会话产物落点）。canonicalize 失败的条目跳过（PathGuard
 /// 对不存在的根会整体报错）。
@@ -215,7 +215,7 @@ fn editor_roots(app: &AppState) -> Vec<PathBuf> {
         .collect()
 }
 
-/// ToolError → D14 错误码（safe_join 语义原样透传，workspace.rs 同款）。
+/// ToolError → IPC 错误码（safe_join 语义原样透传，workspace.rs 同款）。
 fn to_ipc_error(err: crate::util::errors::ToolError) -> IpcError {
     IpcError::new(err.code, err.message)
 }
@@ -278,7 +278,7 @@ pub(crate) fn open_in_editor_core(
     Ok(())
 }
 
-/// `open_in_editor` 命令（§3.3 #36，28 号票实装）：探测不到可用编辑器
+/// `open_in_editor` 命令：探测不到可用编辑器
 /// E_NOT_FOUND（前端 Toast 提示）；路径越界 E_PATH_OUTSIDE_ROOTS；OS 拉起
 /// 失败 E_IO。
 #[tauri::command]

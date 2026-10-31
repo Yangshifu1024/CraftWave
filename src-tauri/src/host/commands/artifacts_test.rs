@@ -1,4 +1,4 @@
-//! 产物面板与编辑器打开命令测试（独立测试文件，28 号票）：
+//! 产物面板与编辑器打开命令测试（独立测试文件）：
 //! list_artifacts（登记经 SessionStore 直驱 + 空清单兜底）、open_in_editor
 //! 校验面（空路径 / 越界 / 白名单放行到编辑器探测）、编辑器探测表、
 //! @ 补全搜索性能与忽略表核查。
@@ -19,7 +19,7 @@ fn app(data: &std::path::Path) -> AppState {
 
 /// list_artifacts 直驱：经 store 登记 → 查询带计数；无登记文件 → 空清单。
 /// 以及 open_in_editor 校验面表驱动：空路径拒绝 E_INVALID_ARG；白名单越界
-/// 拒绝 E_PATH_OUTSIDE_ROOTS（§9.1——家目录下任意非白名单文件不可打开）；
+/// 拒绝 E_PATH_OUTSIDE_ROOTS（——家目录下任意非白名单文件不可打开）；
 /// 数据目录内（workspace 产物落点）通过白名单，编辑器缺失环境 → E_NOT_FOUND
 /// 而非 panic。编辑器探测表：条目非空、候选表优先级序（CLI 在前）。
 #[test]
@@ -78,7 +78,7 @@ fn list_artifacts_and_open_in_editor_semantics() {
     }
 }
 
-/// @ 补全搜索两验收（28 号票）：万级文件目录性能（~15k 条目命中前 20 条，
+/// @ 补全搜索两组验证：万级文件目录性能（~15k 条目命中前 20 条，
 /// 断言 CI debug 容忍上限 600ms，实测数打印在案）；忽略表核查（.git/
 /// node_modules/target/dist/build/.craftwave 下条目不进搜索结果）。
 #[test]
@@ -117,7 +117,7 @@ fn search_paths_large_tree_budget_and_ignore_dirs() {
         assert!(hits.len() <= 20);
     }
     println!(
-        "[28 号票性能实测] 万级目录（~15k 条目）@ 补全命中前 20 条最大耗时 {worst_ms}ms（验收线 300ms）"
+        "[性能实测] 万级目录（~15k 条目）@ 补全命中前 20 条最大耗时 {worst_ms}ms（验收线 300ms）"
     );
     // CI debug 构建抖动保护：600ms 硬上限；本机实测以 println 输出记录
     assert!(
@@ -125,7 +125,7 @@ fn search_paths_large_tree_budget_and_ignore_dirs() {
         "@ 补全搜索超预算：{worst_ms}ms（验收线 300ms，CI 容忍 600ms）"
     );
 
-    // 忽略表核查（SEARCH_SKIP_DIRS 覆盖票面清单）。
+    // 忽略表核查（SEARCH_SKIP_DIRS 覆盖清单）。
     for name in [
         ".git",
         "node_modules",

@@ -1,19 +1,19 @@
-//! 会话图片 blob 存储（§7.7 v1 口径，17 号票）：图片字节数据的落盘与读取。
+//! 会话图片 blob 存储（v1 口径）：图片字节数据的落盘与读取。
 //!
 //! 术语解释：「blob」指一整块二进制数据（binary large object），这里就是
 //! 用户附图或读取的图片文件的原始字节；「内容寻址」指文件名取自内容本身
 //! 的哈希值——相同内容的图片必然落在同一个文件名下，因此同一会话内重复
 //! 附同一张图天然去重（第二次写入直接跳过）。
 //!
-//! 目录与命名（§7.7 行逐字）：数据根下的 `sessions/<sid>.imgblob/<hash>.bin`，
+//! 目录与命名：数据根下的 `sessions/<sid>.imgblob/<hash>.bin`，
 //! `hash` 为 SHA-256 前 32 hex（16 字节十六进制展开，小写）；MIME 类型不单独
 //! 落盘——读取时对字节做魔数嗅探（magic bytes，文件头部特征字节）恢复，
 //! 白名单外格式在写入入口即被拒绝，目录里不可能出现嗅探不出的图片。
 //!
-//! GC（垃圾回收）v1 口径（2026-10-30 本票取舍，已回写 §7.7 注记）：会话删除
+//! GC（垃圾回收）v1 口径（2026-10-30 定案）：会话删除
 //! 时随 `.imgblob` 目录整体删除（`SessionStore::delete_session` 一并执行）；
 //! 「按引用计数的精确 GC（删掉不再被任何消息引用的 blob）」与保留期清理的
-//! 联动归 M3 保留期票。v1 下同一会话内重复附图去重、跨会话不共享（各会话
+//! 联动留待后续版本。v1 下同一会话内重复附图去重、跨会话不共享（各会话
 //! 目录独立），因此整目录删除不会误删他会话的数据。
 //!
 //! 日志纪律（spec「图片与日志」条）：本模块与调用方都**不把图片字节写进
@@ -25,13 +25,13 @@ use sha2::{Digest, Sha256};
 
 use super::StorageError;
 
-/// 单张图片的字节上限（FR-12-02：≤5MiB，与前端附件校验同口径）。
+/// 单张图片的字节上限（≤5MiB，与前端附件校验同口径）。
 pub const MAX_BLOB_BYTES: usize = 5 * 1024 * 1024;
 
 /// blob 哈希的十六进制长度（SHA-256 前 32 hex = 16 字节展开）。
 pub const BLOB_HASH_HEX_LEN: usize = 32;
 
-/// 按文件头魔数嗅探图片 MIME 类型（png/jpeg/gif/webp 四种，§6.2 白名单；
+/// 按文件头魔数嗅探图片 MIME 类型（png/jpeg/gif/webp 四种白名单；
 /// 其余返回 None——调用方按参数错误拒绝）。
 pub fn sniff_image_mime(bytes: &[u8]) -> Option<&'static str> {
     if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
@@ -72,7 +72,7 @@ fn validate_session_id(session_id: &str) -> Result<(), StorageError> {
     }
 }
 
-/// 会话的 blob 目录（数据根下 `sessions/<sid>.imgblob/`，§7.7）。
+/// 会话的 blob 目录（数据根下 `sessions/<sid>.imgblob/`）。
 pub fn imgblob_dir(root: &Path, session_id: &str) -> PathBuf {
     root.join("sessions").join(format!("{session_id}.imgblob"))
 }

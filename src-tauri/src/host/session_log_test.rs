@@ -1,4 +1,4 @@
-//! [`super::SessionLogger`] 的单元测试（32 号票测试口径）：
+//! [`super::SessionLogger`] 的单元测试：
 //! 级别过滤（Debug 全记 / Info 不记 debug / Error 只记 error / 热切换生效）、
 //! 轮转语义（`.1` 副本保留 1 份 + 会话写路径触发）、tail 语义（缺省/坏行容错）、
 //! 删除联动（主文件与轮转副本同删、失败报告面）。

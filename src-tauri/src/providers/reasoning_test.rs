@@ -1,7 +1,7 @@
-//! Thinking 档位映射的表驱动测试（18 号票，§11.4 回写表锚定）。
+//! Thinking 档位映射的表驱动测试（回写表锚定）。
 //!
-//! 五档 × 两方言 × 窗口参数全覆盖；每条断言都直接对照技术设计文档 §11.4
-//! 的回写表（本票定稿），字段值漂移即红。全表合并为单个 #[test]，
+//! 五档 × 两方言 × 窗口参数全覆盖；每条断言都直接对照回写映射表，
+//! 字段值漂移即红。全表合并为单个 #[test]，
 //! 断言消息带阶段标识。
 
 use super::{ReasoningDirective, ThinkingLevel, model_effort_to_request, thinking_to_request};
@@ -11,11 +11,11 @@ const CHAT: ApiFormat = ApiFormat::OpenaiChat;
 const RESPONSES: ApiFormat = ApiFormat::OpenaiResponses;
 const ANTHROPIC: ApiFormat = ApiFormat::AnthropicMessages;
 
-/// 标准窗口参数（§3.2 缺省：128000 窗口 / 32768 maxTokens）。
+/// 标准窗口参数（缺省：128000 窗口 / 32768 maxTokens）。
 const WINDOW: u64 = 128_000;
 const MAX_TOKENS: u64 = 32_768;
 
-// 断言：§11.4 回写表全语义——会话档五档 × OpenAI 系（off→"none" 显式关闭，
+// 断言： 回写表全语义——会话档五档 × OpenAI 系（off→"none" 显式关闭，
 // 其余同名值）；会话档 × Anthropic 比例轴（off 不启用，minimal/low/medium/
 // high = 20/40/60/80% 预算，超过 max_tokens 时上调 = min(窗口, 预算+max_tokens)
 // 封顶窗口）；per-model 档 × OpenAI 系（default 不传、low/medium/high/max
@@ -91,7 +91,7 @@ fn thinking_budget_tables_all_dialects() {
         "high = 80%，上调封顶窗口"
     );
 
-    // per-model 档 × OpenAI 系（§11.4 原表）：default = 不传，其余同名值
+    // per-model 档 × OpenAI 系（原表）：default = 不传，其余同名值
     assert_eq!(
         model_effort_to_request(ReasoningEffort::Default, CHAT, WINDOW, MAX_TOKENS),
         ReasoningDirective::none(),
@@ -115,7 +115,7 @@ fn thinking_budget_tables_all_dialects() {
     }
 
     // per-model 档 × Anthropic：default→20% 不上调；low→40%；high/max 同预算
-    // 80% 且叠加上调（上调规则由预算 > max_tokens 统一判定，§11.4 max 行「类推」口径）
+    // 80% 且叠加上调（上调规则由预算 > max_tokens 统一判定， max 行「类推」口径）
     assert_eq!(
         model_effort_to_request(ReasoningEffort::Default, ANTHROPIC, WINDOW, MAX_TOKENS),
         ReasoningDirective {

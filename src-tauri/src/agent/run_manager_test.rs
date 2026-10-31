@@ -1,6 +1,6 @@
 //! RunManager 与 FrameHub 单元测试（测试代码独立于源码文件，仅 cargo test 时编译）。
 //!
-//! 覆盖（05 号票，§5.8/D16）：
+//! 覆盖：
 //! - 注册表行为：同会话互斥（E_SESSION_RUNNING）、取消只做置位、终态摘除
 //!   与摘除后允许重启、has_active 与注册表空/非空一致、RunState.usage 累计
 //!   与 run_snapshot 对账；
@@ -68,11 +68,11 @@ fn placeholder_snapshot() -> crate::backend::frames::RunSnapshot {
     }
 }
 
-// 断言（注册表行为）：同会话的第二个 run 被拒（E_SESSION_RUNNING，§3.3
-// #18），不同会话不受影响；cancel 无活跃 run 返回 false、命中则置位令牌
-// 返回 true（§3.3 #19）；remove 校验 run_id（不匹配不摘除，防竞态摘掉新
-// run）、正确摘除后同会话可再启动；has_active 与注册表空/非空一致（§9.6
-// 退出拦截）；RunState 写入后 run_snapshot 字段完整（usage 累计随 RunState
+// 断言（注册表行为）：同会话的第二个 run 被拒（E_SESSION_RUNNING），
+// 不同会话不受影响；cancel 无活跃 run 返回 false、命中则置位令牌
+// 返回 true；remove 校验 run_id（不匹配不摘除，防竞态摘掉新
+// run）、正确摘除后同会话可再启动；has_active 与注册表空/非空一致（退出
+// 拦截）；RunState 写入后 run_snapshot 字段完整（usage 累计随 RunState
 // 同步、last_seq 以枢纽实际序号为准）；空 runSnapshot 占位（idle 形态由
 // 命令面 null 承载）。
 #[test]
@@ -94,7 +94,7 @@ fn registry_lifecycle_and_snapshot_fields() {
             Arc::new(FrameHub::new(Box::new(SeqCollectingSink::default()))),
         )
         .unwrap_err();
-    assert_eq!(err.code, "E_SESSION_RUNNING", "§3.3 #18 同会话互斥");
+    assert_eq!(err.code, "E_SESSION_RUNNING", "同会话互斥");
     mgr.start(
         "s2",
         "run-3".to_owned(),
@@ -103,11 +103,11 @@ fn registry_lifecycle_and_snapshot_fields() {
     )
     .expect("他会话可注册");
 
-    // cancel：无活跃 run → false；命中 → 置位并返回 true（§3.3 #19）。
+    // cancel：无活跃 run → false；命中 → 置位并返回 true。
     assert!(!mgr.cancel("s-none"), "无活跃 run → false");
     let handle = mgr.get("s1").expect("活跃 run 在场");
     assert!(!handle.cancel.is_cancelled());
-    assert!(mgr.cancel("s1"), "命中 → 置位并返回 true（§3.3 #19）");
+    assert!(mgr.cancel("s1"), "命中 → 置位并返回 true");
     assert!(handle.cancel.is_cancelled());
 
     // remove 校验 run_id（不匹配不摘，防竞态摘掉新 run）；摘除后可重启。
@@ -124,7 +124,7 @@ fn registry_lifecycle_and_snapshot_fields() {
     .expect("摘除后同会话可再启动");
 
     // has_active 与注册表空/非空一致。
-    assert!(mgr.has_active(), "任一会话有活跃 run → 拦截退出（§9.6）");
+    assert!(mgr.has_active(), "任一会话有活跃 run → 拦截退出");
     mgr.remove("s1", "run-2");
     mgr.remove("s2", "run-3");
     assert!(!mgr.has_active(), "空注册表 → 无活跃 run（退出拦截放行）");
@@ -179,7 +179,7 @@ fn registry_lifecycle_and_snapshot_fields() {
     let _ = EndReason::Done;
 }
 
-// 断言（环形帧缓冲与 attach 重放，§5.8/D16）：容量 512 溢出丢最旧、
+// 断言（环形帧缓冲与 attach 重放）：容量 512 溢出丢最旧、
 // dropped 计数准确、下发端不受丢帧影响、last_seq 以实际序号为准；重放
 // 区间 `(sinceSeq, head]` 四边界（0 全量原 seq/ts 保留 / 中间 / 头空 /
 // 超越头空且不补摘要）；窗口耗尽兜底——sinceSeq 落在缓冲之前补

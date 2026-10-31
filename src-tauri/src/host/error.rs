@@ -3,7 +3,7 @@
 //! `IpcError` 形状本身定义在 `util::errors`（util 为最底层，providers 亦依赖）；
 //! 本模块只承载 `From<StorageError>` 映射——它必须位于 storage 之上，不能下沉。
 //!
-//! code 取值须落在 §3.6 错误码注册表；`E_STORAGE_IO` 行已随 13 号票补录注册表。
+//! code 取值须落在错误码注册表；`E_STORAGE_IO` 行已补录注册表。
 
 use crate::storage::StorageError;
 

@@ -1,4 +1,4 @@
-//! followUp 队列管理器的单元测试（06 号票）：入队/出队/移除/清空/回队/暂停态、
+//! followUp 队列管理器的单元测试：入队/出队/移除/清空/回队/暂停态、
 //! queue.json 原子写与重启（重开管理器）恢复往返、损坏档容错。
 
 use super::*;
@@ -27,7 +27,7 @@ fn entry(text: &str, model_id: Option<&str>) -> FollowUpEntry {
 /// 断言内存队列操作语义：先进先出出队、按 id 移除（未命中 None）、
 /// 清空按排队序交还并解除暂停且删除落盘文件、出队后回队仍为队头
 /// （交付失败重试的挂回语义）；以及 queue.json 原子写与重启（重开管理器）
-/// 恢复往返——§7.7 字段级格式完整落盘（paused 与 entries 随行），暂停态
+/// 恢复往返——字段级格式完整落盘（paused 与 entries 随行），暂停态
 /// 跨重启保留。
 #[test]
 fn queue_operations_requeue_and_pause_across_restart() {
@@ -98,7 +98,7 @@ fn queue_operations_requeue_and_pause_across_restart() {
         mgr.set_paused("sess-r", true);
     }
 
-    // 落盘文件即 §7.7 字段级格式（paused 与 entries 完整保留）
+    // 落盘文件即字段级格式（paused 与 entries 完整保留）
     let raw = std::fs::read_to_string(root.join("sessions").join("sess-r.queue.json"))
         .expect("queue.json 应存在");
     let file: FollowUpQueueFile = serde_json::from_str(&raw).expect("应为合法 JSON");

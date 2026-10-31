@@ -1,9 +1,9 @@
-//! 日志命令（§3.3 #54–56，32 号票，FR-15-01/FR-14-07）：
+//! 日志命令：
 //! `read_session_log`（会话日志尾部拉取）/ `list_log_files`（日志文件
 //! 清单）/ `open_logs_dir`（系统打开日志目录）。
 //!
 //! 读取是纯运维诊断面（拉取式、无实时流）；文件布局与轮转见
-//! `host/session_log.rs`（§7.1 布局的实现落点）。
+//! `host/session_log.rs`（布局的实现落点）。
 
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -12,19 +12,19 @@ use crate::host::AppState;
 use crate::host::IpcError;
 use crate::util::errors::E_IO;
 
-/// `read_session_log` 参数契约（§3.3 #54）。
+/// `read_session_log` 参数契约。
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct ReadSessionLogArgs {
     pub session_id: String,
-    /// 尾行数（缺省 500、上限 5000——越界 clamp 到边界；§3.3 #54 注记）。
+    /// 尾行数（缺省 500、上限 5000——越界 clamp 到边界）。
     #[serde(default)]
     #[cfg_attr(test, ts(optional))]
     pub tail: Option<u32>,
 }
 
-/// `read_session_log` 返回契约（§3.3 #54）：尾部行清单（JSONL 原文行，
+/// `read_session_log` 返回契约：尾部行清单（JSONL 原文行，
 /// 前端解析渲染）。
 #[derive(Debug, Clone, Default, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -33,7 +33,7 @@ pub struct ReadSessionLogResult {
     pub lines: Vec<String>,
 }
 
-/// tail 缺省值与上限（§3.3 #54 注记：缺省 500、上限 5000）。
+/// tail 缺省值与上限（缺省 500、上限 5000）。
 const TAIL_DEFAULT: u32 = 500;
 const TAIL_MAX: u32 = 5000;
 
@@ -53,7 +53,7 @@ pub(crate) fn read_session_log_core(
     }
 }
 
-/// 读取会话日志尾部（§3.3 #54）：文件不存在 → 空清单不报错（幂等查询
+/// 读取会话日志尾部：文件不存在 → 空清单不报错（幂等查询
 /// 语义——verbose 从未开过的会话无日志文件属正常态）。
 #[tauri::command]
 pub(crate) async fn read_session_log(
@@ -66,16 +66,16 @@ pub(crate) async fn read_session_log(
     Ok(read_session_log_core(&app, &args.session_id, args.tail))
 }
 
-/// `list_log_files`（§3.3 #55）：logs/ 下全部日志文件相对名（app.log* +
-/// sessions/*，相对 `~/.craftwave/logs/`；spill 子目录不在清单——票面
+/// `list_log_files`：logs/ 下全部日志文件相对名（app.log* +
+/// sessions/*，相对 `~/.craftwave/logs/`；spill 子目录不在清单——
 /// 布局定义两项）。目录不存在 → 空清单不报错。
 #[tauri::command]
 pub(crate) async fn list_log_files(app: State<'_, AppState>) -> Result<Vec<String>, IpcError> {
     Ok(app.session_log.list_files())
 }
 
-/// `open_logs_dir`（§3.3 #56）：系统文件管理器打开 `~/.craftwave/logs/`
-/// （复用 03 号票 `open_dir` 的系统打开通道与白名单口径——日志目录本身
+/// `open_logs_dir`：系统文件管理器打开 `~/.craftwave/logs/`
+/// （复用 `open_dir` 的系统打开通道与白名单口径——日志目录本身
 /// 就在 open_dir 白名单内，本命令固定打开该目录、免路径传参）。目录
 /// 不存在先创建（首次使用即有）。
 #[tauri::command]

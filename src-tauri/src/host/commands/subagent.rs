@@ -1,24 +1,24 @@
-//! 子代理委派的宿主装配与命令（§5.9，FR-07 域，10 号票）。
+//! 子代理委派的宿主装配与命令。
 //!
 //! 本文件承担三件事：
 //! - **委派执行**（[`SubagentSpawnerImpl`]，注入 [`crate::backend::exec`]
 //!   的 `SubagentSpawner` 接口）：查角色表 → 并发闸拿名额（满额排队）→
-//!   写入角色在 Git 项目创建独立 worktree（ADR-0001）→ 发 subStarted 帧
+//!   写入角色在 Git 项目创建独立 worktree → 发 subStarted 帧
 //!   与 sub:spawn 事件 → 驱动子 run（复用 [`drive_run`]，含审批挂起恢复
 //!   循环与取消级联）→ 四象限收尾（subReport/subDone 帧 + sub:* 事件 +
 //!   worktree 差量回收/保留）→ `<report>` 汇报回父工具结果；
-//! - **子代理历史**（`histories/subs/<parentRunId>/<subId>/`，§7.7）：
+//! - **子代理历史**（`histories/subs/<parentRunId>/<subId>/`）：
 //!   meta.json + history.jsonl（最小子集；JSONL 逐行追加，读取忽略不完整
 //!   尾行——与主会话 SegmentLog 同款追加语义），`load_subagent_history`
 //!   命令转换为 WireMessage（MessageEntry）供抽屉回看；
-//! - **命令面**：`stop_subagent`（#58，级联取消）与
-//!   `load_subagent_history`（#59）。
+//! - **命令面**：`stop_subagent`（级联取消）与
+//!   `load_subagent_history`。
 //!
 //! 公共操作归主代理（2026-10-29 用户决策）：子代理的工具面 = 角色白名单
 //! （执行入口在 executor 检查，`allowed_tools`），写入子代理的文件根指向
 //! worktree（写边界天然隔离），MCP 动态段不装配——command/MCP 入口不能
 //! 绕过；数据库/外部服务等共享资源操作由模型在汇报中交回主代理协调
-//! （worktree 不提供此类资源隔离，ADR-0001）。
+//! （worktree 不提供此类资源隔离）。
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -59,7 +59,7 @@ pub(crate) fn now_ms() -> i64 {
 
 // ---- 委派参数与装配面 ----
 
-/// `subagent` 工具参数契约（§8.3 M2 表）。
+/// `subagent` 工具参数契约。
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -72,7 +72,7 @@ pub struct SubSpawnArgs {
     pub budget_steps: Option<u32>,
 }
 
-/// 子代理历史 meta（§7.7：`histories/subs/<parentRunId>/<subId>/meta.json`，
+/// 子代理历史 meta（`histories/subs/<parentRunId>/<subId>/meta.json`，
 /// 回看索引与 worktree 恢复指针）。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -88,13 +88,13 @@ pub struct SubMeta {
     pub started_at: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub outcome: Option<String>,
-    /// worktree 保留信息（失败/取消的未汇回成果位置，Q11 恢复索引）。
+    /// worktree 保留信息（失败/取消的未汇回成果位置，恢复索引）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worktree_root: Option<String>,
 }
 
 /// 子代理委派的父 run 上下文（start_chat_core 装配面）：子代理默认跟随
-/// 父 run 的模型与权限档（§5.9），帧经父枢纽透传。
+/// 父 run 的模型与权限档，帧经父枢纽透传。
 #[derive(Clone)]
 pub(crate) struct SubagentContext {
     pub session_id: String,
@@ -103,14 +103,14 @@ pub(crate) struct SubagentContext {
     pub tier: PermissionTier,
     pub model_id: Option<String>,
     pub auto_confirm: bool,
-    /// 23 号票 ③ 会话内记忆启用：true 时命令类审批载荷增「始终允许
+    /// 会话内记忆启用：true 时命令类审批载荷增「始终允许
     /// （本会话）」选项；免批登记与主 run 共用会话桶。
     pub session_memory_enabled: bool,
 }
 
 /// 委派执行器（host 装配）：[`SubagentSpawner`] 的生产实现。
 pub(crate) struct SubagentSpawnerImpl {
-    /// 全字段同源的共享句柄副本（`AppState::share_handles`，06 号票同款）。
+    /// 全字段同源的共享句柄副本（`AppState::share_handles`，同款）。
     pub app: AppState,
     pub ctx: SubagentContext,
 }
@@ -123,7 +123,7 @@ impl SubagentSpawner for SubagentSpawnerImpl {
     ) -> std::pin::Pin<Box<dyn Future<Output = crate::backend::run_loop::ToolExecution> + Send + '_>>
     {
         // AppState 非整体 Clone（内部全 Arc 句柄）：share_handles 产出同源
-        // 轻量副本（06 号票同款），spawn 闭包持有
+        // 轻量副本（同款），spawn 闭包持有
         let app = self.app.share_handles();
         let ctx = self.ctx.clone();
         let args_json = args_json.to_owned();
@@ -148,8 +148,8 @@ enum SubExit {
 
 /// 子代理单帧出口：历史记账 + 用量/步数事件 + 父枢纽 subFrame 包装转发。
 /// 帧序不变量：外层先发 subStarted；本出口只负责中段；subDone 由收尾补发。
-/// 20 号票：usage 差分增量同步落账（kind=sub，runs 计数不增，Q40）——
-/// 会话明细（Q37）与日/模型聚合都按实际执行模型归属（`model_identity`
+/// usage 差分增量同步落账（kind=sub，runs 计数不增）——
+/// 会话明细与日/模型聚合都按实际执行模型归属（`model_identity`
 /// 为子 run 装配时解析的实际模型，子 run 不挂每拍刷新源，恒定不变）。
 struct SubRunSink {
     /// 父 run 的帧枢纽（subFrame 入环可随 attach 重放恢复）。
@@ -160,11 +160,11 @@ struct SubRunSink {
     session_usage: Arc<Mutex<std::collections::HashMap<String, UsageTotal>>>,
     session_id: String,
     sub_run_id: String,
-    /// 用量账本（AppState.ledger 克隆件；主/子/辅助共一入口，Q40 只计一次）。
+    /// 用量账本（AppState.ledger 克隆件；主/子/辅助共一入口，只计一次）。
     ledger: crate::host::usage::UsageLedger,
     /// 子 run 实际执行模型 `(配置 id, 显示名)`（装配时解析）。
     model_identity: (String, String),
-    /// 子 run 自身累计（sub:usage 载荷 = 该子代理的自身消耗，Q40 子面板展示；
+    /// 子 run 自身累计（sub:usage 载荷 = 该子代理的自身消耗，子面板展示；
     /// 不重复累进会话累计——会话累计由 tokens:update 单一出口承担）。
     last_total: UsageTotal,
 }
@@ -173,12 +173,12 @@ impl FrameSink for SubRunSink {
     fn send(&mut self, frame: ChatFrame) {
         // ① 历史记账（turn 收口/工具结果/文本累积）
         self.recorder.ingest(&frame);
-        // ② 用量与步数事件（Q39/Q40）
+        // ② 用量与步数事件
         match &frame {
             ChatFrame::Usage { usage, .. } => {
                 let delta = sub_usage(usage, &self.last_total);
                 self.last_total = *usage;
-                // 统计落账（20 号票：kind=sub；runs 计数不增）
+                // 统计落账（kind=sub；runs 计数不增）
                 if delta != UsageTotal::default() {
                     self.ledger.record(
                         &self.session_id,
@@ -246,7 +246,7 @@ fn sub_usage(a: &UsageTotal, b: &UsageTotal) -> UsageTotal {
     }
 }
 
-// ---- 子代理历史（§7.7：单 JSONL 最小子集） ----
+// ---- 子代理历史（单 JSONL 最小子集） ----
 
 /// history.jsonl 的一行（serde tag=type）。Message/Tool 行按 turn 组织，
 /// End 行收口（outcome + report）。
@@ -424,14 +424,14 @@ fn sub_history_dir(data_root: &Path, parent_run_id: &str, sub_id: &str) -> PathB
         .join(sub_id)
 }
 
-/// 写 meta.json（原子写，§7.4）。
+/// 写 meta.json（原子写）。
 fn write_sub_meta(meta: &SubMeta, dir: &Path) {
     if let Ok(bytes) = serde_json::to_vec_pretty(meta) {
         let _ = crate::util::atomic::write_atomic(&dir.join("meta.json"), &bytes);
     }
 }
 
-/// 读一条子代理历史并转换为 WireMessage（MessageEntry）序列（FR-07-06
+/// 读一条子代理历史并转换为 WireMessage（MessageEntry）序列（
 /// 抽屉回看面）：Message/Tool 行按 turn 组装为 assistant 条目（toolCall +
 /// toolResult parts 同条目，与主会话格式同形），End 行产出 report 条目。
 pub(crate) fn load_sub_history_messages(
@@ -551,7 +551,7 @@ pub(crate) fn load_sub_history_messages(
     Ok(out)
 }
 
-/// `load_subagent_history` 主体（§3.3 #59）：按 (sessionId, subId) 在
+/// `load_subagent_history` 主体：按 (sessionId, subId) 在
 /// `histories/subs/<parentRunId>/<subId>/` 下定位（parentRunId 不在参数面，
 /// 扫描一层目录匹配 meta），未命中 → E_NOT_FOUND。
 pub(crate) fn load_subagent_history_core(
@@ -580,7 +580,7 @@ pub(crate) fn load_subagent_history_core(
     Err(IpcError::not_found(format!("子代理历史不存在：{sub_id}")))
 }
 
-// ---- worktree 收尾处置（Q10/Q11） ----
+// ---- worktree 收尾处置 ----
 
 /// worktree 收尾处置结果（模型/UI 双通道摘要）。
 struct WorktreeOutcome {
@@ -591,7 +591,7 @@ struct WorktreeOutcome {
 }
 
 /// 处置 worktree：成功面（report/partial）汇回并清理；失败/取消保留现场
-/// 标注未完成（不汇回，重启不自动续跑——Q11）。
+/// 标注未完成（不汇回，重启不自动续跑）。
 fn settle_worktree(
     lease: &mut WorktreeLease,
     data_root: &Path,
@@ -736,7 +736,7 @@ async fn run_subagent(
         };
     }
 
-    // ③ worktree 决策（Q7）：写入角色 + Git 项目 → 独立 worktree；
+    // ③ worktree 决策：写入角色 + Git 项目 → 独立 worktree；
     //    非 Git 项目写入子代理直接拒绝（由主代理修改）；只读角色读当前工作区
     let session_roots = resolve_session_roots(app, &ctx.session_id);
     let project_root = session_roots.project_root.clone();
@@ -760,7 +760,7 @@ async fn run_subagent(
             role.name,
         ) {
             Ok(created) => lease = Some(created),
-            // 快照创建失败不静默退回旧 HEAD（Q9）：直接回喂错误
+            // 快照创建失败不静默退回旧 HEAD：直接回喂错误
             Err(e) => {
                 app.subs.gate().release();
                 return spawn_failure(E_IO, &format!("独立工作区创建失败：{e}"));
@@ -803,7 +803,7 @@ async fn run_subagent(
             "role": role.name,
         }),
     );
-    // 子代理生命周期行（32 号票 kind=subagent：spawn，锚 subId；task 文本
+    // 子代理生命周期行（kind=subagent：spawn，锚 subId；task 文本
     // 不进日志——正文不入诊断面，详情走抽屉回看通道）
     app.session_log.session_line(
         &ctx.session_id,
@@ -865,7 +865,7 @@ async fn run_subagent(
     );
 
     // 写入角色 → 工具根指向 worktree（写边界隔离）；只读角色 → 当前工作区。
-    // 会话授权的外部目录（24 号票，§9.9）对子代理同样放行（只读角色访问
+    // 会话授权的外部目录对子代理同样放行（只读角色访问
     // 授权目录与主代理同口径）。
     let (roots_project, roots_data) = match &lease {
         Some(l) => (PathBuf::from(&l.worktree_root), workspace_root.clone()),
@@ -918,20 +918,20 @@ async fn run_subagent(
             session_id: ctx.session_id.clone(),
             run_id: sub_run_id.clone(),
             data_root: data_root.clone(),
-            // 问卷 ask 开关日志（32 号票）：子代理问卷行也落父会话日志
+            // 问卷 ask 开关日志：子代理问卷行也落父会话日志
             ask_log: Some(Arc::new(crate::host::commands::chat::HostAskLogger {
                 session_log: app.session_log.clone(),
             })),
-            // 产物登记（28 号票）：子代理环境不装配——worktree 内写入不进
-            // 会话产物面（ADR-0001：改动经汇回进主工作区，主代理写操作登记）
+            // 产物登记：子代理环境不装配——worktree 内写入不进
+            // 会话产物面（改动经汇回进主工作区，主代理写操作登记）
             store: None,
-            // 子代理边界（Q13 + 公共操作）：无 MCP 动态段、无委派面、
+            // 子代理边界（公共操作约束）：无 MCP 动态段、无委派面、
             // 执行入口按白名单过滤（工具可见面 = 执行许可）
             mcp: None,
             skills: None,
             subagents: None,
             allowed_tools: Some(allowed),
-            // 网络工具环境（12 号票）：子代理白名单一般不含网络工具，
+            // 网络工具环境：子代理白名单一般不含网络工具，
             // 但环境照常装配（执行入口白名单先拦；策略与主代理同源）。
             // 配置读取失败按缺省配置装配（fail-closed：缺省拒绝私网）。
             network: Some(std::sync::Arc::new(match app.config.load() {
@@ -940,12 +940,12 @@ async fn run_subagent(
             })),
         }),
     );
-    // 审批门（23 号票装配面）：与主 run 同口径——内部状态禁区判定
-    //（FR-05-08，子代理写根 + 数据目录根）、会话级免批桶（always_session
-    // 与主 run 共用会话桶）、审批策略快照（四开关 ①④ + 白名单条目）。
-    // 无 MCP 视图（子代理不装配动态段，§5.9）。围栏工作区上下文同主 run
+    // 审批门（装配面）：与主 run 同口径——内部状态禁区判定
+    //（子代理写根 + 数据目录根）、会话级免批桶（always_session
+    // 与主 run 共用会话桶）、审批策略快照（enabled/allowlist_enabled 两开关 + 白名单条目）。
+    // 无 MCP 视图（子代理不装配动态段）。围栏工作区上下文同主 run
     // 口径装配（roots/base canonical 后传入；失败退化为有写目标即 Confirm）。
-    // 外部目录授权（24 号票，§9.9）：初始集合 = 会话已授权目录 + 热追加
+    // 外部目录授权：初始集合 = 会话已授权目录 + 热追加
     // 接缝（恢复循环授权后 grant），数据目录根做禁授权目标判定。
     let gate = {
         let canonical = |p: &std::path::Path| std::fs::canonicalize(p).ok();
@@ -976,7 +976,7 @@ async fn run_subagent(
             ))
             .with_external_dirs(sub_extra_roots, data_root.clone())
             .with_session_memory(app.approval_memory.bucket(&ctx.session_id))
-            // 计划基线扩展桶（25 号票，§8.6）：子代理与主 run 同会话同桶
+            // 计划基线扩展桶：子代理与主 run 同会话同桶
             //——主 run 范围门「本会话始终允许」的授权目录对子代理同样生效
             //（子代理自身计划独立，无已批准计划时范围门不触发）。
             .with_plan_scope_memory(app.plan_scopes.bucket(&ctx.session_id))
@@ -992,7 +992,7 @@ async fn run_subagent(
         }
         Arc::new(gate)
     };
-    // 子 run 实际执行模型（20 号票落账归属；子 run 无每拍刷新源，恒定）
+    // 子 run 实际执行模型（落账归属；子 run 无每拍刷新源，恒定）
     let model_identity = (resolved.id.clone(), resolved.name.clone());
     let mut sink = SubRunSink {
         hub: ctx.parent_hub.clone(),
@@ -1023,12 +1023,12 @@ async fn run_subagent(
             &mut sink,
             resume_state.take(),
             None, // 子代理无 steer 插话
-            None, // 子代理无每拍请求刷新源（18 号票刷新面仅主 run）
+            None, // 子代理无每拍请求刷新源（刷新面仅主 run）
             stall_timeout,
         )
         .await;
         match attempt {
-            // 预算耗尽（§5.9：max_turns 顶格 → rig MaxTurns）→ partial
+            // 预算耗尽（max_turns 顶格 → rig MaxTurns）→ partial
             Err(rig::run::PromptError::MaxTurns { .. }) => break SubExit::Budget,
             Err(err) => {
                 let message = err.to_string();
@@ -1038,7 +1038,7 @@ async fn run_subagent(
             Ok(RunExit::Done(_)) => break SubExit::Done,
             Ok(RunExit::Cancelled) => break SubExit::Cancelled,
             Ok(RunExit::Stalled { message }) => break SubExit::Failed(message),
-            // 每拍请求刷新失败（18 号票新变体；子代理未挂刷新源，防御面
+            // 每拍请求刷新失败（新变体；子代理未挂刷新源，防御面
             // 兜底——语义与 Stalled 同形：runEnded(error) 已发出，按失败收）
             Ok(RunExit::Failed { message, .. }) => break SubExit::Failed(message),
             Ok(RunExit::Suspended(info)) => {
@@ -1056,19 +1056,19 @@ async fn run_subagent(
                     &pending,
                     ctx.auto_confirm,
                     ctx.session_memory_enabled,
-                    // 范围卡基线对照（25 号票）：子代理计划独立，无已批准
+                    // 范围卡基线对照：子代理计划独立，无已批准
                     // 基线可对照，恒 None（范围门对子代理天然不触发）。
                     None,
-                    // 审计结论注记（36 号票，§8.7）：灰区审计只挂主 run 恢复
+                    // 审计结论注记：灰区审计只挂主 run 恢复
                     // 循环，子代理审批卡恒不带，None。
                     None,
-                    // 会话日志（32 号票）：子代理审批开关行也落父会话日志
+                    // 会话日志：子代理审批开关行也落父会话日志
                     Some(&app.session_log),
                 )
                 .await
                 {
                     ApprovalResolution::Allowed { option_id } => {
-                        // 外部目录授权（24 号票，§9.9）：与主 run 同款——
+                        // 外部目录授权：与主 run 同款——
                         // 并入会话 roots 快照（持久化）+ 门热追加；内存面
                         // 授权用最长存在前缀归一（目标目录不存在时持久面
                         // 被拒，内存面仍生效防重放死循环）。
@@ -1089,7 +1089,7 @@ async fn run_subagent(
                             }
                         }
                         gate.approve(&pending.name, &pending.args_json);
-                        // 23 号票：always_session → 会话级免批桶登记
+                        // always_session → 会话级免批桶登记
                         //（与主 run 共用会话桶，跨 run 生效、不持久化）
                         if option_id == "always_session" {
                             app.approval_memory.remember(
@@ -1146,8 +1146,8 @@ type AssembledSubRun = (
 );
 
 /// 子 run 装配：模型解析 + 请求面构造（cleanContext 默认——子代理上下文
-/// 干净，仅角色系统提示 + task；父历史注入形态见 [`build_subagent_history`]，
-/// M2 未开放配置）。失败返回错误消息（finalize 按 no_report 收口）。
+/// 干净，仅角色系统提示 + task；父历史注入形态见 [`build_subagent_history`]）。
+/// 失败返回错误消息（finalize 按 no_report 收口）。
 fn assemble_sub_run(
     app: &AppState,
     ctx: &SubagentContext,
@@ -1189,7 +1189,7 @@ fn sub_tool_definitions(
         .collect()
 }
 
-/// 子代理请求 history 构造（§5.9 末行）：返回 `[系统提示(, 父历史尾), task]`
+/// 子代理请求 history 构造：返回 `[系统提示(, 父历史尾), task]`（task 为末行）
 /// 序列——末位是 task 消息（drive_run 的 prompt），其余为 history。
 /// - clean_context=true（默认/生产）：仅角色系统提示 + task；
 /// - clean_context=false：角色系统提示 + 父历史尾至多 6 条 + task
@@ -1268,12 +1268,12 @@ fn finalize_spawn(
     exit: SubExit,
     report_candidate: Option<String>,
 ) -> crate::backend::run_loop::ToolExecution {
-    // 子 run 明细收口（20 号票 Q37：补写 endedAt；终态只收口不搬移已记日期）
+    // 子 run 明细收口（补写 endedAt；终态只收口不搬移已记日期）
     let _ = app
         .ledger
         .detail
         .mark_run_ended(&ctx.session_id, sub_run_id);
-    // 四象限（§5.9）：report / partial / no_report / cancelled
+    // 四象限：report / partial / no_report / cancelled
     let report = report_candidate.unwrap_or_default();
     let (outcome, error_note): (SubOutcome, Option<(String, String)>) = match exit {
         SubExit::Done => {
@@ -1312,7 +1312,7 @@ fn finalize_spawn(
     }
     let _ = meta_updated;
 
-    // worktree 处置（Q10/Q11）
+    // worktree 处置
     let worktree_outcome = match lease.as_mut() {
         Some(l) => settle_worktree(l, app.store.root(), outcome),
         None => WorktreeOutcome {
@@ -1368,7 +1368,7 @@ fn finalize_spawn(
             "outcome": outcome_key(&outcome),
         }),
     );
-    // 子代理收口行（32 号票 kind=subagent：终态 outcome；失败带错误码）
+    // 子代理收口行（kind=subagent：终态 outcome；失败带错误码）
     app.session_log.session_line(
         &ctx.session_id,
         if matches!(outcome, SubOutcome::Cancelled) {
@@ -1467,9 +1467,9 @@ fn finalize_spawn(
     }
 }
 
-// ---- 命令面（§3.3 #58/#59） ----
+// ---- 命令面 ----
 
-/// `stop_subagent` 参数契约（§3.3 #58）。
+/// `stop_subagent` 参数契约。
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -1477,7 +1477,7 @@ pub struct StopSubagentArgs {
     pub sub_id: String,
 }
 
-/// `stop_subagent` 主体（§3.3 #58）：级联取消（子代理令牌置位即返回；
+/// `stop_subagent` 主体：级联取消（子代理令牌置位即返回；
 /// 终态以该子代理的 subFrame 序列（runEnded + subDone）为权威）。
 pub(crate) fn stop_subagent_core(app: &AppState, sub_id: &str) -> Result<(), IpcError> {
     let handle = app
@@ -1488,7 +1488,7 @@ pub(crate) fn stop_subagent_core(app: &AppState, sub_id: &str) -> Result<(), Ipc
     Ok(())
 }
 
-/// `stop_subagent` 命令（§3.3 #58）。
+/// `stop_subagent` 命令。
 #[tauri::command]
 pub(crate) async fn stop_subagent(
     app: State<'_, AppState>,
@@ -1499,7 +1499,7 @@ pub(crate) async fn stop_subagent(
     stop_subagent_core(&app, &args.sub_id)
 }
 
-/// `load_subagent_history` 参数契约（§3.3 #59）。
+/// `load_subagent_history` 参数契约。
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -1508,7 +1508,7 @@ pub struct LoadSubagentHistoryArgs {
     pub sub_id: String,
 }
 
-/// `load_subagent_history` 命令（§3.3 #59）。
+/// `load_subagent_history` 命令。
 #[tauri::command]
 pub(crate) async fn load_subagent_history(
     app: State<'_, AppState>,

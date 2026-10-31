@@ -1,4 +1,4 @@
-//! 并发闸与注册表测试（10 号票，FR-07-04/Q13 热调整语义）：
+//! 并发闸与注册表测试（热调整语义）：
 //! 满额排队不拒绝、降低不取消已有任务且低于新上限才补入（欠账湮灭）、
 //! 提高立即放行排队任务、取消传播级联、审批路由反查。
 
@@ -14,7 +14,7 @@ async fn acquired_within(gate: &ConcurrencyGate, token: &CancellationToken, ms: 
         .unwrap_or(false)
 }
 
-// 断言（并发闸，Q13）：满额排队不拒绝、释放后排队者获得名额；热降档
+// 断言（并发闸）：满额排队不拒绝、释放后排队者获得名额；热降档
 // 不取消已有任务，抽空闲名额抽不到记欠账、释放时名额湮灭（不归还信号
 // 量），活跃数低于新上限才补入；热升档立即按新上限放行排队任务；排队中
 // 取消 → 未取得名额即退出（委派未启动面）。
@@ -44,7 +44,7 @@ async fn gate_queuing_hot_resize_and_cancel() {
         .unwrap();
     assert!(got);
 
-    // 热降档（Q13）：4 运行降到 2 不取消已有任务；不补入直到运行数低于
+    // 热降档：4 运行降到 2 不取消已有任务；不补入直到运行数低于
     // 新上限（释放时欠账湮灭）。
     let gate = Arc::new(ConcurrencyGate::new(2));
     let token = CancellationToken::new();
@@ -75,7 +75,7 @@ async fn gate_queuing_hot_resize_and_cancel() {
         .unwrap();
     assert!(got);
 
-    // 热升档（Q13）：提高后立即按新上限启动排队任务。
+    // 热升档：提高后立即按新上限启动排队任务。
     let gate = Arc::new(ConcurrencyGate::new(1));
     let token = CancellationToken::new();
     assert!(gate.acquire(&token).await, "占满初始名额");
@@ -117,7 +117,7 @@ async fn gate_queuing_hot_resize_and_cancel() {
     gate.release();
 }
 
-// 断言：父取消级联（S5）——子令牌是父令牌的子令牌，父取消传播到全部
+// 断言：父取消级联——子令牌是父令牌的子令牌，父取消传播到全部
 // 子代理，子代理单独取消不影响父；注册表登记/摘除/active_count 与
 // cancel_by_session 按会话级联兜底；审批路由 askId 反查命中活跃子代理
 // （resolve_ask 兜底链，查询幂等）。

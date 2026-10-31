@@ -1,4 +1,4 @@
-//! 系统通知门（§9.6，FR-13-06/07，17 号票）。
+//! 系统通知门。
 //!
 //! 职责：把「值得用户回来看一眼」的事件转成系统通知——run 终态（窗口
 //! 失焦/隐藏时）与人工介入等待（ask 询问/审批）。触发点不在本模块：
@@ -6,7 +6,7 @@
 //! `run:cancelled` / `ask:opened` 四个事件键旁路调用本门（单一旁路点，
 //! 测试用的 [`crate::util::events::RecordingEventSink`] 天然无通知副作用）。
 //!
-//! 防打扰（FR-13-06）：通知总开关关闭时不发；「仅人工介入」开启时 run
+//! 防打扰：通知总开关关闭时不发；「仅人工介入」开启时 run
 //! 终态不发；窗口聚焦且正停留在触发会话时不发（隐藏窗口视为失焦）。
 //!
 //! 点击回跳：通知携带 `anchor`（sessionId/runId/anchor）载荷，点击后由
@@ -34,7 +34,7 @@ pub struct NotifyGate {
     app: tauri::AppHandle,
     /// 活跃会话标识（前端 `set_ui_state` 顺带写入；与本门共享同一把锁）。
     active_session: Arc<Mutex<Option<String>>>,
-    /// 应用配置（读通知偏好 `notifications`，FR-13-06 设置项）。
+    /// 应用配置（读通知偏好 `notifications`，设置项）。
     config: Arc<ConfigStore<AppConfig>>,
 }
 
@@ -53,9 +53,9 @@ impl NotifyGate {
         }
     }
 
-    /// run 终态通知（§9.6 触发点①）。`reason` 为 done / error / cancelled。
-    /// 正文语言随 `config.ui.language`（31 号票——每次触发读最新配置缓存，
-    /// 语言切换后下一条通知即新语言）。
+    /// run 终态通知。`reason` 为 done / error / cancelled。
+    /// 正文语言随 `config.ui.language`——每次触发读最新配置缓存，
+    /// 语言切换后下一条通知即新语言。
     pub fn run_ended(&self, session_id: &str, run_id: &str, reason: &str, duration_ms: u64) {
         let lang = self.ui_language();
         let body = crate::host::strings::run_ended_body(reason, duration_ms as f64 / 1000.0, lang);
@@ -70,7 +70,7 @@ impl NotifyGate {
         );
     }
 
-    /// 人工介入通知（§9.6 触发点②：ask 询问/审批等待用户回应）。
+    /// 人工介入通知（ask 询问/审批等待用户回应时）。
     pub fn ask_opened(&self, session_id: &str, ask_id: &str) {
         self.send(
             session_id,
@@ -87,7 +87,7 @@ impl NotifyGate {
 
     /// 统一出口：防打扰判定通过才发送。
     ///
-    /// 授权未授予时的口径（19 号票）：`show()` 失败（macOS 拒发）一律吞掉——
+    /// 授权未授予时的口径：`show()` 失败（macOS 拒发）一律吞掉——
     /// 通知是尽力而为的旁路，触发侧静默降级不报错、不影响 run 主链路；
     /// 授权引导在设置页（`notification_permission_status` 命令）承担。
     fn send(&self, session_id: &str, body: &str, anchor: Value) {
@@ -105,7 +105,7 @@ impl NotifyGate {
             .show();
     }
 
-    /// 界面语言（31 号票）：读最新配置缓存；读不出（配置损坏等）按缺省
+    /// 界面语言：读最新配置缓存；读不出（配置损坏等）按缺省
     /// 中文——宁可退回基准语言也不阻塞通知。
     fn ui_language(&self) -> crate::providers::types::Language {
         self.config
@@ -114,7 +114,7 @@ impl NotifyGate {
             .unwrap_or_default()
     }
 
-    /// 防打扰判定（FR-13-06）：总开关关 / 前台正看该会话 → 抑制。
+    /// 防打扰判定：总开关关 / 前台正看该会话 → 抑制。
     fn suppressed(&self, session_id: &str) -> bool {
         let prefs = self.config.load().map(|c| c.notifications.clone()).ok();
         let Some(prefs) = prefs else {
@@ -197,7 +197,7 @@ fn authorization_word(status: objc2_user_notifications::UNAuthorizationStatus) -
     }
 }
 
-/// macOS 通知授权态查询（19 号票，设置页引导的数据面）。
+/// macOS 通知授权态查询（设置页引导的数据面）。
 ///
 /// 必须在主线程调用（UNUserNotificationCenter 的线程约束）：发起异步设置
 /// 查询，结果经 `tx` 回传——completion 由系统队列回调，调用方在别的线程

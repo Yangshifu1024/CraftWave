@@ -1,34 +1,34 @@
-//! 用量统计存取（§7.7 M2 增量两行，20 号票）：日/模型匿名聚合 + run/会话
+//! 用量统计存取（M2 增量两行）：日/模型匿名聚合 + run/会话
 //! 四口径明细，两个权威文件面。
 //!
 //! 名词解释：「四口径」指 input / output / cacheRead / cacheWrite 四项 token
-//! 计数（§3.2 UsageTotal）；「匿名聚合」指按天按模型汇总的统计文件里不含
-//! 任何会话标识——数字是真实消耗，但无法反查出自哪个会话（Q43 删除保留
+//! 计数（UsageTotal）；「匿名聚合」指按天按模型汇总的统计文件里不含
+//! 任何会话标识——数字是真实消耗，但无法反查出自哪个会话（删除保留
 //! 口径的存储侧定案）；「落账」指把一次模型调用的用量增量记入统计文件。
 //!
-//! 两个文件面（§7.7 字段级）：
+//! 两个文件面（字段级）：
 //!
 //! 1. `stats/<YYYY-MM-DD>.json`（日/模型聚合，90 天保留）：
 //!    `{ version: 1, day, models: { modelId: { modelName, 四口径, runs } } }`。
-//!    - Q39：每次模型响应返回 usage 时按**当时本地日期**固定记账，跨午夜
-//!      run 可分属两天，之后切时区不重划历史（记账时点决定归属，恢复/查询
-//!      不改写已落日期）。
-//!    - Q40：主代理、子代理与辅助调用（suggest/压缩）都进聚合，只计一次；
-//!      `runs` 只计主 run（含队列自动发起），子 run 与辅助调用不增加。
+//! - 每次模型响应返回 usage 时按**当时本地日期**固定记账，跨午夜
+//!   run 可分属两天，之后切时区不重划历史（记账时点决定归属，恢复/查询
+//!   不改写已落日期）。
+//! - 主代理、子代理与辅助调用（suggest/压缩）都进聚合，只计一次；
+//!   `runs` 只计主 run（含队列自动发起），子 run 与辅助调用不增加。
 //!    - **匿名聚合**：不含 sessionId——删除会话不改写本文件，聚合面永不
-//!      暴露已删会话身份（Q43 字段级定案）。
+//!      暴露已删会话身份（字段级定案）。
 //!    - `util::atomic` 原子写（合并 = 读整文件 → 增量累加 → 整文件重写）；
 //!      解析失败先把原文件备份为 `<name>.corrupt` 再按空重建（宁缺勿炸）。
 //!
-//! 2. `sessions/<sid>.usage.json`（run/会话四口径明细，Q37 权威面）：
+//! 2. `sessions/<sid>.usage.json`（run/会话四口径明细，权威面）：
 //!    `{ version: 1, sessionTotal, runs: { runId: { kind, startedAt,
 //!    endedAt?, byModel: { modelId: { modelName, 四口径 } } } } }`。
 //!    - sessionTotal = 全部 runs 之和（主/子/辅助，会话累计权威，与
 //!      tokens:update 全量同源同构）。
 //!    - run 内切模型按拍归属各自 modelId 桶（真实归属，不全算给结束模型）。
-//!    - 读取契约：#59k `session_usage`；旧数据无明细文件时回退 index.json
-//!      的 totalTokens 标量（不伪造四口径拆分）。
-//!    - 会话删除随目录边界删除本文件（Q43）。
+//! - 读取契约： `session_usage`；旧数据无明细文件时回退 index.json
+//!   的 totalTokens 标量（不伪造四口径拆分）。
+//! - 会话删除随目录边界删除本文件。
 //!
 //! 线程纪律：两个存取器与 SessionIndex 同款——进程内 Mutex 串行化读改写，
 //! 幂等（同一增量重复落账 = 重复计数，落账方保证一次：usage 帧差分增量在
@@ -44,10 +44,10 @@ use serde::{Deserialize, Serialize};
 use crate::backend::frames::UsageTotal;
 use crate::util::atomic::write_json;
 
-/// 日/模型统计目录名（数据根下，§7.1/§7.7）。
+/// 日/模型统计目录名（数据根下）。
 pub const STATS_DIR: &str = "stats";
 
-/// 日/模型统计保留天数（FR-15-02：90 天；按文件名日期惰性清理）。
+/// 日/模型统计保留天数（90 天；按文件名日期惰性清理）。
 pub const STATS_RETENTION_DAYS: u32 = 90;
 
 /// 聚合文件与明细文件的格式版本（结构不兼容时升版并写迁移）。
@@ -65,13 +65,13 @@ pub struct ModelDayStats {
     pub output: u64,
     pub cache_read: u64,
     pub cache_write: u64,
-    /// 当日该模型的主 run 次数（Q40：仅主 run 含队列发起；子 run 与辅助
+    /// 当日该模型的主 run 次数（仅主 run 含队列发起；子 run 与辅助
     /// 调用不增加）。
     #[serde(default)]
     pub runs: u64,
 }
 
-/// stats/<YYYY-MM-DD>.json 文件载荷（§7.7 匿名聚合；**无会话身份字段**）。
+/// stats/<YYYY-MM-DD>.json 文件载荷（匿名聚合；**无会话身份字段**）。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DailyStats {
@@ -100,8 +100,8 @@ pub struct ModelRunUsage {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RunUsage {
-    /// run 类别（Q40）：main = 主 run（含队列自动发起）；sub = 子代理 run；
-    /// aux = 辅助调用（suggest/压缩等后台小调用，计入会话不计轮次，C-9）。
+    /// run 类别：main = 主 run（含队列自动发起）；sub = 子代理 run；
+    /// aux = 辅助调用（suggest/压缩等后台小调用，计入会话不计轮次）。
     pub kind: String,
     /// run/调用开始时刻（Unix 毫秒）。
     #[serde(default)]
@@ -114,12 +114,12 @@ pub struct RunUsage {
     pub by_model: BTreeMap<String, ModelRunUsage>,
 }
 
-/// sessions/<sid>.usage.json 文件载荷（§7.7 run/会话四口径权威明细）。
+/// sessions/<sid>.usage.json 文件载荷（run/会话四口径权威明细）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionUsage {
     pub version: u32,
-    /// 会话累计（主/子/辅助总和；与 tokens:update 全量同源同构，Q40）。
+    /// 会话累计（主/子/辅助总和；与 tokens:update 全量同源同构）。
     #[serde(default)]
     pub session_total: UsageTotal,
     /// 按 runId 的明细。
@@ -142,7 +142,7 @@ impl Default for SessionUsage {
 /// 落账请求（调用方给足身份面，存取器负责文件合并）。
 #[derive(Debug, Clone)]
 pub struct UsageRecord<'a> {
-    /// 记账日（Q39：调用时刻的本地日期，`YYYY-MM-DD`；由调用方传入——
+    /// 记账日（调用时刻的本地日期，`YYYY-MM-DD`；由调用方传入——
     /// 存取器不做时钟依赖，测试可注入任意日期）。
     pub day: &'a str,
     /// 实际执行模型的配置 id。
@@ -153,7 +153,7 @@ pub struct UsageRecord<'a> {
     /// 不能把累计值重复相加）。
     pub delta: UsageTotal,
     /// 是否为主 run 首次落账（true = 当日该模型 runs +1；子 run/辅助调用
-    /// 与后续帧传 false，Q40）。
+    /// 与后续帧传 false）。
     pub counts_run: bool,
 }
 
@@ -208,7 +208,7 @@ fn daily_path(root: &Path, day: &str) -> PathBuf {
 }
 
 /// 日/模型聚合存取器（进程内 Mutex 串行化；不持有时钟——记账日由调用方
-/// 按 Q39 传入）。
+/// 按 传入）。
 pub struct StatsStore {
     root: PathBuf,
     lock: Mutex<()>,
@@ -228,7 +228,7 @@ impl StatsStore {
         &self.root
     }
 
-    /// 落一笔用量增量进当日聚合（Q39/Q40；原子重写）。
+    /// 落一笔用量增量进当日聚合（原子重写）。
     /// 返回合并后的当日该模型条目（失败返回 IO 错误，调用方仅记日志）。
     pub fn record(&self, record: &UsageRecord) -> std::io::Result<ModelDayStats> {
         let _guard = self
@@ -273,7 +273,7 @@ impl StatsStore {
         list_days_unlocked(&self.root)
     }
 
-    /// 90 天保留的惰性清理（§7.7：落账时顺带执行，无后台任务）：文件名
+    /// 90 天保留的惰性清理（落账时顺带执行，无后台任务）：文件名
     /// 升序遍历，早于 `today - retention_days` 的统计日文件整文件删除
     /// （今天 = `today` 参数，`YYYY-MM-DD`）。返回被删除的日期清单。
     pub fn prune_expired(&self, today: &str, retention_days: u32) -> Vec<String> {
@@ -295,7 +295,7 @@ impl StatsStore {
         removed
     }
 
-    /// 范围聚合（§3.3 #52 降级直读面；真相在 stats/*.json）：`from`/`to`
+    /// 范围聚合（降级直读面；真相在 stats/*.json）：`from`/`to`
     /// 为闭区间日期（`YYYY-MM-DD`），返回区间内逐日聚合（升序）。
     pub fn read_range(&self, from: &str, to: &str) -> Vec<DailyStats> {
         let _guard = self
@@ -354,7 +354,7 @@ pub fn shift_day(day: &str, delta_days: i64) -> Option<String> {
     ))
 }
 
-// ---- run/会话四口径明细（sessions/<sid>.usage.json，Q37 权威面） ----
+// ---- run/会话四口径明细（sessions/<sid>.usage.json，权威面）----
 
 /// 明细文件路径：`sessions/<sessionId>.usage.json`。
 pub fn usage_detail_path(root: &Path, session_id: &str) -> PathBuf {
@@ -371,7 +371,7 @@ pub fn load_session_usage(root: &Path, session_id: &str) -> SessionUsage {
     }
 }
 
-/// 原子写会话用量明细（§7.4；调用方持锁面）。
+/// 原子写会话用量明细（调用方持锁面）。
 pub fn save_session_usage(
     root: &Path,
     session_id: &str,
@@ -419,7 +419,7 @@ impl UsageDetailStore {
 
     /// 落一笔 run 用量增量进会话明细（合并 byModel 桶 + 推进 sessionTotal；
     /// sessionTotal 恒 = 重算全量，杜绝明细与汇总漂移）。返回合并后的
-    /// sessionTotal（Q40 会话口径：主/子/辅助总和）。
+    /// sessionTotal（会话口径：主/子/辅助总和）。
     pub fn record(&self, record: &RunUsageRecord) -> std::io::Result<UsageTotal> {
         let _guard = self
             .lock
@@ -437,7 +437,7 @@ impl UsageDetailStore {
         bucket.output += record.delta.output;
         bucket.cache_read += record.delta.cache_read;
         bucket.cache_write += record.delta.cache_write;
-        // 汇总恒重算：会话累计 = 全部 runs 之和（主/子/辅助，Q40）
+        // 汇总恒重算：会话累计 = 全部 runs 之和（主/子/辅助）
         let mut total = UsageTotal::default();
         for run in usage.runs.values() {
             for bucket in run.by_model.values() {
@@ -454,7 +454,7 @@ impl UsageDetailStore {
         Ok(total)
     }
 
-    /// 读会话累计与明细（恢复读面，#59k 数据源）。
+    /// 读会话累计与明细（恢复读面，数据源）。
     pub fn load(&self, session_id: &str) -> SessionUsage {
         let _guard = self
             .lock
@@ -463,7 +463,7 @@ impl UsageDetailStore {
         load_session_usage(&self.root, session_id)
     }
 
-    /// 会话运行收口：补写 endedAt（终态只做收口，不搬移已记日期，Q39）。
+    /// 会话运行收口：补写 endedAt（终态只做收口，不搬移已记日期）。
     pub fn mark_run_ended(&self, session_id: &str, run_id: &str) -> std::io::Result<()> {
         let _guard = self
             .lock
@@ -479,7 +479,7 @@ impl UsageDetailStore {
         Ok(())
     }
 
-    /// 删除会话明细（Q43：delete_session 联动；文件不存在静默成功）。
+    /// 删除会话明细（delete_session 联动；文件不存在静默成功）。
     pub fn forget_session(&self, session_id: &str) {
         let _guard = self
             .lock

@@ -1,4 +1,4 @@
-//! SSRF 防护向量测试集（§9.2，12 号票）。
+//! SSRF 防护向量测试集。
 //!
 //! 覆盖：地址判定核的向量表（私网/回环/链路本地/CGNAT/ULA/未指定/组播/
 //! 保留/IPv4 映射/NAT64 解包，`allow_private_network` 例外开关）；跳间判定
@@ -7,7 +7,7 @@
 //! 直连与回环域名解析、重定向跳数上限、50MiB 双保险、例外策略下正常抓取
 //! + 重定向链 + 跨源剥头。
 //!
-//! 「重定向到内网」的说明（票面测试向量）：本地 fixture 服务必然落回环段
+//! 「重定向到内网」向量的说明：本地 fixture 服务必然落回环段
 //! （127.0.0.1），默认策略下首跳即被拒、走不到重定向二跳；二跳的拒绝判定
 //! 与首跳同一入口（fetch 循环每跳先 `check_url`），其向量由地址判定核单测
 //! 覆盖（`http://10.0.0.1/` 等直接拒），管线贯通由「默认策略拒回环直连」
@@ -163,7 +163,7 @@ fn address_deny_allow_vectors() {
     }
 }
 
-// 断言：check_url 向量（§9.2 第 1 步 + IP 字面量拦截）——非 http/https
+// 断言：check_url 向量（第 1 步防线 + IP 字面量拦截）——非 http/https
 // scheme 直接拒（message 带类别）；私网/ULA IP 字面量在请求前拦截（IP 直连
 // 不触发 DNS，resolver 拦不到）；域名放行（判定交给 resolver）；「域名解析
 // 到私网」向量：解析结果部分公网部分私网 → 整体拒绝（防多地址部分私网
@@ -217,7 +217,7 @@ fn check_url_and_resolution_vectors() {
     .expect("纯公网解析结果应放行");
 }
 
-// 断言：跳间判定（§9.2 第 4 步）与节流纯函数面——https→http 降级拒绝
+// 断言：跳间判定（第 4 步防线）与节流纯函数面——https→http 降级拒绝
 // （message 带降级类别）、http→https 升级放行；跨源（host/端口变化）敏感
 // 头全剥、普通头保留，同源（scheme+host+port 全同，含默认端口归一）头
 // 原样保留；节流——首次无需等待、窗口内返回剩余等待、窗口边界外无需等待、
@@ -280,7 +280,7 @@ fn next_hop_and_throttle_pure_functions() {
     .unwrap();
     assert_eq!(same2.get("authorization").unwrap(), "Bearer secret");
 
-    // 节流（§9.2：每 host 1s）——mock clock 纯函数面。
+    // 节流（每 host 1s）——mock clock 纯函数面。
     let min = Duration::from_secs(1);
     let t0 = Instant::now();
     // 首次：无记录 → 无需等待
@@ -328,7 +328,7 @@ fn next_hop_and_throttle_pure_functions() {
     let _ = HeaderName::from_static("x-custom");
 }
 
-// ---- fetch 管线集成（本地 fixture，§9.2 五步贯通）----
+// ---- fetch 管线集成（本地 fixture，五步防线贯通）----
 
 /// 起一个 axum fixture 服务（127.0.0.1 随机端口，零外网），返回地址与
 /// 服务任务句柄。路由由用例给定。

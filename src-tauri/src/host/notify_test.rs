@@ -1,4 +1,4 @@
-//! notify.rs 的纯逻辑单测（19 号票）：macOS 授权态到前端口径的映射。
+//! notify.rs 的纯逻辑单测：macOS 授权态到前端口径的映射。
 //! FFI 查询本体（query_macos_authorization）依赖主线程与系统回调，不在
 //! 单测覆盖内；这里钉死的是映射口径（前端引导文案按 status 分支）。
 

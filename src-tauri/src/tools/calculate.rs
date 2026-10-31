@@ -1,10 +1,10 @@
-//! `calculate` 工具（ReadOnly，§8.3 M2 表）：纯 Rust 表达式求值器，
-//! 防模型心算出错（票面动机）。
+//! `calculate` 工具（ReadOnly）：纯 Rust 表达式求值器，
+//! 防模型心算出错。
 //!
-//! 选型决议（14 号票，票面两候选的定案过程）：票面首选第三方库 `evalexpr`
+//! 选型决议（两候选定案）：首选评估过第三方库 `evalexpr`
 //! （纯 Rust / MIT / 空上下文下无函数调用面，评估通过），但其错误类型
-//! **不携带 token 位置**，票面「除零/语法错误 E_INVALID_ARG 带出错位置」
-//! 无法满足；按票面备选走**手写递归下降解析器**（约 300 行零依赖）——
+//! **不携带 token 位置**，而本工具要求除零/语法错误以 E_INVALID_ARG
+//! 带出错位置返回，无法满足；故走**手写递归下降解析器**（约 300 行零依赖）——
 //! 错误位置由词法/解析层原生携带，且求值语义完全可控。定案标准逐条核对：
 //! 无副作用（纯求值）、无 IO、无任意函数调用（标识符仅 pi/e，函数调用
 //! 形态显式报错）、浮点结果与 Python/bc 对照精确（f64 + 最短往返格式化，
@@ -46,7 +46,7 @@ impl Value {
 }
 
 /// 求值/解析错误：出错字节位置 + 人话说明（转 E_INVALID_ARG 时换算成
-/// 1-based 字符位置，票面「带出错位置」）。
+/// 1-based 字符位置，错误信息带出错位置）。
 #[derive(Debug)]
 struct CalcError {
     /// 出错位置的字节偏移。
@@ -610,7 +610,7 @@ pub struct CalculateArgs {
     pub expression: String,
 }
 
-/// calculate 工具规格（能力 ReadOnly，全档放行，§8.5）。
+/// calculate 工具规格（能力 ReadOnly，全档放行）。
 pub fn spec() -> ToolSpec {
     ToolSpec {
         name: "calculate".to_string(),

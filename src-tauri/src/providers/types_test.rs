@@ -429,7 +429,7 @@ fn config_groups_defaults_and_bounds() {
     }
 }
 
-// 断言（29 号票）：组合键归一化纯函数表驱动——大小写等价、修饰符重排
+// 断言：组合键归一化纯函数表驱动——大小写等价、修饰符重排
 // 等价、别名收编、重复修饰符去重、纯修饰符/空段/多主键拒绝。
 #[test]
 fn normalize_accelerator_table() {

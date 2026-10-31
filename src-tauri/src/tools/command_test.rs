@@ -1,4 +1,4 @@
-//! command 工具单测（§8.3/§8.8）：退出码/合流输出/ANSI 清洗/超时收割/
+//! command 工具单测：退出码/合流输出/ANSI 清洗/超时收割/
 //! 取消收割/spill 治理/cwd 边界。Unix 路径（sh）；Windows 行为由三平台 CI 覆盖。
 
 use std::time::{Duration, Instant};

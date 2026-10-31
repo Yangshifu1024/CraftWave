@@ -1,4 +1,4 @@
-//! 【38 号票】本地 OpenAI Responses API 兼容 mock SSE 服务：脚本化输出
+//! 本地 OpenAI Responses API 兼容 mock SSE 服务：脚本化输出
 //! Responses 事件流（reasoning summary delta / output_text delta /
 //! function_call_arguments 增量含半截 JSON），无网络、无 API key。
 //! 仅测试编译单元（tests/）可见，不进产物。

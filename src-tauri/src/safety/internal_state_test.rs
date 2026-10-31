@@ -79,7 +79,7 @@ fn forbidden_zone_lexical_hits_and_workspace_exception() {
     assert_pass(&guard, &project.path().join("segmeta.json"));
     assert_pass(&guard, &project.path().join("normal.txt"));
     // workspace 例外：数据根下 `workspace/` 是代理工作区；清单外的数据根
-    // 路径（skills/、backups/ 等）不在本票禁区——不扩大。
+    // 路径（skills/、backups/ 等）不在禁区——不扩大。
     assert_pass(&guard, &data.path().join("workspace"));
     assert_pass(&guard, &data.path().join("workspace/out.txt"));
     assert_pass(&guard, &data.path().join("skills"));

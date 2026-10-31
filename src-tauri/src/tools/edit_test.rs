@@ -1,6 +1,6 @@
 //! edit 工具测试：三级匹配、唯一性拒绝、version 乐观锁、EOL 保持、
-//! lineChanges 统计、GBK 文件转 UTF-8、07 号票同批合并原子提交与
-//! 22 号票写后自检（越界拒绝见 mod.rs 共享守卫测试 path_guard_test）。
+//! lineChanges 统计、GBK 文件转 UTF-8、同批合并原子提交与
+//! 写后自检（越界拒绝见 mod.rs 共享守卫测试 path_guard_test）。
 
 use serde_json::json;
 
@@ -64,7 +64,7 @@ fn single_edit_semantics_matrix() {
     assert!(outcome.ok, "{outcome:?}");
     let data = outcome.data.expect("data");
     assert_eq!(data["matchLevel"], "indent-shift");
-    // §8.4 语义：缩进平移只用于「匹配」；替换区间含原首行缩进，
+    // 缩进平移只用于「匹配」；替换区间含原首行缩进，
     // newText 原样落位（缩进由模型自带）。
     assert_eq!(
         std::fs::read_to_string(ws.project_file("b.rs")).expect("读回"),
@@ -147,13 +147,13 @@ fn single_edit_semantics_matrix() {
     let bytes = std::fs::read(ws.project_file("win.txt")).expect("读回");
     assert_eq!(bytes, b"line1\r\nline-two\r\n", "CRLF 应保持");
 
-    // —— GBK 转 UTF-8 落盘（C-10 接受的转换副作用）——
+    // —— GBK 转 UTF-8 落盘（接受的转换副作用）——
     let (gbk, _, _) = encoding_rs::GBK.encode("旧值：alpha\n重复行\n");
     std::fs::write(ws.project_file("legacy.ini"), &gbk).expect("写 GBK");
     let outcome = run(&ws.ctx(), &args("legacy.ini", "alpha", "beta"));
     assert!(outcome.ok, "{outcome:?}");
     let bytes = std::fs::read(ws.project_file("legacy.ini")).expect("读回");
-    let text = std::str::from_utf8(&bytes).expect("编辑后应为 UTF-8（C-10 副作用）");
+    let text = std::str::from_utf8(&bytes).expect("编辑后应为 UTF-8（落盘编码副作用）");
     assert_eq!(text, "旧值：beta\n重复行\n");
 
     // —— lineChanges 三种口径：扩行、缩行、整块删除 ——
@@ -178,8 +178,8 @@ fn single_edit_semantics_matrix() {
     assert_eq!(data["lineChanges"], json!({ "add": 0, "del": 2 }));
 }
 
-// 断言：同批同文件多 edit 合并语义矩阵（apply_edit_group，§8.4 步骤 4/5 +
-// 22 号票写后自检）——非重叠多 edit 一次合并提交（共享同一 version、各成员
+// 断言：同批同文件多 edit 合并语义矩阵（apply_edit_group 预演/应用 +
+// 写后自检）——非重叠多 edit 一次合并提交（共享同一 version、各成员
 // lineChanges 对位）；区间重叠的后续成员被拒；任一成员匹配失败整组降级为
 // 源序逐个独立执行；落盘闭包失败整组回滚且备份清理；写后自检拦下篡改写入
 // （E_INTERNAL + 路径 + 校验阶段）；正常与 CRLF 编辑通过自检。
@@ -307,7 +307,7 @@ fn edit_group_commit_and_postcheck_matrix() {
         .collect();
     assert!(leftovers.is_empty(), "备份文件应清理：{leftovers:?}");
 
-    // —— 写后自检（22 号票）：篡改写入在哈希阶段拦下 ——
+    // —— 写后自检：篡改写入在哈希阶段拦下 ——
     let ws = TestWorkspace::new();
     write_file(&ws, "g.txt", "alpha\nbeta\ngamma\n");
     let outcomes = apply_edit_group(
@@ -319,7 +319,7 @@ fn edit_group_commit_and_postcheck_matrix() {
     assert_eq!(outcomes.len(), 1);
     assert!(!outcomes[0].ok, "篡改写入应被自检拦下：{:?}", outcomes[0]);
     let err = outcomes[0].error.as_ref().unwrap();
-    assert_eq!(err.code, "E_INTERNAL", "错误码用 E_INTERNAL（§3.6 兜底）");
+    assert_eq!(err.code, "E_INTERNAL", "错误码用 E_INTERNAL（通用兜底）");
     assert!(
         err.message.contains("自检失败"),
         "message 指明自检失败：{}",

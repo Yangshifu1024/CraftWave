@@ -1,23 +1,22 @@
-//! 统一信任存储（§7.7 `trust/project.json` / §9.8；24 号票收敛落点）。
+//! 统一信任存储（`trust/project.json`；MCP 启动信任与项目资源信任的收敛落点）。
 //!
 //! 名词解释：TOFU（Trust On First Use，首次使用信任）——外部资源第一次被
 //! 使用时先向用户弹确认，「记住此版本」后同指纹免问，内容一变（指纹不符）
-//! 重新询问。此前 MCP 启动信任（08 号票，`trust/mcp.json`）与项目资源信任
-//! （09 号票技能最小版，`trust/project.json`）各自持有一份存储实现；本票把
+//! 重新询问。此前 MCP 启动信任（`trust/mcp.json`）与项目资源信任
+//! （技能信任最初版，`trust/project.json`）各自持有一份存储实现；本模块把
 //! 两者收敛为**单一文件单一实现**：
 //!
 //! - 文件 = `<data>/trust/project.json`，条目数组
 //!   `[{ scope, resourceName, fingerprint, decidedAt, decision }]`；
 //! - `scope` 判别字段区分两类记录：`"project"`（项目/全局技能、项目指令等
-//!   项目资源）与 `"mcp"`（MCP 服务器启动信任，§9.7）——设计文档 §7.7
-//!   已随本票回写；
-//! - MCP 侧历史遗留文件 `trust/mcp.json`（08 号票形状，无 scope/resourceName）
+//!   项目资源）与 `"mcp"`（MCP 服务器启动信任）；
+//! - MCP 侧历史遗留文件 `trust/mcp.json`（旧形状，无 scope/resourceName）
 //!   在读取时**合并迁入**内存视图（project.json 优先、按
 //!   (scope, resourceName, fingerprint) 去重），首次写入时随统一格式落回
 //!   project.json——旧文件保留不删（只读迁移面，幂等安全）；
-//! - 指纹算法不因收敛改变：MCP 沿用 §9.7 元组哈希（mcp/trust 的
-//!   `launch_fingerprint`），技能沿用 Q21 整目录摘要（knowledge/skills 的
-//!   `version_fingerprint`），项目指令 = 文件内容 SHA-256（§9.8）。
+//! - 指纹算法不因收敛改变：MCP 沿用既有元组哈希（mcp/trust 的
+//!   `launch_fingerprint`），技能沿用既有整目录摘要（knowledge/skills 的
+//!   `version_fingerprint`），项目指令 = 文件内容 SHA-256。
 //!
 //! 信任面磁盘纪律：**缺失/损坏按未信任处理**（宁缺勿炸——文件损坏时用户
 //! 重新确认即可恢复，不做崩溃性失败）。
@@ -26,32 +25,32 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-/// 信任域目录与统一文件名（§7.7 trust 域）。
+/// 信任域目录与统一文件名（trust 域）。
 pub const TRUST_DIR: &str = "trust";
 /// 统一信任文件（project 资源 + MCP 启动信任共用，scope 判别）。
 pub const TRUST_FILE: &str = "project.json";
-/// 08 号票遗留的 MCP 启动信任文件（只读迁入面）。
+/// 遗留的 MCP 启动信任文件（只读迁入面）。
 pub const LEGACY_MCP_FILE: &str = "mcp.json";
 
 /// 决策值域（`decision` 字段的两个合法值）。
 pub const DECISION_REMEMBER: &str = "remember";
 pub const DECISION_REVOKE: &str = "revoke";
 
-/// 信任判别作用域（§7.7 scope 字段，24 号票回写）：记录属于哪一类信任面。
+/// 信任判别作用域（scope 字段，回写）：记录属于哪一类信任面。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "lowercase")]
 pub enum TrustScope {
     /// 项目资源信任（技能 / 项目指令；全局来源技能同属本域——
-    /// §9.8 载荷的 global/project 作用域不进存储键，同名同内容共享记录）。
+    /// 载荷的 global/project 作用域不进存储键，同名同内容共享记录）。
     Project,
-    /// MCP 服务器启动信任（§9.7 TOFU）。
+    /// MCP 服务器启动信任（TOFU）。
     Mcp,
 }
 
 /// 决策值（remember = 记住此版本同指纹免问；revoke = 显式撤销，下次使用
 /// 重新询问）。deny / allow_once 不落盘（会话内存面与「不产生记录」口径，
-/// §9.8/§9.7 同构）。
+/// 同构）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
@@ -83,14 +82,14 @@ impl TrustDecision {
     }
 }
 
-/// 统一信任记录（§7.7 `trust/project.json` 条目，24 号票字段级）。
+/// 统一信任记录（`trust/project.json` 条目，字段级）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TrustRecord {
     /// 判别作用域（project 资源 / mcp 服务器）。
     pub scope: TrustScope,
     /// 资源名（project 域 = 技能名或指令文件名；mcp 域恒空串——服务器身份
-    /// 已完整包含在指纹元组里，08 号票遗留条目迁移时同样补空串）。
+    /// 已完整包含在指纹元组里，遗留条目迁移时同样补空串）。
     #[serde(default)]
     pub resource_name: String,
     /// 内容指纹（完整 hex；各域算法见模块头注释）。
@@ -124,14 +123,14 @@ impl TrustRecordStatus {
     }
 }
 
-/// 信任存储的统一接口（24 号票收敛面：文件实现为生产形态，测试可替换桩）。
+/// 信任存储的统一接口（收敛面：文件实现为生产形态，测试可替换桩）。
 pub trait TrustStore: Send + Sync {
     /// 全部记录快照（含旧 mcp.json 迁入的条目）。
     fn entries(&self) -> Vec<TrustRecord>;
 
     /// 是否已被「记住」（scope + resourceName + fingerprint 全等命中
     /// remember）。resourceName 参与匹配：同名资源换内容后指纹变，自然
-    /// 不命中（内容变更重新询问，§9.8）。
+    /// 不命中（内容变更重新询问）。
     fn is_trusted(&self, scope: TrustScope, resource_name: &str, fingerprint: &str) -> bool;
 
     /// 按 (scope, fingerprint) 查信任状态（mcp 管理页信任列 / 技能页撤销
@@ -142,8 +141,8 @@ pub trait TrustStore: Send + Sync {
     /// decidedAt 与 decision；原子写）。
     fn decide(&self, record: TrustRecord) -> Result<(), String>;
 
-    /// 清空全部记录（Q41 备份恢复接线面：恢复不复活已撤销/已记住许可，
-    /// 恢复流程由 33 号票调用；普通重启不调用）。
+    /// 清空全部记录（备份恢复接线面：恢复不复活已撤销/已记住许可，
+    /// 恢复流程由 调用；普通重启不调用）。
     fn clear_all(&self) -> Result<(), String>;
 }
 
@@ -152,7 +151,7 @@ pub trait TrustStore: Send + Sync {
 pub struct FileTrustStore {
     /// 统一文件路径。
     path: PathBuf,
-    /// 08 号票遗留文件路径（只读迁入面；不存在时零开销）。
+    /// 遗留文件路径（只读迁入面；不存在时零开销）。
     legacy_path: PathBuf,
 }
 
@@ -174,7 +173,7 @@ impl FileTrustStore {
             .unwrap_or_default()
     }
 
-    /// 读取 08 号票遗留 mcp.json（形状 `{fingerprint, decidedAt, decision}`，
+    /// 读取 遗留 mcp.json（形状 `{fingerprint, decidedAt, decision}`，
     /// 无 scope/resourceName）并补齐为统一记录；文件缺失/损坏 = 空。
     fn read_legacy_mcp(&self) -> Vec<TrustRecord> {
         #[derive(Deserialize)]
@@ -265,7 +264,7 @@ impl TrustStore for FileTrustStore {
     }
 }
 
-/// 原子写统一信任文件（util/atomic，§7.4 同款；目录按需创建）。
+/// 原子写统一信任文件（util/atomic 同款；目录按需创建）。
 fn write_records_atomic(path: &Path, records: &[TrustRecord]) -> Result<(), String> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("创建信任目录失败：{e}"))?;

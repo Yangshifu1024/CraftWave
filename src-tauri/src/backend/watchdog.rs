@@ -1,4 +1,4 @@
-//! 监督看门狗（技术设计文档 §5.7，FR-03-07，37 号票）。
+//! 监督看门狗。
 //!
 //! 名词解释：看门狗（watchdog）= 旁路监督 run 推进过程、在模型陷入重复失败
 //! 或空转、模型流停滞时及时纠偏或终止的守护逻辑。它不参与正常的工具执行与
@@ -9,9 +9,9 @@
 //!   前）评估四类信号——同签名连续失败、无进展轮次、同参数只读成功重复、
 //!   同文件连续分段读——命中阈值即纠偏（hidden system 提示）或终止
 //!   （E_RUN_STALLED）；
-//! - **停滞计时（[`StallGuard`]）**：仅模型请求阶段计时（Q33 边界）——单次
+//! - **停滞计时（[`StallGuard`]）**：仅模型请求阶段计时——单次
 //!   模型请求自发出起，无有效模型增量达到 `stall_timeout` 即终止；有效增量
-//!   （§5.7 字段级判定：三类增量帧 textDelta/reasoningDelta/toolArgs）到达
+//!   （字段级判定：三类增量帧 textDelta/reasoningDelta/toolArgs）到达
 //!   即刷新。工具执行、审批等待、子代理等待不在计时生命周期内；前端帧、
 //!   重连与工具进度不能刷新计时。
 
@@ -23,9 +23,9 @@ use tokio::time::Instant as TokioInstant;
 
 use super::frames::ChatFrame;
 
-// ---- 阈值（§5.7 表格钉死；验收要求全部可复现）----
+// ---- 阈值（常量钉死；验收要求全部可复现）----
 
-/// 工具结果滑动窗口容量（§5.7：32）。
+/// 工具结果滑动窗口容量。
 pub const WINDOW_CAPACITY: usize = 32;
 /// 同签名工具连续失败——纠偏阈值（注入 hidden system 提示）。
 pub const SAME_SIGNATURE_FAIL_CORRECT: usize = 3;
@@ -43,7 +43,7 @@ pub const SEGMENTED_READ_CORRECT: usize = 10;
 /// 一条工具结果记录（滑动窗口的单元）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolRecord {
-    /// 调用签名 = 工具名 + 参数哈希（§5.7；参数哈希对参数 JSON 文本求
+    /// 调用签名 = 工具名 + 参数哈希（参数哈希对参数 JSON 文本求
     /// std DefaultHasher 值——同进程内一致即可，不跨进程持久化）。
     pub signature: u64,
     /// 工具名。
@@ -58,7 +58,7 @@ pub struct ToolRecord {
     pub read_path: Option<String>,
 }
 
-/// turn 边界评估的结论（§5.7 动作列）。
+/// turn 边界评估的结论（动作面）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WatchdogAction {
     /// 无事发生。
@@ -70,7 +70,7 @@ pub enum WatchdogAction {
     Terminate(String),
 }
 
-/// run 内的工具结果滑动窗口与无进展计数（§5.7）。
+/// run 内的工具结果滑动窗口与无进展计数。
 ///
 /// 挂在跨挂起延续的驱动状态（[`super::run_loop::DriveState`]）上：审批挂起
 /// 恢复后窗口与计数延续，不丢历史、不重复计数。阈值评估带纠偏水位——同一
@@ -163,7 +163,7 @@ impl RunWatchdog {
         }
     }
 
-    /// turn 边界评估（§5.7 四类信号，终止优先于纠偏，多信号同时命中取
+    /// turn 边界评估（四类信号，终止优先于纠偏，多信号同时命中取
     /// 优先级最高者）：内部更新纠偏水位——同一水平只纠偏一次。
     pub fn evaluate(&mut self) -> WatchdogAction {
         if let Some(action) = self.check_same_signature_failures() {
@@ -178,7 +178,7 @@ impl RunWatchdog {
         self.check_segmented_reads().unwrap_or(WatchdogAction::None)
     }
 
-    /// 信号①：同签名工具连续失败（§5.7 行 1/2）。连续段 = 自窗口尾部起、
+    /// 信号①：同签名工具连续失败。连续段 = 自窗口尾部起、
     /// 与末条同签名且全为失败的紧邻段（同签名成功或不同签名调用即打断）。
     /// 5 次终止；3 次纠偏一次（段内继续失败不再重复纠偏，段重开——锚变化
     /// ——则复位，新一轮失败累计到 3 再纠偏）。
@@ -222,7 +222,7 @@ impl RunWatchdog {
         None
     }
 
-    /// 信号②：无进展轮次（§5.7 行 3）。连续无进展步达到 14 终止、8 纠偏
+    /// 信号②：无进展轮次。连续无进展步达到 14 终止、8 纠偏
     /// 一次（继续空转不再重复纠偏，直至 14 终止）；有进展的步在
     /// [`Self::record_step`] 已清零计数并复位纠偏水位。
     fn check_no_progress(&mut self) -> Option<WatchdogAction> {
@@ -244,7 +244,7 @@ impl RunWatchdog {
         None
     }
 
-    /// 信号③：同参数只读调用成功重复（§5.7 行 4）。按窗口内末条签名（须为
+    /// 信号③：同参数只读调用成功重复。按窗口内末条签名（须为
     /// 只读成功）的成功计数评估，每满 4 次纠偏一次（提示已获得过该结果）。
     fn check_readonly_repeat(&mut self) -> Option<WatchdogAction> {
         let last = self.window.back()?;
@@ -269,7 +269,7 @@ impl RunWatchdog {
         None
     }
 
-    /// 信号④：同文件连续分段读（§5.7 行 5）。连续段 = 自窗口尾部起、对同一
+    /// 信号④：同文件连续分段读。连续段 = 自窗口尾部起、对同一
     /// 文件路径的 read 调用紧邻段（读别的文件或调用其他工具即打断），每满
     /// 10 次纠偏一次（提示一次性读取更大窗口或改用 grep 定位，避免碎片化
     /// 读取）。
@@ -295,7 +295,7 @@ impl RunWatchdog {
     }
 }
 
-/// §5.7 有效模型增量判定：三类增量帧（textDelta / reasoningDelta / toolArgs）
+/// 有效模型增量判定：三类增量帧（textDelta / reasoningDelta / toolArgs）
 /// 到过一个即刷新停滞计时；其余帧（生命周期事件与帧面非增量帧）不刷新——
 /// 前端帧、重连与工具进度天然不能给模型停滞计时续命。
 pub fn is_model_delta(frame: &ChatFrame) -> bool {
@@ -305,7 +305,7 @@ pub fn is_model_delta(frame: &ChatFrame) -> bool {
     )
 }
 
-/// 模型流停滞计时器（§5.7 计时边界，Q33）：随单次模型请求生灭。
+/// 模型流停滞计时器（计时边界：仅请求阶段计时）：随单次模型请求生灭。
 ///
 /// - `armed` 即启动计时（等价于「请求发出」时刻——`drive_run` 在发起流式
 ///   调用的同一拍构造）；

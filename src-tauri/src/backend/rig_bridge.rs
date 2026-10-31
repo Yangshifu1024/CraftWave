@@ -1,11 +1,11 @@
-//! rig 流事件到帧的桥接（技术设计文档 §4.3"流事件 → 帧"的映射面：
+//! rig 流事件到帧的桥接（"流事件 → 帧"的映射面：
 //! 文本/推理/工具参数三类增量，参数增量为半截 JSON 时也原样转发）。
 //!
 //! 名词解释：rig 是本项目使用的第三方大模型编排库；流事件（StreamEvent）
 //! 是模型流式回复过程中的原始事件；帧（frame）是后端发给前端的事件消息。
-//! rig 升级只应改到本文件与 `providers/`（防腐层原则，§4.1）。
+//! rig 升级只应改到本文件与 `providers/`（防腐层原则）。
 //!
-//! callId 同源问题（§3.4）：工具参数还在流式传输时，rig 的事件只携带
+//! callId 同源问题：工具参数还在流式传输时，rig 的事件只携带
 //! part 序号（流内分片序号；模型真正的调用 id 要到该分片的 End 事件才
 //! 确定），因此 toolStarted/toolArgs 帧先用桥接派生 id（`call_part_{轮}_{序号}`）
 //! 承载；End 事件到达时登记"模型调用 id → 桥接 id"映射，主循环发
@@ -65,7 +65,7 @@ impl RigEventBridge {
             return Bridged::None;
         };
         // 派生 id 带 turn 前缀：part 序号按响应各自从 0 计，跨轮会撞车
-        // （14 号票修正：第二轮 tool-call 的帧面 callId 不得复用第一轮的）。
+        // （第二轮 tool-call 的帧面 callId 不得复用第一轮的）。
         let derive = |part_index: usize| format!("call_part_{turn}_{part_index}");
         match event {
             StreamEvent::Start { part, kind, name } => match kind {
@@ -120,7 +120,7 @@ impl RigEventBridge {
                     .or_insert_with(|| derive(part.index()))
                     .clone();
                 // 参数增量 JSON 片段原样转发（半截 JSON 保留原样，前端以
-                // 「参数准备中」态渲染——§10.2）
+                // 「参数准备中」态渲染）
                 Bridged::Frame(ChatFrame::ToolArgs {
                     call_id,
                     chunk: json.clone(),
@@ -145,7 +145,7 @@ impl RigEventBridge {
         }
     }
 
-    /// 按模型调用 id 反查帧面 callId（§3.4 同源：主循环发 toolResult 帧
+    /// 按模型调用 id 反查帧面 callId（callId 同源：主循环发 toolResult 帧
     /// 前调用；映射未命中——如 End 事件尚未到达的异常路径——回退用模型
     /// id 本身，保证帧仍能发出）。
     pub fn frame_call_id_for_model(&self, model_call_id: &str) -> String {

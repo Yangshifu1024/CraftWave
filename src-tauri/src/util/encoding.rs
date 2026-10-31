@@ -1,4 +1,4 @@
-//! 共用文本解码器（附录 C-10 定案，2026-10-27 grilling）。
+//! 共用文本解码器（2026-10-27 定案）。
 //!
 //! BOM（Byte Order Mark，字节顺序标记）：文件开头的一小段特殊字节，用来
 //! 标明文本的编码与字节序（如 UTF-16LE 以 FF FE 开头）。chardetng：Mozilla
@@ -7,15 +7,15 @@
 //! 判定顺序：BOM（UTF-8/UTF-16LE/BE）→ 严格 UTF-8 校验 → chardetng 探测
 //! → 均不中按最佳猜测渲染（预览宁乱码不报错，无效序列替换 U+FFFD）。
 //!
-//! agent 的 `read` 工具（§8.3）与 `read_workspace_file` 命令（§3.2 #28）
+//! agent 的 `read` 工具与 `read_workspace_file` 命令
 //! 必须共用本模块，不得各写一套。
 
 use encoding_rs::Encoding;
 
-/// 二进制嗅探窗口：前 8KB 含 NUL 判二进制（C-10）。
+/// 二进制嗅探窗口：前 8KB 含 NUL 判二进制。
 pub const BINARY_SNIFF_BYTES: usize = 8 * 1024;
 
-/// 读工具文本通道单次响应上限（C-10：单次响应 ≤512KB）。
+/// 读工具文本通道单次响应上限（单次响应 ≤512KB）。
 pub const MAX_RESPONSE_BYTES: usize = 512 * 1024;
 
 /// 解码结果：文本 + 实际使用的编码标签 + 是否命中 BOM。
@@ -35,7 +35,7 @@ pub fn is_probably_binary(bytes: &[u8]) -> bool {
     window.contains(&0u8)
 }
 
-/// 按 C-10 四步判定解码。任何路径都不报错：最终兜底 windows-1252
+/// 按 四步判定解码。任何路径都不报错：最终兜底 windows-1252
 /// （单字节编码，任何字节序列均合法，配合替换语义即「最佳猜测渲染」）。
 pub fn decode_text(bytes: &[u8]) -> DecodedText {
     // ① BOM 直接定（encoding_rs decode 自会剥离 BOM；decode 的第三返回值

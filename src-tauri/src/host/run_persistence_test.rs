@@ -1,6 +1,6 @@
-//! RunRecorder 帧聚合落盘测试（15 号票，独立测试文件，源码零测试）。
+//! RunRecorder 帧聚合落盘测试（独立测试文件，源码零测试）。
 //!
-//! 帧序驱动 PersistingSink（与 RunLoop 出口同一 FrameSink 面），断言 §7.3
+//! 帧序驱动 PersistingSink（与 RunLoop 出口同一 FrameSink 面），断言
 //! 时机表的落盘产物：文本 turn 条目、工具 turn 条目、runMarker 收口与
 //! index upsert。
 
@@ -62,8 +62,8 @@ fn send_text_run(sink: &mut PersistingSink) {
 ///    marker 挂在工具条目之后（父链完整）；
 /// 3) 文本 + 工具混合 turn：usage 先收口，文本条先落、工具条后落，
 ///    reasoning 段排在文本段之前，父链按落盘顺序串起来；
-/// 4) index upsert 不得清空既有外部目录授权（24 号票语义：授权跨 run 生效；
-///    27 号票收尾核实并修复的回归）；流中取消（没有 usage 收口帧）残留文本
+/// 4) index upsert 不得清空既有外部目录授权（语义：授权跨 run 生效）；
+///    流中取消（没有 usage 收口帧）残留文本
 ///    桶由 runEnded 防御兜底收口，runMarker 仍照常落盘。
 #[test]
 fn text_tool_mixed_and_run_end_persistence() {
@@ -208,7 +208,7 @@ fn text_tool_mixed_and_run_end_persistence() {
 
     // 4) run 终态：授权跨 run 保留。
     let (store, mut sink, _dir) = recorder();
-    // 预置会话（run 开始前 index 已有授权记录，模拟 24 号票授权后的会话）
+    // 预置会话（run 开始前 index 已有授权记录，模拟授权后的会话）
     store
         .index()
         .upsert(crate::storage::SessionMeta {

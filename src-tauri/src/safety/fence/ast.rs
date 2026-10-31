@@ -1,4 +1,4 @@
-//! 命令围栏 AST 写目标分析（FR-05-05 P1，§8.7【M2】AST 管线，22 号票）。
+//! 命令围栏 AST 写目标分析。
 //!
 //! 把围栏的写信号判定从「词法猜」升级为「语法看」：用 tree-sitter 解析命令
 //! 文本，从语法树里提取**真正的写目标**（重定向 / tee / sed -i / rm、mv、
@@ -12,19 +12,19 @@
 //! - 解析失败 / 超限 → **fail-closed 按 Confirm**（非 fail-open，宁可误拦
 //!   走人工确认，不可漏拦）。
 //!
-//! 结构约定（22 号票）：
-//! - 纯判定核心 + 可注入文件系统解析器（[`Canonicalizer`]）——沿 12 号票
-//!   ssrf.rs 先例，测试可 mock symlink 行为；
-//! - [`WriteTarget`] 提取产物（目标路径 + 类别）是 23 号票（内部状态保护）
-//!   的复用接缝：接口在本票定形，23 号票消费目标列表做禁区命中判定；
-//! - [`git_classify`] 是 26 号票（git 集成）的复用接缝：纯函数表驱动，
+//! 结构约定：
+//! - 纯判定核心 + 可注入文件系统解析器（[`Canonicalizer`]）——沿 ssrf.rs
+//!   先例，测试可 mock symlink 行为；
+//! - [`WriteTarget`] 提取产物（目标路径 + 类别）是内部状态保护模块的
+//!   复用接缝：本模块定形接口，internal_state.rs 消费目标列表做禁区命中判定；
+//! - [`git_classify`] 是 git 集成的复用接缝：纯函数表驱动，
 //!   策略开关消费此函数。
 //!
-//! 判定口径（§8.7 四象限，字段级定义见技术设计文档）：
+//! 判定口径（四象限）：
 //!
 //! | 词法位置 | canonical 位置 | 结论 |
 //! |---|---|---|
-//! | roots 内 | roots 内 | Allow（最终仍由 §8.5 矩阵合成） |
+//! | roots 内 | roots 内 | Allow（最终仍由能力矩阵合成） |
 //! | roots 内 | 逃逸（symlink） | Confirm |
 //! | roots 外 | roots 内 | Confirm（保守，少见形态） |
 //! | roots 外 | roots 外 | 删除类 Block；其余 Confirm |
@@ -62,7 +62,7 @@ impl Shell {
     }
 }
 
-/// 写目标类别（§8.7 写目标提取清单）。
+/// 写目标类别（写目标提取清单）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WriteKind {
     /// 重定向 `>` / `>>`（含 `2>`、heredoc 目标）。
@@ -89,7 +89,7 @@ pub enum WriteKind {
 }
 
 impl WriteKind {
-    /// 删除类（`rm`/`mv`）：词法越界时直接 Block（§8.7 四象限）。
+    /// 删除类（`rm`/`mv`）：词法越界时直接 Block（四象限判定）。
     pub fn is_destructive(self) -> bool {
         matches!(self, WriteKind::Delete | WriteKind::Move)
     }
@@ -123,8 +123,8 @@ pub enum TargetPath {
 
 /// 提取出的一个写目标。
 ///
-/// 23 号票接缝：内部状态保护消费本结构的目标路径列表做禁区命中判定
-/// （接口在本票定形）。36 号票（命令审计）消费判定原因区分「必须人工确认」
+/// 内部状态保护（internal_state.rs）消费本结构的目标路径列表做禁区命中
+/// 判定（接口在此定形）。命令审计可消费判定原因区分「必须人工确认」
 /// 与「可交审计定性的灰区」。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WriteTarget {
@@ -447,7 +447,7 @@ fn split_flags(args: &[ArgItem]) -> (Vec<&ArgItem>, Vec<&ArgItem>) {
     (flags, positional)
 }
 
-/// bash 写命令表（§8.7 清单：tee、sed -i、rm/mv/chmod/chown、cp/install、
+/// bash 写命令表（写目标清单：tee、sed -i、rm/mv/chmod/chown、cp/install、
 /// mkfs、dd of=）。提取不到目标时返回 None（该命令不产写目标）。
 fn posix_command_targets(name: &str, args: &[ArgItem]) -> Option<Vec<WriteTarget>> {
     let (flags, positional) = split_flags(args);
@@ -672,9 +672,9 @@ fn ps_redirect_target(node: Node, src: &str) -> Option<WriteTarget> {
     })
 }
 
-// ---- git 子命令分类（26 号票接缝）----
+// ---- git 子命令分类（git 集成接缝）----
 
-/// git 子命令类别（26 号票策略开关消费本结论）。
+/// git 子命令类别（策略开关消费本结论）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GitClass {
     /// 只读（status/diff/log/show 等明确只读面）。
@@ -685,7 +685,7 @@ pub enum GitClass {
     Destructive,
 }
 
-/// git 子命令分类表（§8.7：status/diff/log/show 只读；push/commit/merge/
+/// git 子命令分类表（status/diff/log/show 只读；push/commit/merge/
 /// rebase 写；push --force 归破坏性——fence 黑名单正则先行 Block）。
 ///
 /// 输入契约：`argv[0]` 为 `git`（basename 归一后）；非 git 输入保守按
@@ -721,8 +721,8 @@ pub fn git_classify(argv: &[&str]) -> GitClass {
 /// 文件系统 canonical 解析器（注入面：生产 [`FsCanonicalizer`]，测试 mock）。
 pub trait Canonicalizer {
     /// 尽力解析：整路径存在则 canonicalize（解析 symlink）；不存在时对
-    /// 最长存在前缀 canonicalize + 剩余段词法归一（与 safe_join 同思路，
-    /// 22 号票注：剩余段不存在故无 symlink）；连根都无法解析 → None。
+    /// 最长存在前缀 canonicalize + 剩余段词法归一（与 safe_join 同思路：
+    /// 剩余段不存在故无 symlink）；连根都无法解析 → None。
     fn canonical(&self, path: &Path) -> Option<PathBuf>;
 }
 
@@ -759,7 +759,7 @@ impl Canonicalizer for FsCanonicalizer {
 
 /// 工作区判定上下文（judge_in_workspace 的输入）。
 pub struct Workspace<'a> {
-    /// canonical 后的允许根集合（项目主目录 + workspace 子目录，§9.1）。
+    /// canonical 后的允许根集合（项目主目录 + workspace 子目录）。
     pub roots: &'a [PathBuf],
     /// 相对路径解析基准（command 的 cwd 解析后的绝对路径；缺省项目主目录）。
     pub base: &'a Path,
@@ -781,7 +781,7 @@ fn path_within(path: &Path, roots: &[PathBuf]) -> bool {
         .any(|root| path == root || path.starts_with(root))
 }
 
-/// 单个写目标的四象限判定（§8.7 字段级口径）。
+/// 单个写目标的四象限判定。
 pub fn judge_target(target: &WriteTarget, ws: &Workspace) -> TargetVerdict {
     // 字面量掩码：写路径含未解析变量 → 保守 Confirm（防 $HOME/.. 逃逸）。
     let TargetPath::Literal(literal) = &target.path else {

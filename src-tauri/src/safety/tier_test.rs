@@ -1,8 +1,8 @@
-//! 权限四档矩阵与 plan 档过滤测试（§8.5）。
+//! 权限四档矩阵与 plan 档过滤测试。
 
 use super::{Capability, GateDecision, PermissionTier, decide_gate};
 
-// 断言：四档 × 能力判定矩阵（§8.5 全表），档位/能力枚举经 JSON
+// 断言：四档 × 能力判定矩阵（全表），档位/能力枚举经 JSON
 // （camelCase）往返不丢语义（跨 IPC 传输用）。
 #[test]
 fn permission_matrix_and_serde_roundtrip() {

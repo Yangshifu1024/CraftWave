@@ -1,16 +1,16 @@
-//! 代理 HTTP 客户端工厂（FR-02-10，19 号票）：none/system/manual 三模式
+//! 代理 HTTP 客户端工厂：none/system/manual 三模式
 //! 的 reqwest 客户端统一装配点 + 进程级缓存与热生效。
 //!
-//! 为什么收敛在这里：代理之前分散在两处各自为政——12 号票 `safety/ssrf.rs`
+//! 为什么收敛在这里：代理之前分散在两处各自为政—— `safety/ssrf.rs`
 //! 的 `build_client`（网络工具侧）与 rig 的共享 client（模型请求侧，rig
 //! 默认进程级 reqwest client 不读我们的代理配置）。本模块提供唯一的
 //! 「ProxyConfig → reqwest::Client」装配函数，两侧共用（ssrf.rs 保留其
 //! SSRF 特有的 resolver/重定向/超时装配，代理段改调这里）；模型请求侧由
 //! [`HttpClientFactory`] 缓存配置好的 client，`resolve_model` 经
-//! `rig_reqwest::ReqwestClient::from(client)` 注入 rig（附录 B"代理经
-//! rig-reqwest builder"）。
+//! `rig_reqwest::ReqwestClient::from(client)` 注入 rig（代理经
+//! rig-reqwest builder 注入）。
 //!
-//! 三模式语义（§3.2 AppConfig.proxy 注记）：
+//! 三模式语义（AppConfig.proxy 配置域）：
 //! - `none`（及未配置 `proxy` 字段）：`ClientBuilder::no_proxy()` 显式禁用
 //!   ——语义 = 直连，环境变量 `http_proxy` 等一律不读（防本机开发环境的
 //!   代理变量泄漏进用户应用）；
@@ -21,10 +21,10 @@
 //!   （socks5h = 域名由代理远端解析），scheme 白名单校验在
 //!   [`validate_proxy_url`]，`AppConfig::normalize` 与本模块共用同一口径。
 //!
-//! 热生效（FR-02-10）：`save_config` 保存成功 → [`HttpClientFactory::reload`]
+//! 热生效：`save_config` 保存成功 → [`HttpClientFactory::reload`]
 //! 重建缓存 client（generation 计数递增）；进行中的 run 不切换——run 的
 //! rig 客户端在 `resolve_model` 时按当时代工厂快照构建并整个 run 复用
-//! （§11.1"客户端在 run 内复用"），下一次 start_chat 取新 client。
+//! （"客户端在 run 内复用"），下一次 start_chat 取新 client。
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -41,10 +41,10 @@ const USER_AGENT: &str = concat!("CraftWave/", env!("CARGO_PKG_VERSION"));
 /// probe.rs 按请求覆盖设置）。
 const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
-/// 代理地址的 scheme 白名单（FR-02-10：socks5/socks5h；含大小写变体归一）。
+/// 代理地址的 scheme 白名单（socks5/socks5h；含大小写变体归一）。
 pub const PROXY_SCHEMES: [&str; 4] = ["http", "https", "socks5", "socks5h"];
 
-/// 校验代理地址（FR-02-10）：scheme 必须在 [`PROXY_SCHEMES`] 白名单内且
+/// 校验代理地址：scheme 必须在 [`PROXY_SCHEMES`] 白名单内且
 /// `://` 后带主机部分。`AppConfig::normalize`（保存前校验）与本模块装配
 /// （运行时防御）共用同一口径，错误消息人读。
 pub fn validate_proxy_url(url: &str) -> Result<(), String> {
@@ -77,7 +77,7 @@ pub fn validate_proxy_url(url: &str) -> Result<(), String> {
 /// 按 [`ProxyConfig`] 把代理装配进 reqwest builder（三模式语义见模块注释）。
 /// 返回 `Err(String)` 为配置错误（调用方按 E_INVALID_ARG 归面）。
 ///
-/// 12 号票收敛点：`safety/ssrf.rs::build_client` 的代理段改调本函数——
+/// 收敛点：`safety/ssrf.rs::build_client` 的代理段改调本函数——
 /// 此前该侧对 `system` 模式只有 reqwest 默认行为（本仓 reqwest 未开
 /// system-proxy feature 时实际不读系统设置），统一后网络工具与模型请求
 /// 的代理语义完全一致。
@@ -128,7 +128,7 @@ pub fn build_proxy_client(proxy: Option<&ProxyConfig>) -> Result<reqwest::Client
         .map_err(|e| IpcError::internal(format!("HTTP 客户端构建失败：{e}")))
 }
 
-/// 进程级代理 HTTP 客户端缓存（FR-02-10 热生效）：
+/// 进程级代理 HTTP 客户端缓存（热生效）：
 ///
 /// - 读侧 [`Self::client`] 无锁取当前快照（`Arc<reqwest::Client>`，克隆即
 ///   引用计数 +1）——`resolve_model` 每 run 构建时取用；
@@ -164,7 +164,7 @@ impl HttpClientFactory {
         self.generation.load(Ordering::Acquire)
     }
 
-    /// 热生效：按新代理配置重建缓存客户端（FR-02-10，save_config 边界）。
+    /// 热生效：按新代理配置重建缓存客户端（save_config 边界）。
     /// 成功 = generation +1 且后续 [`Self::client`] 返回新实例；失败保留
     /// 旧 client 并返回错误（不把工厂置于无客户端状态）。
     pub fn reload(&self, proxy: Option<&ProxyConfig>) -> Result<(), IpcError> {

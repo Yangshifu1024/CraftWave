@@ -1,6 +1,6 @@
-//! storage/stats.rs 的单元测试（20 号票）：日/模型聚合合并幂等、跨日翻
-//! 文件、90 天惰性清理、损坏兜底、run/会话明细合并与删除（Q37/Q39/Q40/Q43
-//! 存储面）。同型用例在单个 #[test] 内顺序合并，断言消息带用例标识。
+//! storage/stats.rs 的单元测试：日/模型聚合合并幂等、跨日翻
+//! 文件、90 天惰性清理、损坏兜底、run/会话明细合并与删除的
+//! 存储面。同型用例在单个 #[test] 内顺序合并，断言消息带用例标识。
 
 use std::fs;
 
@@ -24,8 +24,8 @@ fn usage(input: u64, output: u64, cache_read: u64, cache_write: u64) -> UsageTot
 
 // ---- 日/模型聚合与守卫 ----
 
-// 断言：日聚合全语义——同日同模型数字累加且 runs 不重复计次（Q40 幂等）、
-// 同日两模型分桶、跨午夜同 run 落次日（Q39）、原子写文件无 tmp 残留、
+// 断言：日聚合全语义——同日同模型数字累加且 runs 不重复计次（幂等）、
+// 同日两模型分桶、跨午夜同 run 落次日、原子写文件无 tmp 残留、
 // 损坏文件备份为 .corrupt 后重建、90 天惰性清理只删过期日、read_range
 // 闭区间、非日期命名文件被忽略、shift_day 纯函数表驱动。
 #[test]
@@ -53,7 +53,7 @@ fn daily_aggregate_and_guards() {
     assert_eq!(m.output, 20);
     assert_eq!(m.cache_read, 80);
     assert_eq!(m.cache_write, 10);
-    assert_eq!(m.runs, 1, "同 run 后续帧不重复计次（Q40 幂等）");
+    assert_eq!(m.runs, 1, "同 run 后续帧不重复计次（幂等）");
     assert_eq!(m.model_name, "gpt-4o");
 
     // 同日两模型分桶 + 跨午夜落次日（独立 store，避免与前段同模型累加）
@@ -85,7 +85,7 @@ fn daily_aggregate_and_guards() {
     assert_eq!(d30.models["m1"].input, 10);
     assert_eq!(d30.models["m1"].runs, 1);
     let d31 = store.read_day("2026-10-31");
-    assert_eq!(d31.models["m1"].input, 5, "跨午夜增量落次日（Q39）");
+    assert_eq!(d31.models["m1"].input, 5, "跨午夜增量落次日");
     assert_eq!(d31.models["m1"].runs, 1, "run 属次日的部分也按主 run 计次");
 
     // 原子写：文件为完整 JSON、无 tmp 残留
@@ -181,9 +181,9 @@ fn daily_aggregate_and_guards() {
 
 // ---- run/会话四口径明细 ----
 
-// 断言：明细全语义——run 内切模型分桶保留并重算会话累计（Q37/Q40，主/子/
+// 断言：明细全语义——run 内切模型分桶保留并重算会话累计（主/子/
 // 辅助全并入）、缺失/损坏文件按空兜底且可继续落账、mark_run_ended 补写
-// endedAt 且幂等、forget_session 删除明细（Q43）且对不存在会话幂等。
+// endedAt 且幂等、forget_session 删除明细且对不存在会话幂等。
 #[test]
 fn usage_detail_semantics() {
     let (_dir, root) = temp_root();
@@ -200,7 +200,7 @@ fn usage_detail_semantics() {
         })
         .expect("落账");
     assert_eq!(total, usage(100, 20, 30, 0));
-    // 同 run 内切模型（Q37 真实归属）：第二拍模型 B
+    // 同 run 内切模型（真实归属）：第二拍模型 B
     let total = store
         .record(&RunUsageRecord {
             session_id: "s1",
@@ -212,7 +212,7 @@ fn usage_detail_semantics() {
         })
         .expect("落账");
     assert_eq!(total, usage(150, 25, 30, 10));
-    // 子 run + 辅助调用并入会话累计（Q40）
+    // 子 run + 辅助调用并入会话累计
     store
         .record(&RunUsageRecord {
             session_id: "s1",
@@ -268,7 +268,7 @@ fn usage_detail_semantics() {
     );
 
     // 收口与删除：mark_run_ended 补写 endedAt、重复收口幂等、未知 run 静默成功；
-    // forget_session 删除明细（Q43）且对不存在会话不报错
+    // forget_session 删除明细且对不存在会话不报错
     store.mark_run_ended("s1", "r1").expect("收口");
     store.mark_run_ended("s1", "r1").expect("重复收口幂等");
     assert!(

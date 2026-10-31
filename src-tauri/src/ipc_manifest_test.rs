@@ -1,14 +1,14 @@
-//! §12.3 契约测试（Rust 侧产出）：
+//! 契约测试（Rust 侧产出）：
 //!
 //! 1. 遍历注册命令（`ipc_commands!` 单一事实源）落盘 `target/ipc-manifest.json`；
 //! 2. 落盘跨语言 roundtrip fixture `target/session-tree-fixture.jsonl`
 //!    （serde 序列化字节即 SegmentLog 落盘行格式），供前端
 //!    `ui/src/ipc/contract.test.ts` 做 TS 镜像比对与树还原校验；
-//! 3. 导出契约负载类型的 TS 声明到 `ui/src/ipc/generated/`（02 号票，C-2
-//!    定案：ts-rs 12 生成物进 git，cargo build 不依赖生成步骤，导出由本测试
-//!    统一驱动——宏清单按类型统一调用，避免每类型散落导出测试）。
+//! 3. 导出契约负载类型的 TS 声明到 `ui/src/ipc/generated/`——
+//!    ts-rs 12 生成物进 git，cargo build 不依赖生成步骤，导出由本测试
+//!    统一驱动（宏清单按类型统一调用，避免每类型散落导出测试）。
 //!
-//! 前端消费产物前必须先跑 `cargo test`（§12.3 CI 顺序）。
+//! 前端消费产物前必须先跑 `cargo test`（CI 顺序）。
 
 use std::fs;
 use std::path::PathBuf;
@@ -46,7 +46,7 @@ fn list_generated_files(dir: &std::path::Path, base: &std::path::Path, out: &mut
     }
 }
 
-/// 02 号票：契约负载类型的 ts-rs 导出 + manifest ↔ 生成物正向一致 + 冒烟。
+/// ：契约负载类型的 ts-rs 导出 + manifest ↔ 生成物正向一致 + 冒烟。
 /// 正向（manifest 名义类型 ⊆ 生成文件）在本测试钉住；反向（生成文件 ⊆
 /// types.ts 再导出面，防类型删除后遗留孤儿文件）由前端 contract.test 扫描
 /// ——cargo test → vitest 的 CI 顺序保证本测试先更新生成物、前端再校验。
@@ -76,44 +76,44 @@ fn export_contract_types_and_match_manifest() {
     // 须显式补根。
     <crate::backend::frames::ChatFrame as ts_rs::TS>::export_all(&cfg).unwrap();
     <crate::backend::frames::SequencedFrame as ts_rs::TS>::export_all(&cfg).unwrap();
-    // 运行快照（05 号票，§3.2/§3.4）：session_run_snapshot 返回 Option<RunSnapshot>
+    // 运行快照：session_run_snapshot 返回 Option<RunSnapshot>
     // 与 runSnapshot 摘要帧负载都是非名义根（Option<_>/帧内 flatten），显式补根
     <crate::backend::frames::RunSnapshot as ts_rs::TS>::export_all(&cfg).unwrap();
     <crate::backend::ask::AskPayload as ts_rs::TS>::export_all(&cfg).unwrap();
-    // 待审批/询问恢复查询（05 号票，§3.3 #59c）：返回 Option<SessionPendingAsk>
+    // 待审批/询问恢复查询：返回 Option<SessionPendingAsk>
     // 非名义，显式补根导出类型声明
     <crate::host::commands::chat::SessionPendingAsk as ts_rs::TS>::export_all(&cfg).unwrap();
     <crate::storage::StoredEntry as ts_rs::TS>::export_all(&cfg).unwrap();
     <crate::host::commands::workspace::WorkspacePathHit as ts_rs::TS>::export_all(&cfg).unwrap();
     <crate::util::errors::IpcError as ts_rs::TS>::export_all(&cfg).unwrap();
     <crate::tools::ToolOutcome as ts_rs::TS>::export_all(&cfg).unwrap();
-    // 内置预设类型（03 号票）：预设不在任何命令负载闭包内，显式补根导出
+    // 内置预设类型：预设不在任何命令负载闭包内，显式补根导出
     // 类型声明（ProviderPreset.ts + 依赖 PresetModel.ts）。
     <crate::providers::presets::ProviderPreset as ts_rs::TS>::export_all(&cfg).unwrap();
-    // 技能清单行（09 号票，§3.3 #48）：skill_list 返回 Vec<SkillListEntry>
+    // 技能清单行：skill_list 返回 Vec<SkillListEntry>
     // 非名义根，显式补根导出（连带 SkillSource 枚举）。
     <crate::knowledge::commands::SkillListEntry as ts_rs::TS>::export_all(&cfg).unwrap();
-    // 子代理契约（10 号票）：SubSpawnArgs 是 subagent 工具参数（非命令负载），
+    // 子代理契约：SubSpawnArgs 是 subagent 工具参数（非命令负载），
     // SubMeta 是子代理历史 meta（回看面），显式补根导出（连带 SubOutcome/
     // SubHistoryLine 等依赖）。
     <crate::host::commands::subagent::SubSpawnArgs as ts_rs::TS>::export_all(&cfg).unwrap();
     <crate::host::commands::subagent::SubMeta as ts_rs::TS>::export_all(&cfg).unwrap();
-    // 配额快照行（21 号票，§3.3 #53）：quota_snapshots 返回 Vec<QuotaSnapshot>
+    // 配额快照行：quota_snapshots 返回 Vec<QuotaSnapshot>
     // 非名义根，显式补根导出（连带 QuotaStatus/QuotaData/QuotaEntry 依赖）。
     // 类型本体在 providers::quota（命令壳只是转调，契约类型不重复归属）。
     <crate::providers::quota::QuotaSnapshot as ts_rs::TS>::export_all(&cfg).unwrap();
-    // 产物面板契约（28 号票，§3.3 #59l/#35）：list_editors 返回
+    // 产物面板契约：list_editors 返回
     // Vec<EditorEntry> 非名义根，显式补根导出。
     <crate::host::commands::artifacts::EditorEntry as ts_rs::TS>::export_all(&cfg).unwrap();
 
-    // ①b 内置预设清单常量（03 号票单源定稿）：serde 序列化权威清单写入
+    // ①b 内置预设清单常量（单源定稿）：serde 序列化权威清单写入
     //    BuiltinPresets.ts（前端 settings/presets.ts re-export 消费）——
     //    改 Rust 预设 → cargo test 重新生成 → 前端类型与内容即时感知。
     let presets_json = serde_json::to_string_pretty(crate::providers::presets::builtin_presets())
         .expect("内置预设序列化失败");
     let presets_ts = format!(
         "// 本文件由 cargo test 生成（src-tauri/src/ipc_manifest_test.rs），勿手改。\n\
-         // 权威来源：src-tauri/src/providers/presets.rs 的 builtin_presets()（§3.3 预设单源注记）。\n\
+         // 权威来源：src-tauri/src/providers/presets.rs 的 builtin_presets()（预设单源）。\n\
          import type {{ ProviderPreset }} from \"./ProviderPreset\";\n\n\
          /** 内置供应商预设全集（顺序即设置页「从预设添加」的展示顺序）。 */\n\
          export const BUILTIN_PRESETS: ProviderPreset[] = {presets_json};\n"
@@ -146,11 +146,11 @@ fn export_contract_types_and_match_manifest() {
         "AskAnswer.ts",
         "IpcError.ts",
         "ToolOutcome.ts",
-        // 预设单源（03 号票）：类型声明 + 清单常量
+        // 预设单源：类型声明 + 清单常量
         "ProviderPreset.ts",
         "PresetModel.ts",
         "BuiltinPresets.ts",
-        // 技能契约（09 号票）
+        // 技能契约
         "SkillListEntry.ts",
         "SkillSource.ts",
         "SkillToggleArgs.ts",
@@ -197,10 +197,10 @@ fn export_contract_types_and_match_manifest() {
 /// 契约导出主测试：先校验 manifest 的不变式（命令名唯一且 snake_case）与
 /// 各命令的契约类型名锚点，落盘 ipc-manifest.json；再构造固定样例树做
 /// 行级往返校验（落盘字节即契约），落盘 session-tree-fixture.jsonl。两个
-/// 文件供前端 TS 侧镜像比对（§12.3）。
+/// 文件供前端 TS 侧镜像比对。
 #[test]
 fn export_ipc_manifest_and_cross_lang_fixture() {
-    // ---- 1. manifest：命令清单 + 契约类型名（§12.3 schema） ----
+    // ---- 1. manifest：命令清单 + 契约类型名（schema）----
     let commands = crate::ipc_manifest();
     let find = |name: &str| {
         commands
@@ -209,7 +209,7 @@ fn export_ipc_manifest_and_cross_lang_fixture() {
             .unwrap_or_else(|| panic!("manifest 缺命令 {name}"))
     };
 
-    // 键面不变式：invoke 名唯一且 snake_case（§3.1/D14）
+    // 键面不变式：invoke 名唯一且 snake_case
     let mut names: Vec<&str> = commands.iter().map(|c| c.name.as_str()).collect();
     let before = names.len();
     names.sort_unstable();
@@ -223,31 +223,31 @@ fn export_ipc_manifest_and_cross_lang_fixture() {
         );
     }
 
-    // 存储两命令的契约类型名锚点（10 号票）
+    // 存储两命令的契约类型名锚点
     assert_eq!(find("save_session_tree").args_type, "SaveSessionTreeArgs");
     assert_eq!(find("save_session_tree").ret_type, "SaveSessionTreeResult");
     assert_eq!(find("load_session_tree").args_type, "LoadSessionTreeArgs");
     assert_eq!(find("load_session_tree").ret_type, "SessionTreeData");
-    // provider/config 四命令的契约类型名锚点（12 号票，收编同一宏）
+    // provider/config 四命令的契约类型名锚点（收编同一宏）
     assert_eq!(find("get_config").ret_type, "AppConfig");
     assert_eq!(find("save_config").args_type, "SaveConfigArgs");
     assert_eq!(find("save_config").ret_type, "AppConfig");
     assert_eq!(find("save_provider").args_type, "SaveProviderArgs");
     assert_eq!(find("save_provider").ret_type, "ProviderConfig");
     assert_eq!(find("delete_provider").args_type, "DeleteProviderArgs");
-    // 核心链路与 ask/计划门命令锚点（13/14 号票）
+    // 核心链路与 ask/计划门命令锚点
     assert_eq!(find("start_chat").args_type, "StartChatArgs");
     assert_eq!(find("start_chat").ret_type, "StartChatResult");
     assert_eq!(find("cancel_run").args_type, "CancelRunArgs");
     assert_eq!(find("resolve_ask").args_type, "ResolveAskArgs");
     assert_eq!(find("approve_plan").args_type, "ApprovePlanArgs");
-    // 会话偏好两命令（18 号票，§3.3 #24/#25）：#25 返回 () 非名义，载荷
+    // 会话偏好两命令： 返回 () 非名义，载荷
     // 类型名只锚 args 面（SetSessionPrefsArgs → SetSessionPrefsPayload）
     assert_eq!(find("get_session_prefs").args_type, "SessionPrefsArgs");
     assert_eq!(find("get_session_prefs").ret_type, "GetSessionPrefsResult");
     assert_eq!(find("set_session_prefs").args_type, "SetSessionPrefsArgs");
     assert_eq!(find("set_session_prefs").ret_type, "()");
-    // steer/followUp 队列三命令（06 号票，§3.3 #21/#59d/#59e）
+    // steer/followUp 队列三命令
     assert_eq!(find("inject_run_message").args_type, "InjectRunMessageArgs");
     assert_eq!(
         find("inject_run_message").ret_type,
@@ -263,19 +263,19 @@ fn export_ipc_manifest_and_cross_lang_fixture() {
     );
     assert_eq!(find("remove_followup").args_type, "RemoveFollowupArgs");
     assert_eq!(find("remove_followup").ret_type, "RemoveFollowupResult");
-    // 通知引导两命令（19 号票）
+    // 通知引导两命令
     assert_eq!(
         find("notification_permission_status").ret_type,
         "NotificationPermissionStatus"
     );
     assert_eq!(find("open_notification_settings").ret_type, "()");
-    // 数据目录入口（03 号票，§3.3 #3）
+    // 数据目录入口
     assert_eq!(find("open_dir").args_type, "OpenDirArgs");
     assert_eq!(find("open_dir").ret_type, "()");
-    // 手动压缩命令（04 号票，§3.3 #59b）
+    // 手动压缩命令
     assert_eq!(find("compact_session").args_type, "CompactSessionArgs");
     assert_eq!(find("compact_session").ret_type, "CompactSessionResult");
-    // 帧重放与热重连三命令（05 号票，§3.3 #20/#57/#59c）
+    // 帧重放与热重连三命令
     assert_eq!(find("attach_run").args_type, "AttachRunArgs");
     assert_eq!(find("attach_run").ret_type, "AttachRunResult");
     assert_eq!(
@@ -291,9 +291,9 @@ fn export_ipc_manifest_and_cross_lang_fixture() {
         find("session_pending_ask").ret_type,
         "Option<SessionPendingAsk>"
     );
-    // MCP 八命令（08 号票，§3.3 #40–47）
+    // MCP 八命令（–47）
     assert_eq!(find("mcp_list_config").args_type, "McpListConfigArgs");
-    // 技能四命令（09 号票，§3.3 #48–51 逐字；skill_list 返回非名义 Vec，
+    // 技能四命令（skill_list 返回非名义 Vec，
     // ret_type 记 Vec<SkillListEntry>，元素类型经下方显式补根导出）
     assert_eq!(find("skill_list").ret_type, "Vec<SkillListEntry>");
     assert_eq!(find("skill_toggle").args_type, "SkillToggleArgs");
@@ -302,7 +302,7 @@ fn export_ipc_manifest_and_cross_lang_fixture() {
     assert_eq!(find("skill_reload").ret_type, "()");
     assert_eq!(find("skill_inspect").args_type, "SkillInspectArgs");
     assert_eq!(find("skill_inspect").ret_type, "SkillInspectResult");
-    // 子代理两命令（10 号票，§3.3 #58/#59 逐字；#59 返回 Vec 非名义）
+    // 子代理两命令（load_subagent_history 返回 Vec\<MessageEntry\> 实际类型）
     assert_eq!(find("stop_subagent").args_type, "StopSubagentArgs");
     assert_eq!(find("stop_subagent").ret_type, "()");
     assert_eq!(
@@ -319,13 +319,13 @@ fn export_ipc_manifest_and_cross_lang_fixture() {
 
     let manifest = serde_json::json!({
         "commands": commands,
-        // ChatFrame P0 全集 9 帧（§3.4）
+        // ChatFrame P0 全集 9 帧
         "frames": crate::host::commands::FRAMES,
-        // 事件键（§3.5）：14 号票实装 5 键
+        // 事件键：实装 5 键
         "events": crate::host::commands::EVENTS,
-        // 镜像工具清单（§12.3）：工具注册表单一事实源
+        // 镜像工具清单：工具注册表单一事实源
         "tools": crate::tools::STATIC_TOOL_NAMES,
-        // 工具规格（name + paramsSchema）：前端 toolkit 声明同源校验（§10.3，14 号票）
+        // 工具规格（name + paramsSchema）：前端 toolkit 声明同源校验
         "toolSpecs": crate::tools::build_registry()
             .into_iter()
             .map(|s| serde_json::json!({
@@ -334,16 +334,16 @@ fn export_ipc_manifest_and_cross_lang_fixture() {
             }))
             .collect::<Vec<_>>(),
     });
-    // 帧：P0 9 帧 + 【M2】压缩/摘要/子代理 4 帧 + 36 号票 toolAudit（16）
+    // 帧：P0 9 帧 + 压缩/摘要/子代理 4 帧 + toolAudit（16）
     assert_eq!(manifest["frames"].as_array().unwrap().len(), 16);
-    // 事件键：14 号票 5 键 + 17 号票 5 键（run 终态三键 + notify/退出两键）
-    // + 04 号票压缩三键（run:compacting/compacted/compact_failed）
-    // + 06 号票三键（run:start / run:inject / run:queue）+ 08 号票 mcp:status
-    // + 10 号票子代理六键（sub:spawn/step/report/usage/done/error）
-    // + 27 号票 session:title（自动起名，§3.5 P0 键位收口）
+    // 事件键： 5 键 + 5 键（run 终态三键 + notify/退出两键）
+    // + 压缩三键（run:compacting/compacted/compact_failed）
+    // + 三键（run:start / run:inject / run:queue）+ mcp:status
+    // + 子代理六键（sub:spawn/step/report/usage/done/error）
+    // + session:title（自动起名， P0 键位收口）
     assert_eq!(manifest["events"].as_array().unwrap().len(), 24);
-    // 08 号票：注册表分「静态段 + 动态段」两断言——静态段钉死（14 号票起
-    // 17 个：+batch_read/glob/calculate/render_html，§8.3 M2 表小工具包
+    // ：注册表分「静态段 + 动态段」两断言——静态段钉死（起
+    // 17 个：+batch_read/glob/calculate/render_html， M2 表小工具包
     // 四行）；动态段（MCP）运行时可变，manifest 落盘时为当前快照
     // （恒 ≥ 静态段）。
     assert_eq!(manifest["tools"].as_array().unwrap().len(), 17);
@@ -360,7 +360,7 @@ fn export_ipc_manifest_and_cross_lang_fixture() {
     )
     .unwrap();
 
-    // ---- 2. fixture：固定样例树（与 ui/src/ipc/contract.test.ts 的 EXPECTED_ENTRIES 一致） ----
+    // ---- 2. fixture：固定样例树（与 ui/src/ipc/contract.test.ts 的 EXPECTED_ENTRIES 一致）----
     let entries = fixture_entries();
     let mut text = String::new();
     for entry in &entries {
@@ -458,7 +458,7 @@ fn fixture_entries() -> Vec<StoredEntry> {
                 reason: CompleteReason::Unknown,
             }),
         }),
-        // runMarker 条目（15 号票 canonical 收口行）：role=system、链尾节点，
+        // runMarker 条目（canonical 收口行）：role=system、链尾节点，
         // 前端以 metadata.custom.runMarker 保真往返（漂移即 E_SESSION_REV）
         StoredEntry::Message(MessageEntry {
             id: "run-2:marker".to_string(),
@@ -475,7 +475,7 @@ fn fixture_entries() -> Vec<StoredEntry> {
             run_id: None,
             status: None,
         }),
-        // 带图 user 消息（17 号票，§3.2 image part）：JSONL 行只含 blobHash/
+        // 带图 user 消息（image part）：JSONL 行只含 blobHash/
         // mimeType 引用，不含图片本体（体积不膨胀的验收面）；行序在分支
         // 链（a2/a3/marker）之后——父先子后的存储纪律保持
         StoredEntry::Message(MessageEntry {
@@ -495,8 +495,8 @@ fn fixture_entries() -> Vec<StoredEntry> {
             run_id: None,
             status: None,
         }),
-        // compaction 条目（04 号票，§6.1）：前端树持久化层须跳过（不投影为
-        // 树节点，§6.3），跨语言行格式在此钉住
+        // compaction 条目：前端树持久化层须跳过（不投影为
+        // 树节点），跨语言行格式在此钉住
         StoredEntry::Compaction(crate::storage::StoredCompactionEntry {
             id: "manual:compact:1".to_string(),
             cut_entry_id: "a3".to_string(),

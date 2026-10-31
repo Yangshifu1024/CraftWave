@@ -1,23 +1,22 @@
-//! 文档读取管线（16 号票，§8.9 读侧）：docx / xlsx / pdf 三类二进制文档
+//! 文档读取管线：docx / xlsx / pdf 三类二进制文档
 //! 解析为模型可读的结构化 Markdown 文本，挂在 `read` 工具的扩展名分派上
-//! （§8.3 read 行——文档读取不设独立工具，与文本/图片路径并列）。
+//! （文档读取不设独立工具，与文本/图片路径并列）。
 //!
-//! 选型（15 号票定案，全部纯 Rust、MIT/Apache 兼容、零系统依赖）：
+//! 选型（全部纯 Rust、MIT/Apache 兼容、零系统依赖）：
 //! - docx → docx-rs（bokuweb）`read_docx`：段落线性输出 + 表格转 Markdown；
-//!   已知开放缺陷 #873（合法文件解 zip 失败）与 #933（非默认命名空间前缀
-//!   丢文本）走降级路径——zip + quick-xml 手解 `word/document.xml`（按本地
+//!   已知开放缺陷：合法文件解 zip 失败与非默认命名空间前缀丢文本两类，
+//!   走降级路径——zip + quick-xml 手解 `word/document.xml`（按本地
 //!   名匹配，天然免疫命名空间前缀差异），降级结果带 warnings「降级解析」
-//!   （§8.2：warnings 仅 UI 显示不进模型文本）。
+//!   （warnings 仅 UI 显示不进模型文本）。
 //! - xlsx → calamine：逐 sheet `worksheet_range`（天然二维表）转 Markdown
 //!   表格；公式单元格取文件内缓存值（calamine 的 `worksheet_formula` 备而
 //!   不用，v1 不输出公式文本）；xls/xlsm/xlsb/ods 顺带覆盖。
 //! - pdf → pdf-extract：`extract_text_from_mem_by_pages` 按页提取线性文本
-//!   （v1 无表格重建，15 号票口径）；`catch_unwind` 包裹（#97/#141 对不可信
-//!   输入可能 panic）→ panic 转结构化错误；内容头部标注「提取可能不完整」
-//!   （部分中文 PDF CMap 限制 #103）；>10 页须显式页码、单次窗口 ≤20 页
-//!   （§8.3 read 行 / §8.9 口径）。
+//!   （v1 无表格重建）；`catch_unwind` 包裹（对不可信输入可能 panic）→
+//!   panic 转结构化错误；内容头部标注「提取可能不完整」（部分中文 PDF
+//!   CMap 限制）；>10 页须显式页码、单次窗口 ≤20 页。
 //!
-//! 大小口径（与 read_workspace_file #28 同款）：单次响应 ≤512KB，超限按整行
+//! 大小口径（与 read_workspace_file 同款）：单次响应 ≤512KB，超限按整行
 //! 边界截断 + truncated + 续读指引（pdf 用 page/pages、xlsx 用 sheet；docx
 //! v1 无分页参数，截断如实说明）。文档本体先检查大小再读取（超 50MiB 拒绝），
 //! 路径守卫复用 read 的 safe_join roots。
@@ -36,12 +35,12 @@ use crate::util::errors::ToolError;
 pub const MAX_DOC_FILE_BYTES: u64 = 50 * 1024 * 1024;
 /// docx 降级路径解压 `word/document.xml` 的输入字节上限（zip 炸弹防线）。
 const MAX_DOCUMENT_XML_BYTES: u64 = 64 * 1024 * 1024;
-/// PDF「须显式页码」的页数门槛（§8.3 read 行：PDF>10 页须显式页码）。
+/// PDF「须显式页码」的页数门槛（PDF>10 页须显式页码）。
 pub const PDF_EXPLICIT_PAGE_THRESHOLD: usize = 10;
-/// PDF 单次页码窗口上限（§8.9：单次 ≤20 页）。
+/// PDF 单次页码窗口上限（单次 ≤20 页）。
 pub const PDF_MAX_PAGE_WINDOW: u32 = 20;
-/// xlsx 缺省预览行数（未给 sheet 参数时输出首 sheet 前 N 行，票面「前 N 行」
-/// 未定值，取 100 平衡预览完整度与响应预算）。
+/// xlsx 缺省预览行数（未给 sheet 参数时输出首 sheet 前 100 行，
+/// 平衡预览完整度与响应预算）。
 pub const XLSX_DEFAULT_PREVIEW_ROWS: usize = 100;
 /// docx 降级解析允许的表格嵌套深度上限（防恶意深嵌套 XML 打爆调用栈）。
 const MAX_TABLE_DEPTH: usize = 16;
@@ -103,8 +102,8 @@ enum DocBlock {
     },
 }
 
-/// 判断块序列是否不含任何非空白文本（#933 检测启发：docx-rs 成功解析但
-/// 一个字都没提出来，而文件里其实有文本）。
+/// 判断块序列是否不含任何非空白文本（检测 docx-rs 成功解析但
+/// 一个字都没提出来，而文件里其实有文本的形态）。
 fn blocks_have_no_text(blocks: &[DocBlock]) -> bool {
     blocks.iter().all(|b| match b {
         DocBlock::Paragraph(t) => t.trim().is_empty(),
@@ -204,12 +203,12 @@ fn render_blocks(blocks: &[DocBlock], budget: usize) -> (String, bool) {
 
 /// 执行文档读取（read 工具的文档分派路径）。
 pub fn run(ctx: &ToolsContext, args: &DocArgs) -> ToolOutcome {
-    // 路径守卫：与 read 文本路径共用 safe_join roots（§9.1）。
+    // 路径守卫：与 read 文本路径共用 safe_join roots。
     let resolved = match ctx.guard().and_then(|g| g.resolve(&args.path)) {
         Ok(p) => p,
         Err(e) => return ToolOutcome::from(e),
     };
-    // 文档本体大小预检（读取前拒绝，票面「超大文件读取前拒并提示」）。
+    // 文档本体大小预检（超大文件读取前拒并提示）。
     let meta = match std::fs::metadata(&resolved) {
         Ok(m) => m,
         Err(e) => return ToolOutcome::from(ToolError::from(e)),
@@ -242,10 +241,10 @@ pub fn run(ctx: &ToolsContext, args: &DocArgs) -> ToolOutcome {
 }
 
 // ---------------------------------------------------------------------------
-// docx：docx-rs 首选 + zip+quick-xml 降级（#873/#933）
+// docx：docx-rs 首选 + zip+quick-xml 降级
 // ---------------------------------------------------------------------------
 
-/// docx 读取主路径（16 号票）：docx-rs `read_docx` → 块序列；失败或零文本
+/// docx 读取主路径：docx-rs `read_docx` → 块序列；失败或零文本
 /// 时落降级路径并记 warnings。整体 `catch_unwind` 包裹（解析器对畸形输入
 /// 的 panic 防线，与 pdf 同一约束）。
 fn run_docx(display: &str, bytes: &[u8]) -> ToolOutcome {
@@ -256,12 +255,12 @@ fn run_docx(display: &str, bytes: &[u8]) -> ToolOutcome {
         Ok(Ok(docx)) => {
             let blocks = blocks_from_docx_rs(&docx);
             if blocks_have_no_text(&blocks) {
-                // #933 检测：docx-rs「成功」但零文本（非默认命名空间前缀
+                // 零文本检测：docx-rs「成功」但零文本（非默认命名空间前缀
                 // 丢文本的典型形态）→ 降级验证；降级能提出文本才采用。
                 match fallback_docx_blocks(bytes) {
                     Ok(fb) if !blocks_have_no_text(&fb) => {
                         warnings.push(
-                            "降级解析：docx-rs 未提取到文本（疑似命名空间前缀不兼容，#933），\
+                            "降级解析：docx-rs 未提取到文本（疑似命名空间前缀不兼容），\
                              已用 zip+quick-xml 兜底解析"
                                 .to_string(),
                         );
@@ -274,7 +273,7 @@ fn run_docx(display: &str, bytes: &[u8]) -> ToolOutcome {
             }
         }
         Ok(Err(e)) => {
-            // #873 形态：合法 docx 解 zip 失败 → 降级兜底。
+            // 合法 docx 解 zip 失败的形态 → 降级兜底。
             match fallback_docx_blocks(bytes) {
                 Ok(fb) => {
                     warnings.push(format!(
@@ -339,7 +338,7 @@ fn run_docx(display: &str, bytes: &[u8]) -> ToolOutcome {
         ),
     );
     if !warnings.is_empty() {
-        // §8.2：warnings 仅 UI 显示（黄条）不进模型文本。
+        // warnings 仅 UI 显示（黄条）不进模型文本。
         outcome = outcome.with_detail(json!({ "warnings": warnings }));
     }
     outcome
@@ -434,7 +433,7 @@ fn push_table_rs(blocks: &mut Vec<DocBlock>, table: &docx_rs::Table) {
 
 // ---------------------------------------------------------------------------
 // docx 降级路径：zip + quick-xml 手解 word/document.xml（按本地名匹配，
-// 免疫命名空间前缀差异——#933 的根因）
+// 免疫命名空间前缀差异——零文本缺陷的根因）
 // ---------------------------------------------------------------------------
 
 /// 降级解析：从 docx（zip 包）取出 `word/document.xml`，quick-xml 流式
@@ -648,7 +647,7 @@ fn parse_document_xml(xml: &str) -> Result<Vec<DocBlock>, String> {
 // xlsx：calamine 逐 sheet → Markdown 表格
 // ---------------------------------------------------------------------------
 
-/// xlsx 读取主路径（16 号票）：calamine `worksheet_range` 逐 sheet 转
+/// xlsx 读取主路径：calamine `worksheet_range` 逐 sheet 转
 /// Markdown 表格。缺省（无 sheet 参数）输出 sheet 名清单 + 首 sheet 前
 /// [`XLSX_DEFAULT_PREVIEW_ROWS`] 行；给 sheet 参数时输出该表全量（预算内）。
 /// 公式单元格取文件内缓存值（worksheet_range 给的就是缓存值；公式文本
@@ -725,7 +724,7 @@ fn run_xlsx(args: &DocArgs, bytes: &[u8]) -> ToolOutcome {
     let mut content = body;
     let mut resume_hint: Option<String> = None;
     if preview_only {
-        // 缺省预览：列出全部 sheet 名供模型选表续读（§8.2：模型据此行动的
+        // 缺省预览：列出全部 sheet 名供模型选表续读（模型据此行动的
         // 结论写入 data）。
         let list = sheet_names
             .iter()
@@ -843,12 +842,12 @@ fn data_to_string(d: &calamine::Data) -> String {
 // pdf：pdf-extract 按页线性文本 + catch_unwind + 页码门槛
 // ---------------------------------------------------------------------------
 
-/// pdf 读取主路径（16 号票）：pdf-extract 按页提取线性文本（v1 无表格重建）。
-/// `catch_unwind` 包裹（#97/#141 对不可信输入可能 panic）；输出头部标注
-/// 「提取可能不完整」（部分中文 PDF CMap 限制 #103）；>10 页须显式页码、
-/// 单次窗口 ≤20 页（§8.3/§8.9）。
+/// pdf 读取主路径：pdf-extract 按页提取线性文本（v1 无表格重建）。
+/// `catch_unwind` 包裹（解析器对不可信输入可能 panic）；输出头部标注
+/// 「提取可能不完整」（部分中文 PDF CMap 映射限制）；>10 页须显式页码、
+/// 单次窗口 ≤20 页。
 fn run_pdf(args: &DocArgs, bytes: &[u8]) -> ToolOutcome {
-    // 加密检测（票面「加密/损坏文件 E_INVALID_ARG 明确话术」）：trailer 带
+    // 加密检测（加密/损坏文件给 E_INVALID_ARG 明确话术）：trailer 带
     // /Encrypt 即加密文档——即便解析器可能解出内容，也按不支持处理（口令
     // 不在工具参数面，弱加密解出的内容亦不可信）。检测本身失败不拦路
     //（损坏文件的错误由下方解析路径统一给）。
@@ -876,7 +875,7 @@ fn run_pdf(args: &DocArgs, bytes: &[u8]) -> ToolOutcome {
     }
     let page_count = pages.len() as u32;
 
-    // 页码解析（§8.3 read 行：page?/pages?）。窗口越界部分自然裁剪（与
+    // 页码解析（page?/pages?）。窗口越界部分自然裁剪（与
     // read 文本 offset 超界行为一致），from ≥1 强制。
     let (start, end) = match (args.page, args.pages) {
         (Some(_), Some(_)) => {
@@ -932,7 +931,7 @@ fn run_pdf(args: &DocArgs, bytes: &[u8]) -> ToolOutcome {
         let text = pages[(p - 1) as usize].trim_end();
         body.push_str(&format!("--- 第 {p} 页 ---\n{text}\n"));
     }
-    // 头部标注（#103 口径：票面「输出头部标注提取可能不完整」）。
+    // 头部标注：输出「提取可能不完整」提示。
     let header = "（PDF 线性文本提取：表格无法结构化重建；部分中文 PDF 因 CMap 映射限制可能乱码或缺字，提取可能不完整）\n\n".to_string();
     let full = format!("{header}{body}");
     // 512KB 预算按整行边界截断（含页标记行）。

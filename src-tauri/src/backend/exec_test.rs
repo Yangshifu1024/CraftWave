@@ -1,5 +1,5 @@
 //! 工具执行器适配的单元测试：五个文件工具的分发执行、参数错误以
-//! E_INVALID_ARG 回喂、plan 权限档对写工具的排除；批次调度（07 号票）——
+//! E_INVALID_ARG 回喂、plan 权限档对写工具的排除；批次调度——
 //! 并发上限信号量、FileWrite 全局互斥串行、源序回喂、取消收齐、同文件
 //! 写冲突检测与非重叠 edit 合并原子提交。
 
@@ -57,7 +57,7 @@ async fn execute(name: &str, args_json: &str) -> (ToolExecution, ToolsContext) {
 /// 断言单工具分发各面：read 成功时双通道各自正确（界面摘要一行人话、模型
 /// 通道携带内容）；参数非合法 JSON / 未知工具名均按工具级失败收口（仍是
 /// Completed，E_INVALID_ARG 回喂模型，run 不中断）；plan 权限档下写工具被
-/// E_TOOL_BLOCKED 排除且文件不落盘（§8.5）。
+/// E_TOOL_BLOCKED 排除且文件不落盘（权限矩阵）。
 #[tokio::test]
 async fn single_tool_dispatch_cases() {
     // ① read 成功：ui_summary 与 model_text 双通道
@@ -138,13 +138,13 @@ async fn single_tool_dispatch_cases() {
     else {
         panic!("应为 Completed");
     };
-    assert!(!ok, "plan 档 FileWrite 过滤（§8.5）");
+    assert!(!ok, "plan 档 FileWrite 过滤（权限矩阵）");
     assert_eq!(error.expect("错误面").code, "E_TOOL_BLOCKED");
     assert!(ui_summary.contains("write"));
     assert!(!ctx.project_root.join("x.txt").exists(), "被排除工具不落盘");
 }
 
-// —— 07 号票：批次调度核心（run_batch_tasks）——
+// —— 批次调度核心（run_batch_tasks）——
 
 /// 构造一个调度层测试任务：延迟 `delay_ms` 后产出 index 的完成结果，
 /// 期间以 `counters` 记录并发峰值（file_write=true 的任务受全局写互斥）。
@@ -173,8 +173,8 @@ fn counting_task(
 }
 
 /// 断言批次调度各面：并发上限信号量跟随配置额度（8 任务 × 额度 4 → 峰值
-/// 4、额度 2 → 峰值 2，不超限也不退化串行，§3.2 tools.maxParallel）；源序
-/// 回喂（完成顺序不改序，FR-03-11）；FileWrite 全局互斥跨执行器组串行
+/// 4、额度 2 → 峰值 2，不超限也不退化串行，tools.maxParallel）；源序
+/// 回喂（完成顺序不改序）；FileWrite 全局互斥跨执行器组串行
 /// （写峰值 = 1，只读不受影响）；取消收齐两态——派发前置位零派发全部补
 /// Cancelled { executed: false }、在飞置位则 join 收齐不丢结果。
 #[tokio::test]
@@ -276,7 +276,7 @@ async fn batch_scheduling_cases() {
     }
 }
 
-// —— 07 号票：ToolsetExecutor 批次执行（同文件写冲突检测 + 合并提交）——
+// —— ToolsetExecutor 批次执行（同文件写冲突检测 + 合并提交）——
 
 /// 构造一条批内调用。
 fn batch_call(call_id: &str, name: &str, args_json: &str) -> BatchCall {
@@ -288,7 +288,7 @@ fn batch_call(call_id: &str, name: &str, args_json: &str) -> BatchCall {
 }
 
 /// 断言同文件分组两态：非重叠 edit 合并原子提交（两个 edit 基于同一原
-/// 内容预演后一次提交生效、共享同一最终 version）+ 冲突检测表（Q32，源序
+/// 内容预演后一次提交生效、共享同一最终 version）+ 冲突检测表（源序
 /// 首个保留、后续冲突成员 E_INVALID_ARG 拒绝且不生效）——edit 区间重叠、
 /// write 后混入 edit、edit 后混入 write、重复 write——四类冲突文件终态都
 /// 只体现源序首个成员。
@@ -345,7 +345,7 @@ async fn same_file_group_cases() {
             ),
             "XX\nccc\n",
         ),
-        // write + edit 混批（Q32）：edit 被拒
+        // write + edit 混批：edit 被拒
         (
             "n.txt",
             None,
@@ -516,7 +516,7 @@ async fn mixed_batch_and_cross_executor_cases() {
     );
 }
 
-// ---- 产物登记接线（28 号票，FR-10-06）：write/edit 成功落盘后登记、
+// ---- 产物登记接线：write/edit 成功落盘后登记、
 // 失败不登记、合并组逐成员计数、未装配 store 不登记。----
 
 use std::sync::Mutex as StdMutex;
@@ -552,7 +552,7 @@ fn executor_with_store() -> (
     (executor, store, root)
 }
 
-/// 断言产物登记接线（28 号票，FR-10-06）：write 成功登记（runCount=1）、
+/// 断言产物登记接线：write 成功登记（runCount=1）、
 /// 失败（已存在仅新建语义）不登记、edit 同路径重复编辑 runCount 递增、
 /// 同批合并组逐成员各计一次、未装配 store（子代理/headless）成功但不登记
 /// 不报错。

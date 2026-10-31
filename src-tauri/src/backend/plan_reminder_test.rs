@@ -1,5 +1,5 @@
-//! 计划提醒测试（25 号票，FR-06-04/§8.6）：N=8 阈值、plan:update 清零、
-//! 开关面与跨挂起延续——剧本假模型直驱 `drive_run` 全链（37 号票直驱
+//! 计划提醒测试：N=8 阈值、plan:update 清零、
+//! 开关面与跨挂起延续——剧本假模型直驱 `drive_run` 全链（直驱
 //! 基建同款），不依赖真实计时。
 
 use std::sync::Arc;
@@ -20,7 +20,7 @@ use crate::backend::run_loop::{
 };
 use crate::backend::turn::TurnDriver;
 
-/// 提醒文本的判别子串（与 §5.7 看门狗纠偏文本区分）。
+/// 提醒文本的判别子串（与看门狗纠偏文本区分）。
 const REMINDER_MARK: &str = "计划纪律提醒";
 
 /// 剧本流一轮：一个 command 工具调用（变更工具，FileWrite/Network 能力）
@@ -159,7 +159,7 @@ fn assert_reminder_only_on(requests: &[CompletionRequest], only_at: Option<usize
     }
 }
 
-/// 全链场景合并（25 号票，FR-06-04/§8.6）：阈值常量钉死（附录 B N=8）；
+/// 全链场景合并：阈值常量钉死（N=8）；
 /// 场景 A——连续 8 次 command 后第 9 拍请求携带一次性提醒、注入后清零
 /// （第 10 拍不再携带）；场景 B——plan 成功更新清零后计数不达阈值全程
 /// 不注入；场景 C——开关关闭（子代理/缺省装配）全程不计数不注入；场景
@@ -167,7 +167,7 @@ fn assert_reminder_only_on(requests: &[CompletionRequest], only_at: Option<usize
 /// 循环把 SuspendedInfo.state 原样传回 drive_run），1 次变更即达阈值。
 #[tokio::test]
 async fn plan_reminder_chain_cases() {
-    assert_eq!(PLAN_REMINDER_EVERY, 8, "附录 B：N=8 阈值钉死");
+    assert_eq!(PLAN_REMINDER_EVERY, 8, "N=8 阈值钉死");
 
     // 场景 A：9 轮 command + 1 轮文本 = 10 拍请求；第 9 拍（8 次变更后）
     // 携带一次性提醒，注入后计数清零

@@ -1,4 +1,4 @@
-//! http_request 工具测试（12 号票）：GET/POST 往返、§8.8 响应 spill 治理、
+//! http_request 工具测试：GET/POST 往返、响应 spill 治理、
 //! 方法白名单与请求头校验（spec 注册表面见 tests/tools_registry_test.rs）。
 //!
 //! 集成用例经本地 fixture HTTP server（127.0.0.1 随机端口、零外网）+
@@ -137,7 +137,7 @@ async fn get_post_round_trip_matrix() {
 // 非法头名/头值（换行注入）拒绝。
 #[tokio::test(flavor = "current_thread")]
 async fn spill_governance_and_validation_matrix() {
-    // —— spill 治理（§8.8）——
+    // —— spill 治理 ——
     let served: String = "中".repeat(SPILL_THRESHOLD); // 96KB+ 的多字节文本
     assert!(served.len() > SPILL_THRESHOLD);
     let for_handler = served.clone();
@@ -166,7 +166,7 @@ async fn spill_governance_and_validation_matrix() {
     // 全量落盘字节 = 服务器发的全部
     let spilled = std::fs::read_to_string(spill_path).expect("spill 文件可读");
     assert_eq!(spilled.len(), served.len(), "spill 应承载全量响应体");
-    // 结果 body 只带尾部 16KB（§8.8；按 UTF-8 字符边界取整，多字节文本
+    // 结果 body 只带尾部 16KB（按 UTF-8 字符边界取整，多字节文本
     // 可能略短于 16KB 字节）
     let tail = data["body"].as_str().expect("body");
     assert!(tail.len() <= crate::tools::command::TAIL_BYTES);
@@ -174,7 +174,7 @@ async fn spill_governance_and_validation_matrix() {
         served.ends_with(tail),
         "body 应为响应体尾部（字符边界取整）"
     );
-    // spill 文件落在数据根的 logs/spill/ 下（§7.1/§8.8）
+    // spill 文件落在数据根的 logs/spill/ 下
     assert!(spill_path.contains("logs/spill/"));
 
     // —— 方法白名单：白名单外在参数预检即拒（不发请求）——

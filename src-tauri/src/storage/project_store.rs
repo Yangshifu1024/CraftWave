@@ -1,4 +1,4 @@
-//! 项目注册表（FR-10-01，技术设计文档 §7.1）：`~/.craftwave/projects/directories.json`
+//! 项目注册表：`~/.craftwave/projects/directories.json`
 //! （项目=名称+单主目录）与各主目录 `.craftwave/project.json`（注册清单，
 //! 含 rootsSnapshot——M1 单主目录，快照即 [homeDir]）。
 //!
@@ -13,7 +13,7 @@
 //! project.json：旧目录移除、新目录写入）/ `delete_project`（只删注册与
 //! project.json，绝不触碰项目数据目录本身——删除项目不等于删除用户文件）。
 //!
-//! 项目写频低，读走全量读盘（进程内 Mutex 串行化即可，§7.4 单进程口径）。
+//! 项目写频低，读走全量读盘（进程内 Mutex 串行化即可，单进程口径）。
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use crate::util::atomic::write_atomic;
 use crate::util::ids::new_uuid;
 
-/// §3.2 ProjectMeta（directories.json 元素与 list_projects 返回）。
+/// ProjectMeta（directories.json 元素与 list_projects 返回）。
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -45,7 +45,7 @@ struct ProjectFile {
     projects: Vec<ProjectMeta>,
 }
 
-/// 项目主目录 `.craftwave/project.json` 载荷（§7.1）。
+/// 项目主目录 `.craftwave/project.json` 载荷。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectManifest {
@@ -197,7 +197,7 @@ impl ProjectStore {
     }
 }
 
-/// 主目录 project.json 路径（§7.1：`<home>/.craftwave/project.json`）。
+/// 主目录 project.json 路径（`<home>/.craftwave/project.json`）。
 fn manifest_path(home: &Path) -> PathBuf {
     home.join(".craftwave").join("project.json")
 }

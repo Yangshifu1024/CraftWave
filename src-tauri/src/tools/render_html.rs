@@ -1,10 +1,10 @@
-//! `render_html` 工具（ReadOnly*，§8.3 M2 表「*只读但产物可见」，FR-12-04）：
+//! `render_html` 工具（只读但产物可见）：
 //! 接收 ≤50,000 字符的自包含 HTML，后端**不落盘、不解析**，只做长度校验与
 //! 形态返回；渲染全在前端沙箱（iframe，`sandbox="allow-scripts"` 无
 //! allow-same-origin，opaque origin 隔离）。
 //!
-//! 沙箱加载通道（14 号票定案）：srcdoc/blob: 帧会继承主窗 CSP
-//! （`script-src 'self'` 拦预览页内联脚本，票面验证点证实），故走**自定义
+//! 沙箱加载通道：srcdoc/blob: 帧会继承主窗 CSP
+//! （`script-src 'self'` 拦预览页内联脚本，实测验证点），故走**自定义
 //! 协议 `preview`**（lib.rs 注册）：协议响应自带预览专用 CSP
 //! ([`PREVIEW_CSP`]，禁外联防内网探测、放内联脚本/样式），不继承主窗 CSP。
 //! 内容传递：前端经 `preview_register` 命令把 HTML 存入进程级
@@ -21,13 +21,13 @@ use crate::safety::tier::Capability;
 use crate::tools::{ToolAnnotations, ToolOutcome, ToolSpec};
 use crate::util::errors::ToolError;
 
-/// 单次 HTML 字符数上限（§8.3 render_html 行「≤50,000 字符」）。
+/// 单次 HTML 字符数上限（≤50,000 字符）。
 pub const MAX_HTML_CHARS: usize = 50_000;
 /// 预览注册表容量上限（每条 ≤50,000 字符，256 条 ≈ 12.8MB 内存上界）；
 /// 超出按插入序淘汰最旧（长会话的旧预览由前端按参数重注册兜底）。
 const MAX_PREVIEW_ENTRIES: usize = 256;
 
-/// 预览页专用 CSP（14 号票定案，§9.5 回写）：
+/// 预览页专用 CSP：
 /// - `default-src 'none'` 兜底；仅放行内联脚本/样式与 data:/blob: 资源
 ///   （自包含 HTML 的合理需要）；
 /// - **禁一切网络面**：connect-src/img-src 不放 http(s)——预览页脚本即便

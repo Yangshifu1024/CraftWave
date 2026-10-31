@@ -1,4 +1,4 @@
-//! 测试基建：本地 in-process MCP echo server（§12.5 定的测试基建；08 号票）。
+//! 测试基建：本地 in-process MCP echo server。
 //!
 //! 「外部依赖一律 fixture/录制回放——MCP 用本地 echo server」（spec Testing
 //! Decisions）：本模块提供一个 `rmcp` 进程内 server（stdio 行式 JSON-RPC
@@ -8,7 +8,7 @@
 //!   通知（清单热同步路径）；
 //! - `die_after_record` + [`EchoFixture::arm_die_after_record`]：记录已执行
 //!   操作后**不返回响应**（挂住，等测试侧 [`EchoFixture::kill_server`]）
-//!   ——精确复现「记录已执行操作后、返回响应前断连」的 Q14 场景；
+//! ——精确复现「记录已执行操作后、返回响应前断连」的 场景；
 //! - [`EchoFixture::kill_server`]：服务端主动断连（模拟 server 崩溃/被
 //!   kill），触发客户端断线自动重连与 `mcp:status` 状态迁移。
 //!
@@ -95,7 +95,7 @@ pub struct EchoState {
 pub struct EchoFixture {
     /// 共享状态（server handler 与测试断言同源）。
     pub state: Arc<EchoState>,
-    /// 已执行操作数（原子面；Q14 断言「调用计数保持 1」的权威面）。
+    /// 已执行操作数（原子面； 断言「调用计数保持 1」的权威面）。
     pub call_count: Arc<AtomicUsize>,
     /// 活跃 server 服务（每次连接一个；take + cancel = 服务端断连）。
     servers: Mutex<Vec<RunningService<RoleServer, EchoServer>>>,
@@ -126,7 +126,7 @@ impl EchoFixture {
             .clone()
     }
 
-    /// 预约：下一次调用记录后不返回响应（Q14「记录已执行操作后、返回响应
+    /// 预约：下一次调用记录后不返回响应（「记录已执行操作后、返回响应
     /// 前断连」的 server 侧配合面——挂住等待测试 kill_server）。
     pub fn arm_die_after_record(&self) {
         self.state.die_on_next.store(true, Ordering::SeqCst);
@@ -290,7 +290,7 @@ impl ServerHandler for EchoServer {
         Output = Result<rmcp::model::CallToolResponse, rmcp::model::ErrorData>,
     > + Send
     + '_ {
-        // 记录（Q14 断言的权威面：计数只进一次）
+        // 记录（断言的权威面：计数只进一次）
         self.call_count.fetch_add(1, Ordering::SeqCst);
         self.state
             .calls

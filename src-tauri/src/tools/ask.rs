@@ -1,4 +1,4 @@
-//! ask 工具（§8.3 Interactive 行）：向用户提问，answer 回喂为工具结果。
+//! ask 工具（Interactive 能力）：向用户提问，answer 回喂为工具结果。
 //!
 //! 参数校验与 AskPayload(question) 构造是纯逻辑（本文件）；等待
 //! resolve_ask 的挂起由 executor 承担（AskSlot + ask:opened 事件）。
@@ -11,7 +11,7 @@ use crate::util::errors::ToolError;
 
 use super::{ToolAnnotations, ToolSpec};
 
-/// ask 工具参数（§8.3：{title, questions:[…]}）。
+/// ask 工具参数：{title, questions:[…]}。
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AskArgs {

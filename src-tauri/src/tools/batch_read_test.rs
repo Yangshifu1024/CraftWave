@@ -1,5 +1,5 @@
 //! batch_read 工具测试：混合成功失败、文件数上限、共享 512KB 预算截断、
-//! 续读 nextOffset、预算耗尽让路与空数组拒绝（票面测试计划逐项，矩阵化合并）。
+//! 续读 nextOffset、预算耗尽让路与空数组拒绝（矩阵化合并）。
 
 use serde_json::json;
 
@@ -82,7 +82,7 @@ fn batch_results_budget_and_resume_matrix() {
     assert_eq!(files[3]["error"]["code"], json!("E_PATH_OUTSIDE_ROOTS"));
     assert!(outcome.ui_summary.contains("1 成功、3 失败"));
 
-    // —— 文件数上限：缺省 20 拒绝、limit=25 放行（上限常量与 §3.2
+    // —— 文件数上限：缺省 20 拒绝、limit=25 放行（上限常量与
     //    tools.batchReadLimit 同源）——
     assert_eq!(DEFAULT_BATCH_READ_LIMIT, 20);
     assert_eq!(MAX_BATCH_READ_LIMIT, 100);

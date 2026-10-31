@@ -1,10 +1,10 @@
-//! 命令围栏 fence v0.2（FR-05-05 P0 + P1，§8.7）——纯判定逻辑。
+//! 命令围栏 fence——纯判定逻辑。
 //!
-//! 1. 黑名单（正则集）命中即 Block，任何档位均拦截（§8.5 灾难级）。
+//! 1. 黑名单（正则集）命中即 Block，任何档位均拦截（灾难级命令）。
 //! 2. plan 档只读白名单：每段命中方放行，否则 Confirm（段边界由 AST
 //!    提供——v0.1 词法切段的引号误拦已消除，白名单语义不变）。
 //! 3. 非 plan 档：AST 写目标分析（tree-sitter bash/PowerShell，见
-//!    [`ast`] 子模块，§8.7【M2】AST 管线，22 号票）——提取真正的写目标
+//!    [`ast`] 子模块）——提取真正的写目标
 //!    做四象限判定；写信号词法启发（v0.1 规则 3 的重定向/tee/sed 判定）
 //!    已由 AST 接管，安装类命令（npm/pip/cargo 等会写工作区文件）保留
 //!    词法信号防放松。
@@ -15,7 +15,7 @@
 //! - [`Fence::judge`]：无工作区上下文（无 roots）——有写目标即 Confirm
 //!   （无法判界，保守方向）；
 //! - [`Fence::judge_in_workspace`]：带 roots 与相对路径基准——对写目标做
-//!   §8.7 四象限判定（Allow/Confirm/Block + 人话原因）。
+//!   四象限判定（Allow/Confirm/Block + 人话原因）。
 
 use regex::Regex;
 
@@ -27,7 +27,7 @@ pub mod ast;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum FenceVerdict {
-    /// 围栏不拦（最终能否执行仍由 §8.5 矩阵合成）。
+    /// 围栏不拦（最终能否执行仍由能力矩阵合成）。
     Allow,
     /// 需用户审批。
     Confirm,
@@ -35,7 +35,7 @@ pub enum FenceVerdict {
     Block,
 }
 
-/// 判定结论 + 人话原因（审批挂起载荷的 fenceReason 展示给用户；22 号票：
+/// 判定结论 + 人话原因（审批挂起载荷的 fenceReason 展示给用户；
 /// 原因随 AST 判定更具体，如「重定向目标越出工作区（symlink 逃逸）」）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct FenceOutcome {
@@ -67,8 +67,8 @@ impl FenceOutcome {
     }
 }
 
-/// 黑名单正则集（§8.7 规则 1）。在整条命令文本上匹配。
-/// 较文档字面更保守的扩展见 11 号票 Answer。
+/// 黑名单正则集（规则 1）。在整条命令文本上匹配；
+/// 覆盖面较常见清单更保守（如 `su`、`--force-with-lease` 一并拦截）。
 const BLACKLIST: &[&str] = &[
     // rm 递归删除（-rf/-fr/-Rf 等短旗标组合与 --recursive）。
     r"\brm\s+-[a-zA-Z]*[rR][a-zA-Z]*\b",
@@ -93,7 +93,7 @@ const BLACKLIST: &[&str] = &[
     r"(?i)\brd\s+/s\b",
 ];
 
-/// 安装类信号（22 号票起语义收窄：v0.1 规则 3 的重定向/tee/sed -i 判定
+/// 安装类信号（语义已收窄：v0.1 规则 3 的重定向/tee/sed -i 判定
 /// 已由 AST 写目标分析接管，本集仅保留「会修改工作区文件」的安装类命令
 /// 词法信号防放松——npm install 写 node_modules、cargo build 写 target 等，
 /// 这些命令无 shell 级重定向语法，AST 写目标清单覆盖不到）。
@@ -122,14 +122,14 @@ impl Fence {
         }
     }
 
-    /// 对一条命令文本做围栏判定（§8.7 规则 1→2→3，无工作区上下文：
+    /// 对一条命令文本做围栏判定（规则 1→2→3，无工作区上下文：
     /// 发现写目标即 Confirm，无法做四象限判界）。
     pub fn judge(&self, command: &str, tier: PermissionTier) -> FenceVerdict {
         self.judge_in_workspace(command, tier, ast::Shell::host_default(), None)
             .verdict
     }
 
-    /// 带工作区上下文的完整判定：对 AST 提取的写目标做 §8.7 四象限判定，
+    /// 带工作区上下文的完整判定：对 AST 提取的写目标做四象限判定，
     /// 结论附人话原因（审批挂起载荷 fenceReason 用）。
     ///
     /// - `shell`：命令的执行 shell（与 command 工具执行形态同源）；
@@ -145,7 +145,7 @@ impl Fence {
         let (Some(blacklist), Some(signals)) = (&self.blacklist, &self.write_signals) else {
             return FenceOutcome::confirm("围栏规则集未就绪，按保守策略需确认");
         };
-        // 规则 1：黑名单命中即 Block（任何档位，§8.5 灾难级）。
+        // 规则 1：黑名单命中即 Block（任何档位，灾难级命令）。
         if blacklist.iter().any(|re| re.is_match(command)) {
             return FenceOutcome::block(format!("灾难级命令，任何档位不豁免：{command}"));
         }
@@ -167,7 +167,7 @@ impl Fence {
                 }
             }
             // 规则 3：AST 写目标分析（confirm_each/auto_edit/full_access
-            // 同判；结论与 §8.5 矩阵由调用方合成——Confirm 表示须经审批）。
+            // 同判；结论与能力矩阵由调用方合成——Confirm 表示须经审批）。
             _ => {
                 if !targets.is_empty() {
                     return match ws {
@@ -206,7 +206,7 @@ fn compile_all(patterns: &[&str]) -> Option<Vec<Regex>> {
         .collect::<Option<Vec<_>>>()
 }
 
-/// plan 档只读白名单（§8.7 规则 2）：ls/cat/head/tail/wc/find/rg/grep、
+/// plan 档只读白名单（规则 2）：ls/cat/head/tail/wc/find/rg/grep、
 /// git 只读子命令、node/python --version。输入为 AST 提取的命令段 argv。
 /// 命令名不区分大小写并取 basename（PowerShell cmdlet 面与 `/bin/ls`
 /// 形态统一归一；白名单语义不变）。

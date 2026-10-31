@@ -1,6 +1,6 @@
-//! Rust 侧用户可见文案表（31 号票，FR-13-09 + FR-14-04，§10.8）。
+//! Rust 侧用户可见文案表。
 //!
-//! 范围（票面定案的两类）：托盘菜单（`host/shell.rs` install_tray）与系统
+//! 范围（两类）：托盘菜单（`host/shell.rs` install_tray）与系统
 //! 通知正文（`host/notify.rs` NotifyGate）。按 `config.ui.language` 查表——
 //! 事件/通知触发时读最新配置缓存（ConfigStore 共享缓存，天然「下次触发即
 //! 新语言」）；托盘菜单在 save_config 钩子处重建一次（shell.rs
@@ -11,7 +11,7 @@
 use crate::providers::types::Language;
 
 /// 文案键（托盘菜单 + 通知正文）。两语言表必须同键集——单测
-/// [`tests::key_sets_match`] 钉死（票面验收）。
+/// [`tests::key_sets_match`] 钉死。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Str {
     /// 托盘菜单：显示主窗口。

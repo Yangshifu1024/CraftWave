@@ -100,7 +100,7 @@ fn blacklist_blocks_every_tier_and_plan_allows_whitelist_only() {
 
 // 断言：plan 之外的档位，命中写信号（重定向、tee、sed -i、包安装、
 // make/cargo 等）的命令一律 Confirm；无写信号的普通只读命令直接 Allow；
-// 引号内的 `|`/`>` 不再触发切段/写信号（22 号票验收 2，v0.1 误拦消除）；
+// 引号内的 `|`/`>` 不再触发切段/写信号（v0.1 误拦已消除）；
 // 规则集编译失败时判定恒 Confirm，绝不 fail-open。
 #[test]
 fn write_signals_confirm_and_fail_closed_when_rules_broken() {
@@ -160,7 +160,7 @@ fn write_signals_confirm_and_fail_closed_when_rules_broken() {
     );
 
     // 构造编译必失败的规则集，验证恒 Confirm（不 fail-open）。
-    // write_signals 字段语义自 22 号票起收窄为「安装类命令」词法信号
+    // write_signals 字段语义已收窄为「安装类命令」词法信号
     // （重定向/tee/sed 已由 AST 接管），None → 恒 Confirm 的 fail-closed
     // 语义不变。
     let mut fence = Fence::new();

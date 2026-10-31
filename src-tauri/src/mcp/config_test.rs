@@ -1,4 +1,4 @@
-//! mcp/config.rs 的单测（08 号票）：未知字段 round-trip、双作用域同名
+//! mcp/config.rs 的单测：未知字段 round-trip、双作用域同名
 //! 覆盖、条目解析容错、保存原子性。
 
 use super::config::{McpConfigFile, McpConfigStore, McpScope, McpServerConfig};

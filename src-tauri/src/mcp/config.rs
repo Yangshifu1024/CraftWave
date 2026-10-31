@@ -1,16 +1,15 @@
-//! MCP 双作用域配置（FR-08-02，§9.7/§3.3 #40/#41 字段级；08 号票）。
+//! MCP 双作用域配置（全局与项目两级字段同构）。
 //!
 //! 两份配置文件：
 //! - 全局：`~/.craftwave/mcp.json`（数据目录根）；
-//! - 项目：`<项目主目录>/.craftwave/mcp.json`（§9.8：项目作用域 mcp.json
-//!   属项目信任资源——24 号票落地通用信任门前，本票先按最小版处理：加载
-//!   接 TOFU 指纹核验（配置内容进指纹），保存不设额外门；收敛点已记录在
-//!   08 号票）。
+//! - 项目：`<项目主目录>/.craftwave/mcp.json`（项目作用域 mcp.json
+//!   属项目信任资源——通用信任门落地前按最小版处理：加载接 TOFU 指纹
+//!   核验（配置内容进指纹），保存不设额外门）。
 //!
-//! 合并规则（FR-08-02）：按服务器名「同名覆盖」——项目条目整体替换全局
+//! 合并规则：按服务器名「同名覆盖」——项目条目整体替换全局
 //! 同名条目，其余并存；合并结果即工具发现面。
 //!
-//! 未知字段 round-trip（票面明文）：服务器条目用 `#[serde(flatten)]` 收留
+//! 未知字段 round-trip：服务器条目用 `#[serde(flatten)]` 收留
 //! 未知字段到保序 map（serde_json preserve_order 底座 = IndexMap），保存
 //! 时原样写回——向前兼容用户手写的注释性/前瞻性字段，读取-保存往返不丢。
 
@@ -19,7 +18,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-/// 作用域（§3.3 #40–47 逐字口径）。
+/// 作用域口径。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "lowercase")]
@@ -40,20 +39,20 @@ impl McpScope {
     }
 }
 
-/// 服务器条目字段（§9.7 逐字：command/args/env/cwd/url/headers/enabled/
+/// 服务器条目字段（逐字：command/args/env/cwd/url/headers/enabled/
 /// timeout/read_only/always_allow/tools{allow,deny glob}）。
 ///
-/// 字段语义定案（08 号票，设计文档 §9.7 已回写）：
+/// 字段语义定案（设计文档 已回写）：
 /// - `command/args/env/cwd`：stdio 传输的四要素（command 有值即 stdio）；
 /// - `url/headers`：streamable HTTP 传输的两要素（url 有值即 HTTP）；
 ///   两者同时给出以 stdio 为准（配置校验报错，不允许二义）；
 /// - `enabled`：缺省 true——false 的服务器不出现在发现面，连接命令报
 ///   E_INVALID_ARG（用户显式停用）；
 /// - `timeout`：单次工具调用超时秒数，缺省 60，合法区间 1–600（对齐
-///   §8.8 命令超时上界）；
-/// - `read_only`/`always_allow`：**只取用户确认的配置**（§9.7 Q44）——
+///   命令超时上界）；
+/// - `read_only`/`always_allow`：**只取用户确认的配置**——
 ///   read_only=true 把该 server 全部工具标为 ReadOnly 能力；always_allow
-///   =true 时未声明 read_only 的工具调用仍须通过 Q44 许可表核验（绑定
+///   =true 时未声明 read_only 的工具调用仍须通过 许可表核验（绑定
 ///   服务器指纹 + 原始工具名 + 输入 schema 哈希），不是无脑放行；
 /// - `tools.allow/deny`：注册时过滤的 glob 工具名清单（对原始工具名匹配；
 ///   deny 优先于 allow——命中 deny 一律不注册）。
@@ -90,15 +89,15 @@ pub struct McpServerConfig {
     #[cfg_attr(test, ts(optional))]
     pub timeout: Option<u64>,
     /// 用户确认的只读声明（true = 全部工具按 ReadOnly 能力参与门控矩阵；
-    /// 远端 annotations 不参与判定，§9.7）。字段名按票面逐字 snake_case。
+    /// 远端 annotations 不参与判定）。字段名逐字 snake_case。
     #[serde(
         rename = "read_only",
         default,
         skip_serializing_if = "std::ops::Not::not"
     )]
     pub read_only: bool,
-    /// 用户确认的服务器级免审批声明（配合 Q44 许可表逐工具核验，见
-    /// [`Self`] 文档）。字段名按票面逐字 snake_case。
+    /// 用户确认的服务器级免审批声明（配合 许可表逐工具核验，见
+    /// [`Self`] 文档）。字段名逐字 snake_case。
     #[serde(
         rename = "always_allow",
         default,
@@ -109,7 +108,7 @@ pub struct McpServerConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub tools: Option<McpToolFilter>,
-    /// 未知字段收留（保序 round-trip，票面明文；ts-rs 对 flatten 字段
+    /// 未知字段收留（保序 round-trip；ts-rs 对 flatten 字段
     /// 生成 index signature，无需 type 覆写）。
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
@@ -170,7 +169,7 @@ impl McpConfigFile {
     }
 }
 
-/// 双作用域配置的加载与保存（08 号票命令面 #40/#41 的存储层）。
+/// 双作用域配置的加载与保存（命令面 / 的存储层）。
 #[derive(Debug, Clone)]
 pub struct McpConfigStore {
     /// 全局 mcp.json 路径（canonical 前已为绝对路径）。
@@ -206,7 +205,7 @@ impl McpConfigStore {
         load_file(path)
     }
 
-    /// 原子保存一份作用域配置（§7.4 util/atomic；目录不存在先建）。
+    /// 原子保存一份作用域配置（util/atomic；目录不存在先建）。
     pub fn save(&self, scope: McpScope, config: &McpConfigFile) -> Result<(), String> {
         let path = self
             .path_of(scope)
@@ -218,7 +217,7 @@ impl McpConfigStore {
             .map_err(|e| format!("保存 mcp.json 失败：{e}"))
     }
 
-    /// 合并视图（FR-08-02 同名覆盖）：项目条目整体替换全局同名条目。
+    /// 合并视图（同名覆盖）：项目条目整体替换全局同名条目。
     /// 返回（服务器名 → (作用域, 条目)），同名时作用域为 project。
     pub fn merged(&self) -> Result<Vec<(String, McpScope, McpServerConfig)>, String> {
         let (global, g_bad) = self.load(McpScope::Global)?.parse_servers();
