@@ -159,6 +159,15 @@ impl ComposerState {
         self.completion.as_ref().map_or(0, |c| c.selected)
     }
 
+    /// 外部填入文本（B1 建议 chips 点击 / 3.3 编辑重发预填）：整体替换
+    /// 输入框内容并通知重渲。需要 `&mut Window`（TextareaState::set_value
+    /// 的固有要求，见模块注释）。
+    pub fn set_text(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.input
+            .update(cx, |state, cx| state.set_value(text, window, cx));
+        cx.notify();
+    }
+
     // ==================================================================
     // 发送（产出待发数据；真通道 = SessionService，回声 = mod.rs 分流）
     // ==================================================================

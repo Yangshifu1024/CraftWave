@@ -69,9 +69,10 @@ use craftwave_engine::util::errors::IpcError;
 use craftwave_engine::util::ids::new_uuid;
 
 use crate::engine::{FrameBridge, MailEventSink, UiMail};
+use crate::i18n::t;
 
 use super::composer::CompletionSource;
-use super::state::ConversationState;
+use super::state::{ConversationState, SiblingInfo};
 
 /// 会话服务：engine 调用面 + 帧流管道的 owner。
 pub struct SessionService {
@@ -122,9 +123,7 @@ impl SessionService {
         }
     }
 
-    /// 当前会话 id。
-    // 生产消费方随阶段 3.1 多会话侧栏接入；本批由测试面使用
-    #[allow(dead_code)]
+    /// 当前会话 id（侧栏活动高亮与空态判定的读面）。
     pub fn session_id(&self) -> Option<&str> {
         self.session_id.as_deref()
     }
@@ -135,16 +134,9 @@ impl SessionService {
         self.conversation = conversation;
     }
 
-    /// 是否有进行中的 run（Composer 停止钮的显示面）。
-    #[allow(dead_code)]
+    /// 是否有进行中的 run（Composer 停止钮与侧栏「生成中」槽的显示面）。
     pub fn busy(&self) -> bool {
         self.busy
-    }
-
-    /// 当前历史基准（活动路径；测试断言用）。
-    #[allow(dead_code)]
-    pub fn history(&self) -> &Rc<Vec<Rc<MessageEntry>>> {
-        &self.history
     }
 
     /// 帧聚合器句柄（测试驱动假帧用；生产只有泵任务写它）。
@@ -203,8 +195,8 @@ impl SessionService {
             return;
         };
         // ② 发送前树同步（双写协议：user 拓扑先落盘再 start_chat——engine
-        //    侧另有幂等兜底，这里按正常协议走）
-        let user_entry = match self.persist_user(&session_id, &text, attachments) {
+        //    侧另有幂等兜底，这里按正常协议走）；常规发送挂当前活动叶
+        let user_entry = match self.persist_user_at(&session_id, AttachTo::ActiveLeaf, &text, attachments) {
             Ok(entry) => entry,
             Err(err) => {
                 eprintln!("[craftwave] 消息落盘失败（不发送）：{err:?}");
@@ -217,11 +209,49 @@ impl SessionService {
         self.reset_pipeline(Rc::new(history), cx);
         // ④ user 气泡即刻上屏（不等首帧）
         self.push_history(cx);
-        // ⑤ busy 上屏（停止钮出现）
+        // ⑤ busy 上屏（停止钮出现）；⑥ start_chat 跑 tokio
         self.set_busy(true, cx);
-        // ⑥ start_chat 跑 tokio：装配树 + run 任务全在线程池；帧经
-        //    FrameBridge 回主线程泵，完成回执经同一通道。JoinHandle 不存
-        //    （回执驱动，见模块文档）。
+        self.launch_run(session_id, user_entry);
+    }
+
+    /// 编辑重发产生新分支（3.3）：新 user 节点挂到 `parent_id` 下（与被
+    /// 编辑的原消息成为同父兄弟——旧栈 `ActionBarPrimitive.Edit` 的分支
+    /// 语义），active 叶切到新节点后正常起 run。会话须已存在（编辑重发
+    /// 只可能发生在打开的会话里）。
+    pub fn branch_resend(
+        &mut self,
+        parent_id: Option<String>,
+        text: String,
+        attachments: Vec<QueuedImageAttachment>,
+        cx: &mut Context<Self>,
+    ) {
+        let text = text.trim().to_owned();
+        if text.is_empty() {
+            return;
+        }
+        let Some(session_id) = self.session_id.clone() else {
+            return;
+        };
+        let user_entry =
+            match self.persist_user_at(&session_id, AttachTo::Parent(parent_id), &text, attachments) {
+                Ok(entry) => entry,
+                Err(err) => {
+                    eprintln!("[craftwave] 分支重发落盘失败（不发送）：{err:?}");
+                    return;
+                }
+            };
+        let mut history = (*self.history).clone();
+        history.push(Rc::new(user_entry.clone()));
+        self.reset_pipeline(Rc::new(history), cx);
+        self.push_history(cx);
+        self.set_busy(true, cx);
+        self.launch_run(session_id, user_entry);
+    }
+
+    /// start_chat 跑 tokio：装配树 + run 任务全在线程池；帧经 FrameBridge
+    /// 回主线程泵，完成回执经同一通道。JoinHandle 不存（回执驱动，见模块
+    /// 文档）。send_message / branch_resend 共用（同一条 ⑥ 段）。
+    fn launch_run(&mut self, session_id: String, user_entry: MessageEntry) {
         let state = self.state.clone();
         let mailbox = match self.mailbox.clone() {
             Some(mailbox) => mailbox,
@@ -312,8 +342,7 @@ impl SessionService {
 
     /// 切换 / 打开会话：装载历史 + 重置管道 + `attach_run` 续流（该会话
     /// 有进行中 run 时帧从 0 重放并重新接上节流）。阶段 3.1 多会话侧栏
-    /// 的接线点；本批由测试面使用。
-    #[allow(dead_code)]
+    /// 的接线点。
     pub fn open_session(&mut self, session_id: String, cx: &mut Context<Self>) {
         // 旧管道收摊（泵/节流 drop；旧通道关闭）
         self.tasks.clear();
@@ -321,19 +350,10 @@ impl SessionService {
         self.aggregator = Arc::new(FrameAggregator::new());
         self.busy = false;
         self.session_id = Some(session_id.clone());
-        // 历史装载（会话不存在 → 空历史 + 日志，不 panic）
-        self.history = match session::load_session_tree(
-            &self.state,
-            LoadSessionTreeArgs {
-                session_id: session_id.clone(),
-            },
-        ) {
-            Ok(tree) => active_path(&tree.messages, tree.active_leaf_id.as_deref()),
-            Err(err) => {
-                eprintln!("[craftwave] 会话历史装载失败（按空会话继续）：{err:?}");
-                Rc::new(Vec::new())
-            }
-        };
+        // 历史装载（会话不存在 → 空历史 + 日志，不 panic）；分支表随树
+        // 一起装载（3.3：行分支控件的数据面）
+        let (history, branches) = load_view(&self.state, &session_id);
+        self.history = history;
         // 续流：重放 (0, 头] 全区间到新通道；无活跃 run 时返回空重放。
         // 心跳任务无条件起：无活跃 run 时通道空转（每 64ms 一次空排空），
         // 换取「有 run 即自动接流」的简单语义（busy 面与重放结果对齐）
@@ -354,7 +374,79 @@ impl SessionService {
             self.spawn_stream_loop(rx, cx);
         }
         self.push_history(cx);
+        self.push_branches(branches, cx);
         self.push_busy(cx);
+    }
+
+    /// 新建会话（3.1 ⌘N）：收摊当前会话回到「未发送」空态。会话 id 置回
+    /// None——首条消息发送时才真正 create_session（[`Self::send_message`]
+    /// 的既有语义），避免留下一串空会话索引条目。旧栈「新建 Tab（空）」
+    /// 的单视图对应形态。
+    pub fn reset_to_new(&mut self, cx: &mut Context<Self>) {
+        self.tasks.clear();
+        self.mailbox = None;
+        self.aggregator = Arc::new(FrameAggregator::new());
+        self.busy = false;
+        self.session_id = None;
+        self.history = Rc::new(Vec::new());
+        self.push_history(cx);
+        self.push_busy(cx);
+        // 侧栏高亮与空态随会话实体重渲自然对齐（侧栏 render 每帧读服务）
+        cx.notify();
+    }
+
+    /// 切换分支（3.3）：把指定消息同父兄弟的相邻一支设为活动叶，落盘后
+    /// 重载历史。运行中拒绝（树归 run 落盘器持有，中途切叶会撞 revision）。
+    /// 单分支的消息不产生本调用（行控件隐藏），到头/到尾的方向也直接返回。
+    pub fn switch_branch(
+        &mut self,
+        message_id: &str,
+        dir: BranchDir,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(session_id) = self.session_id.clone() else {
+            return;
+        };
+        if self.busy {
+            eprintln!("[craftwave] {}", t("Session is running; branch switching is unavailable"));
+            return;
+        }
+        let tree = match session::load_session_tree(
+            &self.state,
+            LoadSessionTreeArgs {
+                session_id: session_id.clone(),
+            },
+        ) {
+            Ok(tree) => tree,
+            Err(err) => {
+                eprintln!("[craftwave] 分支切换装载失败：{err:?}");
+                return;
+            }
+        };
+        let Some(target) = branch_neighbor(&tree.messages, message_id, dir) else {
+            return;
+        };
+        // 新活动叶 = 目标兄弟沿「数组序最后的孩子」走到底（确定性路径；
+        // 编辑重发产生的分支其叶即最新消息，与预期一致）
+        let leaf = deepest_leaf(&tree.messages, &target);
+        if let Err(err) = session::save_session_tree(
+            &self.state,
+            SaveSessionTreeArgs {
+                session_id: session_id.clone(),
+                messages: tree.messages,
+                active_leaf_id: Some(leaf),
+                base_revision: tree.revision,
+            },
+        ) {
+            eprintln!("[craftwave] 分支切换落盘失败：{err:?}");
+            return;
+        }
+        // 重载历史 + 分支表（同 open_session 的推送面；本会话流式行应为
+        // None——busy 时已拒绝，防御性一致）
+        let (history, branches) = load_view(&self.state, &session_id);
+        self.history = history;
+        self.push_history(cx);
+        self.push_branches(branches, cx);
     }
 
     /// 窗口关闭的优雅收尾：取消进行中 run（退出拦截本身阶段 4.6）。
@@ -373,14 +465,20 @@ impl SessionService {
         Ok(())
     }
 
-    /// 发送前树同步：load 全树 → 追加 user 条目（挂活动叶）→ save。
-    /// 失败上抛（调用方放弃发送并日志——输入还留在 composer 不丢字）。
-    /// 树尚不存在（新会话首条消息：历史文件随首次 save 产生，load 报
-    /// E_NOT_FOUND）按空树处理——与旧栈「失败不阻断」不同，这里保持
-    /// 正常协议（save 成功后再 start_chat），不依赖引擎的幂等兜底。
-    fn persist_user(
+    /// 发送前树同步：load 全树 → 追加 user 条目 → save。失败上抛（调用方
+    /// 放弃发送并日志——输入还留在 composer 不丢字）。
+    ///
+    /// `attach` 形态：`ActiveLeaf` = 常规发送，挂当前活动叶；`Parent` =
+    /// 编辑重发（3.3），挂指定父节点产生兄弟分支（`None` = 根——被编辑的
+    /// 根消息的新分支同样挂根；Some(id) 不在树上时回退活动叶，防御树被
+    /// 并发改写后 stale parent 产生孤儿节点）。树尚不存在（新会话首条
+    /// 消息：历史文件随首次 save 产生，load 报 E_NOT_FOUND）按空树处理
+    /// ——与旧栈「失败不阻断」不同，这里保持正常协议（save 成功后再
+    /// start_chat），不依赖引擎的幂等兜底。
+    fn persist_user_at(
         &self,
         session_id: &str,
+        attach: AttachTo,
         text: &str,
         attachments: Vec<QueuedImageAttachment>,
     ) -> Result<MessageEntry, IpcError> {
@@ -413,9 +511,23 @@ impl SessionService {
                 mime_type: attachment.mime_type.clone(),
             });
         }
+        // 挂接点：编辑重发的 parent = Some(id) 时须是树上的既有节点，
+        // 否则回退活动叶（stale parent 防御）；Parent(None) = 挂根（根消息
+        // 的兄弟分支同样无父）；ActiveLeaf = 常规发送挂当前活动叶
+        let attach_parent = match attach {
+            AttachTo::ActiveLeaf => tree.active_leaf_id.clone(),
+            AttachTo::Parent(None) => None,
+            AttachTo::Parent(Some(id)) => {
+                if tree.messages.iter().any(|m| m.id == id) {
+                    Some(id)
+                } else {
+                    tree.active_leaf_id.clone()
+                }
+            }
+        };
         let entry = MessageEntry {
             id: new_uuid(),
-            parent_id: tree.active_leaf_id.clone(),
+            parent_id: attach_parent,
             role: MessageRole::User,
             parts,
             created_at: storage::trust::now_ms(),
@@ -514,11 +626,16 @@ impl SessionService {
                 }
                 if terminal_emitted {
                     // 终态已上屏一帧：落盘重载历史（run 落盘器在 runEnded
-                    // 帧下发前已写完 canonical 条目），流式行由历史接管
-                    let history = reload_history(&state, &session_id, history);
-                    let _ = conversation.update(cx, |conversation, cx| {
-                        conversation.apply_snapshot(history, None, cx);
-                    });
+                    // 帧下发前已写完 canonical 条目），流式行由历史接管；
+                    // 分支表随树重载（新叶/新节点进表——3.3）
+                    if let Some((history, branches)) =
+                        reload_history(&state, &session_id, history)
+                    {
+                        let _ = conversation.update(cx, |conversation, cx| {
+                            conversation.apply_snapshot(history, None, cx);
+                            conversation.set_branches(branches, cx);
+                        });
+                    }
                     let _ = this.update(cx, |service, cx| service.set_busy(false, cx));
                     return;
                 }
@@ -564,6 +681,19 @@ impl SessionService {
         self.push_busy(cx);
     }
 
+    /// 分支表下推（不经 self 可变借用的路径：装载后与 open_session 共用）。
+    fn push_branches(
+        &self,
+        branches: HashMap<String, SiblingInfo>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(conversation) = self.conversation.upgrade() {
+            conversation.update(cx, |conversation, cx| {
+                conversation.set_branches(branches, cx);
+            });
+        }
+    }
+
     /// busy 下推（不经 self 可变借用的路径：泵任务回调里用）。
     fn push_busy(&self, cx: &mut Context<Self>) {
         if let Some(conversation) = self.conversation.upgrade() {
@@ -590,22 +720,125 @@ fn default_run_config() -> RunConfig {
     }
 }
 
-/// 终态后落盘重载：从会话树重建活动路径（run 落盘器的 canonical 条目
-/// 此时已全部在盘上）。装载失败保留原历史（尽力而为，不崩收口流程）。
-fn reload_history(
-    state: &AppState,
-    session_id: &str,
-    fallback: Rc<Vec<Rc<MessageEntry>>>,
-) -> Rc<Vec<Rc<MessageEntry>>> {
+/// 会话展示面（活动路径历史 + 分支表）——装载函数的返回载体。
+type SessionView = (Rc<Vec<Rc<MessageEntry>>>, HashMap<String, SiblingInfo>);
+
+/// 装载一个会话的展示面：活动路径历史 + 分支表（open_session /
+/// switch_branch 共用；装载失败按空会话继续 + 日志，不 panic）。
+fn load_view(state: &AppState, session_id: &str) -> SessionView {
     match session::load_session_tree(
         state,
         LoadSessionTreeArgs {
             session_id: session_id.to_owned(),
         },
     ) {
-        Ok(tree) => active_path(&tree.messages, tree.active_leaf_id.as_deref()),
-        Err(_) => fallback,
+        Ok(tree) => (
+            active_path(&tree.messages, tree.active_leaf_id.as_deref()),
+            build_branches(&tree.messages),
+        ),
+        Err(err) => {
+            eprintln!("[craftwave] 会话历史装载失败（按空会话继续）：{err:?}");
+            (Rc::new(Vec::new()), HashMap::new())
+        }
     }
+}
+
+/// 终态后落盘重载：从会话树重建活动路径与分支表（run 落盘器的 canonical
+/// 条目此时已全部在盘上）。装载失败返回 None（保留原历史，尽力而为，
+/// 不崩收口流程）。
+fn reload_history(
+    state: &AppState,
+    session_id: &str,
+    fallback: Rc<Vec<Rc<MessageEntry>>>,
+) -> Option<SessionView> {
+    match session::load_session_tree(
+        state,
+        LoadSessionTreeArgs {
+            session_id: session_id.to_owned(),
+        },
+    ) {
+        Ok(tree) => Some((
+            active_path(&tree.messages, tree.active_leaf_id.as_deref()),
+            build_branches(&tree.messages),
+        )),
+        Err(_) => {
+            let _ = fallback;
+            None
+        }
+    }
+}
+
+/// 发送 user 节点的挂接点（[`SessionService::persist_user_at`] 的参数面）。
+#[derive(Debug, Clone)]
+enum AttachTo {
+    /// 常规发送：挂当前活动叶。
+    ActiveLeaf,
+    /// 编辑重发（3.3）：挂指定父节点（`None` = 根，产生根的兄弟分支）。
+    Parent(Option<String>),
+}
+
+/// 分支切换方向（3.3）：相邻兄弟（旧栈 BranchPicker 的 Previous/Next）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BranchDir {
+    /// 前一个兄弟。
+    Prev,
+    /// 后一个兄弟。
+    Next,
+}
+
+/// 全树消息 → 分支表：以消息 id 为键给出它在同父兄弟组中的位置。
+/// 兄弟序 = messages 数组序（旧栈 export 序，父先子后）；无父（根）的
+/// 消息同组成组（`None` 作为组键）。
+pub(crate) fn build_branches(messages: &[MessageEntry]) -> HashMap<String, SiblingInfo> {
+    let mut groups: HashMap<Option<&str>, Vec<usize>> = HashMap::new();
+    for (ix, entry) in messages.iter().enumerate() {
+        groups.entry(entry.parent_id.as_deref()).or_default().push(ix);
+    }
+    let mut table = HashMap::with_capacity(messages.len());
+    for indices in groups.into_values() {
+        let count = indices.len();
+        for (index, ix) in indices.into_iter().enumerate() {
+            table.insert(
+                messages[ix].id.clone(),
+                SiblingInfo { index, count },
+            );
+        }
+    }
+    table
+}
+
+/// 指定消息在兄弟序列中的相邻一支（None = 无树/消息不在树上/已到头——
+/// 调用方按「无动作」处理）。
+pub(crate) fn branch_neighbor(
+    messages: &[MessageEntry],
+    message_id: &str,
+    dir: BranchDir,
+) -> Option<String> {
+    let entry = messages.iter().find(|m| m.id == message_id)?;
+    let siblings: Vec<&MessageEntry> = messages
+        .iter()
+        .filter(|m| m.parent_id == entry.parent_id)
+        .collect();
+    let pos = siblings.iter().position(|m| m.id == message_id)?;
+    match dir {
+        BranchDir::Prev if pos > 0 => Some(siblings[pos - 1].id.clone()),
+        BranchDir::Next if pos + 1 < siblings.len() => Some(siblings[pos + 1].id.clone()),
+        _ => None,
+    }
+}
+
+/// 从指定节点沿「数组序最后的孩子」走到底（切换分支后新活动叶的确定性
+/// 路径——编辑重发分支的最新回答即其叶）。
+pub(crate) fn deepest_leaf(messages: &[MessageEntry], start: &str) -> String {
+    let mut cursor = start.to_owned();
+    while let Some(child) = messages
+        .iter()
+        .rev()
+        .find(|m| m.parent_id.as_deref() == Some(cursor.as_str()))
+    {
+        cursor = child.id.clone();
+    }
+    cursor
 }
 
 /// 全树消息 → 活动路径线性序（leaf 沿 parent_id 回溯到根再反转）。

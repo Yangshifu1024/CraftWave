@@ -24,13 +24,14 @@ mod chat;
 mod engine;
 mod i18n;
 mod prefs;
+mod sidebar;
 // token 表全量照抄 theme.md（其 §11「照抄单」），消费方从阶段 2.C 起逐批
 // 接入；bin crate 里暂无消费方的 pub 项也报 dead_code，故模块级放行
 #[allow(dead_code)]
 mod theme;
 // 文本工具四件套（clip_display/one_line/smart_time/tilde_path）：smart_time
-// 与 tilde_path 的消费方在阶段 3.1 侧栏（会话时间/路径列）——与 theme 同理
-// 模块级放行 dead_code，函数本体已由 text_util_test 钉住
+// 与 tilde_path 已由 3.1 侧栏消费（会话时间/组头路径），one_line/clip_display
+// 的消费方在 chat——greeting 由 B1 空态消费；测试面已钉住，模块级放行兜底
 #[allow(dead_code)]
 mod text_util;
 mod ui_zoom;
@@ -120,10 +121,13 @@ impl Global for MainWindow {}
 
 /// 主窗根视图：自绘标题带 + 三栏骨架。
 /// `zoom_seen` 是 ui_zoom 换档检测的上次档位（render 每帧比对，见其注释）；
-/// `chat` 是中栏对话流（阶段 2.C-1 接入：消息列表 + Composer）。
+/// `chat` 是中栏对话流（阶段 2.C-1 接入：消息列表 + Composer）；`sidebar`
+/// 是左栏会话侧栏（阶段 3.1；None = 无引擎桥的回声测试装置——侧栏依赖
+/// 引擎清单与服务，回声装配以占位文案运行）。
 struct MainWindowView {
     zoom_seen: f32,
     chat: Entity<chat::ConversationState>,
+    sidebar: Option<Entity<sidebar::SidebarState>>,
 }
 
 impl gpui_kit::Render for MainWindowView {
@@ -162,14 +166,16 @@ impl gpui_kit::Render for MainWindowView {
                     .text_size(px(theme::font_size(theme::FONT_UI_SM, zoom)))
                     .child(t("CraftWave")),
             )
-            // 三栏骨架：左栏 260px 定宽 / 中栏对话流 / 右栏折叠占位条
+            // 三栏骨架：左栏 260px 定宽（会话侧栏，3.1）/ 中栏对话流 /
+            // 右栏折叠占位条
             .child(
                 div()
                     .flex_1()
                     .min_h_0()
                     .flex()
                     .flex_row()
-                    // 左栏：侧栏占位（spec 3.1 多会话侧栏接入前只立骨架）
+                    // 左栏：会话侧栏（清单装载/分组/行操作在 sidebar 模块）；
+                    // 无引擎桥的回声测试装置保持占位文案
                     .child(
                         div()
                             .w(px(SIDEBAR_PLACEHOLDER_WIDTH))
@@ -178,13 +184,20 @@ impl gpui_kit::Render for MainWindowView {
                             .bg(sidebar)
                             .border_r_1()
                             .border_color(border)
+                            .overflow_hidden()
                             .p(px(theme::SPACE_4))
                             .text_size(px(theme::font_size(
                                 theme::FONT_UI_CAPTION,
                                 zoom,
                             )))
                             .text_color(subtlest)
-                            .child(t("Sidebar placeholder")),
+                            .children(match &self.sidebar {
+                                Some(sidebar) => {
+                                    let _ = subtlest;
+                                    Some(sidebar.clone().into_any_element())
+                                }
+                                None => Some(div().child(t("Sidebar placeholder")).into_any_element()),
+                            }),
                     )
                     // 中栏：对话流（阶段 2.C-1 消息流底座 + Composer；
                     // 历史由 chat::install 装假数据，真会话装载随 3.1）
@@ -256,6 +269,11 @@ fn open_main_window(cx: &mut App) -> WindowHandle<Root> {
                 // main 装配，服务实体在此处创建并挂 Global）
                 let engine = crate::engine::bridge(cx);
                 let chat_entity = chat::install(window, cx, engine.as_ref());
+                // 左栏侧栏装配（须在 chat::install 后——依赖 EngineService
+                // Global；引擎桥缺失（回声测试装置）时不装，左栏保持占位文案）
+                let sidebar_entity = engine.as_ref().map(|bridge| {
+                    sidebar::install(window, cx, bridge)
+                });
                 // 根视图；几何记忆（观察 bounds + 防抖落盘）挂在它的构造
                 // Context 上，再包 base Root（浮层挂载点 + rem 同步插件）
                 let view = cx.new(|cx| {
@@ -264,6 +282,7 @@ fn open_main_window(cx: &mut App) -> WindowHandle<Root> {
                         // 从 0 起步：首帧 changed 必真，灯位按当前档对齐一次
                         zoom_seen: 0.0,
                         chat: chat_entity,
+                        sidebar: sidebar_entity,
                     }
                 });
                 cx.new(|cx| Root::new(view, window, cx))
@@ -491,8 +510,13 @@ fn main() {
             eprintln!("[craftwave] 占位：帮助（阶段 3 接入）");
             activate_or_reopen(cx);
         });
+        // 新会话（⌘N / 菜单 / 侧栏大行同一逻辑命令——侧栏行走服务的同一条
+        // 调用，coding-guides §4）：服务收摊回「新会话」空态（首条消息发送
+        // 时才建会话索引条目——send_message 既有语义）
         cx.on_action(|_: &NewSession, cx| {
-            eprintln!("[craftwave] 占位：新会话（阶段 3.1 接入）");
+            if let Some(service) = cx.try_global::<chat::EngineService>().map(|s| s.0.clone()) {
+                service.update(cx, |service, cx| service.reset_to_new(cx));
+            }
             activate_or_reopen(cx);
         });
 

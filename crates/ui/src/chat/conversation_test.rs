@@ -78,6 +78,7 @@ fn chat_window(
         let inner = cx.new(|_| MainWindowView {
             zoom_seen: 0.0,
             chat,
+            sidebar: None,
         });
         gpui_kit::base::Root::new(inner, window, cx)
     });

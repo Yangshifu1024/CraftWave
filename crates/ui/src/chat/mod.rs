@@ -47,13 +47,23 @@ mod service_test;
 #[path = "parts_test.rs"]
 mod parts_test;
 
+#[cfg(test)]
+#[path = "tree_test.rs"]
+mod tree_test;
+
+#[cfg(test)]
+#[path = "empty_test.rs"]
+mod empty_test;
+
 use std::rc::Rc;
 
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::input::{InputEvent, TextareaState};
 use gpui_kit::prelude::*;
-use gpui_kit::{App, Entity, Global, Window, div, px};
+use gpui_kit::{App, Entity, FontWeight, Global, SharedString, Window, div, px};
 
+use crate::i18n::t;
+use crate::text_util::greeting;
 use crate::theme::ActiveCraftwave as _;
 use crate::ui_zoom;
 
@@ -174,6 +184,9 @@ pub fn install(
                     else {
                         return; // 空白输入：不空发
                     };
+                    // 编辑重发待发态（3.3）：本次发送走 branch_resend 挂到
+                    // 目标 parent 下产生新分支，随后清除待发态（一次一分支）
+                    let resend_parent = conversation.resend_parent.take();
                     match &conversation.service {
                         // 真通道：服务的发送链要回写本会话实体
                         // （apply_snapshot），而当前正处于会话实体的
@@ -182,8 +195,13 @@ pub fn install(
                         Some(service) => {
                             let service = service.clone();
                             cx.defer(move |cx| {
-                                service.update(cx, |service, cx| {
-                                    service.send_message(text, attachments, cx);
+                                service.update(cx, |service, cx| match resend_parent {
+                                    Some(parent) => {
+                                        service.branch_resend(parent, text, attachments, cx);
+                                    }
+                                    None => {
+                                        service.send_message(text, attachments, cx);
+                                    }
                                 });
                             });
                         }
@@ -232,28 +250,44 @@ impl Render for ConversationState {
         let list_state = self.list.clone();
         let entity = cx.entity();
         // 消息流：不等高惰性测量（Bottom 对齐 + 512 overscan），Tail 跟随在
-        // ListState 内建（新消息贴底 / 上滚暂停 / 回底续跟）
+        // ListState 内建（新消息贴底 / 上滚暂停 / 回底续跟）；B1 空态：无行
+        // 时问候语 + 建议 chips 整体替代列表（列表 0 行本来画不出东西）
+        let stream_area: gpui_kit::AnyElement = if self.is_empty_view() {
+            div()
+                .flex_1()
+                .min_h_0()
+                .child(self.render_empty_state(cx))
+                .into_any_element()
+        } else {
+            div()
+                .flex_1()
+                .min_h_0()
+                .child(
+                    gpui_kit::list(list_state, move |ix, _window, cx| {
+                        entity.update(cx, |conversation, cx| conversation.render_row(ix, cx))
+                    })
+                    .size_full(),
+                )
+                .into_any_element()
+        };
         let mut column = div()
             .relative()
             .size_full()
             .flex()
             .flex_col()
-            .child(
-                div().flex_1().min_h_0().child(
-                    gpui_kit::list(list_state, move |ix, _window, cx| {
-                        entity.update(cx, |conversation, cx| conversation.render_row(ix, cx))
-                    })
-                    .size_full(),
-                ),
-            );
+            .child(stream_area);
         if let Some(composer) = &self.composer {
-            column = column.child(
-                div()
-                    .flex_shrink_0()
-                    .px(px(crate::theme::SPACE_5))
-                    .pb(px(crate::theme::SPACE_5))
-                    .child(composer.clone()),
-            );
+            // 编辑重发提示条（3.3）：待发态可见（发送将产生新分支），点 ×
+            // 取消回到常规发送
+            let composer_area = div()
+                .flex_shrink_0()
+                .px(px(crate::theme::SPACE_5))
+                .pb(px(crate::theme::SPACE_5))
+                .when(self.resend_pending(), |area| {
+                    area.child(self.render_resend_banner(cx))
+                })
+                .child(composer.clone());
+            column = column.child(composer_area);
         }
         // zoom 覆盖层（2.9）：开着时叠在中栏上（inset_0 + occlude 挡住下层
         // 点击），背景点击 / 关闭钮收场
@@ -265,6 +299,146 @@ impl Render for ConversationState {
 }
 
 impl ConversationState {
+    /// 建议 chip 点击（B1）：文案填入 composer（不自动发送——发送由用户
+    /// Enter 决定，与旧栈「点击填入 composer」语义一致）。
+    pub(crate) fn fill_suggestion(
+        &mut self,
+        text: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(composer) = &self.composer {
+            composer.update(cx, |composer, cx| composer.set_text(text, window, cx));
+        }
+    }
+
+    /// B1 空态：时段问候语（smart_time 同源的时段判定）+ 副句 + 建议
+    /// chips；无会话时多一行引导文案（引导创建——发送链在首条消息时
+    /// 自动建会话，输入即开始）。
+    fn render_empty_state(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+        let theme = cx.theme().colors;
+        let zoom = cx.craftwave().zoom;
+        let no_session = self
+            .service
+            .as_ref()
+            .is_none_or(|service| service.read(cx).session_id().is_none());
+        // 建议 chips 文案（i18n 词表；点击填 composer）
+        let suggestions = [
+            t("Explain this repository's structure"),
+            t("Help me write a build script"),
+            t("Review the recent changes"),
+            t("Summarize today's meeting notes"),
+        ];
+        let mut stack = div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .gap(px(crate::theme::SPACE_4))
+            .child(
+                div()
+                    .text_size(px(crate::theme::font_size(crate::theme::FONT_UI_XL, zoom)))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(theme.foreground)
+                    .child(t(greeting())),
+            )
+            .child(
+                div()
+                    .text_size(px(crate::theme::font_size(crate::theme::FONT_UI_BASE, zoom)))
+                    .text_color(theme.muted_foreground)
+                    .child(t("What can I help you with?")),
+            );
+        if no_session {
+            stack = stack.child(
+                div()
+                    .max_w(px(crate::chat::state::READER_MAX_WIDTH))
+                    .px(px(crate::theme::SPACE_10))
+                    .text_center()
+                    .text_size(px(crate::theme::font_size(crate::theme::FONT_UI_SM, zoom)))
+                    .text_color(cx.craftwave().colors.foreground_subtle)
+                    .child(t(
+                        "No conversation yet — type below to start a new session, or pick one from the sidebar.",
+                    )),
+            );
+        }
+        stack = stack.child(
+            div()
+                .flex()
+                .flex_wrap()
+                .justify_center()
+                .gap(px(crate::theme::SPACE_3))
+                .max_w(px(crate::chat::state::READER_MAX_WIDTH))
+                .children(suggestions.map(|label| {
+                    div()
+                        .id(SharedString::from(label))
+                        .cursor_pointer()
+                        .px(px(crate::theme::SPACE_5))
+                        .py(px(crate::theme::SPACE_2))
+                        .rounded(px(crate::theme::rounded_lg(zoom)))
+                        .border_1()
+                        .border_color(theme.border)
+                        .bg(cx.craftwave().colors.composer_surface)
+                        .text_size(px(crate::theme::font_size(crate::theme::FONT_UI_SM, zoom)))
+                        .text_color(theme.foreground)
+                        .hover(|style| style.bg(theme.list_hover))
+                        .debug_selector(move || format!("suggestion-chip-{}", label))
+                        .on_click({
+                            let entity = cx.entity();
+                            move |_, window, cx| {
+                                entity.update(cx, |conversation, cx| {
+                                    conversation.fill_suggestion(label, window, cx);
+                                });
+                            }
+                        })
+                        .child(label)
+                })),
+        );
+        stack.into_any_element()
+    }
+
+    /// 编辑重发提示条（3.3）：composer 上方一条说明（发送将产生新分支）
+    /// + 取消钮。取消只清重发态，输入保留（用户可再手动清空）。
+    fn render_resend_banner(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+        let theme = cx.theme().colors;
+        let zoom = cx.craftwave().zoom;
+        let entity = cx.entity();
+        div()
+            .w_full()
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_between()
+            .gap(px(crate::theme::SPACE_3))
+            .px(px(crate::theme::SPACE_4))
+            .py(px(crate::theme::SPACE_2))
+            .rounded(px(crate::theme::rounded_md(zoom)))
+            .bg(theme.muted)
+            .mb(px(crate::theme::SPACE_2))
+            .debug_selector(|| "resend-banner".to_owned())
+            .child(
+                div()
+                    .text_size(px(crate::theme::font_size(crate::theme::FONT_UI_SM, zoom)))
+                    .text_color(theme.muted_foreground)
+                    .child(t(
+                        "Editing history message — sending creates a new branch",
+                    )),
+            )
+            .child(
+                div()
+                    .id("resend-cancel")
+                    .cursor_pointer()
+                    .text_size(px(crate::theme::font_size(crate::theme::FONT_UI_SM, zoom)))
+                    .text_color(theme.muted_foreground)
+                    .hover(|style| style.text_color(theme.foreground))
+                    .on_click(move |_, _, cx| {
+                        entity.update(cx, |conversation, cx| conversation.cancel_resend(cx));
+                    })
+                    .child(t("Cancel edit")),
+            )
+            .into_any_element()
+    }
+
     /// zoom 覆盖层（Wake render_image_zoom 形态收窄）：Ready 态图按视口
     /// 自适应展示（不放大超过原尺寸），scrim 遮罩 + 关闭钮。zoom 目标不可
     /// 渲染（缓存被清等）时不画——防御路径，正常流不会走到。

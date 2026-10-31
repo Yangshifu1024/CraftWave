@@ -160,3 +160,20 @@ fn tilde_path_folds_only_on_separator_boundaries() {
     // 无 HOME（env 缺失）原样返回，不猜
     assert_eq!(tilde_path_with("/Users/al/x", None), "/Users/al/x");
 }
+
+// ======================================================================
+// greeting：时段问候分档（B1 空状态，阶段 3-A）
+// ======================================================================
+
+/// 时段分档：12 点前早上 / 18 点前下午 / 其后晚上（分档与 smart_time
+/// 同源——都是本机 Local 时钟，可测本体注入小时数）。
+#[test]
+fn greeting_buckets_by_hour() {
+    use crate::text_util::greeting_from;
+    assert_eq!(greeting_from(0), "Good morning");
+    assert_eq!(greeting_from(11), "Good morning");
+    assert_eq!(greeting_from(12), "Good afternoon");
+    assert_eq!(greeting_from(17), "Good afternoon");
+    assert_eq!(greeting_from(18), "Good evening");
+    assert_eq!(greeting_from(23), "Good evening");
+}

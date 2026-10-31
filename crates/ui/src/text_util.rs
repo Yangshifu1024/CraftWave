@@ -21,7 +21,7 @@
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-use chrono::{DateTime, Datelike, Duration, Local, TimeZone};
+use chrono::{DateTime, Datelike, Duration, Local, TimeZone, Timelike};
 use unicode_segmentation::UnicodeSegmentation as _;
 use unicode_width::UnicodeWidthStr as _;
 
@@ -136,6 +136,29 @@ fn calendar_date(dt: &DateTime<Local>, now: &DateTime<Local>) -> String {
         t("%b %-d, %Y")
     };
     dt.format(format).to_string()
+}
+
+// ======================================================================
+// greeting：时段问候（B1 空状态；时段判定与 smart_time 同源——本机
+// Local 时钟，可测本体由调用方注入小时数）
+// ======================================================================
+
+/// 当前时段的问候语 key（12 点前早上 / 18 点前下午 / 其后晚上）。
+/// 返回 i18n key（英文原文），调用方经 `t()` 取译文。
+pub fn greeting() -> &'static str {
+    greeting_from(Local::now().hour())
+}
+
+/// [`greeting`] 的可测本体：小时数由调用方注入（生产传本机当前小时，
+/// 测试传固定值），分档判定不依赖真实时钟。
+pub(crate) fn greeting_from(hour: u32) -> &'static str {
+    if hour < 12 {
+        "Good morning"
+    } else if hour < 18 {
+        "Good afternoon"
+    } else {
+        "Good evening"
+    }
 }
 
 // ======================================================================

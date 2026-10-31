@@ -103,6 +103,7 @@ fn three_pane_layout_renders_a_frame(cx: &mut TestAppContext) {
     let (_view, visual) = cx.add_window_view(|window, cx| MainWindowView {
         zoom_seen: 0.0,
         chat: crate::chat::install(window, cx, None),
+        sidebar: None,
     });
     // run_until_parked 把首帧 layout/prepaint/paint 跑完——到这就是不 panic
     visual.run_until_parked();

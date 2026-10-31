@@ -99,6 +99,16 @@ pub struct ConversationState {
     pub(crate) service: Option<Entity<super::service::SessionService>>,
     /// 上次见过的缩放档（render 每帧比对，换档触发全列表重测）。
     pub(crate) zoom_seen: f32,
+    /// 分支表（3.3）：消息 id → 同父兄弟中的位置。由服务在装载历史时
+    /// 从 SessionTreeData 构建（兄弟序 = messages 数组序，即旧栈 export 序）；
+    /// 行渲染据此显示分支控件（count > 1 才显示——单分支隐藏）。
+    branches: HashMap<String, SiblingInfo>,
+    /// 编辑重发态（3.3）：`Some(parent)` = 待发的新 user 节点挂到该
+    /// parent 下产生新分支（parent 为 `None` = 原消息是根节点，新分支
+    /// 同样挂根）；`None` = 不在重发态，发送走常规链。双 Option 与
+    /// engine `SetSessionPrefsPayload` 的「未传 / 传了 null」同构：
+    /// 外层区分重发态，内层携带目标 parent。发送一次后清除。
+    pub(crate) resend_parent: Option<Option<String>>,
     /// splice(ix..ix+1, 1) 重测执行次数（对账计数：测试断言「展开折叠触发了
     /// 重测」，生产路径零成本自增）。
     pub(crate) splice_retest_count: usize,
@@ -140,6 +150,8 @@ impl ConversationState {
             service: None,
             // 从 0 起步：首帧 changed 必真，列表按当前档重测一次
             zoom_seen: 0.0,
+            branches: HashMap::new(),
+            resend_parent: None,
             splice_retest_count: 0,
             remeasure_count: 0,
             _subscriptions: Vec::new(),
@@ -255,6 +267,50 @@ impl ConversationState {
     }
 
     // ==================================================================
+    // 会话树与分支（3.3）
+    // ==================================================================
+
+    /// 整体替换分支表（服务装载历史时随历史一起推送；换会话即换树，
+    /// 旧表整表作废——与 `set_history` 清展开表同一生命周期）。
+    pub fn set_branches(&mut self, branches: HashMap<String, SiblingInfo>, cx: &mut Context<Self>) {
+        self.branches = branches;
+        cx.notify();
+    }
+
+    /// 某消息的同父兄弟信息（None = 无表数据或单节点链——行渲染
+    /// count > 1 才出控件，这里不做阈值判断）。
+    pub fn branch_of(&self, message_id: &str) -> Option<SiblingInfo> {
+        self.branches.get(message_id).copied()
+    }
+
+    /// 当前是否处于「编辑重发」待发态（mod.rs 提示条的显示面；发送
+    /// 链据此走 `branch_resend` 而不是常规发送）。
+    pub fn resend_pending(&self) -> bool {
+        self.resend_parent.is_some()
+    }
+
+    /// 发起编辑重发：记目标父节点（该消息的 parent——新 user 节点挂到
+    /// 它下面，与原消息成为兄弟分支；根消息的 parent 是 `None`，新分支
+    /// 同样挂根）。composer 预填由调用方做。
+    pub fn begin_resend(&mut self, entry: &MessageEntry, cx: &mut Context<Self>) {
+        self.resend_parent = Some(entry.parent_id.clone());
+        cx.notify();
+    }
+
+    /// 取消编辑重发（提示条关闭钮 / 换历史时）。
+    pub fn cancel_resend(&mut self, cx: &mut Context<Self>) {
+        if self.resend_parent.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    /// 中栏空态判定（B1）：无历史且无流式行——问候语 + 建议 chips 的
+    /// 显示面。行数为 0 时 ListState 也无行可画，空态视图整体替代列表。
+    pub fn is_empty_view(&self) -> bool {
+        self.row_count() == 0
+    }
+
+    // ==================================================================
     // 快照驱动路径（2.C-1 假数据与 2.C-2 真帧流共用的唯一写入口）
     // ==================================================================
 
@@ -271,6 +327,8 @@ impl ConversationState {
         self.images.clear();
         self.loading_images.clear();
         self.zoom = None;
+        // 行号映射换了，未发出去的编辑重发目标随旧行作废（3.3）
+        self.resend_parent = None;
         self.ensure_images_loaded(cx);
         self.list.reset(count);
         cx.notify();
@@ -515,6 +573,17 @@ pub(crate) enum Slot {
     Body { text: String },
     /// 工具簇卡（该消息全部工具调用一张卡；折叠态由展开表决定）。
     Tools { calls: Vec<CallLite> },
+}
+
+/// 分支槽位信息（3.3）：一条消息在其同父兄弟中的位置。行渲染据此出
+/// 分支控件（`count > 1` 才显示——旧栈 `BranchPickerPrimitive.Root
+/// hideWhenSingleBranch` 语义）；`index`/`count` 拼成「k/n」计数面。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SiblingInfo {
+    /// 同父兄弟中的序（0 起；兄弟序 = 树数组序，即旧栈 export 序）。
+    pub index: usize,
+    /// 同父兄弟总数。
+    pub count: usize,
 }
 
 /// 单个工具调用的展示面（WirePart 与 StreamPart 归一后的形态）。

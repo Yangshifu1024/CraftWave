@@ -240,6 +240,7 @@ fn service_window(
         MainWindowView {
             zoom_seen: 0.0,
             chat: conversation,
+            sidebar: None,
         }
     });
     let chat = visual.update(|_window, cx| view.read(cx).chat.clone());
@@ -341,6 +342,7 @@ fn pipeline_delivers_frames_to_conversation(cx: &mut TestAppContext) {
     let (view, visual) = cx.add_window_view(|_window, cx| MainWindowView {
         zoom_seen: 0.0,
         chat: cx.new(|_| ConversationState::new()),
+        sidebar: None,
     });
     visual.run_until_parked();
     let chat = visual.update(|_window, cx| view.read(cx).chat.clone());
@@ -657,6 +659,7 @@ fn composer_enter_creates_session_and_dispatches_send(cx: &mut TestAppContext) {
     let (view, visual) = cx.add_window_view(|window, cx| MainWindowView {
         zoom_seen: 0.0,
         chat: crate::chat::install(window, cx, Some(&bridge)),
+        sidebar: None,
     });
     visual.run_until_parked();
     let chat = visual.update(|_window, cx| view.read(cx).chat.clone());

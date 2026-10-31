@@ -85,6 +85,35 @@ const ZH_CN: &[(&str, &str)] = &[
     ("Transcript limit reached", "转录已达上限"),
     ("Zoom image", "放大查看"),
     ("Close", "关闭"),
+    // 侧栏（阶段 3.1：多会话 + 侧栏）
+    ("Temporary sessions", "临时会话"),
+    ("Projects", "项目"),
+    ("No sessions yet", "还没有会话"),
+    ("Rename", "重命名"),
+    ("Delete", "删除"),
+    ("Delete session", "删除会话"),
+    ("Delete session?", "删除这个会话？"),
+    ("This permanently removes the conversation history. This cannot be undone.", "将永久删除该会话的全部历史记录，此操作不可撤销。"),
+    ("Cancel", "取消"),
+    ("messages", "条消息"),
+    ("Session title", "会话标题"),
+    // 会话树与分支（阶段 3.3）
+    ("Previous branch", "上一个分支"),
+    ("Next branch", "下一个分支"),
+    ("Edit and resend", "编辑重发"),
+    ("Editing history message — sending creates a new branch", "正在编辑历史消息——发送将产生新分支"),
+    ("Cancel edit", "取消编辑"),
+    ("Session is running; branch switching is unavailable", "会话运行中，暂不能切换分支"),
+    // B1 空状态（阶段 3-A）
+    ("Good morning", "早上好"),
+    ("Good afternoon", "下午好"),
+    ("Good evening", "晚上好"),
+    ("What can I help you with?", "今天想做点什么？"),
+    ("No conversation yet — type below to start a new session, or pick one from the sidebar.", "还没有对话——在下方输入即可开始新会话，或从左侧选择历史会话。"),
+    ("Explain this repository's structure", "讲解这个仓库的结构"),
+    ("Help me write a build script", "帮我写一个构建脚本"),
+    ("Review the recent changes", "审查最近的改动"),
+    ("Summarize today's meeting notes", "总结今天的会议记录"),
 ];
 
 /// 查表结构：`OnceLock` 首次访问构建，之后零开销哈希查词。

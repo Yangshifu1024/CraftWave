@@ -109,8 +109,10 @@ pub(crate) fn render_row(
             craftwave_engine::storage::MessageRole::System => render_system(entry, cx),
         }
     };
-    // 阅读轴：全消息共用同一竖直轴；首条 pt / 末条 pb 呼吸边距
+    // 阅读轴：全消息共用同一竖直轴；首条 pt / 末条 pb 呼吸边距。
+    // 3.3 分支栏（消息有多个兄弟分支时）挂在消息下方同一轴内
     let last = ix + 1 == state.row_count();
+    let branch_bar = render_branch_bar(state, ix, cx);
     div()
         .w_full()
         .flex()
@@ -123,9 +125,120 @@ pub(crate) fn render_row(
                 .max_w(px(READER_MAX_WIDTH))
                 .text_size(px(theme::font_size(theme::FONT_UI_BASE, zoom)))
                 .text_color(cx.theme().foreground)
-                .child(content),
+                .child(
+                    div()
+                        .w_full()
+                        .flex()
+                        .flex_col()
+                        .child(content)
+                        .children(branch_bar),
+                ),
         )
         .into_any_element()
+}
+
+// ======================================================================
+// 分支栏（3.3）：‹ k/n › 相邻分支切换；User 行附「编辑重发」入口。
+// 单分支隐藏（旧栈 BranchPickerPrimitive.Root hideWhenSingleBranch 语义）。
+// ======================================================================
+
+/// 分支栏（None = 单分支 / 无表数据——不渲染任何控件）。
+fn render_branch_bar(
+    state: &ConversationState,
+    ix: usize,
+    cx: &mut Context<ConversationState>,
+) -> Option<AnyElement> {
+    let entry = state.messages().get(ix)?;
+    let info = state.branch_of(&entry.id)?;
+    if info.count <= 1 {
+        return None;
+    }
+    let theme = cx.theme().colors;
+    let zoom = cx.craftwave().zoom;
+    let message_id = entry.id.clone();
+    // 相邻分支切换钮：点击 defer 调服务切活动叶 + 重载（会话实体的
+    // listener 栈内不能嵌套 update 会话，与 Enter 发送同款手法）
+    let branch_btn = |dir: super::service::BranchDir, icon_name: IconName| {
+        let message_id = message_id.clone();
+        let btn_id: SharedString = match dir {
+            super::service::BranchDir::Prev => format!("branch-prev-{message_id}").into(),
+            super::service::BranchDir::Next => format!("branch-next-{message_id}").into(),
+        };
+        div()
+            .id(btn_id)
+            .cursor_pointer()
+            .flex_shrink_0()
+            .rounded(px(theme::rounded_md(zoom)))
+            .text_color(theme.muted_foreground)
+            .hover(|style| style.bg(theme.list_hover).text_color(theme.foreground))
+            .tooltip(move |window, cx| {
+                let label = match dir {
+                    super::service::BranchDir::Prev => t("Previous branch"),
+                    super::service::BranchDir::Next => t("Next branch"),
+                };
+                gpui_kit::component::tooltip::Tooltip::new(label).build(window, cx)
+            })
+            .on_click(cx.listener(move |this: &mut ConversationState, _, _, cx| {
+                let Some(service) = this.service.clone() else {
+                    return;
+                };
+                let id = message_id.clone();
+                cx.defer(move |cx| {
+                    service.update(cx, |service, cx| service.switch_branch(&id, dir, cx));
+                });
+            }))
+            .child(Icon::new(icon_name).with_size(px(theme::ICON_SM)))
+    };
+    let is_user = entry.role == craftwave_engine::storage::MessageRole::User;
+    // 编辑重发入口（仅 User 行——旧栈 BranchBar editOnly 语义）：composer
+    // 预填原文 + 记目标父节点，Enter 发送走 branch_resend 产生新分支
+    let resend_btn = is_user.then(|| {
+        let original = entry
+            .parts
+            .iter()
+            .find_map(|part| match part {
+                craftwave_engine::storage::WirePart::Text { text } => Some(text.clone()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        let entry_snapshot = (**entry).clone();
+        div()
+            .id(SharedString::from(format!("branch-resend-{}", entry.id)))
+            .cursor_pointer()
+            .flex_shrink_0()
+            .rounded(px(theme::rounded_md(zoom)))
+            .text_color(theme.muted_foreground)
+            .hover(|style| style.bg(theme.list_hover).text_color(theme.foreground))
+            .tooltip(|window, cx| {
+                gpui_kit::component::tooltip::Tooltip::new(t("Edit and resend")).build(window, cx)
+            })
+            .on_click(cx.listener(move |this: &mut ConversationState, _, window, cx| {
+                this.begin_resend(&entry_snapshot, cx);
+                if let Some(composer) = &this.composer {
+                    composer.update(cx, |composer, cx| {
+                        composer.set_text(&original, window, cx);
+                    });
+                }
+            }))
+            .child(Icon::new(IconName::Pencil).with_size(px(theme::ICON_SM)))
+    });
+    Some(
+        h_flex()
+            .gap(px(theme::SPACE_1))
+            .mt(px(theme::SPACE_2))
+            .debug_selector(|| format!("branch-bar-{ix}"))
+            .child(branch_btn(super::service::BranchDir::Prev, IconName::ChevronLeft))
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .text_size(px(theme::font_size(theme::FONT_UI_SM, zoom)))
+                    .text_color(cx.craftwave().colors.dim)
+                    .child(format!("{}/{}", info.index + 1, info.count)),
+            )
+            .child(branch_btn(super::service::BranchDir::Next, IconName::ChevronRight))
+            .children(resend_btn)
+            .into_any_element(),
+    )
 }
 
 // ======================================================================
