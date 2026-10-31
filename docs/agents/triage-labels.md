@@ -1,17 +1,19 @@
 # Triage Labels
 
-The skills speak in terms of five canonical triage roles. This file maps those roles to the actual label strings used in this repo's issue tracker.
+The skills speak in terms of five canonical triage roles. This repo's issue tracker uses a smaller lifecycle vocabulary, recorded as a `Status:` line inside each ticket file under `docs/specs/<name>/tasks/`.
 
-| Label in mattpocock/skills | Label in our tracker | Meaning                                  |
-| -------------------------- | -------------------- | ---------------------------------------- |
-| `needs-triage`             | `needs-triage`       | Maintainer needs to evaluate this issue  |
-| `needs-info`               | `needs-info`         | Waiting on reporter for more information |
-| `ready-for-agent`          | `ready-for-agent`    | Fully specified, ready for an AFK agent  |
-| `ready-for-human`          | `ready-for-human`    | Requires human implementation            |
-| `wontfix`                  | `wontfix`            | Will not be actioned                     |
+| Label in mattpocock/skills | Status in our tracker | Meaning                                             |
+| -------------------------- | --------------------- | --------------------------------------------------- |
+| `needs-triage`             | _(no equivalent)_     | 新票先在 map 的雾区/Not yet specified 里记录，不单独立票 |
+| `needs-info`               | _(no equivalent)_     | 待澄清问题直接走 grilling 票（HITL）                  |
+| `ready-for-agent`          | `open`                | 已立票待领（对应 map 上未 claimed 的票）              |
+| `ready-for-human`          | `open`（Type: grilling） | 用户亲自执行的票（如真实使用验收）                  |
+| `wontfix`                  | _(no equivalent)_     | 砍单决策记在 map 的 Out of scope，不立票              |
 
-When a skill mentions a role (e.g. "apply the AFK-ready triage label"), use the corresponding label string from this table.
+## Our lifecycle vocabulary
 
-This repo uses the local-markdown tracker, so labels appear as `Status:` lines inside ticket files under `docs/specs/<name>/tasks/` rather than tracker labels.
+- `claimed`：代理已领票开工（动工前置条件）。
+- `resolved`：票完成，Answer 节写结论，map 的 Decisions so far 追加一行索引。
+- `open`：已立票未完成（含等待人工执行的票）。
 
-Edit the "Label in our tracker" column to match whatever vocabulary you actually use.
+When a skill mentions a triage role, map it to the vocabulary above rather than the five canonical strings.
