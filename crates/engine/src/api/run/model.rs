@@ -35,8 +35,10 @@ impl<W: Wire<Op = Completion> + Send + Sync + 'static> RunWire for W {}
 pub trait RunTransport<W: RunWire>: Transport<W> + Send + Sync + 'static {}
 impl<W: RunWire, T: Transport<W> + Send + Sync + 'static> RunTransport<W> for T {}
 
-/// 解析后的运行模型（旧壳 chat.rs 同名结构的泛型化）。
-pub(crate) struct ResolvedModel<W: RunWire, T: RunTransport<W>> {
+/// 解析后的运行模型（旧壳 chat.rs 同名结构的泛型化）。pub：壳外集成测试
+/// （feature = "test-utils"）经 [`ModelResolver`] 产出它——engine 自身
+/// run_test.rs 与 GPUI 壳 service_test 共用同一接缝。
+pub struct ResolvedModel<W: RunWire, T: RunTransport<W>> {
     /// 模型配置 id（`ProviderModel.id`；用量统计按实际执行模型
     /// 归属的记账面——显示名可改可删，配置 id 是稳定聚合键）。
     pub id: String,
@@ -65,7 +67,8 @@ pub(crate) struct ResolvedModel<W: RunWire, T: RunTransport<W>> {
 
 /// 模型解析接缝：`(app, 配置 id)` → 解析产物。`model_id` 为 None 时按
 /// `AppConfig.activeModelId` 回落（与旧壳 `resolve_model` 同语义）。
-pub(crate) type ModelResolver<W, T> =
+/// pub：壳外集成测试（feature = "test-utils"）注入剧本解析器用同一接缝。
+pub type ModelResolver<W, T> =
     Arc<dyn Fn(&AppState, Option<&str>) -> Result<ResolvedModel<W, T>, IpcError> + Send + Sync>;
 
 /// 生产解析器：按 AppConfig 查找 `(provider, model)` 配置行，Key 校验

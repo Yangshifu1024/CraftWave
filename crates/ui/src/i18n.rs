@@ -62,6 +62,8 @@ const ZH_CN: &[(&str, &str)] = &[
     ("Running…", "运行中…"),
     ("Reply or type @ for files…", "输入消息，@ 可引用文件…"),
     ("Attach image", "添加图片附件"),
+    // 对话流（阶段 2.C-2b：运行中停止钮）
+    ("Stop", "停止"),
 ];
 
 /// 查表结构：`OnceLock` 首次访问构建，之后零开销哈希查词。

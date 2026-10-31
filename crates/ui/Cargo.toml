@@ -20,8 +20,19 @@ gpui-kit = "0.8.1"
 # 阶段 2.C 长会话性能观察时接入（fps_monitor 挂窗口根）
 gpui-fps = "0.8.1"
 
-# 引擎（帧流阶段 2.C 接入；本阶段用 util::atomic 的原子写盘）
+# 引擎（帧流阶段 2.C-2b 接入：AppState 装配 / start_chat / 帧协议）
 craftwave-engine = { path = "../engine" }
+
+# 常驻 tokio 运行时（engine 的 start_chat 装配树与 run 任务要求调用方
+# 自备运行时；多线程调度）。features 与 workspace 的 tokio 1.x 同源，
+# rt-multi-thread 供 Runtime::new()
+tokio = { version = "1", default-features = false, features = [
+    "rt",
+    "rt-multi-thread",
+    "sync",
+    "time",
+    "macros",
+] }
 
 # 壳自管小存档（窗口几何 / 界面缩放偏好）的序列化
 serde = { version = "1", features = ["derive"] }
@@ -32,3 +43,9 @@ serde_json = { version = "1", features = ["preserve_order"] }
 # 给 gpui 加测试钩子，不影响运行时行为（Wake 同款做法）。
 [dev-dependencies]
 gpui-kit = { version = "0.8.1", features = ["test-support"] }
+# 集成测试（service_test）：engine 的 test-utils 接缝（start_chat 的
+# resolver 注入）+ rig 剧本假模型 + 临时数据根。仅测试构建激活——
+# feature unification 只发生在 cargo test，生产二进制不带 test-utils。
+craftwave-engine = { path = "../engine", features = ["test-utils"] }
+rig = { version = "0.45.0", features = ["test-utils"] }
+tempfile = "3"

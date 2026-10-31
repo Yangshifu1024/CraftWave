@@ -2206,8 +2206,11 @@ dependencies = [
  "craftwave-engine",
  "gpui-fps",
  "gpui-kit",
+ "rig",
  "serde",
  "serde_json",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

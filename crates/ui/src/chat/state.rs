@@ -67,6 +67,10 @@ pub struct ConversationState {
     pub(crate) list: ListState,
     /// Composer 实体（install 装配；中栏列的下半段）。
     pub(crate) composer: Option<Entity<super::composer::ComposerState>>,
+    /// 引擎会话服务（install 装配；None = 回声模式的测试装置）。
+    /// Enter 分流经它走真发送链；服务持本实体的弱引用（反向），
+    /// 这里持强引用不构成环。
+    pub(crate) service: Option<Entity<super::service::SessionService>>,
     /// 上次见过的缩放档（render 每帧比对，换档触发全列表重测）。
     pub(crate) zoom_seen: f32,
     /// splice(ix..ix+1, 1) 重测执行次数（对账计数：测试断言「展开折叠触发了
@@ -88,6 +92,7 @@ impl ConversationState {
             expanded_tools: HashSet::new(),
             list,
             composer: None,
+            service: None,
             // 从 0 起步：首帧 changed 必真，列表按当前档重测一次
             zoom_seen: 0.0,
             splice_retest_count: 0,

@@ -12,6 +12,12 @@ name = "craftwave_engine"
 # TS 契约导出（ts_rs derive）：壳的 test 构建激活（dev-dependencies 引入
 # features=["ts"]）——engine 自身 test 亦开。生产构建零开销。
 ts = ["dep:ts-rs"]
+# 壳外集成测试接缝（GPUI 壳 crates/ui 的 #[gpui_kit::test] 用）：开启后
+# api::run 暴露 start_chat 的解析器注入入口（start_chat_test），壳侧集成
+# 测试与 engine 自身 run_test.rs 共用 rig 剧本假模型接缝，不起真实 provider。
+# rig/test-utils：MockCompletionModel / MockStreamEvent 的承载 feature。
+# 仅测试构建激活（ui 的 dev-dependencies 引入）；生产二进制不带。
+test-utils = ["rig/test-utils"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

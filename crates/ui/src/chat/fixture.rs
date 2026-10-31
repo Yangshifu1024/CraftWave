@@ -14,6 +14,7 @@
 use std::rc::Rc;
 
 use craftwave_engine::api::workspace::WorkspacePathHit;
+use craftwave_engine::followup::QueuedImageAttachment;
 use craftwave_engine::storage::{MessageEntry, MessageRole, WirePart};
 // 流式态工厂只进测试（生产演示装配没有活跃 run）；类型随用随引
 #[cfg(test)]
@@ -329,9 +330,38 @@ pub fn streaming_with_tools() -> StreamingMessage {
 }
 
 // ======================================================================
-// @ 补全 stub 源（真接线在 2.C-2：engine api/workspace.rs 的
-// search_workspace_paths 需要 AppState 装配链，本批以静态表代替，
-// 接口见 composer.rs 的 CompletionSource trait）
+// 回声模式（无服务的测试装配用）：发送分流把 (正文, 附件) 重建为一条
+// User 条目直接追加进会话——2.C-1 回声发送的工厂保留为测试装置形态
+// （真通道 = SessionService::send_message，不经过这里）。
+// ======================================================================
+
+/// (正文, 附件) → 一条 User 条目（正文在前，附件展开为 Image part）。
+/// 与生产发送链 `service::persist_user` 的 parts 排布同一口径（树挂接
+/// 除外：回声条目不落盘、不挂树）。
+pub fn echo_entry(text: &str, attachments: Vec<QueuedImageAttachment>) -> Rc<MessageEntry> {
+    let mut parts = vec![WirePart::Text {
+        text: text.to_owned(),
+    }];
+    for attachment in &attachments {
+        parts.push(WirePart::Image {
+            blob_hash: attachment.blob_hash.clone(),
+            mime_type: attachment.mime_type.clone(),
+        });
+    }
+    Rc::new(MessageEntry {
+        id: next_id(),
+        parent_id: None,
+        role: MessageRole::User,
+        parts,
+        created_at: FAKE_NOW_MS,
+        run_id: None,
+        status: None,
+    })
+}
+
+// ======================================================================
+// @ 补全 stub 源（真接线在 2.C-2b：EngineCompletionSource 经
+// SessionService 取 AppState 装配链；本源仅测试装配使用）
 // ======================================================================
 
 /// 静态假补全源：内存路径表 + 基名大小写不敏感子串匹配（与引擎
@@ -364,16 +394,20 @@ fn hit(path: &str, kind: &str) -> WorkspacePathHit {
 
 impl super::composer::CompletionSource for FakeCompletionSource {
     /// 空查询给前几条（弹层初始候选），非空按子串过滤（trait 面，
-    /// composer 的 source 槽位消费它）。
-    fn search(&self, query: &str) -> Vec<WorkspacePathHit> {
+    /// composer 的 source 槽位消费它）。假源同步快返回：用 ready 任务
+    /// 保持与真源（后台线程池）同一条异步回写路径。
+    fn search(&self, query: &str, cx: &mut gpui_kit::App) -> gpui_kit::Task<Vec<WorkspacePathHit>> {
         let needle = query.trim().to_lowercase();
-        if needle.is_empty() {
-            return self.entries.iter().take(5).cloned().collect();
-        }
-        self.entries
-            .iter()
-            .filter(|hit| hit.path.to_lowercase().contains(&needle))
-            .cloned()
-            .collect()
+        let hits = if needle.is_empty() {
+            self.entries.iter().take(5).cloned().collect()
+        } else {
+            self.entries
+                .iter()
+                .filter(|hit| hit.path.to_lowercase().contains(&needle))
+                .cloned()
+                .collect()
+        };
+        let _ = cx;
+        gpui_kit::Task::ready(hits)
     }
 }

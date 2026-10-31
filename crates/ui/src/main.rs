@@ -21,6 +21,7 @@
 //! 它的 util::atomic（原子写盘）。
 
 mod chat;
+mod engine;
 mod i18n;
 mod prefs;
 // token 表全量照抄 theme.md（其 §11「照抄单」），消费方从阶段 2.C 起逐批
@@ -191,16 +192,23 @@ fn open_main_window(cx: &mut App) -> WindowHandle<Root> {
                     })
                     .detach();
                 theme::sync_system_appearance(Some(window), cx);
-                // 关窗即退出（阶段 4.6 接管退出确认前的默认行为）：
-                // 先强写几何（防抖窗口内的最后几何此时必须落盘）再退进程
+                // 关窗收尾：先取消进行中 run（优雅收尾——退出拦截本身
+                // 阶段 4.6 接管），再强写几何、退进程
                 window.on_window_should_close(cx, |_window, cx| {
+                    // clone 结束 try_global 对 cx 的借用，才能把 cx 以
+                    // &mut 交给 service.update（activate_or_reopen 同款）
+                    if let Some(service) = cx.try_global::<chat::EngineService>().map(|s| s.0.clone()) {
+                        service.update(cx, |service, cx| service.shutdown(cx));
+                    }
                     window_state::flush(cx);
                     cx.quit();
                     true
                 });
-                // 中栏对话流装配（假数据历史 + composer + 输入事件订阅，
-                // 都需要 window —— 必须在窗口构造闭包里做）
-                let chat = chat::install(window, cx);
+                // 中栏对话流装配（composer + 输入事件订阅 + 真通道服务，
+                // 都需要 window —— 必须在窗口构造闭包里做；引擎桥已在
+                // main 装配，服务实体在此处创建并挂 Global）
+                let engine = crate::engine::bridge(cx);
+                let chat_entity = chat::install(window, cx, engine.as_ref());
                 // 根视图；几何记忆（观察 bounds + 防抖落盘）挂在它的构造
                 // Context 上，再包 base Root（浮层挂载点 + rem 同步插件）
                 let view = cx.new(|cx| {
@@ -208,7 +216,7 @@ fn open_main_window(cx: &mut App) -> WindowHandle<Root> {
                     MainWindowView {
                         // 从 0 起步：首帧 changed 必真，灯位按当前档对齐一次
                         zoom_seen: 0.0,
-                        chat,
+                        chat: chat_entity,
                     }
                 });
                 cx.new(|cx| Root::new(view, window, cx))
@@ -384,6 +392,11 @@ fn main() {
         ui_zoom::init(cx);
         theme::apply(cx);
         ui_zoom::register(cx);
+
+        // 引擎桥（阶段 2.C-2b）：常驻 tokio 运行时 + AppState 装配
+        // （~/.craftwave）。会话服务实体随主窗构造（chat::install）创建，
+        // 这里先把引擎侧就位。
+        engine::install(cx);
 
         // 应用退出统一收口：退出前强写主窗几何（节流写盘可能还没触发；
         // Dock 退出、注销关机都走这里，不只 ⌘Q）

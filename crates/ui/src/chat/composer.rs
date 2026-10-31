@@ -1,4 +1,5 @@
-//! Composer（gpui-rewrite 2.10）：多行输入 + Enter 发送 + @ 补全 + 图片附件。
+//! Composer（gpui-rewrite 2.10 + 2.C-2b 真通道）：多行输入 + Enter 发送 +
+//! @ 补全（异步真源）+ 图片附件 + 运行中停止钮。
 //!
 //! ## 组件面（spike 04 号票踩平的用法直接沿用）
 //!
@@ -8,43 +9,55 @@
 //! - `set_value` 需要 `&mut Window`：输入事件订阅用 `cx.subscribe_in`
 //!   五参闭包（事件回调拿得到 window）——装配在 mod.rs 的 install 里。
 //!
-//! ## @ 补全（at-refs 平移的接口面）
+//! ## @ 补全（at-refs 平移 + 2.C-2b 异步真源）
 //!
 //! 输入 `@` 触发文件路径补全：光标前最近一个 `@` 到光标之间无空白即视为
-//! 查询词。真数据源是 engine `api/workspace.rs::search_workspace_paths`
-//! （需要 AppState 装配链，2.C-2 / 集成周接通），本批经
-//! [`CompletionSource`] trait 用假数据 stub（fixture::FakeCompletionSource）。
+//! 查询词。数据源经 [`CompletionSource`] 注入：生产 =
+//! `service::EngineCompletionSource`（engine `search_workspace_paths` 跑
+//! 后台线程池）；测试 = fixture 假源（同步快返回，同一 trait 面）。
 //!
-//! 弹层交互本批：点击条目插入 / Enter 接受高亮项；键盘上下导航与 Escape
-//! 关闭随 2.C-2 的键位面一起接（本批 up/down 键还归输入框光标移动）。
+//! 结果绑**查询词**对账（异步拒绝过期）：发起时记住查询词，回写时查询词
+//! 已变（用户继续输入触发了更新的查询 / 弹层已关）即丢弃。查询任务的
+//! 句柄存 owner（[`ComposerState::completion_task`]），新一轮查询即
+//! drop 旧任务。
+//!
+//! 弹层交互：点击条目插入 / Enter 接受高亮项；键盘上下导航与 Escape
+//! 关闭随键位面切片再接（本批 up/down 键还归输入框光标移动）。
 //!
 //! ## 附件（队列类型用 engine 的 QueuedImageAttachment）
 //!
-//! 附件按钮本批入队的是演示占位（真按钮走文件选择器 + `attach_image`
-//! 落盘拿 blobHash，2.C-2 接线）；发送时附件展开为 WirePart::Image 并清空。
+//! 附件按钮本批入队的仍是演示占位（文件选择器阶段 4 接 rfd；真落盘
+//! 通道 `SessionService::attach_image_from_path` 已链通，由测试驱动）；
+//! 发送时附件展开为 WirePart::Image 并清空。
+//!
+//! ## 发送与停止（2.C-2b）
+//!
+//! `take_outgoing` 只产出（正文 + 附件）交回调用方——真通道由
+//! mod.rs 的分流交给 [`super::service::SessionService`]（会话创建 /
+//! 落盘 / start_chat 都在服务侧）；无服务的装配（测试装置）走回声。
+//! 运行中（`busy`，由会话侧推送）显示停止钮，点击经取消目标
+//! （服务弱引用）调 `cancel_run`——引擎补发终态帧，节流循环自然收口。
 
 use std::rc::Rc;
 
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
 use gpui_kit::prelude::*;
-use gpui_kit::{Entity, Window, div, px};
+use gpui_kit::{App, Entity, Task, WeakEntity, Window, div, px};
 
 use craftwave_engine::api::workspace::WorkspacePathHit;
 use craftwave_engine::followup::QueuedImageAttachment;
-use craftwave_engine::storage::{MessageEntry, MessageRole, WirePart};
-use craftwave_engine::util::ids::new_uuid;
-use craftwave_engine::storage;
 
 use crate::i18n::t;
 use crate::theme::{self, ActiveCraftwave as _};
 
+use super::service::SessionService;
 
-/// @ 补全数据源接口：查询词 → 命中条目（engine `WorkspacePathHit`）。
-/// 2.C-2 的真实现包一层 `search_workspace_paths`（同步调用，预算 P95<300ms；
-/// 若届时要异步化，把返回改成 Task 再平移调用点）。
+/// @ 补全数据源接口：查询词 → 命中条目任务（engine `WorkspacePathHit`）。
+/// 真实现（engine 搜索）跑后台线程池，假实现（fixture）同步快返回——
+/// composer 只消费 Task，两种来源同一条回写路径。
 pub trait CompletionSource {
-    fn search(&self, query: &str) -> Vec<WorkspacePathHit>;
+    fn search(&self, query: &str, cx: &mut App) -> Task<Vec<WorkspacePathHit>>;
 }
 
 /// 打开的补全弹层状态（None = 关闭）。
@@ -53,16 +66,14 @@ pub struct Completion {
     pub at_ix: usize,
     /// 触发时的光标位置（查询词右界；接受时替换到这里的旧文）。
     pub cursor: usize,
-    /// 当前查询词。
-    pub query: String,
     /// 候选条目。
     pub candidates: Vec<WorkspacePathHit>,
-    /// 高亮项下标（键盘导航 2.C-2 接；本批 Enter 接受它）。
+    /// 高亮项下标（键盘导航随键位面接；本批 Enter 接受它）。
     pub selected: usize,
 }
 
-/// Composer 状态：输入框 + 附件队列 + @ 补全。发送链（会话追加 /
-/// 2.C-2 的 start_chat）在 mod.rs 的订阅回调层完成——composer 只负责
+/// Composer 状态：输入框 + 附件队列 + @ 补全（异步）+ 运行停止钮。
+/// 发送链在 mod.rs 的订阅回调层分流（真服务 / 回声）——composer 只负责
 /// 产出输入面数据（见 `take_outgoing` 的注释）。
 pub struct ComposerState {
     /// 多行输入框（TextareaState 实体；渲染走 `Textarea::new`）。
@@ -71,8 +82,16 @@ pub struct ComposerState {
     attachments: Vec<QueuedImageAttachment>,
     /// 打开的补全弹层（None = 关闭）。
     completion: Option<Completion>,
-    /// @ 补全数据源（本批假 stub，2.C-2 换 engine 搜索）。
+    /// @ 补全数据源（生产 = engine 异步搜索；测试 = fixture 假源）。
     source: Rc<dyn CompletionSource>,
+    /// 在途补全查询的任务句柄（存 owner：新一轮查询 drop 旧任务即取消）。
+    completion_task: Option<Task<()>>,
+    /// 在途查询的查询词（结果对账基准：回写时已变即过期丢弃）。
+    completion_query: Option<String>,
+    /// 有进行中的 run（停止钮显示面；由会话侧经 [`Self::set_busy`] 推送）。
+    busy: bool,
+    /// 取消目标（服务弱引用；停止钮点击时升级调用 `cancel_run`）。
+    cancel_target: Option<WeakEntity<SessionService>>,
 }
 
 impl ComposerState {
@@ -94,6 +113,10 @@ impl ComposerState {
             attachments: Vec::new(),
             completion: None,
             source,
+            completion_task: None,
+            completion_query: None,
+            busy: false,
+            cancel_target: None,
         }
     }
 
@@ -120,45 +143,58 @@ impl ComposerState {
     }
 
     // ==================================================================
-    // 发送（本批回声式：用户消息直接追加进会话；真 start_chat 在 2.C-2）
+    // 发送（产出待发数据；真通道 = SessionService，回声 = mod.rs 分流）
     // ==================================================================
 
-    /// 取出待发消息：正文 + 附件 → 一条 User `MessageEntry`，同时清空
-    /// 输入与附件队列。空白输入返回 None（不空发）。
+    /// 取出待发消息：正文 + 附件二元组，同时清空输入与附件队列。
+    /// 空白输入返回 None（不空发）。
     ///
-    /// 为什么不在这里追加进会话：Enter 事件走会话实体的订阅回调，回调期间
-    /// 会话实体正在被 update——gpui 禁止嵌套 update 同一实体。所以本方法
-    /// 只产出消息，追加由 mod.rs 的回调在会话自己的 Context 里完成
-    /// （会话的 splice 重排与 notify 都落在它的 Context 上，语义完整）。
-    pub fn take_outgoing(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<Rc<MessageEntry>> {
+    /// 为什么不在这里追加进会话 / 调服务：Enter 事件走会话实体的订阅
+    /// 回调，回调期间会话实体正在被 update——gpui 禁止嵌套 update 同一
+    /// 实体，而服务的发送链要回写会话（apply_snapshot）。所以本方法只
+    /// 产出数据；真通道的调用由 mod.rs 用 `App::defer` 推迟到本轮
+    /// update 结束后（见 mod.rs 分流注释）。
+    pub fn take_outgoing(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<(String, Vec<QueuedImageAttachment>)> {
         let text = self.input.read(cx).value().trim().to_owned();
         if text.is_empty() {
             return None;
         }
-        // 正文在前，附件随其后展开为 Image part（wire 契约：blobHash + mime）
-        let mut parts = vec![WirePart::Text { text }];
-        for attachment in &self.attachments {
-            parts.push(WirePart::Image {
-                blob_hash: attachment.blob_hash.clone(),
-                mime_type: attachment.mime_type.clone(),
-            });
-        }
-        let entry = Rc::new(MessageEntry {
-            id: new_uuid(),
-            // parent_id / 树挂接随 2.C-2 的 start_chat 装配链补上（回声式
-            // 消息只进渲染流，不落盘、不挂树）
-            parent_id: None,
-            role: MessageRole::User,
-            parts,
-            created_at: storage::trust::now_ms(),
-            run_id: None,
-            status: None,
-        });
-        self.attachments.clear();
+        let attachments = std::mem::take(&mut self.attachments);
         self.completion = None;
-        self.input.update(cx, |state, cx| state.set_value("", window, cx));
+        self.completion_task = None;
+        self.completion_query = None;
+        self.input
+            .update(cx, |state, cx| state.set_value("", window, cx));
         cx.notify();
-        Some(entry)
+        Some((text, attachments))
+    }
+
+    // ==================================================================
+    // 运行停止（2.C-2b：busy 由会话侧推送；点击桥到服务 cancel_run）
+    // ==================================================================
+
+    /// 推送运行状态（会话实体在发送 / 收口时调用）：busy 变化才 notify，
+    /// 同值的重复推送零成本。
+    pub(crate) fn set_busy(&mut self, busy: bool, cx: &mut Context<Self>) {
+        if self.busy != busy {
+            self.busy = busy;
+            cx.notify();
+        }
+    }
+
+    /// 注入取消目标（install 装配时调用；服务在 Global，寿命覆盖全部
+    /// composer，这里只存弱引用防止反向持有）。
+    pub(crate) fn set_cancel_target(
+        &mut self,
+        target: WeakEntity<SessionService>,
+        cx: &mut Context<Self>,
+    ) {
+        self.cancel_target = Some(target);
+        cx.notify();
     }
 
     // ==================================================================
@@ -197,16 +233,23 @@ impl ComposerState {
     // @ 补全
     // ==================================================================
 
-    /// 输入变化后刷新补全弹层：光标前有活 `@` 词 → 查询并开层（候选为空
-    /// 不开）；`@` 词消失 → 关层。
+    /// 输入变化后刷新补全弹层：光标前有活 `@` 词 → 发起异步查询（结果
+    /// 回写时开层，候选为空不开）；`@` 词消失 → 关层。
+    ///
+    /// 异步对账：查询任务句柄存 owner（新一轮查询 drop 旧任务），结果
+    /// 回写以查询词为基准（[`Self::apply_completion_results`]）——用户
+    /// 继续输入后旧结果过期，直接丢弃。
     pub fn refresh_completion(&mut self, cx: &mut Context<Self>) {
         let value = self.input.read(cx).value().to_string();
         let cursor = self.input.read(cx).selected_range().end;
         match at_query(&value, cursor) {
             Some((at_ix, query)) => {
-                // 查询词没变就不重查（光标在词内移动不闪烁弹层）
-                let query_unchanged =
-                    self.completion.as_ref().is_some_and(|c| c.query == query);
+                // 查询词没变就不重查（光标在词内移动不闪烁弹层），
+                // 只更新替换锚点
+                let query_unchanged = self
+                    .completion_query
+                    .as_deref()
+                    .is_some_and(|inflight| inflight == query);
                 if query_unchanged {
                     if let Some(completion) = self.completion.as_mut() {
                         completion.at_ix = at_ix;
@@ -214,22 +257,62 @@ impl ComposerState {
                     }
                     return;
                 }
-                let candidates = self.source.search(query);
-                self.completion = (!candidates.is_empty()).then(|| Completion {
-                    at_ix,
-                    cursor,
-                    query: query.to_owned(),
-                    candidates,
-                    selected: 0,
-                });
+                // 发起查询：任务句柄存 owner（旧任务 drop 即取消），查询
+                // 词记为对账基准；弹层先保持现状（旧候选继续显示，避免
+                // 逐字符打字时整层闪烁），结果回写时统一替换
+                let query = query.to_owned();
+                let task = self.source.search(&query, cx);
+                self.completion_query = Some(query.clone());
+                self.completion_task = Some(cx.spawn(async move |this, cx| {
+                    let hits = task.await;
+                    let _ = this.update(cx, |composer, cx| {
+                        composer.apply_completion_results(&query, at_ix, cursor, hits, cx);
+                    });
+                }));
                 cx.notify();
             }
             None => {
+                // @ 词消失：关层 + 作废在途查询
+                self.completion_task = None;
+                self.completion_query = None;
                 if self.completion.take().is_some() {
                     cx.notify();
                 }
             }
         }
+    }
+
+    /// 补全结果回写（查询任务完成时）：查询词仍是发起时那一个才采纳
+    /// （过期丢弃——用户已继续输入触发了更新的查询），且当时触发查询的
+    /// 光标处仍能扫出同一个 @ 词（词被编辑掉的场景丢弃）。候选为空不开层。
+    fn apply_completion_results(
+        &mut self,
+        query: &str,
+        at_ix: usize,
+        cursor: usize,
+        hits: Vec<WorkspacePathHit>,
+        cx: &mut Context<Self>,
+    ) {
+        let inflight_matches = self
+            .completion_query
+            .as_deref()
+            .is_some_and(|inflight| inflight == query);
+        if !inflight_matches {
+            return;
+        }
+        self.completion_task = None;
+        if !hits.is_empty() {
+            self.completion = Some(Completion {
+                at_ix,
+                cursor,
+                candidates: hits,
+                selected: 0,
+            });
+        } else {
+            self.completion = None;
+            self.completion_query = None;
+        }
+        cx.notify();
     }
 
     /// 接受一条候选：把 `@查询词` 替换为 `@完整路径 `（尾随空格方便续打）。
@@ -395,7 +478,35 @@ impl Render for ComposerState {
                             .bordered(false)
                             .flex_1(),
                     )
-                    // 附件按钮：＋（真文件选择器通道 2.C-2 接，本批入演示占位）
+                    // 停止钮：仅运行中渲染（■ 危险色）。点击桥到服务
+                    // cancel_run——引擎置位取消令牌后补发终态帧，节流循环
+                    // 自然收口（busy 由会话侧推送复位）
+                    .when(self.busy, |composer| {
+                        composer.child(
+                            div()
+                                .id("stop-button")
+                                .cursor_pointer()
+                                .flex_shrink_0()
+                                .px(px(theme::SPACE_2))
+                                .py(px(theme::SPACE_1))
+                                .rounded(px(theme::rounded_md(zoom)))
+                                .text_size(px(theme::font_size(
+                                    theme::FONT_UI_CAPTION,
+                                    zoom,
+                                )))
+                                .text_color(theme.danger)
+                                .debug_selector(|| "stop-button".to_owned())
+                                .on_click(cx.listener(|this: &mut Self, _, _, cx| {
+                                    if let Some(service) = &this.cancel_target {
+                                        let _ =
+                                            service.update(cx, |service, cx| service.cancel(cx));
+                                    }
+                                }))
+                                .child(t("Stop")),
+                        )
+                    })
+                    // 附件按钮：＋（真文件选择器通道阶段 4 接 rfd，本批入
+                    // 演示占位；真落盘通道由测试驱动验证）
                     .child(
                         div()
                             .id("attach-button")

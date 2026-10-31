@@ -301,6 +301,39 @@ pub async fn start_chat(
     .await
 }
 
+/// 壳外集成测试接缝（feature = "test-utils" 才编译）：start_chat 的
+/// 解析器注入形态。生产入口 [`start_chat`] 固定走 `dialect_resolver`；
+/// GPUI 壳的 `#[gpui_kit::test]` 集成测试经本入口注入 rig 剧本假模型
+/// （与 engine 自身 `run_test.rs` 消费的是同一装配接缝
+/// `assemble::start_chat_assembled`，装配逻辑零改动），不起真实 provider。
+///
+/// 解析器与解析产物类型一并 re-export（`model` 模块本身保持
+/// `pub(crate)`——壳外只需要这几个名字）。
+#[cfg(feature = "test-utils")]
+pub use model::{ModelResolver, ResolvedModel, RunTransport, RunWire};
+
+#[cfg(feature = "test-utils")]
+pub async fn start_chat_test<W: model::RunWire, T: model::RunTransport<W>>(
+    app: &AppState,
+    runs: &RunManager,
+    args: StartChatArgs,
+    sink: Box<dyn SequencedSink>,
+    auto_confirm: bool,
+    resolve: ModelResolver<W, T>,
+) -> Result<StartChatResult, IpcError> {
+    assemble::start_chat_assembled(
+        app,
+        runs,
+        args.session_id,
+        args.messages,
+        args.run_config,
+        sink,
+        auto_confirm,
+        resolve,
+    )
+    .await
+}
+
 /// 取消会话活跃 run（旧命令 `cancel_run`）：取消令牌置位即返回，
 /// 真正的收尾由 run 任务自己完成（补发取消终态帧）。
 /// 返回是否有活跃 run 被置位（false = 无活跃 run，幂等）。
