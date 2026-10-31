@@ -80,10 +80,21 @@ fn as_message(arc: &std::sync::Arc<Message>) -> &Message {
     arc.as_ref()
 }
 
-/// 断言末条 user 消息作为 prompt，其余重建为 history（工具结果拆成一条
-/// 独立的 user 消息）。
+/// 提取 system 消息文本（断言辅助；非 system 即 panic）。
+fn system_text(msg: &Message) -> String {
+    let Message::System { content } = msg else {
+        panic!("应为 system 消息");
+    };
+    content.clone()
+}
+
+/// 断言 prompt 与 history 切分及非法形态拒绝：末条 user 消息作为 prompt、
+/// 其余重建为 history（工具结果拆成一条独立 user 消息）；runMarker/
+/// planSnapshot 两类 part 被跳过（不产出消息）；悬空 toolResult（无配对
+/// toolCall）、空序列、末条非 user 各以明确错误拒绝。
 #[test]
-fn last_user_as_prompt_rest_history() {
+fn split_prompt_shape_and_rejection_cases() {
+    // 正常切分：u1 + (a1 的 assistant) + (a1 拆出的工具结果 user) = 3 条
     let entries = vec![
         user("u1", "第一条"),
         assistant_with_tool_round("a1", "call_1", "read"),
@@ -91,7 +102,6 @@ fn last_user_as_prompt_rest_history() {
     ];
     let (history, prompt) = split_prompt(&entries).unwrap();
     assert_eq!(user_text(&prompt), "再来一条");
-    // history：u1 + (a1 的 assistant) + (a1 拆出的工具结果 user) = 3 条
     assert_eq!(history.len(), 3);
     assert_eq!(user_text(as_message(&history[0])), "第一条");
     assert!(matches!(as_message(&history[1]), Message::Assistant(_)));
@@ -99,89 +109,8 @@ fn last_user_as_prompt_rest_history() {
         panic!("工具结果应为 user 消息");
     };
     assert_eq!(content.len(), 1, "toolResult 合并为一条 user 消息");
-}
 
-/// 断言工具结果按调用 id 配对出工具名，ok 标志映射为 is_error 取反，
-/// 摘要作为文本内容。
-#[test]
-fn tool_results_pair_by_call_id_and_error_mapping() {
-    let entry = assistant_with_tool_round("a1", "call_9", "grep");
-    let stream = rebuild_message_stream(&[entry]).unwrap();
-    assert_eq!(stream.len(), 2, "assistant + 工具结果 user");
-    let Message::User { content } = as_message(stream.last().unwrap()) else {
-        panic!("应有工具结果消息");
-    };
-    let UserContent::ToolResult(result) = &content[0] else {
-        panic!("应为 ToolResult content");
-    };
-    assert_eq!(result.call.to_string(), "call_9");
-    assert_eq!(result.name.to_string(), "grep");
-    assert!(!result.is_error, "ok=true → is_error=false");
-    match &result.content[0] {
-        ToolResultContent::Text(t) => assert_eq!(t.text, "文件共 3 行"),
-        other => panic!("应为文本工具结果：{other:?}"),
-    }
-}
-
-/// 断言失败的工具结果（ok=false）映射为 is_error=true。
-#[test]
-fn failed_tool_result_is_error_true() {
-    let mut entry = assistant_with_tool_round("a1", "call_1", "read");
-    entry.parts[3] = WirePart::ToolResult {
-        call_id: "call_1".to_owned(),
-        ok: false,
-        summary: "E_INVALID_ARG: 参数错".to_owned(),
-    };
-    let stream = rebuild_message_stream(&[entry]).unwrap();
-    let Message::User { content } = as_message(stream.last().unwrap()) else {
-        panic!("应有工具结果消息");
-    };
-    let UserContent::ToolResult(result) = &content[0] else {
-        panic!("应为 ToolResult content");
-    };
-    assert!(result.is_error);
-}
-
-/// 断言悬空的 toolResult（同条目内没有配对的 toolCall）被拒绝。
-#[test]
-fn tool_result_without_paired_call_rejected() {
-    let entry = MessageEntry {
-        id: "a1".to_owned(),
-        parent_id: None,
-        role: MessageRole::Assistant,
-        parts: vec![WirePart::ToolResult {
-            call_id: "call_x".to_owned(),
-            ok: true,
-            summary: "悬空结果".to_owned(),
-        }],
-        created_at: 1,
-        run_id: None,
-        status: None,
-    };
-    let entries = vec![user("u1", "hi"), entry, user("u2", "再问")];
-    assert_eq!(
-        split_prompt(&entries),
-        Err(WireError(
-            "消息 a1 的 toolResult call_x 缺配对的 toolCall".to_owned()
-        ))
-    );
-}
-
-/// 断言空序列与末条不是 user 的序列都被拒绝。
-#[test]
-fn empty_sequence_or_non_user_tail_rejected() {
-    assert_eq!(
-        split_prompt(&[]),
-        Err(WireError("start_chat 消息序列为空".to_owned()))
-    );
-    let assistant_only = vec![assistant_with_tool_round("a1", "call_1", "read")];
-    assert!(matches!(split_prompt(&assistant_only), Err(WireError(_))));
-}
-
-/// 断言 runMarker 与 planSnapshot 两类 part 被跳过（不产出消息、不影响
-/// 其余内容）。
-#[test]
-fn run_marker_and_plan_snapshot_skipped() {
+    // runMarker / planSnapshot 跳过：不产消息、其余内容不受影响
     let entry = MessageEntry {
         id: "a1".to_owned(),
         parent_id: None,
@@ -208,55 +137,71 @@ fn run_marker_and_plan_snapshot_skipped() {
         panic!("应为 assistant");
     };
     assert_eq!(m.content.len(), 1, "只余 text part");
-}
 
-/// 提取 system 消息文本（断言辅助；非 system 即 panic）。
-fn system_text(msg: &Message) -> String {
-    let Message::System { content } = msg else {
-        panic!("应为 system 消息");
+    // 悬空 toolResult：显式拒绝
+    let dangling = MessageEntry {
+        id: "a1".to_owned(),
+        parent_id: None,
+        role: MessageRole::Assistant,
+        parts: vec![WirePart::ToolResult {
+            call_id: "call_x".to_owned(),
+            ok: true,
+            summary: "悬空结果".to_owned(),
+        }],
+        created_at: 1,
+        run_id: None,
+        status: None,
     };
-    content.clone()
+    let entries = vec![user("u1", "hi"), dangling, user("u2", "再问")];
+    assert_eq!(
+        split_prompt(&entries),
+        Err(WireError(
+            "消息 a1 的 toolResult call_x 缺配对的 toolCall".to_owned()
+        ))
+    );
+    // 空序列与末条非 user：拒绝
+    assert_eq!(
+        split_prompt(&[]),
+        Err(WireError("start_chat 消息序列为空".to_owned()))
+    );
+    let assistant_only = vec![assistant_with_tool_round("a1", "call_1", "read")];
+    assert!(
+        matches!(split_prompt(&assistant_only), Err(WireError(_))),
+        "末条非 user 应拒绝"
+    );
 }
 
-/// 有 customPrompt：注入为 history 首条 system 消息（§6.2 次序首位），其余
-/// 消息原序后移——模拟 start_chat 的 wire 出口调用形态。
+/// 断言工具结果按调用 id 配对出工具名、ok 标志映射为 is_error 取反、摘要
+/// 作为文本内容；失败结果（ok=false）映射 is_error=true。
 #[test]
-fn custom_prompt_injected_as_first_system_message() {
-    let entries = vec![user("u1", "第一条"), user("u2", "第二条")];
-    let (history, prompt) = split_prompt(&entries).unwrap();
-    assert_eq!(history.len(), 1, "前置：无注入时 history 只有 u1");
-
-    let injected = with_system_prefix(history, Some("始终用中文回复"));
-    assert_eq!(injected.len(), 2, "注入后首条 system + 原 history");
-    assert_eq!(system_text(as_message(&injected[0])), "始终用中文回复");
-    assert_eq!(user_text(as_message(&injected[1])), "第一条");
-    // prompt 不受注入影响
-    assert_eq!(user_text(&prompt), "第二条");
-}
-
-/// 无/空白 customPrompt：零注入（history 原样返回，不产生空 system 消息）。
-#[test]
-fn empty_or_missing_custom_prompt_injects_nothing() {
-    let entries = vec![user("u1", "第一条"), user("u2", "第二条")];
-    let (history, _) = split_prompt(&entries).unwrap();
-    let baseline_len = history.len();
-
-    for prefix in [None, Some(""), Some("   \n\t ")] {
-        let kept = with_system_prefix(history.clone(), prefix);
-        assert_eq!(kept.len(), baseline_len, "前缀 {prefix:?} 应零注入");
-        assert!(
-            !matches!(as_message(&kept[0]), Message::System { .. }),
-            "前缀 {prefix:?} 首条不应是 system"
-        );
+fn tool_result_pairing_and_error_mapping_cases() {
+    // (ok, 期望 is_error)
+    for (ok_flag, summary, want_error) in [
+        (true, "文件共 3 行", false),
+        (false, "E_INVALID_ARG: 参数错", true),
+    ] {
+        let mut entry = assistant_with_tool_round("a1", "call_9", "grep");
+        entry.parts[3] = WirePart::ToolResult {
+            call_id: "call_9".to_owned(),
+            ok: ok_flag,
+            summary: summary.to_owned(),
+        };
+        let stream = rebuild_message_stream(&[entry]).unwrap();
+        assert_eq!(stream.len(), 2, "assistant + 工具结果 user");
+        let Message::User { content } = as_message(stream.last().unwrap()) else {
+            panic!("应有工具结果消息");
+        };
+        let UserContent::ToolResult(result) = &content[0] else {
+            panic!("应为 ToolResult content");
+        };
+        assert_eq!(result.call.to_string(), "call_9", "调用 id 配对");
+        assert_eq!(result.name.to_string(), "grep", "按调用 id 配对出工具名");
+        assert_eq!(result.is_error, want_error, "ok={ok_flag} → is_error 取反");
+        match &result.content[0] {
+            ToolResultContent::Text(t) => assert_eq!(t.text, summary, "摘要作为文本内容"),
+            other => panic!("应为文本工具结果：{other:?}"),
+        }
     }
-}
-
-/// 注入的空白归一：带首尾空白的前缀按 trim 后注入（与 AppConfig.normalize
-/// 的归一口径双保险，防绕过配置入口的调用方带入空白前缀）。
-#[test]
-fn custom_prompt_is_trimmed_before_injection() {
-    let injected = with_system_prefix(Vec::new(), Some("  保持简洁  "));
-    assert_eq!(system_text(as_message(&injected[0])), "保持简洁");
 }
 
 // ---- 压缩边界重建（§6.2【M2】，04 号票）----
@@ -272,10 +217,12 @@ fn compact_sample() -> Vec<MessageEntry> {
     ]
 }
 
-/// 断言：cutEntryId（含）之前跳过、之后正常展开（工具配对完整）、prompt
-/// 保留、摘要作为第三返回值交注入层。
+/// 断言压缩边界重建：cutEntryId（含）之前跳过、之后正常展开（工具配对
+/// 完整）、prompt 保留、摘要作为第三返回值交注入层；无边界全量展开；边界
+/// 锚点不在活动路径上 → 显式拒绝（不静默全量展开——未经摘要的历史不得被
+/// 静默裁掉的镜像不变量：不确定时不裁）。
 #[test]
-fn boundary_skips_before_cut_and_expands_after() {
+fn compaction_boundary_cases() {
     let entries = compact_sample();
     let boundary = CompactionBoundary {
         cut_entry_id: "u1".to_owned(),
@@ -286,57 +233,33 @@ fn boundary_skips_before_cut_and_expands_after() {
     assert_eq!(history.len(), 2, "裁剪后 history：{history:?}");
     assert!(matches!(as_message(&history[0]), Message::Assistant(_)));
     assert!(matches!(as_message(&history[1]), Message::User { .. }));
-    // 工具配对完整：a1 的 toolResult 以 user 工具结果消息展开
     if let Message::User { content } = as_message(&history[1]) {
-        assert!(matches!(content.first(), Some(UserContent::ToolResult(_))));
+        assert!(
+            matches!(content.first(), Some(UserContent::ToolResult(_))),
+            "工具配对完整展开"
+        );
     } else {
         panic!("第二条应为工具结果 user 消息");
     }
-    // prompt = 本次输入，不受边界影响
-    assert_eq!(user_text(as_message(&prompt)), "本次输入");
+    assert_eq!(
+        user_text(as_message(&prompt)),
+        "本次输入",
+        "prompt 不受边界影响"
+    );
     assert_eq!(summary.as_deref(), Some("早期内容摘要"));
 
     // 无边界：全量展开（u1 + a1 的 assistant + 工具结果）
     let (full_history, _, summary) = split_prompt_with_boundary(&entries, None).unwrap();
     assert_eq!(full_history.len(), 3);
     assert!(summary.is_none(), "无边界无摘要层");
-}
 
-/// 断言：边界锚点不在活动路径上 → 显式拒绝（不静默全量展开——未经摘要的
-/// 历史不得被静默裁掉的镜像不变量：不确定时不裁）。
-#[test]
-fn missing_cut_anchor_is_rejected_not_silently_expanded() {
-    let entries = compact_sample();
+    // 锚点缺失：显式拒绝
     let boundary = CompactionBoundary {
         cut_entry_id: "不存在".to_owned(),
         summary: "x".to_owned(),
     };
     let err = split_prompt_with_boundary(&entries, Some(&boundary)).unwrap_err();
     assert!(err.0.contains("压缩边界锚点"), "错误面：{err}");
-}
-
-/// 断言：多层前缀层叠次序（§6.2 定稿）——customPrompt 在最前、压缩 summary
-/// 紧随其后；空层零注入。
-#[test]
-fn layered_prefix_orders_custom_prompt_then_summary() {
-    let entries = compact_sample();
-    let (history, _, _) = split_prompt_with_boundary(
-        &entries,
-        Some(&CompactionBoundary {
-            cut_entry_id: "u1".to_owned(),
-            summary: "摘要层".to_owned(),
-        }),
-    )
-    .unwrap();
-    let layered = with_system_prefix_layers(history, [Some("自定义提示"), Some("摘要层")]);
-    assert_eq!(system_text(as_message(&layered[0])), "自定义提示");
-    assert_eq!(system_text(as_message(&layered[1])), "摘要层");
-    assert!(matches!(as_message(&layered[2]), Message::Assistant(_)));
-
-    // 空层零注入：customPrompt 未配置 + 无压缩边界 → 原样
-    let (plain, _, _) = split_prompt_with_boundary(&entries, None).unwrap();
-    let untouched = with_system_prefix_layers(plain, [None, None]);
-    assert!(!matches!(as_message(&untouched[0]), Message::System { .. }));
 }
 
 // ---- image part 双形态重建（§6.2，17 号票）----
@@ -381,10 +304,15 @@ fn image_part() -> WirePart {
     }
 }
 
-/// vision 模型：prompt 中的 image part 映射为多模态 content 块（base64 嵌入
-/// + MIME 类型），文本 part 顺序保留。
+/// 断言 image part 双形态重建与降级各面（Q30）：vision 模型 prompt 中
+/// image 映射为多模态 content 块（base64 嵌入 + MIME）；非 vision 模型
+/// **历史**中的 image 降级为明确占位文本；**本次新附图**按参数错误拒绝
+/// （不能由前端把新图标成历史绕过检查）；blob 缺失降级为占位文本不拒绝
+/// （诚实降级）；旧调用面对 image part 仍按参数错误拒绝；visioned 重建流
+/// 中 assistant 侧 image part 照 runMarker 同类跳过（M2 无图片生成）。
 #[test]
-fn vision_prompt_maps_image_to_multimodal_block() {
+fn vision_image_part_cases() {
+    // ① vision：prompt 中 image 映射多模态块，文本 part 顺序保留
     let entries = vec![user_parts(
         "u1",
         vec![
@@ -419,16 +347,12 @@ fn vision_prompt_maps_image_to_multimodal_block() {
             .map(rig::message::MimeType::to_mime_type),
         Some("image/png")
     );
-}
 
-/// 非 vision 模型：**历史**中的 image part 降级为明确占位文本（§6.2 逐字
-/// 格式），纯文字继续（Q30）。
-#[test]
-fn non_vision_history_image_degrades_to_placeholder() {
-    let history_img = user_parts("u1", vec![image_part()]);
-    let prompt = user("u2", "改用文字描述一下");
-    let entries = vec![history_img, prompt];
-    let blobs = blobs_one();
+    // ② 非 vision：历史中的 image 降级为占位文本
+    let entries = vec![
+        user_parts("u1", vec![image_part()]),
+        user("u2", "改用文字描述一下"),
+    ];
     let policy = VisionPolicy {
         vision: false,
         blobs: &blobs,
@@ -439,12 +363,8 @@ fn non_vision_history_image_degrades_to_placeholder() {
         user_text(as_message(&history[0])),
         image_placeholder(&"a".repeat(32))
     );
-}
 
-/// 非 vision 模型：**本次新附图**（prompt 中的 image part）按参数错误拒绝
-/// （Q30：新输入与持久历史后端区分，不能由前端把新图标成历史绕过检查）。
-#[test]
-fn non_vision_new_image_rejected() {
+    // ③ 非 vision：本次新附图按参数错误拒绝（Q30）
     let entries = vec![user_parts(
         "u1",
         vec![
@@ -454,23 +374,14 @@ fn non_vision_new_image_rejected() {
             image_part(),
         ],
     )];
-    let blobs = blobs_one();
-    let policy = VisionPolicy {
-        vision: false,
-        blobs: &blobs,
-    };
     let err = split_prompt_visioned(&entries, None, &policy).unwrap_err();
     assert!(
         err.0.contains("不支持图片输入"),
         "错误应说明 vision 限制：{}",
         err.0
     );
-}
 
-/// vision 模型但 blob 缺失（会话 blob 目录被清等）：降级为占位文本，
-/// 不拒绝请求（诚实降级，不静默丢上下文线索）。
-#[test]
-fn vision_with_missing_blob_degrades_to_placeholder() {
+    // ④ vision 但 blob 缺失：降级为占位文本，不拒绝请求
     let entries = vec![user_parts("u1", vec![image_part()])];
     let empty: ImageBlobMap = HashMap::new();
     let policy = VisionPolicy {
@@ -479,23 +390,17 @@ fn vision_with_missing_blob_degrades_to_placeholder() {
     };
     let (_, prompt, _) = split_prompt_visioned(&entries, None, &policy).unwrap();
     assert_eq!(user_text(&prompt), image_placeholder(&"a".repeat(32)));
-}
 
-/// 旧调用面（split_prompt / rebuild_message_stream）对 image part 仍按参数
-/// 错误拒绝——语义为"调用方未声明视觉能力"。
-#[test]
-fn legacy_split_prompt_rejects_image_part() {
+    // ⑤ 旧调用面（split_prompt / rebuild_message_stream）对 image part
+    // 仍按参数错误拒绝——语义为"调用方未声明视觉能力"
     let entries = vec![user_parts("u1", vec![image_part()])];
-    let err = split_prompt(&entries).unwrap_err();
-    assert!(matches!(err, WireError(_)));
-    let err = rebuild_message_stream(&entries).unwrap_err();
-    assert!(matches!(err, WireError(_)));
-}
+    assert!(matches!(split_prompt(&entries), Err(WireError(_))));
+    assert!(matches!(
+        rebuild_message_stream(&entries),
+        Err(WireError(_))
+    ));
 
-/// visioned 重建流（rebuild_message_stream_visioned）：assistant 侧 image
-/// part 照 runMarker 同类跳过（M2 无图片生成）。
-#[test]
-fn assistant_image_part_skipped_in_stream() {
+    // ⑥ visioned 重建流：assistant 侧 image part 跳过（M2 无图片生成）
     let entry = MessageEntry {
         id: "a1".to_owned(),
         parent_id: None,
@@ -527,43 +432,65 @@ fn assistant_image_part_skipped_in_stream() {
     ));
 }
 
-// ---- ai_language 注入层（31 号票，§6.2 注入次序回写）----
+// ---- 系统级前缀注入（03 号票 customPrompt 两态 + 31 号票 ai_language）----
 
-/// 三态：ai_language 非空 → 注入自定义语言（中文界面模板）。
+/// 断言系统级前缀注入各面：有 customPrompt 注入为 history 首条 system
+/// 消息（§6.2 次序首位）；无/空白 customPrompt 零注入（不产生空 system
+/// 消息）；带首尾空白的前缀按 trim 后注入（与 AppConfig.normalize 归一
+/// 口径双保险）；ai_language 三态（非空 → 自定义语言、空 → 跟随界面语言
+/// zh-CN/en-US）；层叠次序（§6.2 定稿）——customPrompt → 项目指令 →
+/// ai_language → 压缩 summary → 技能清单按传入序层叠，空层零注入。
 #[test]
-fn ai_language_custom_takes_precedence() {
-    let layer =
-        ai_language_layer(Some("English"), "zh-CN").expect("ai_language 非空必须产生注入层");
-    assert_eq!(layer, "请始终使用 English 回答。");
-}
+fn system_prefix_and_language_layer_cases() {
+    // ① 有 customPrompt：注入为首条 system，其余原序后移
+    let entries = vec![user("u1", "第一条"), user("u2", "第二条")];
+    let (history, prompt) = split_prompt(&entries).unwrap();
+    assert_eq!(history.len(), 1, "前置：无注入时 history 只有 u1");
+    let injected = with_system_prefix(history, Some("始终用中文回复"));
+    assert_eq!(injected.len(), 2, "注入后首条 system + 原 history");
+    assert_eq!(system_text(as_message(&injected[0])), "始终用中文回复");
+    assert_eq!(user_text(as_message(&injected[1])), "第一条");
+    assert_eq!(user_text(&prompt), "第二条", "prompt 不受注入影响");
 
-/// 三态：ai_language 空 → 跟随界面语言（zh-CN → 中文固定行）。
-#[test]
-fn ai_language_empty_follows_ui_lang_zh() {
-    let layer = ai_language_layer(None, "zh-CN").expect("空值回退界面语言也产生注入层");
-    assert_eq!(layer, "请始终使用 简体中文 回答。");
-    // 空白串与 None 同语义
-    let blank = ai_language_layer(Some("   "), "zh-CN").expect("空白同 None");
-    assert_eq!(blank, "请始终使用 简体中文 回答。");
-}
+    // ② 无/空白 customPrompt：零注入
+    let entries = vec![user("u1", "第一条"), user("u2", "第二条")];
+    let (history, _) = split_prompt(&entries).unwrap();
+    let baseline_len = history.len();
+    for prefix in [None, Some(""), Some("   \n\t ")] {
+        let kept = with_system_prefix(history.clone(), prefix);
+        assert_eq!(kept.len(), baseline_len, "前缀 {prefix:?} 应零注入");
+        assert!(
+            !matches!(as_message(&kept[0]), Message::System { .. }),
+            "前缀 {prefix:?} 首条不应是 system"
+        );
+    }
 
-/// 三态：ai_language 空 + en-US 界面 → 英文固定行（en 文案无 CJK）。
-#[test]
-fn ai_language_empty_follows_ui_lang_en() {
+    // ③ 带首尾空白的前缀按 trim 后注入
+    let injected = with_system_prefix(Vec::new(), Some("  保持简洁  "));
+    assert_eq!(system_text(as_message(&injected[0])), "保持简洁");
+
+    // ④ ai_language 三态：(ai_language, 界面语言, 期望固定行)
+    for (ai, ui_lang, want) in [
+        (Some("English"), "zh-CN", "请始终使用 English 回答。"),
+        (None, "zh-CN", "请始终使用 简体中文 回答。"),
+        (Some("   "), "zh-CN", "请始终使用 简体中文 回答。"), // 空白同 None
+        (None, "en-US", "Always respond in English."),
+    ] {
+        let layer = ai_language_layer(ai, ui_lang)
+            .unwrap_or_else(|| panic!("应产生注入层：ai={ai:?} ui={ui_lang}"));
+        assert_eq!(layer, want, "ai={ai:?} ui={ui_lang}");
+    }
+    // en 文案无 CJK
     let layer = ai_language_layer(None, "en-US").expect("en 界面同样产生注入层");
-    assert_eq!(layer, "Always respond in English.");
     assert!(
         !layer
             .chars()
-            .any(|c| ('\u{4E00}'..='\u{9FFF}').contains(&c))
+            .any(|c| ('\u{4E00}'..='\u{9FFF}').contains(&c)),
+        "en 文案无 CJK"
     );
-}
 
-/// 注入排序（§6.2 回写口径）：customPrompt → 项目指令 → ai_language →
-/// 压缩 summary → 技能清单——layers 按传入序层叠，本测断言 ai_language
-/// 层位于 customPrompt/项目指令之后、压缩 summary 之前。
-#[test]
-fn ai_language_layer_order_in_system_prefix() {
+    // ⑤ 层叠次序（§6.2 回写口径）：ai_language 层位于 customPrompt/项目
+    // 指令之后、压缩 summary 之前；空层零注入
     let ai = ai_language_layer(Some("English"), "zh-CN").unwrap();
     let history: Vec<_> = Vec::new();
     let out = with_system_prefix_layers(
@@ -592,5 +519,26 @@ fn ai_language_layer_order_in_system_prefix() {
             "SUMMARY",
             "SKILLS"
         ]
+    );
+
+    // customPrompt 与压缩 summary 的层叠次序 + 空层零注入
+    let entries = compact_sample();
+    let (history, _, _) = split_prompt_with_boundary(
+        &entries,
+        Some(&CompactionBoundary {
+            cut_entry_id: "u1".to_owned(),
+            summary: "摘要层".to_owned(),
+        }),
+    )
+    .unwrap();
+    let layered = with_system_prefix_layers(history, [Some("自定义提示"), Some("摘要层")]);
+    assert_eq!(system_text(as_message(&layered[0])), "自定义提示");
+    assert_eq!(system_text(as_message(&layered[1])), "摘要层");
+    assert!(matches!(as_message(&layered[2]), Message::Assistant(_)));
+    let (plain, _, _) = split_prompt_with_boundary(&entries, None).unwrap();
+    let untouched = with_system_prefix_layers(plain, [None, None]);
+    assert!(
+        !matches!(as_message(&untouched[0]), Message::System { .. }),
+        "空层零注入：customPrompt 未配置 + 无压缩边界 → 原样"
     );
 }

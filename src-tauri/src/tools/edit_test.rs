@@ -1,8 +1,10 @@
 //! edit 工具测试：三级匹配、唯一性拒绝、version 乐观锁、EOL 保持、
-//! lineChanges 统计、GBK 文件转 UTF-8、越界拒绝。
+//! lineChanges 统计、GBK 文件转 UTF-8、07 号票同批合并原子提交与
+//! 22 号票写后自检（越界拒绝见 mod.rs 共享守卫测试 path_guard_test）。
 
 use serde_json::json;
 
+use super::apply_edit_group;
 use super::{EditArgs, run};
 use crate::util::test_support::TestWorkspace;
 
@@ -21,9 +23,15 @@ fn write_file(ws: &TestWorkspace, rel: &str, content: &str) {
     std::fs::write(ws.project_file(rel), content).expect("预置文件");
 }
 
-// 断言：L1 精确唯一命中完成替换，matchLevel=exact，lineChanges 统计正确。
+// 断言：单次 edit 语义矩阵——L1 精确唯一命中（matchLevel/lineChanges/内容
+// 替换正确）、L2 缩进平移（替换区间含原首行缩进、newText 原样落位）、L3 逐行
+// 空白归一；0 命中报 E_EDIT_NO_MATCH、多处命中报 E_EDIT_AMBIGUOUS、空
+// oldText 报 E_INVALID_ARG；version 乐观锁三态（匹配执行/不匹配可唯一命中
+// 降级警告执行/不匹配且不可唯一命中报 E_EDIT_VERSION_STALE）；CRLF 保持、
+// GBK 转 UTF-8 落盘、lineChanges 三种口径。
 #[test]
-fn l1_exact_unique_replacement() {
+fn single_edit_semantics_matrix() {
+    // —— L1 精确唯一命中 ——
     let ws = TestWorkspace::new();
     write_file(&ws, "a.rs", "fn main() {\n    println!(\"hi\");\n}\n");
     let outcome = run(
@@ -38,14 +46,8 @@ fn l1_exact_unique_replacement() {
         std::fs::read_to_string(ws.project_file("a.rs")).expect("读回"),
         "fn main() {\n    println!(\"hello\");\n}\n"
     );
-}
 
-// 断言：L2 缩进平移——oldText 无缩进也能命中深缩进块，
-// 且替换区间含原首行缩进、newText 原样落位。
-#[test]
-fn l2_indent_shift_recovers_nested_block() {
-    let ws = TestWorkspace::new();
-    // 模型给的 oldText 无缩进，文件里是深缩进块。
+    // —— L2 缩进平移：oldText 无缩进也能命中深缩进块 ——
     write_file(
         &ws,
         "b.rs",
@@ -66,15 +68,10 @@ fn l2_indent_shift_recovers_nested_block() {
     // newText 原样落位（缩进由模型自带）。
     assert_eq!(
         std::fs::read_to_string(ws.project_file("b.rs")).expect("读回"),
-        "function f() {\ndoWork(1);\nreturn false;\n    }\n",
+        "function f() {\ndoWork(1);\nreturn false;\n    }\n"
     );
-}
 
-// 断言：L3 逐行空白归一——各行缩进/尾随空白不一致时仍能整块命中替换。
-#[test]
-fn l3_whitespace_normalized_matches() {
-    let ws = TestWorkspace::new();
-    // 两行缩进不一致 + 尾随空白：L1 不中、L2 统一缩进无法表达，落到 L3。
+    // —— L3 逐行空白归一 ——
     write_file(&ws, "c.txt", "doA();   \n\t\tdoB();\n");
     let outcome = run(
         &ws.ctx(),
@@ -87,12 +84,8 @@ fn l3_whitespace_normalized_matches() {
         std::fs::read_to_string(ws.project_file("c.txt")).expect("读回"),
         "doA(1);\ndoB(2);\n"
     );
-}
 
-// 断言：0 命中报 E_EDIT_NO_MATCH，多处命中报 E_EDIT_AMBIGUOUS（绝不猜）。
-#[test]
-fn no_match_and_ambiguous_are_rejected() {
-    let ws = TestWorkspace::new();
+    // —— 0 命中 / 多处命中 / 空 oldText ——
     write_file(&ws, "d.txt", "one\ntwo\n");
     let outcome = run(&ws.ctx(), &args("d.txt", "three", "3"));
     assert!(!outcome.ok);
@@ -104,27 +97,16 @@ fn no_match_and_ambiguous_are_rejected() {
     let err = outcome.error.expect("e");
     assert_eq!(err.code, "E_EDIT_AMBIGUOUS");
     assert!(err.message.contains("补充"));
-}
 
-// 断言：空 oldText 以 E_INVALID_ARG 拒绝。
-#[test]
-fn empty_old_text_is_invalid_arg() {
-    let ws = TestWorkspace::new();
     write_file(&ws, "f.txt", "x\n");
     let outcome = run(&ws.ctx(), &args("f.txt", "", "y"));
     assert!(!outcome.ok);
     assert_eq!(outcome.error.expect("e").code, "E_INVALID_ARG");
-}
 
-// 断言：version 乐观锁三态——匹配正常执行、不匹配但可唯一命中降级警告执行、
-// 不匹配且不可唯一命中报 E_EDIT_VERSION_STALE。
-#[test]
-fn version_match_and_stale_downgrade() {
-    let ws = TestWorkspace::new();
+    // —— version 乐观锁三态 ——
     write_file(&ws, "g.txt", "hello world\n");
     let bytes = std::fs::read(ws.project_file("g.txt")).expect("读");
     let good = super::version_hex(&bytes);
-
     // 版本匹配：正常执行。
     let mut a = args("g.txt", "hello", "hi");
     a.version = Some(good.clone());
@@ -157,23 +139,15 @@ fn version_match_and_stale_downgrade() {
     let outcome = run(&ws.ctx(), &a);
     assert!(!outcome.ok);
     assert_eq!(outcome.error.expect("e").code, "E_EDIT_VERSION_STALE");
-}
 
-// 断言：CRLF 文件编辑后仍保持 CRLF 行尾风格。
-#[test]
-fn crlf_style_is_preserved() {
-    let ws = TestWorkspace::new();
+    // —— CRLF 保持 ——
     write_file(&ws, "win.txt", "line1\r\nline2\r\n");
     let outcome = run(&ws.ctx(), &args("win.txt", "line2", "line-two"));
     assert!(outcome.ok, "{outcome:?}");
     let bytes = std::fs::read(ws.project_file("win.txt")).expect("读回");
     assert_eq!(bytes, b"line1\r\nline-two\r\n", "CRLF 应保持");
-}
 
-// 断言：GBK 编码文件编辑后按 UTF-8 落盘（C-10 接受的转换副作用）。
-#[test]
-fn gbk_file_is_rewritten_as_utf8() {
-    let ws = TestWorkspace::new();
+    // —— GBK 转 UTF-8 落盘（C-10 接受的转换副作用）——
     let (gbk, _, _) = encoding_rs::GBK.encode("旧值：alpha\n重复行\n");
     std::fs::write(ws.project_file("legacy.ini"), &gbk).expect("写 GBK");
     let outcome = run(&ws.ctx(), &args("legacy.ini", "alpha", "beta"));
@@ -181,26 +155,18 @@ fn gbk_file_is_rewritten_as_utf8() {
     let bytes = std::fs::read(ws.project_file("legacy.ini")).expect("读回");
     let text = std::str::from_utf8(&bytes).expect("编辑后应为 UTF-8（C-10 副作用）");
     assert_eq!(text, "旧值：beta\n重复行\n");
-}
 
-// 断言：lineChanges 的 add/del 分别按 newText/oldText 行数计
-//（扩行、缩行、整块删除三种口径）。
-#[test]
-fn line_changes_counts_add_and_del() {
-    let ws = TestWorkspace::new();
-    // 单行扩为三行：+3/-1（口径：lines().count()）。
+    // —— lineChanges 三种口径：扩行、缩行、整块删除 ——
     write_file(&ws, "j.txt", "start\nend\n");
     let outcome = run(&ws.ctx(), &args("j.txt", "start", "a\nb\nc"));
     let data = outcome.data.expect("data");
     assert_eq!(data["lineChanges"], json!({ "add": 3, "del": 1 }));
 
-    // 两行删为一行。
     write_file(&ws, "k.txt", "x\ny\n");
     let outcome = run(&ws.ctx(), &args("k.txt", "x\ny", "z"));
     let data = outcome.data.expect("data");
     assert_eq!(data["lineChanges"], json!({ "add": 1, "del": 2 }));
 
-    // 整块删除：newText 空。
     write_file(&ws, "l.txt", "keep\ndrop\n");
     let outcome = run(&ws.ctx(), &args("l.txt", "keep\ndrop\n", ""));
     assert!(outcome.ok, "{outcome:?}");
@@ -212,23 +178,14 @@ fn line_changes_counts_add_and_del() {
     assert_eq!(data["lineChanges"], json!({ "add": 0, "del": 2 }));
 }
 
-// 断言：roots 外的绝对路径被拒绝（E_PATH_OUTSIDE_ROOTS）。
+// 断言：同批同文件多 edit 合并语义矩阵（apply_edit_group，§8.4 步骤 4/5 +
+// 22 号票写后自检）——非重叠多 edit 一次合并提交（共享同一 version、各成员
+// lineChanges 对位）；区间重叠的后续成员被拒；任一成员匹配失败整组降级为
+// 源序逐个独立执行；落盘闭包失败整组回滚且备份清理；写后自检拦下篡改写入
+// （E_INTERNAL + 路径 + 校验阶段）；正常与 CRLF 编辑通过自检。
 #[test]
-fn outside_roots_rejected() {
-    let ws = TestWorkspace::new();
-    let outcome = run(&ws.ctx(), &args("/etc/hosts", "localhost", "evil"));
-    assert!(!outcome.ok);
-    assert_eq!(outcome.error.expect("e").code, "E_PATH_OUTSIDE_ROOTS");
-}
-
-// —— 07 号票：同批同文件多 edit 合并原子提交（apply_edit_group，§8.4 步骤 4/5）——
-
-use super::apply_edit_group;
-
-// 断言：非重叠多 edit 基于同一原内容预演，一次合并提交——两个 edit 都
-// 成功、共享同一最终 version，文件内容为两处替换叠加。
-#[test]
-fn group_merges_non_overlapping_edits_one_commit() {
+fn edit_group_commit_and_postcheck_matrix() {
+    // —— 非重叠多 edit 合并提交 ——
     let ws = TestWorkspace::new();
     write_file(&ws, "g.txt", "alpha\nbeta\ngamma\n");
     let outcomes = apply_edit_group(
@@ -252,12 +209,31 @@ fn group_merges_non_overlapping_edits_one_commit() {
         std::fs::read_to_string(ws.project_file("g.txt")).unwrap(),
         "ALPHA\nbeta\nGAMMA\n"
     );
-}
 
-// 断言：区间重叠的后续成员被拒（E_INVALID_ARG），源序首个保留——
-// 文件只体现首个 edit 的修改。
-#[test]
-fn group_rejects_overlapping_member_after_first() {
+    // —— lineChanges 按成员对位统计 ——
+    let ws = TestWorkspace::new();
+    write_file(&ws, "g.txt", "a\nb\nc\n");
+    let outcomes = apply_edit_group(
+        &ws.ctx(),
+        "g.txt",
+        &[args("g.txt", "a\nb", "x\ny\nz"), args("g.txt", "c", "d")],
+        crate::tools::write::atomic_write_utf8,
+    );
+    assert!(outcomes[0].ok && outcomes[1].ok, "{outcomes:?}");
+    assert_eq!(
+        outcomes[0].data.as_ref().unwrap()["lineChanges"],
+        json!({ "add": 3, "del": 2 })
+    );
+    assert_eq!(
+        outcomes[1].data.as_ref().unwrap()["lineChanges"],
+        json!({ "add": 1, "del": 1 })
+    );
+    assert_eq!(
+        std::fs::read_to_string(ws.project_file("g.txt")).unwrap(),
+        "x\ny\nz\nd\n"
+    );
+
+    // —— 区间重叠的后续成员被拒（E_INVALID_ARG），首个保留 ——
     let ws = TestWorkspace::new();
     write_file(&ws, "g.txt", "one\ntwo\nthree\n");
     let outcomes = apply_edit_group(
@@ -276,12 +252,29 @@ fn group_rejects_overlapping_member_after_first() {
         std::fs::read_to_string(ws.project_file("g.txt")).unwrap(),
         "X\nthree\n"
     );
-}
 
-// 断言：批次事务回滚——落盘闭包失败 → 整组回滚（文件保持原内容），
-// 全部接受成员以失败收口（§8.4 步骤 5"任一失败回滚整组"）。
-#[test]
-fn group_commit_failure_rolls_back_whole_group() {
+    // —— 成员匹配失败 → 整组降级为源序独立执行 ——
+    let ws = TestWorkspace::new();
+    write_file(&ws, "g.txt", "head\nmid\ntail\n");
+    let outcomes = apply_edit_group(
+        &ws.ctx(),
+        "g.txt",
+        &[
+            args("g.txt", "mid", "MID"),
+            args("g.txt", "不存在的原文", "whatever"),
+        ],
+        crate::tools::write::atomic_write_utf8,
+    );
+    assert_eq!(outcomes.len(), 2);
+    assert!(outcomes[0].ok, "第一个成员独立执行成功：{:?}", outcomes[0]);
+    assert!(!outcomes[1].ok, "匹配失败成员回喂错误");
+    assert_eq!(outcomes[1].error.as_ref().unwrap().code, "E_EDIT_NO_MATCH");
+    assert_eq!(
+        std::fs::read_to_string(ws.project_file("g.txt")).unwrap(),
+        "head\nMID\ntail\n"
+    );
+
+    // —— 落盘失败 → 整组回滚（文件保持原内容），备份清理 ——
     let ws = TestWorkspace::new();
     write_file(&ws, "g.txt", "keep\n");
     let outcomes = apply_edit_group(
@@ -307,73 +300,14 @@ fn group_commit_failure_rolls_back_whole_group() {
         "keep\n",
         "回滚后文件保持原样"
     );
-    // 备份文件已清理（同目录无 .cw-bak-* 残留）。
     let leftovers: Vec<_> = std::fs::read_dir(ws.project_file("."))
         .unwrap()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_name().to_string_lossy().starts_with(".cw-bak-"))
         .collect();
     assert!(leftovers.is_empty(), "备份文件应清理：{leftovers:?}");
-}
 
-// 断言：任一成员匹配失败 → 整组降级为源序逐个独立执行（各出各的结果，
-// 第二个成员基于第一个修改后的文件匹配）。
-#[test]
-fn group_demotes_to_independent_runs_when_member_fails_to_match() {
-    let ws = TestWorkspace::new();
-    write_file(&ws, "g.txt", "head\nmid\ntail\n");
-    let outcomes = apply_edit_group(
-        &ws.ctx(),
-        "g.txt",
-        &[
-            args("g.txt", "mid", "MID"),
-            args("g.txt", "不存在的原文", "whatever"),
-        ],
-        crate::tools::write::atomic_write_utf8,
-    );
-    assert_eq!(outcomes.len(), 2);
-    assert!(outcomes[0].ok, "第一个成员独立执行成功：{:?}", outcomes[0]);
-    assert!(!outcomes[1].ok, "匹配失败成员回喂错误");
-    assert_eq!(outcomes[1].error.as_ref().unwrap().code, "E_EDIT_NO_MATCH");
-    assert_eq!(
-        std::fs::read_to_string(ws.project_file("g.txt")).unwrap(),
-        "head\nMID\ntail\n"
-    );
-}
-
-// 断言：合并组各成员的 lineChanges 各自统计（对位正确）。
-#[test]
-fn group_line_changes_are_per_member() {
-    let ws = TestWorkspace::new();
-    write_file(&ws, "g.txt", "a\nb\nc\n");
-    let outcomes = apply_edit_group(
-        &ws.ctx(),
-        "g.txt",
-        &[args("g.txt", "a\nb", "x\ny\nz"), args("g.txt", "c", "d")],
-        crate::tools::write::atomic_write_utf8,
-    );
-    assert!(outcomes[0].ok && outcomes[1].ok, "{outcomes:?}");
-    assert_eq!(
-        outcomes[0].data.as_ref().unwrap()["lineChanges"],
-        json!({ "add": 3, "del": 2 })
-    );
-    assert_eq!(
-        outcomes[1].data.as_ref().unwrap()["lineChanges"],
-        json!({ "add": 1, "del": 1 })
-    );
-    assert_eq!(
-        std::fs::read_to_string(ws.project_file("g.txt")).unwrap(),
-        "x\ny\nz\nd\n"
-    );
-}
-
-// —— 22 号票：写后完整性自检（合并提交出口 + 单次 edit 出口）——
-
-// 故障注入：落盘闭包写入「被篡改的内容」（与预期 final_bytes 不一致，
-// 等价磁盘静默损坏场景），写后自检应在哈希阶段拦下，整组接受成员以
-// 失败收口回喂 E_INTERNAL（错误回喂含路径与校验阶段）。
-#[test]
-fn group_postcheck_injection_fails_with_internal_error() {
+    // —— 写后自检（22 号票）：篡改写入在哈希阶段拦下 ——
     let ws = TestWorkspace::new();
     write_file(&ws, "g.txt", "alpha\nbeta\ngamma\n");
     let outcomes = apply_edit_group(
@@ -401,14 +335,9 @@ fn group_postcheck_injection_fails_with_internal_error() {
         "message 含校验阶段：{}",
         err.message
     );
-}
 
-// 正常路径：合并提交出口的自检对 CRLF 文件通过（EOL 保持实证不误伤）；
-// 单次 edit（run）的 CRLF 写回同样过自检（行为面回归）。
-#[test]
-fn postcheck_passes_normal_and_crlf_edits() {
+    // —— 自检不误伤：LF 合并提交与 CRLF 单次编辑均通过且 EOL 保持 ——
     let ws = TestWorkspace::new();
-    // 合并提交 + LF 文件。
     write_file(&ws, "g.txt", "alpha\nbeta\n");
     let outcomes = apply_edit_group(
         &ws.ctx(),
@@ -417,7 +346,6 @@ fn postcheck_passes_normal_and_crlf_edits() {
         crate::tools::write::atomic_write_utf8,
     );
     assert!(outcomes[0].ok, "LF 正常合并应过自检：{:?}", outcomes[0]);
-    // CRLF 文件的单次 edit：写回保持 CRLF，自检通过。
     write_file(&ws, "crlf.txt", "line one\r\nline two\r\n");
     let outcome = run(&ws.ctx(), &args("crlf.txt", "line one", "LINE ONE"));
     assert!(outcome.ok, "CRLF 编辑应过自检：{outcome:?}");

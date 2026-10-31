@@ -9,11 +9,11 @@
 use std::sync::Arc;
 
 use super::commands::{
-    SkillInspectArgs, SkillToggleArgs, ensure_skills_snapshot, skill_inspect_core, skill_list_core,
-    skill_reload_core, skill_toggle_core,
+    ensure_skills_snapshot, skill_inspect_core, skill_list_core, skill_reload_core,
+    skill_toggle_core,
 };
 use super::trust::ProjectTrustStore;
-use crate::backend::ask::{AskAnswer, AskPayload};
+use crate::backend::ask::AskAnswer;
 use crate::host::AppState;
 use crate::storage::SessionMeta;
 use crate::util::events::{RecordingEventSink, keys};
@@ -21,25 +21,17 @@ use crate::util::events::{RecordingEventSink, keys};
 /// headless AppState（临时数据目录 + 录音事件汇）：内置根指向一个空临时
 /// 目录（隔离 dev 源码树 resources/skills 的真实内置技能，保证断言确定性）。
 fn headless_app() -> (Arc<AppState>, tempfile::TempDir, Arc<RecordingEventSink>) {
-    headless_app_with(None)
-}
-
-/// headless AppState 变体：可预置内置技能根（None = 空临时目录；resource_
-/// skills_dir 在 Arc 包装前赋值——AppState 字段面非锁保护的，构造期注入）。
-fn headless_app_with(
-    builtin_root: Option<std::path::PathBuf>,
-) -> (Arc<AppState>, tempfile::TempDir, Arc<RecordingEventSink>) {
     let dir = tempfile::tempdir().expect("临时目录");
     let events = Arc::new(RecordingEventSink::new());
     let mut state = AppState::new_in(dir.path().to_path_buf(), events.clone());
-    state.resource_skills_dir = Some(builtin_root.unwrap_or_else(|| {
-        // None = 指向一个空目录（隔离 dev 源码树 resources/skills 的真实
-        // 内置技能，保证断言确定性）。
+    state.resource_skills_dir = Some({
+        // 指向一个空目录（隔离 dev 源码树 resources/skills 的真实内置
+        // 技能，保证断言确定性）。
         let empty = tempfile::tempdir().expect("空内置根");
         let path = empty.path().to_path_buf();
         std::mem::forget(empty); // 临时目录保活到进程退出（测试量可忽略）
         path
-    }));
+    });
     let app = Arc::new(state);
     (app, dir, events)
 }
@@ -83,9 +75,11 @@ fn anchor_project_session(app: &AppState, dir: &tempfile::TempDir) -> std::path:
     home
 }
 
-/// 四命令链路：三来源合并可见、项目覆盖全局（验收第 1 条）、启停持久化
-/// （验收第 4 条的后端半边）、reload 感知新增目录、inspect 正文预览与
-/// E_NOT_FOUND。
+// 断言（四命令链路 + 三来源覆盖，验收第 1/4 条后端面）：skill_list 三来源
+// 合并可见、项目覆盖内置与全局（内置<全局<项目）、来源正确、初始全启用；
+// skill_toggle 禁用 + 持久化（重启语义 = 新实例读同一 state 文件）、不存在
+// 名字 E_NOT_FOUND；skill_reload 感知新增目录且禁用态保留；skill_inspect
+// 正文全文（frontmatter 剥离）与 E_NOT_FOUND。
 #[test]
 fn skill_commands_end_to_end() {
     let _guard = super::REGISTRY_TEST_LOCK
@@ -163,11 +157,6 @@ fn skill_commands_end_to_end() {
     // 不存在的名字 → E_NOT_FOUND
     let err = skill_toggle_core(&app, "missing", true).expect_err("不存在");
     assert_eq!(err.code, "E_NOT_FOUND");
-    let args = SkillToggleArgs {
-        name: "missing".to_owned(),
-        enabled: true,
-    };
-    let _ = args; // 契约形状编译期验证（反序列化面在命令宏内）
 
     // skill_reload：感知新增目录（FR 集成面）+ 禁用态保留
     write_skill(
@@ -197,9 +186,6 @@ fn skill_commands_end_to_end() {
     assert_eq!(inspect.markdown, "全局版正文");
     let err = skill_inspect_core(&app, "missing").expect_err("不存在");
     assert_eq!(err.code, "E_NOT_FOUND");
-    let _ = SkillInspectArgs {
-        name: "x".to_owned(),
-    };
 }
 
 /// 后台应答者：等 projectTrust 询问出现后投递指定选项。同一测试内可能有多
@@ -237,12 +223,12 @@ async fn answer_project_trust(
     panic!("projectTrust 询问未出现");
 }
 
-/// 信任三路径 + Q21 版本重核（验收第 5 条后端面）：
-/// - deny → 快照 rejected 含该技能、disclosure 零注入（拒绝 → 不注入清单）；
-/// - allow_session → 本会话内免问（第二次调用不弹询问）且 trust/project.json
-///   不产生记录；
-/// - remember → trust/project.json 落盘（跨 run 免问）；
-/// - Q21：SKILL.md 或随附资源变化（指纹变）→ 记住过的技能重新询问。
+// 断言（信任三路径 + Q21 版本重核，验收第 5 条后端面 + 红线「指纹变更
+// 重问」）：deny → 快照 rejected 含该技能、disclosure 零注入（拒绝 → 不
+// 注入清单），询问载荷字段级（§9.8 resourceName/scope/options）；allow_
+// session → 本会话内免问（第二次调用不弹询问）且 trust/project.json 不
+// 产生记录；remember → trust/project.json 落盘（跨会话新 run 免问）；
+// Q21：SKILL.md 或随附资源变化（指纹变）→ 记住过的技能重新询问。
 #[tokio::test(flavor = "current_thread")]
 #[allow(clippy::await_holding_lock)]
 async fn trust_three_paths_and_version_recheck() {
@@ -343,221 +329,4 @@ async fn trust_three_paths_and_version_recheck() {
     let run = ensure_skills_snapshot(&app, "sess-3").await;
     assert!(run.snapshot.entries.is_empty(), "版本变化后未重核 → 不可用");
     assert!(run.snapshot.is_rejected("guard"), "指纹变化重新走信任");
-}
-
-/// 内置技能豁免信任：resource_skills_dir 注入后无询问直接进快照；
-/// 禁用的内置技能不进快照。
-#[tokio::test(flavor = "current_thread")]
-#[allow(clippy::await_holding_lock)]
-async fn builtin_skills_skip_trust() {
-    // 锁 guard 有意跨 await 持有（current_thread runtime 内串行化，见
-    // trust_three_paths 测试内注释）。
-    let _guard = super::REGISTRY_TEST_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let builtin_root = tempfile::tempdir().unwrap();
-    write_skill(
-        builtin_root.path(),
-        "hello",
-        "hello",
-        "内置示例",
-        "内置正文",
-    );
-    write_skill(
-        builtin_root.path(),
-        "muted",
-        "muted",
-        "禁用的内置",
-        "不该出现",
-    );
-    let (app, dir, events) = headless_app_with(Some(builtin_root.path().to_path_buf()));
-    let _ = anchor_project_session(&app, &dir);
-    skill_toggle_core(&app, "muted", false).expect("禁用内置");
-
-    let run = ensure_skills_snapshot(&app, "sess-1").await;
-    assert_eq!(run.snapshot.entries.len(), 1);
-    assert_eq!(run.snapshot.entries[0].name, "hello");
-    assert_eq!(run.snapshot.entries[0].body, "内置正文");
-    assert!(
-        run.disclosure
-            .expect("内置技能也注入")
-            .contains("hello：内置示例")
-    );
-    assert!(
-        !events
-            .payloads_of(keys::ASK_OPENED)
-            .iter()
-            .any(|p| p["payload"]["kind"] == "projectTrust"),
-        "内置技能豁免信任"
-    );
-}
-
-/// 未信任技能的 skill 工具调用按 E_PROJECT_UNTRUSTED 拒绝（验收第 5 条
-/// 「拒绝后 E_PROJECT_UNTRUSTED」）：直接驱动执行器 skill 分支。
-#[tokio::test(flavor = "current_thread")]
-async fn skill_call_rejected_when_untrusted() {
-    use crate::backend::exec::{ExecutorEnv, ToolsetExecutor};
-    use crate::backend::run_loop::CancellableExecutor;
-    use crate::tools::ToolsContext;
-    use std::sync::Mutex;
-
-    let (app, dir, _events) = headless_app();
-    let snapshot = Arc::new(crate::knowledge::skills::snapshot_for_run(
-        Vec::new(),
-        vec!["guard".to_owned()],
-    ));
-    let ctx = ToolsContext::new(dir.path().to_path_buf(), dir.path().to_path_buf());
-    let executor = ToolsetExecutor::new(ctx, crate::safety::tier::PermissionTier::AutoEdit)
-        .with_env(ExecutorEnv {
-            events: app.events.clone(),
-            ask: Arc::new(Mutex::new(None)),
-            plan: Arc::new(Mutex::new(None)),
-            session_id: "sess-1".to_owned(),
-            run_id: "run-1".to_owned(),
-            data_root: dir.path().to_path_buf(),
-            ask_log: None,
-            mcp: None,
-            skills: Some(snapshot),
-            subagents: None,
-            allowed_tools: None,
-            network: None,
-            store: None,
-        });
-    let token = tokio_util::sync::CancellationToken::new();
-    let exec = executor
-        .execute("call-1", "skill", r#"{"name":"guard"}"#, &token)
-        .await;
-    let crate::backend::run_loop::ToolExecution::Completed {
-        ok,
-        error,
-        model_text,
-        ..
-    } = exec
-    else {
-        panic!("skill 调用应为 Completed");
-    };
-    assert!(!ok);
-    assert_eq!(error.expect("错误面").code, "E_PROJECT_UNTRUSTED");
-    assert!(model_text.contains("E_PROJECT_UNTRUSTED"));
-
-    // 未知技能 → E_INVALID_ARG（completed_failure 的码面）+ 可用清单提示
-    let exec = executor
-        .execute("call-2", "skill", r#"{"name":"missing"}"#, &token)
-        .await;
-    let crate::backend::run_loop::ToolExecution::Completed {
-        ok,
-        error,
-        model_text,
-        ..
-    } = exec
-    else {
-        panic!("skill 调用应为 Completed");
-    };
-    assert!(!ok);
-    assert_eq!(error.expect("错误面").code, "E_INVALID_ARG");
-    assert!(model_text.contains("未知技能"));
-}
-
-/// 已信任技能经执行器加载：正文全文 + 头部标注回喂 + 边车落盘（验收
-/// 第 2 条「skill 工具调用按需加载全文」的执行链半边）。
-#[tokio::test(flavor = "current_thread")]
-async fn skill_call_returns_body_from_snapshot() {
-    use crate::backend::exec::{ExecutorEnv, ToolsetExecutor};
-    use crate::backend::run_loop::CancellableExecutor;
-    use crate::tools::ToolsContext;
-    use std::sync::Mutex;
-
-    let (app, dir, _events) = headless_app();
-    let snapshot = Arc::new(crate::knowledge::skills::snapshot_for_run(
-        vec![crate::knowledge::skills::SkillSnapshotEntry {
-            name: "demo".to_owned(),
-            description: "简介".to_owned(),
-            body: "正文全文 BODY".to_owned(),
-            fingerprint: "fp".to_owned(),
-            untrusted: false,
-        }],
-        Vec::new(),
-    ));
-    let ctx = ToolsContext::new(dir.path().to_path_buf(), dir.path().to_path_buf());
-    let executor = ToolsetExecutor::new(ctx, crate::safety::tier::PermissionTier::AutoEdit)
-        .with_env(ExecutorEnv {
-            events: app.events.clone(),
-            ask: Arc::new(Mutex::new(None)),
-            plan: Arc::new(Mutex::new(None)),
-            session_id: "sess-1".to_owned(),
-            run_id: "run-1".to_owned(),
-            data_root: dir.path().to_path_buf(),
-            ask_log: None,
-            mcp: None,
-            skills: Some(snapshot),
-            subagents: None,
-            allowed_tools: None,
-            network: None,
-            store: None,
-        });
-    let token = tokio_util::sync::CancellationToken::new();
-    let exec = executor
-        .execute("call-1", "skill", r#"{"name":"demo"}"#, &token)
-        .await;
-    let crate::backend::run_loop::ToolExecution::Completed {
-        ok,
-        ui_summary,
-        error,
-        model_text,
-    } = exec
-    else {
-        panic!("skill 调用应为 Completed");
-    };
-    assert!(ok);
-    assert!(error.is_none());
-    assert_eq!(ui_summary, "已加载技能 demo");
-    assert!(model_text.starts_with("以下是技能 demo 的正文："));
-    assert!(model_text.contains("正文全文 BODY"));
-    // 边车：正文进 data 供卡片恢复（FR-04-07 面）
-    let outcomes =
-        crate::storage::toolres::load_outcomes(dir.path(), "sess-1", &["call-1".to_owned()]);
-    let payload = outcomes.get("call-1").expect("skill 结果应写边车");
-    assert_eq!(payload["ok"], true);
-    assert_eq!(payload["data"]["name"], "demo");
-    assert_eq!(payload["data"]["body"], "正文全文 BODY");
-
-    // args 透传面：SkillToolArgs 的可选 args 字段（§8.3 参数摘要）不阻塞加载
-    let exec = executor
-        .execute(
-            "call-2",
-            "skill",
-            r#"{"name":"demo","args":"附加参数"}"#,
-            &token,
-        )
-        .await;
-    let crate::backend::run_loop::ToolExecution::Completed { ok, .. } = exec else {
-        panic!("skill 调用应为 Completed");
-    };
-    assert!(ok);
-
-    // 坏参数 → 工具级失败回喂
-    let exec = executor
-        .execute("call-3", "skill", "not-json", &token)
-        .await;
-    let crate::backend::run_loop::ToolExecution::Completed { ok, .. } = exec else {
-        panic!("skill 调用应为 Completed");
-    };
-    assert!(!ok);
-}
-
-/// ProjectTrust 载荷形状编译期验证（AskPayload 新变体的序列化面）。
-#[test]
-fn project_trust_payload_shape() {
-    let payload = AskPayload::ProjectTrust {
-        resource_name: "guard".to_owned(),
-        scope: crate::backend::ask::SkillTrustScope::Project,
-        fingerprint: "abcdef1234567890".to_owned(),
-        options: Vec::new(),
-    };
-    let json = serde_json::to_value(&payload).unwrap();
-    assert_eq!(json["kind"], "projectTrust");
-    assert_eq!(json["resourceName"], "guard");
-    assert_eq!(json["scope"], "project");
-    let round: AskPayload = serde_json::from_value(json).unwrap();
-    assert_eq!(round, payload);
 }

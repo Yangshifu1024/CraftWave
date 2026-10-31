@@ -3,16 +3,20 @@
 
 use super::config::{McpConfigFile, McpConfigStore, McpScope, McpServerConfig};
 
-/// 服务器条目：未知字段 round-trip（flatten + 保序 map——保存后原样读回，
-/// 顺序与内容都不丢）。
+// 断言：服务器条目未知字段 round-trip（flatten + 保序 map——保存后原样
+// 读回，顺序与内容都不丢）；顶层文件 mcpServers 条目 + 未知顶层字段
+// round-trip 且条目解析成功；stdio 与 HTTP 二义（同时给 command 与 url）
+// parse 层两者都收留（校验在 commands 层）；双作用域同名覆盖（project
+// 整体替换 global 同名条目）+ 其余并存；缺失文件 = 空配置（首次使用
+// 形态），project 无项目上下文时不可用。
 #[test]
-fn unknown_fields_round_trip_in_order() {
+fn config_round_trip_scope_merge_and_defaults() {
+    // 服务器条目：未知字段（用户/前瞻性字段，保存不得丢）。
     let raw = serde_json::json!({
         "command": "uvx",
         "args": ["mcp-server-fetch"],
         "env": { "HOME": "/tmp" },
         "enabled": true,
-        // 未知字段（用户/前瞻性字段，保存不得丢）
         "futureHint": "保持原样",
         "nested": { "a": 1, "b": [true, null] }
     });
@@ -37,11 +41,8 @@ fn unknown_fields_round_trip_in_order() {
         future_pos > command_pos,
         "flatten 未知字段保序在已知字段之后"
     );
-}
 
-/// 顶层文件：mcpServers 条目 + 未知顶层字段 round-trip。
-#[test]
-fn file_round_trip_with_unknown_top_level_fields() {
+    // 顶层文件：mcpServers 条目 + 未知顶层字段 round-trip。
     let raw = serde_json::json!({
         "mcpServers": {
             "fetch": { "command": "uvx", "args": ["mcp-server-fetch"] }
@@ -60,11 +61,13 @@ fn file_round_trip_with_unknown_top_level_fields() {
     assert!(bad.is_empty(), "条目解析失败：{bad:?}");
     assert_eq!(servers[0].0, "fetch");
     assert_eq!(servers[0].1.command.as_deref(), Some("uvx"));
-}
 
-/// 双作用域：同名覆盖（project 整体替换 global 同名条目）+ 其余并存。
-#[test]
-fn project_scope_overrides_same_name() {
+    // stdio 与 HTTP 二义：parse 层两者都收留（校验在 commands 层）。
+    let raw = serde_json::json!({ "command": "x", "url": "http://x" });
+    let config: McpServerConfig = serde_json::from_value(raw).expect("两者都收留");
+    assert!(config.command.is_some() && config.url.is_some());
+
+    // 双作用域：同名覆盖（project 整体替换 global 同名条目）+ 其余并存。
     let dir = tempfile::tempdir().expect("临时目录");
     let project = tempfile::tempdir().expect("临时目录");
     let store = McpConfigStore::new(dir.path(), Some(&project.path().join(".craftwave")));
@@ -101,25 +104,12 @@ fn project_scope_overrides_same_name() {
         .find(|(n, _, _)| n == "beta")
         .expect("beta 在场");
     assert_eq!(beta.1, McpScope::Global);
-}
 
-/// 配置校验：stdio 与 HTTP 二义（同时给 command 与 url）在保存命令层报
-/// 参数错误（校验在 commands 层；此处钉 parse 层两者都收留）。
-#[test]
-fn both_transports_parse_but_validation_is_command_layer() {
-    let raw = serde_json::json!({ "command": "x", "url": "http://x" });
-    let config: McpServerConfig = serde_json::from_value(raw).expect("两者都收留");
-    assert!(config.command.is_some() && config.url.is_some());
-}
-
-/// 缺失文件 = 空配置（首次使用形态）。
-#[test]
-fn missing_file_is_empty_config() {
+    // 缺失文件 = 空配置（首次使用形态）；project 不可用（无项目上下文）。
     let dir = tempfile::tempdir().expect("临时目录");
     let store = McpConfigStore::new(dir.path(), None);
     let file = store.load(McpScope::Global).expect("缺失即空");
     assert!(file.mcp_servers.is_empty());
-    // project 不可用（无项目上下文）
     assert!(store.path_of(McpScope::Project).is_none());
     assert!(store.load(McpScope::Project).is_err());
 }

@@ -54,10 +54,13 @@ async fn execute(name: &str, args_json: &str) -> (ToolExecution, ToolsContext) {
     (out, ctx)
 }
 
-/// 断言 read 成功时双通道各自正确：界面摘要含文件名、模型通道文本携带
-/// 文件内容。
+/// 断言单工具分发各面：read 成功时双通道各自正确（界面摘要一行人话、模型
+/// 通道携带内容）；参数非合法 JSON / 未知工具名均按工具级失败收口（仍是
+/// Completed，E_INVALID_ARG 回喂模型，run 不中断）；plan 权限档下写工具被
+/// E_TOOL_BLOCKED 排除且文件不落盘（§8.5）。
 #[tokio::test]
-async fn read_success_model_channel_compact_text() {
+async fn single_tool_dispatch_cases() {
+    // ① read 成功：ui_summary 与 model_text 双通道
     let (out, _ctx_guard) = {
         let ctx = temp_ctx();
         std::fs::write(ctx.project_root.join("a.txt"), "第一行\n第二行").unwrap();
@@ -87,12 +90,8 @@ async fn read_success_model_channel_compact_text() {
         model_text.contains("第一行"),
         "模型通道携带文件内容：{model_text}"
     );
-}
 
-/// 断言参数不是合法 JSON 时按工具级失败收口：仍是 Completed（失败也是
-/// 收齐的结果），E_INVALID_ARG 回喂模型，run 不中断。
-#[tokio::test]
-async fn invalid_args_tool_level_failure_run_continues() {
+    // ② 参数非合法 JSON：工具级失败 + E_INVALID_ARG
     let (out, _ctx) = execute("read", "{oops 半截").await;
     let ToolExecution::Completed {
         ok,
@@ -104,28 +103,21 @@ async fn invalid_args_tool_level_failure_run_continues() {
         panic!("应为 Completed（失败也是收齐的结果）");
     };
     assert!(!ok);
-    let error = error.expect("带错误面");
-    assert_eq!(error.code, "E_INVALID_ARG");
+    assert_eq!(error.expect("带错误面").code, "E_INVALID_ARG");
     assert!(
         model_text.contains("E_INVALID_ARG"),
-        "模型通道含 code+message"
+        "模型通道含 code+message：{model_text}"
     );
-}
 
-/// 断言未知工具名同样以 E_INVALID_ARG 工具级失败回喂。
-#[tokio::test]
-async fn unknown_tool_feeds_back_invalid_arg() {
+    // ③ 未知工具名：同样 E_INVALID_ARG 工具级失败
     let (out, _) = execute("rm_rf", "{}").await;
     let ToolExecution::Completed { ok, error, .. } = out else {
         panic!("应为 Completed");
     };
     assert!(!ok);
     assert_eq!(error.expect("错误面").code, "E_INVALID_ARG");
-}
 
-/// 断言 plan 权限档下写工具被 E_TOOL_BLOCKED 排除，且文件不落盘。
-#[tokio::test]
-async fn plan_tier_write_tools_excluded_tool_blocked() {
+    // ④ plan 档写工具排除：E_TOOL_BLOCKED 且不落盘
     let ctx = temp_ctx();
     let token = CancellationToken::new();
     let executor = Arc::new(ToolsetExecutor::new(ctx.clone(), PermissionTier::Plan));
@@ -180,47 +172,44 @@ fn counting_task(
     }
 }
 
-/// 并发上限信号量：8 个无冲突（只读）任务、额度 4 → 峰值并发恰为 4
-/// （不超限，也不退化为串行）。
+/// 断言批次调度各面：并发上限信号量跟随配置额度（8 任务 × 额度 4 → 峰值
+/// 4、额度 2 → 峰值 2，不超限也不退化串行，§3.2 tools.maxParallel）；源序
+/// 回喂（完成顺序不改序，FR-03-11）；FileWrite 全局互斥跨执行器组串行
+/// （写峰值 = 1，只读不受影响）；取消收齐两态——派发前置位零派发全部补
+/// Cancelled { executed: false }、在飞置位则 join 收齐不丢结果。
 #[tokio::test]
-async fn batch_semaphore_caps_read_peak_at_max_parallel() {
+async fn batch_scheduling_cases() {
+    // ① 信号量额度表：(额度, 期望峰值并发)
+    for (limit, want_peak) in [(4usize, 4usize), (2, 2)] {
+        let counters = Arc::new(Concurrency::default());
+        let tasks: Vec<PlannedTask> = (0..8)
+            .map(|i| counting_task(i, 30, false, counters.clone()))
+            .collect();
+        let results = run_batch_tasks(tasks, vec![None; 8], limit, &CancellationToken::new()).await;
+        assert_eq!(results.len(), 8, "全部任务收齐（额度 {limit}）");
+        let peak = counters.peak.load(Ordering::SeqCst);
+        assert_eq!(
+            peak, want_peak,
+            "额度 {limit} → 峰值并发 {want_peak}（实际 {peak}）"
+        );
+    }
+
+    // ② 源序回喂：完成序 2（0ms）→ 1（10ms）→ 0（60ms），期望输出仍 0,1,2
     let counters = Arc::new(Concurrency::default());
-    let tasks: Vec<PlannedTask> = (0..8)
-        .map(|i| counting_task(i, 30, false, counters.clone()))
-        .collect();
-    let results = run_batch_tasks(tasks, vec![None; 8], 4, &CancellationToken::new()).await;
-    assert_eq!(results.len(), 8, "全部任务收齐");
+    let tasks = vec![
+        counting_task(0, 60, false, counters.clone()),
+        counting_task(1, 10, false, counters.clone()),
+        counting_task(2, 0, false, counters.clone()),
+    ];
+    let results = run_batch_tasks(tasks, vec![None; 3], 4, &CancellationToken::new()).await;
     for (i, exec) in results.iter().enumerate() {
         let ToolExecution::Completed { model_text, .. } = exec else {
             panic!("任务 {i} 应为 Completed");
         };
-        assert_eq!(model_text, &format!("task-{i}"), "源序对位");
+        assert_eq!(model_text, &format!("task-{i}"), "结果按源序回喂");
     }
-    let peak = counters.peak.load(Ordering::SeqCst);
-    assert_eq!(peak, 4, "峰值并发 = 信号量额度（实际 {peak}）");
-}
 
-/// 并发度配置生效：同一批 8 个只读任务、额度改 2 → 峰值并发随之变为 2
-/// （§3.2 tools.maxParallel 的配置面：改配置后峰值并发跟随变化）。
-#[tokio::test]
-async fn batch_peak_follows_configured_max_parallel() {
-    let counters = Arc::new(Concurrency::default());
-    let tasks: Vec<PlannedTask> = (0..8)
-        .map(|i| counting_task(i, 30, false, counters.clone()))
-        .collect();
-    let results = run_batch_tasks(tasks, vec![None; 8], 2, &CancellationToken::new()).await;
-    assert_eq!(results.len(), 8);
-    assert_eq!(
-        counters.peak.load(Ordering::SeqCst),
-        2,
-        "额度 2 → 峰值并发 2"
-    );
-}
-
-/// FileWrite 全局互斥：两组并发批次（模拟两个会话各自的 execute_batch）
-/// 的文件写任务全程串行（写峰值 = 1），与额度无关。
-#[tokio::test]
-async fn batch_file_write_tasks_globally_serialized_across_groups() {
+    // ③ FileWrite 全局互斥：两组并发批次的写任务全程串行（写峰值 = 1）
     let write_counters = Arc::new(Concurrency::default());
     let read_counters = Arc::new(Concurrency::default());
     let group_a: Vec<PlannedTask> = (0..2)
@@ -247,32 +236,8 @@ async fn batch_file_write_tasks_globally_serialized_across_groups() {
         2,
         "只读任务不受写互斥影响（信号量额度 4 内并发）"
     );
-}
 
-/// 源序回喂：慢的先启动、快的先完成，收集结果仍按源序对位
-/// （FR-03-11：完成顺序不改序）。
-#[tokio::test]
-async fn batch_results_follow_source_order_not_completion_order() {
-    let counters = Arc::new(Concurrency::default());
-    // 完成序 = 2（0ms）→ 1（10ms）→ 0（60ms）；期望输出仍为 0,1,2。
-    let tasks = vec![
-        counting_task(0, 60, false, counters.clone()),
-        counting_task(1, 10, false, counters.clone()),
-        counting_task(2, 0, false, counters.clone()),
-    ];
-    let results = run_batch_tasks(tasks, vec![None; 3], 4, &CancellationToken::new()).await;
-    for (i, exec) in results.iter().enumerate() {
-        let ToolExecution::Completed { model_text, .. } = exec else {
-            panic!("任务 {i} 应为 Completed");
-        };
-        assert_eq!(model_text, &format!("task-{i}"), "结果按源序回喂");
-    }
-}
-
-/// 取消收齐（派发前置位）：cancel 先于批次 → 零派发，全部任务补
-/// Cancelled { executed: false }（不留悬空调用）。
-#[tokio::test]
-async fn batch_cancel_before_dispatch_marks_all_not_executed() {
+    // ④ 取消（派发前置位）：零派发，全部补 Cancelled { executed: false }
     let counters = Arc::new(Concurrency::default());
     let tasks: Vec<PlannedTask> = (0..3)
         .map(|i| counting_task(i, 30, false, counters.clone()))
@@ -287,12 +252,8 @@ async fn batch_cancel_before_dispatch_marks_all_not_executed() {
         assert!(!executed, "任务 {i} 未派发（executed=false）");
     }
     assert_eq!(counters.peak.load(Ordering::SeqCst), 0, "零执行");
-}
 
-/// 取消收齐（在飞 join）：cancel 置位时已在飞的任务不被丢弃——全部 join
-/// 完成后 run_batch_tasks 才返回（已完成结果保留）。
-#[tokio::test]
-async fn batch_cancel_joins_inflight_before_returning() {
+    // ⑤ 取消（在飞 join）：cancel 置位时在飞任务不被丢弃，join 完成后返回
     let counters = Arc::new(Concurrency::default());
     let tasks = vec![
         counting_task(0, 60, false, counters.clone()),
@@ -326,10 +287,14 @@ fn batch_call(call_id: &str, name: &str, args_json: &str) -> BatchCall {
     }
 }
 
-/// 同文件非重叠 edit：基于同一原内容预演后合并原子提交——两个 edit 一次
-/// 生效，结果各自 ok、共享同一最终 version。
+/// 断言同文件分组两态：非重叠 edit 合并原子提交（两个 edit 基于同一原
+/// 内容预演后一次提交生效、共享同一最终 version）+ 冲突检测表（Q32，源序
+/// 首个保留、后续冲突成员 E_INVALID_ARG 拒绝且不生效）——edit 区间重叠、
+/// write 后混入 edit、edit 后混入 write、重复 write——四类冲突文件终态都
+/// 只体现源序首个成员。
 #[tokio::test]
-async fn edit_group_merges_non_overlapping_edits_atomically() {
+async fn same_file_group_cases() {
+    // ① 非重叠合并：两个 edit 同一次提交生效
     let ctx = temp_ctx();
     std::fs::write(ctx.project_root.join("c.txt"), "line1\nline2\nline3\n").unwrap();
     let executor = ToolsetExecutor::new(ctx.clone(), PermissionTier::FullAccess);
@@ -360,162 +325,104 @@ async fn edit_group_merges_non_overlapping_edits_atomically() {
         "L1\nline2\nL3\n",
         "两个 edit 同一次提交生效"
     );
-}
 
-/// 同文件区间重叠的 edit：源序首个保留、后者拒绝（E_INVALID_ARG），
-/// 文件只体现首个 edit。
-#[tokio::test]
-async fn edit_group_rejects_overlapping_edit_after_first() {
-    let ctx = temp_ctx();
-    std::fs::write(ctx.project_root.join("c.txt"), "aaa\nbbb\nccc\n").unwrap();
-    let executor = ToolsetExecutor::new(ctx.clone(), PermissionTier::FullAccess);
-    let batch = vec![
-        batch_call(
-            "c1",
-            "edit",
-            r#"{"path": "c.txt", "oldText": "aaa\nbbb", "newText": "XX"}"#,
+    // ② 冲突表：源序首个保留、冲突成员拒绝且不生效
+    // (目标文件, 初始内容可空, 首个成员, 冲突成员, 期望文件终态)
+    let cases: Vec<(&str, Option<&str>, BatchCall, BatchCall, &str)> = vec![
+        // edit 区间重叠：首个保留、后者拒绝
+        (
+            "c.txt",
+            Some("aaa\nbbb\nccc\n"),
+            batch_call(
+                "c1",
+                "edit",
+                r#"{"path": "c.txt", "oldText": "aaa\nbbb", "newText": "XX"}"#,
+            ),
+            batch_call(
+                "c2",
+                "edit",
+                r#"{"path": "c.txt", "oldText": "bbb\nccc", "newText": "YY"}"#,
+            ),
+            "XX\nccc\n",
         ),
-        batch_call(
-            "c2",
-            "edit",
-            r#"{"path": "c.txt", "oldText": "bbb\nccc", "newText": "YY"}"#,
+        // write + edit 混批（Q32）：edit 被拒
+        (
+            "n.txt",
+            None,
+            batch_call("c1", "write", r#"{"path": "n.txt", "content": "fresh"}"#),
+            batch_call(
+                "c2",
+                "edit",
+                r#"{"path": "n.txt", "oldText": "fresh", "newText": "edited"}"#,
+            ),
+            "fresh",
         ),
-    ];
-    let results = executor
-        .execute_batch(&batch, &CancellationToken::new())
-        .await;
-    let ToolExecution::Completed { ok: ok1, .. } = &results[0] else {
-        panic!("成员 0 应为 Completed");
-    };
-    assert!(ok1, "源序首个 edit 保留执行");
-    let ToolExecution::Completed {
-        ok: ok2,
-        error: err2,
-        ..
-    } = &results[1]
-    else {
-        panic!("成员 1 应为 Completed（失败也是收齐的结果）");
-    };
-    assert!(!ok2, "重叠的后续 edit 被拒");
-    assert_eq!(err2.as_ref().expect("错误面").code, "E_INVALID_ARG");
-    assert_eq!(
-        std::fs::read_to_string(ctx.project_root.join("c.txt")).unwrap(),
-        "XX\nccc\n",
-        "只有首个 edit 生效"
-    );
-}
-
-/// 同文件 write+edit 混批（Q32）：源序首个（write）保留，edit 被拒。
-#[tokio::test]
-async fn same_file_write_then_edit_rejects_edit() {
-    let ctx = temp_ctx();
-    let executor = ToolsetExecutor::new(ctx.clone(), PermissionTier::FullAccess);
-    let batch = vec![
-        batch_call("c1", "write", r#"{"path": "n.txt", "content": "fresh"}"#),
-        batch_call(
-            "c2",
-            "edit",
-            r#"{"path": "n.txt", "oldText": "fresh", "newText": "edited"}"#,
+        // edit + write 混批：write 被拒、不创建覆盖
+        (
+            "e.txt",
+            Some("hello\n"),
+            batch_call(
+                "c1",
+                "edit",
+                r#"{"path": "e.txt", "oldText": "hello", "newText": "hi"}"#,
+            ),
+            batch_call(
+                "c2",
+                "write",
+                r#"{"path": "e.txt", "content": "overwritten"}"#,
+            ),
+            "hi\n",
         ),
-    ];
-    let results = executor
-        .execute_batch(&batch, &CancellationToken::new())
-        .await;
-    let ToolExecution::Completed { ok: ok1, .. } = &results[0] else {
-        panic!("成员 0 应为 Completed");
-    };
-    assert!(ok1, "源序首个（write）保留执行");
-    let ToolExecution::Completed {
-        ok: ok2,
-        error: err2,
-        ..
-    } = &results[1]
-    else {
-        panic!("成员 1 应为 Completed");
-    };
-    assert!(!ok2, "同文件混入 write 的 edit 被拒（Q32）");
-    assert_eq!(err2.as_ref().expect("错误面").code, "E_INVALID_ARG");
-    assert_eq!(
-        std::fs::read_to_string(ctx.project_root.join("n.txt")).unwrap(),
-        "fresh",
-        "文件保持 write 结果"
-    );
-}
-
-/// 同文件 edit+write 混批：源序首个（edit）保留执行，write（后续冲突）
-/// 被拒——不创建文件。
-#[tokio::test]
-async fn same_file_edit_then_write_rejects_write() {
-    let ctx = temp_ctx();
-    std::fs::write(ctx.project_root.join("e.txt"), "hello\n").unwrap();
-    let executor = ToolsetExecutor::new(ctx.clone(), PermissionTier::FullAccess);
-    let batch = vec![
-        batch_call(
-            "c1",
-            "edit",
-            r#"{"path": "e.txt", "oldText": "hello", "newText": "hi"}"#,
-        ),
-        batch_call(
-            "c2",
-            "write",
-            r#"{"path": "e.txt", "content": "overwritten"}"#,
+        // 重复 write：第二个拒绝（不覆盖）
+        (
+            "w.txt",
+            None,
+            batch_call("c1", "write", r#"{"path": "w.txt", "content": "first"}"#),
+            batch_call("c2", "write", r#"{"path": "w.txt", "content": "second"}"#),
+            "first",
         ),
     ];
-    let results = executor
-        .execute_batch(&batch, &CancellationToken::new())
-        .await;
-    let ToolExecution::Completed { ok: ok1, .. } = &results[0] else {
-        panic!("成员 0 应为 Completed");
-    };
-    assert!(ok1, "源序首个（edit）保留执行");
-    let ToolExecution::Completed {
-        ok: ok2,
-        error: err2,
-        ..
-    } = &results[1]
-    else {
-        panic!("成员 1 应为 Completed");
-    };
-    assert!(!ok2, "同文件混入 edit 的 write 被拒（Q32）");
-    assert_eq!(err2.as_ref().expect("错误面").code, "E_INVALID_ARG");
-    assert_eq!(
-        std::fs::read_to_string(ctx.project_root.join("e.txt")).unwrap(),
-        "hi\n",
-        "文件保持 edit 结果，write 未生效"
-    );
+    for (idx, (path, seed, first, conflicting, want_content)) in cases.into_iter().enumerate() {
+        let ctx = temp_ctx();
+        if let Some(content) = seed {
+            std::fs::write(ctx.project_root.join(path), content).unwrap();
+        }
+        let executor = ToolsetExecutor::new(ctx.clone(), PermissionTier::FullAccess);
+        let results = executor
+            .execute_batch(&[first, conflicting], &CancellationToken::new())
+            .await;
+        let ToolExecution::Completed { ok: ok1, .. } = &results[0] else {
+            panic!("用例 {idx}：成员 0 应为 Completed");
+        };
+        assert!(ok1, "用例 {idx}：源序首个成员保留执行");
+        let ToolExecution::Completed {
+            ok: ok2,
+            error: err2,
+            ..
+        } = &results[1]
+        else {
+            panic!("用例 {idx}：成员 1 应为 Completed（失败也是收齐的结果）");
+        };
+        assert!(!ok2, "用例 {idx}：冲突成员应被拒");
+        assert_eq!(
+            err2.as_ref().expect("错误面").code,
+            "E_INVALID_ARG",
+            "用例 {idx}：冲突拒绝码"
+        );
+        assert_eq!(
+            std::fs::read_to_string(ctx.project_root.join(path)).unwrap(),
+            want_content,
+            "用例 {idx}：文件只体现首个成员"
+        );
+    }
 }
 
-/// 同文件两个 write：源序首个保留，第二个拒绝（不覆盖）。
+/// 断言混合批次端到端语义：不同文件的读与写并发/串行各归其位、结果按源
+/// 序返回、同文件多 edit 合并提交；跨执行器（跨会话语义）批次链式提交
+///——两组各自对同一文件 edit 混批，冲突检测独立生效、文件终态唯一。
 #[tokio::test]
-async fn same_file_two_writes_second_rejected() {
-    let ctx = temp_ctx();
-    let executor = ToolsetExecutor::new(ctx.clone(), PermissionTier::FullAccess);
-    let batch = vec![
-        batch_call("c1", "write", r#"{"path": "w.txt", "content": "first"}"#),
-        batch_call("c2", "write", r#"{"path": "w.txt", "content": "second"}"#),
-    ];
-    let results = executor
-        .execute_batch(&batch, &CancellationToken::new())
-        .await;
-    let ToolExecution::Completed { ok: ok1, .. } = &results[0] else {
-        panic!("成员 0 应为 Completed");
-    };
-    assert!(ok1);
-    let ToolExecution::Completed { ok: ok2, error, .. } = &results[1] else {
-        panic!("成员 1 应为 Completed");
-    };
-    assert!(!ok2, "同文件重复 write 被拒");
-    assert_eq!(error.as_ref().expect("错误面").code, "E_INVALID_ARG");
-    assert_eq!(
-        std::fs::read_to_string(ctx.project_root.join("w.txt")).unwrap(),
-        "first"
-    );
-}
-
-/// 同批混合读写批次（端到端语义）：不同文件的读与写并发/串行各归其位，
-/// 结果按源序返回、同文件多 edit 合并提交。
-#[tokio::test]
-async fn mixed_batch_read_parallel_write_group_source_order() {
+async fn mixed_batch_and_cross_executor_cases() {
+    // ① 混批：read a + edit c（两处）+ read b → 全部成功、源序对位、合并提交
     let ctx = temp_ctx();
     std::fs::write(ctx.project_root.join("a.txt"), "A").unwrap();
     std::fs::write(ctx.project_root.join("b.txt"), "B").unwrap();
@@ -550,7 +457,6 @@ async fn mixed_batch_read_parallel_write_group_source_order() {
         "y1\nx2\ny3\n",
         "同文件两个 edit 合并原子提交"
     );
-    // 源序对位：read a 的结果在 0 位、read b 在 2 位。
     let ToolExecution::Completed { model_text: t0, .. } = &results[0] else {
         unreachable!()
     };
@@ -559,34 +465,26 @@ async fn mixed_batch_read_parallel_write_group_source_order() {
         unreachable!()
     };
     assert!(t2.contains("B"), "位置 2 = read b.txt");
-}
 
-/// 跨执行器（跨会话语义）同文件批次互斥：两组并发批次各自对同一文件
-/// write+edit 混批，各组入口冲突检测独立生效、文件终态唯一。
-#[tokio::test]
-async fn cross_session_batches_write_lock_keeps_files_consistent() {
+    // ② 跨执行器：组 A 改 base→A（两个 edit 合并提交），组 B 改 A→B、
+    // "!"→"?"——顺序执行断言终态链式正确（并发互斥由调度层测试钉住）
     let ctx = temp_ctx();
     std::fs::write(ctx.project_root.join("s.txt"), "base\n").unwrap();
     let token = CancellationToken::new();
-    let batch = |old: &str, new: &str| {
-        vec![
-            batch_call(
-                "c1",
-                "edit",
-                &format!(r#"{{"path": "s.txt", "oldText": "{old}", "newText": "{new}"}}"#),
-            ),
-            batch_call(
-                "c2",
-                "edit",
-                &format!(r#"{{"path": "s.txt", "oldText": "{new}", "newText": "{new}!"}}"#),
-            ),
-        ]
-    };
-    // 组 A 改 base→A；组 B 等 A 的批次完成后改 A→B、"!"→"?"（两个 edit
-    // 都基于 B 批次开始时的文件内容，可合并原子提交）。此处顺序执行两个
-    // 批次，断言终态链式正确（并发互斥由调度层测试钉住）。
     let executor_a = ToolsetExecutor::new(ctx.clone(), PermissionTier::FullAccess);
-    let results_a = executor_a.execute_batch(&batch("base", "A"), &token).await;
+    let batch_a = vec![
+        batch_call(
+            "c1",
+            "edit",
+            r#"{"path": "s.txt", "oldText": "base", "newText": "A"}"#,
+        ),
+        batch_call(
+            "c2",
+            "edit",
+            r#"{"path": "s.txt", "oldText": "A", "newText": "A!"}"#,
+        ),
+    ];
+    let results_a = executor_a.execute_batch(&batch_a, &token).await;
     assert!(
         results_a
             .iter()
@@ -654,9 +552,13 @@ fn executor_with_store() -> (
     (executor, store, root)
 }
 
-/// write 成功 → 登记一条（runCount=1）；write 失败（已存在）→ 不登记。
+/// 断言产物登记接线（28 号票，FR-10-06）：write 成功登记（runCount=1）、
+/// 失败（已存在仅新建语义）不登记、edit 同路径重复编辑 runCount 递增、
+/// 同批合并组逐成员各计一次、未装配 store（子代理/headless）成功但不登记
+/// 不报错。
 #[tokio::test]
-async fn write_success_records_artifact_failure_does_not() {
+async fn artifact_recording_cases() {
+    // ① write 成功登记 + 失败不登记
     let (executor, store, root) = executor_with_store();
     let token = CancellationToken::new();
     executor
@@ -689,13 +591,9 @@ async fn write_success_records_artifact_failure_does_not() {
     let a = rows.iter().find(|r| r.path.ends_with("a.txt")).unwrap();
     assert_eq!(a.run_count, 1);
     let _ = root;
-}
 
-/// edit 成功 → 同一路径重复编辑 runCount 递增。
-#[tokio::test]
-async fn edit_repeat_increments_run_count() {
+    // ② edit 同路径重复编辑：runCount 递增
     let (executor, store, _root) = executor_with_store();
-    let token = CancellationToken::new();
     executor
         .execute(
             "c1",
@@ -723,13 +621,9 @@ async fn edit_repeat_increments_run_count() {
     let rows = store.list_artifacts("s-art");
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].run_count, 3, "write 1 次 + edit 2 次");
-}
 
-/// 同批同文件多 edit 合并提交：每个接受成员都登记一次（runCount 逐次 +1）。
-#[tokio::test]
-async fn merged_edit_group_records_each_member() {
+    // ③ 同批同文件多 edit 合并提交：每个接受成员都登记一次
     let (executor, store, _root) = executor_with_store();
-    let token = CancellationToken::new();
     executor
         .execute(
             "c0",
@@ -739,16 +633,16 @@ async fn merged_edit_group_records_each_member() {
         )
         .await;
     let batch = vec![
-        BatchCall {
-            call_id: "c1".to_owned(),
-            name: "edit".to_owned(),
-            args_json: r#"{"path": "m.txt", "oldText": "a", "newText": "A"}"#.to_owned(),
-        },
-        BatchCall {
-            call_id: "c2".to_owned(),
-            name: "edit".to_owned(),
-            args_json: r#"{"path": "m.txt", "oldText": "b", "newText": "B"}"#.to_owned(),
-        },
+        batch_call(
+            "c1",
+            "edit",
+            r#"{"path": "m.txt", "oldText": "a", "newText": "A"}"#,
+        ),
+        batch_call(
+            "c2",
+            "edit",
+            r#"{"path": "m.txt", "oldText": "b", "newText": "B"}"#,
+        ),
     ];
     let results = executor.execute_batch(&batch, &token).await;
     assert!(
@@ -759,11 +653,8 @@ async fn merged_edit_group_records_each_member() {
     let rows = store.list_artifacts("s-art");
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].run_count, 3, "write 1 次 + 合并组两个成员各 1 次");
-}
 
-/// 未装配 store（子代理/headless 形态）：write 成功但不登记、不报错。
-#[tokio::test]
-async fn write_without_store_skips_recording() {
+    // ④ 未装配 store：write 成功但不登记、不报错（无登记文件）
     let dir = tempfile::tempdir().expect("tempdir");
     let root = dir.path().to_path_buf();
     std::mem::forget(dir);
@@ -784,7 +675,6 @@ async fn write_without_store_skips_recording() {
             network: None,
             store: None,
         });
-    let token = CancellationToken::new();
     let out = executor
         .execute(
             "c1",
@@ -794,6 +684,5 @@ async fn write_without_store_skips_recording() {
         )
         .await;
     assert!(matches!(out, ToolExecution::Completed { ok: true, .. }));
-    // 无 store 可写 → 无登记文件
     assert!(!root.join("sessions").join("s-x.artifacts.json").exists());
 }

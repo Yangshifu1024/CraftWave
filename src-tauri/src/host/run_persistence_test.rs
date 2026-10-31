@@ -55,44 +55,19 @@ fn send_text_run(sink: &mut PersistingSink) {
     });
 }
 
-/// run 终态 index upsert 不得清空既有外部目录授权（24 号票语义：授权
-/// 跨 run 生效；27 号票收尾核实并修复的回归）。
+/// 断言三种帧序的落盘产物形状与 run 终态的两个侧面：
+/// 1) 纯文本 run：一条文本条目 + runMarker，index 建档（用量为四项之和、
+///    条目数与修订号与史册一致）；
+/// 2) 纯工具 run：ToolCall 与 ToolResult 相邻配对，args 规范化为紧凑 JSON，
+///    marker 挂在工具条目之后（父链完整）；
+/// 3) 文本 + 工具混合 turn：usage 先收口，文本条先落、工具条后落，
+///    reasoning 段排在文本段之前，父链按落盘顺序串起来；
+/// 4) index upsert 不得清空既有外部目录授权（24 号票语义：授权跨 run 生效；
+///    27 号票收尾核实并修复的回归）；流中取消（没有 usage 收口帧）残留文本
+///    桶由 runEnded 防御兜底收口，runMarker 仍照常落盘。
 #[test]
-fn run_end_preserves_authorized_external_dirs() {
-    let (store, mut sink, _dir) = recorder();
-    // 预置会话（run 开始前 index 已有授权记录，模拟 24 号票授权后的会话）
-    store
-        .index()
-        .upsert(crate::storage::SessionMeta {
-            id: "s1".to_string(),
-            project_id: None,
-            title: "有授权的会话".to_string(),
-            created_at: 1,
-            updated_at: 1,
-            revision: 1,
-            message_count: 0,
-            total_tokens: 0,
-            authorized_external_dirs: vec!["/tmp/外部目录".to_string()],
-        })
-        .unwrap();
-    send_text_run(&mut sink);
-    let meta = store
-        .index()
-        .list()
-        .into_iter()
-        .find(|m| m.id == "s1")
-        .unwrap();
-    assert_eq!(
-        meta.authorized_external_dirs,
-        vec!["/tmp/外部目录".to_string()],
-        "run 终态 upsert 清空了外部目录授权"
-    );
-}
-
-/// 纯文本 run：落盘产物为一条文本条目 + runMarker，且 index 建档
-/// （用量为四项之和、条目数与修订号与史册一致）。
-#[test]
-fn text_run_persists_turn_entry_and_marker() {
+fn text_tool_mixed_and_run_end_persistence() {
+    // 1) 纯文本 run。
     let (store, mut sink, _dir) = recorder();
     send_text_run(&mut sink);
     let tree = store.load_session_tree("s1").unwrap();
@@ -123,12 +98,8 @@ fn text_run_persists_turn_entry_and_marker() {
     assert_eq!(meta.total_tokens, 15);
     assert_eq!(meta.message_count, 2);
     assert_eq!(meta.revision, tree.revision);
-}
 
-/// 纯工具 run：工具条目内 ToolCall 与 ToolResult 相邻配对，args 被
-/// 规范化为紧凑 JSON，marker 挂在工具条目之后（父链完整）。
-#[test]
-fn tool_run_persists_paired_tool_parts() {
+    // 2) 纯工具 run。
     let (store, mut sink, _dir) = recorder();
     sink.send(ChatFrame::RunStarted {
         run_id: "run-1".to_string(),
@@ -181,12 +152,9 @@ fn tool_run_persists_paired_tool_parts() {
     );
     // marker 链尾 = 工具条（parent 链完整）
     assert_eq!(tree.messages[1].parent_id.as_deref(), Some("run-1:1.tools"));
-}
 
-/// 文本 + 工具混合 turn：真实帧序下 usage 先收口，文本条先落、工具条
-/// 后落，reasoning 段排在文本段之前，父链按落盘顺序串起来。
-#[test]
-fn mixed_turn_persists_text_then_tools_entries() {
+    // 3) 文本 + 工具混合 turn：真实帧序下 Usage（流收口）先于 CallTools
+    //    执行 → 文本条先落、工具条后落。
     let (store, mut sink, _dir) = recorder();
     sink.send(ChatFrame::RunStarted {
         run_id: "run-1".to_string(),
@@ -209,7 +177,6 @@ fn mixed_turn_persists_text_then_tools_entries() {
         call_id: "t1-c1".to_string(),
         chunk: "{}".to_string(),
     });
-    // 真实帧序：Usage（流收口）先于 CallTools 执行 → 文本条先落、工具条后落
     sink.send(ChatFrame::Usage {
         usage: UsageTotal::default(),
         rate: None,
@@ -238,12 +205,38 @@ fn mixed_turn_persists_text_then_tools_entries() {
     // 链：文本 → 工具 → marker
     assert_eq!(tree.messages[1].parent_id.as_deref(), Some("run-1:1"));
     assert_eq!(tree.messages[2].parent_id.as_deref(), Some("run-1:1.tools"));
-}
 
-/// 流中取消（没有 usage 收口帧）：残留文本桶由 runEnded 防御兜底收口，
-/// runMarker 仍然照常落盘，历史不悬空。
-#[test]
-fn cancelled_run_still_closes_with_marker() {
+    // 4) run 终态：授权跨 run 保留。
+    let (store, mut sink, _dir) = recorder();
+    // 预置会话（run 开始前 index 已有授权记录，模拟 24 号票授权后的会话）
+    store
+        .index()
+        .upsert(crate::storage::SessionMeta {
+            id: "s1".to_string(),
+            project_id: None,
+            title: "有授权的会话".to_string(),
+            created_at: 1,
+            updated_at: 1,
+            revision: 1,
+            message_count: 0,
+            total_tokens: 0,
+            authorized_external_dirs: vec!["/tmp/外部目录".to_string()],
+        })
+        .unwrap();
+    send_text_run(&mut sink);
+    let meta = store
+        .index()
+        .list()
+        .into_iter()
+        .find(|m| m.id == "s1")
+        .unwrap();
+    assert_eq!(
+        meta.authorized_external_dirs,
+        vec!["/tmp/外部目录".to_string()],
+        "run 终态 upsert 清空了外部目录授权"
+    );
+
+    // 流中取消：marker 仍收口，历史不悬空。
     let (store, mut sink, _dir) = recorder();
     sink.send(ChatFrame::RunStarted {
         run_id: "run-1".to_string(),

@@ -4,9 +4,16 @@
 use super::*;
 use crate::safety::tier::PermissionTier;
 
-/// 7 个内置角色、名字唯一、清单顺序（§5.9）。
+// 断言：7 个内置角色、名字唯一、清单顺序与票面默认预算（§5.9）；
+// 未知角色查询返回 None（执行入口回喂 E_INVALID_ARG 的依据）且大小写
+// 敏感；budgetSteps 钳制（1–1000，None → 角色默认值）；只读角色的工具表
+// 不含写/命令工具（可见面 = 执行许可，注册表 ⊇ 白名单）；写入角色白名单
+// 与 plan 档过滤（filter_for_tier 同一实现裁剪）；任何角色的白名单都不含
+// subagent（Q13 仅主代理委派的第一道落实）；subagent 工具规格 description
+// 内嵌 7 角色清单与职责一句话、schema 必填 role/task、role 枚举全表。
 #[test]
-fn roles_roster_is_complete_and_unique() {
+fn roles_roster_budget_and_tool_whitelists() {
+    // 7 个内置角色、名字唯一、清单顺序（§5.9）。
     let names: Vec<&str> = ROLES.iter().map(|r| r.name).collect();
     assert_eq!(
         names,
@@ -24,7 +31,7 @@ fn roles_roster_is_complete_and_unique() {
     sorted.sort_unstable();
     sorted.dedup();
     assert_eq!(sorted.len(), names.len(), "角色名必须唯一");
-    // 票面默认预算：explore 40 / dev 90 / reviewer 45 / tester 60
+    // 票面默认预算：explore 40 / dev 90 / reviewer 45 / tester 60。
     let budget_of = |name: &str| find_role(name).unwrap().default_budget_steps;
     assert_eq!(budget_of("explore"), 40);
     assert_eq!(budget_of("implementer"), 90);
@@ -32,19 +39,13 @@ fn roles_roster_is_complete_and_unique() {
     assert_eq!(budget_of("backend-dev"), 90);
     assert_eq!(budget_of("reviewer"), 45);
     assert_eq!(budget_of("tester"), 60);
-}
 
-/// 未知角色查询返回 None（执行入口回喂 E_INVALID_ARG 的依据）。
-#[test]
-fn find_role_unknown_returns_none() {
+    // 未知角色查询返回 None（执行入口回喂 E_INVALID_ARG 的依据）。
     assert!(find_role("ceo").is_none());
     assert!(find_role("").is_none());
     assert!(find_role("Explore").is_none(), "角色名大小写敏感");
-}
 
-/// budgetSteps 钳制（票面：1–1000；None → 角色默认值）。
-#[test]
-fn budget_steps_clamped() {
+    // budgetSteps 钳制（票面：1–1000；None → 角色默认值）。
     let explore = find_role("explore").unwrap();
     assert_eq!(clamp_budget_steps(explore, None), 40);
     assert_eq!(clamp_budget_steps(explore, Some(500)), 500);
@@ -60,11 +61,8 @@ fn budget_steps_clamped() {
         45,
         "planner 默认与 reviewer 同级"
     );
-}
 
-/// 白名单裁剪：只读角色的工具表不含写/命令工具（可见面 = 执行许可）。
-#[test]
-fn role_tool_specs_readonly_roles_have_no_write_tools() {
+    // 白名单裁剪：只读角色的工具表不含写/命令工具（可见面 = 执行许可）。
     for name in ["explore", "planner", "reviewer"] {
         let role = find_role(name).unwrap();
         let specs = roles::role_tool_specs(role, PermissionTier::FullAccess);
@@ -75,19 +73,20 @@ fn role_tool_specs_readonly_roles_have_no_write_tools() {
                 .any(|n| matches!(*n, "write" | "edit" | "command")),
             "只读角色 {name} 的工具表不得含写入面：{names:?}"
         );
-        // 白名单成员全部命中（注册表 ⊇ 白名单）
+        // 白名单成员全部命中（注册表 ⊇ 白名单）。
         assert_eq!(names.len(), role.tools.len());
     }
-}
 
-/// 写入角色的白名单与 plan 档过滤（filter_for_tier 同一实现裁剪）。
-#[test]
-fn role_tool_specs_writer_filtered_by_plan_tier() {
+    // 写入角色的白名单与 plan 档过滤（filter_for_tier 同一实现裁剪）。
     let role = find_role("implementer").unwrap();
     let full = roles::role_tool_specs(role, PermissionTier::AutoEdit);
-    let names: Vec<&str> = full.iter().map(|s| s.name.as_str()).collect();
-    assert!(names.contains(&"write") && names.contains(&"edit") && names.contains(&"command"));
-    // plan 档：写/联网工具被档位过滤（可见面同步收窄）
+    let full_names: Vec<&str> = full.iter().map(|s| s.name.as_str()).collect();
+    assert!(
+        full_names.contains(&"write")
+            && full_names.contains(&"edit")
+            && full_names.contains(&"command")
+    );
+    // plan 档：写/联网工具被档位过滤（可见面同步收窄）。
     let plan = roles::role_tool_specs(role, PermissionTier::Plan);
     let plan_names: Vec<&str> = plan.iter().map(|s| s.name.as_str()).collect();
     assert!(
@@ -99,13 +98,10 @@ fn role_tool_specs_writer_filtered_by_plan_tier() {
         "plan 档 implementer 不得见 command"
     );
     assert!(plan_names.contains(&"read"), "只读工具保留");
-}
 
-/// 子代理的角色边界：任何角色的白名单都不含 subagent（Q13 仅主代理委派
-/// 在工具表层面的第一道落实；执行入口拒绝由 executor 的 allowed_tools +
-/// subagents=None 承担）。
-#[test]
-fn no_role_can_delegate() {
+    // 子代理的角色边界：任何角色的白名单都不含 subagent（Q13 仅主代理
+    // 委派在工具表层面的第一道落实；执行入口拒绝由 executor 的
+    // allowed_tools + subagents=None 承担）。
     for role in ROLES {
         assert!(
             !role.tools.contains(&"subagent"),
@@ -113,12 +109,9 @@ fn no_role_can_delegate() {
             role.name
         );
     }
-}
 
-/// subagent 工具规格：description 内嵌 7 角色清单（模型点名依据）、
-/// schema 必填 role/task、Meta 能力（全档放行）。
-#[test]
-fn subagent_spec_embeds_roster() {
+    // subagent 工具规格：description 内嵌 7 角色清单（模型点名依据）、
+    // schema 必填 role/task。
     let spec = roles::subagent_spec();
     assert_eq!(spec.name, "subagent");
     for role in ROLES {

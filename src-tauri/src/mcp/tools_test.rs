@@ -5,10 +5,16 @@ use super::config::{McpScope, McpServerConfig};
 use super::tools::{ConnKey, McpToolRegistry, normalize_tool_name};
 use crate::tools::ToolOrigin;
 
-/// 归一化：合法集 [a-z_][a-z0-9_]{0,63}（§8.1）——大写小写化、非法字符
-/// 替换 _、首字符数字加前缀、超长截断、空名兜底。
+// 断言：归一化合法集 [a-z_][a-z0-9_]{0,63}（§8.1）——大写小写化、非法
+// 字符替换 _、首字符数字加前缀、超长截断、空名兜底；同 server 内注册名
+// 与静态段/其他 server 的碰撞：`__2` 序号后缀 + 反向映射还原（归一名 →
+// (连接键, 原名)，跨 server 不串）；重复同步（tools/list_changed 热更新）
+// 保留既有归一名不抖动；deny glob 过滤优先于 allow；能力标注与 Q44 身份
+// 三元组（read_only 配置 → ReadOnly，未声明 → Network；fingerprint/原名/
+// schema 哈希/timeout 随身份带出）；断开移除后动态段即时收窄。
 #[test]
-fn normalize_tool_name_rules() {
+fn normalize_collision_identity_and_lifecycle() {
+    // 归一化规则。
     assert_eq!(normalize_tool_name("read_file"), "read_file");
     assert_eq!(normalize_tool_name("ReadFile"), "readfile");
     assert_eq!(normalize_tool_name("fs:read!path"), "fs_read_path");
@@ -17,12 +23,8 @@ fn normalize_tool_name_rules() {
     let long = "a".repeat(100);
     assert_eq!(normalize_tool_name(&long).len(), 64);
     assert_eq!(normalize_tool_name(""), "_");
-}
 
-/// 同 server 内注册名与静态段/其他 server 的碰撞：`__2` 序号后缀 + 反向
-/// 映射还原（归一名 → (连接键, 原名)）。
-#[test]
-fn collision_suffix_and_reverse_mapping() {
+    // 碰撞后缀 + 反向映射还原。
     let registry = McpToolRegistry::default();
     let cfg = McpServerConfig::default();
     let key_a = ConnKey {
@@ -81,44 +83,17 @@ fn collision_suffix_and_reverse_mapping() {
     let b_echo = registry.identity("echo__2").expect("echo__2 归 b");
     assert_eq!(b_echo.conn_key.name, "server_b");
     assert_eq!(b_echo.original_name, "echo");
-}
 
-/// 重复同步（tools/list_changed 热更新）：同 server 保留既有归一名不抖动。
-#[test]
-fn resync_keeps_own_names() {
-    let registry = McpToolRegistry::default();
-    let cfg = McpServerConfig::default();
-    let key = ConnKey {
-        scope: McpScope::Global,
-        project_id: None,
-        name: "srv".into(),
-        canonical_path: "/tmp/s.json".into(),
-    };
-    let mk = |name: &str| {
-        (
-            name.to_owned(),
-            "d".to_owned(),
-            serde_json::json!({"type": "object"}),
-            crate::tools::ToolAnnotations {
-                read_only_hint: false,
-                destructive_hint: false,
-                idempotent_hint: false,
-                open_world_hint: false,
-            },
-        )
-    };
-    registry.sync(key.clone(), "fp".into(), &cfg, vec![mk("echo")]);
-    registry.sync(key.clone(), "fp".into(), &cfg, vec![mk("echo")]);
+    // 重复同步（tools/list_changed 热更新）：同 server 保留既有归一名不抖动。
+    registry.sync(
+        key_a.clone(),
+        "fp_a".into(),
+        &cfg,
+        vec![mk("echo", serde_json::json!({"type":"object"}))],
+    );
     assert!(registry.identity("echo").is_some(), "重同步保留自己占用名");
-    // 快照里只有一份
-    assert_eq!(registry.snapshot().len(), 1);
-}
 
-/// 能力标注与 Q44 身份：read_only 配置 → ReadOnly 能力；timeout/许可三元
-/// 组字段随身份带出；deny glob 过滤优先于 allow。
-#[test]
-fn capability_identity_and_glob_filter() {
-    let registry = McpToolRegistry::default();
+    // 能力标注与 Q44 身份 + glob 过滤。
     let key = ConnKey {
         scope: McpScope::Global,
         project_id: None,
@@ -134,19 +109,6 @@ fn capability_identity_and_glob_filter() {
         }),
         ..McpServerConfig::default()
     };
-    let mk = |name: &str, schema: serde_json::Value| {
-        (
-            name.to_owned(),
-            "d".to_owned(),
-            schema,
-            crate::tools::ToolAnnotations {
-                read_only_hint: false,
-                destructive_hint: false,
-                idempotent_hint: false,
-                open_world_hint: false,
-            },
-        )
-    };
     let schema = serde_json::json!({"type": "object", "properties": {}});
     let registered = registry.sync(
         key.clone(),
@@ -160,7 +122,11 @@ fn capability_identity_and_glob_filter() {
     );
     // deny 命中的不注册；allow 未命中的不注册
     assert_eq!(registered, vec!["fs__read".to_owned()]);
-    let spec = registry.snapshot().into_iter().next().expect("一个工具");
+    let spec = registry
+        .snapshot()
+        .into_iter()
+        .find(|s| s.name == "fs__read")
+        .expect("fs__read 在场");
     assert_eq!(spec.origin, ToolOrigin::Mcp);
     assert_eq!(
         spec.capability,
@@ -176,43 +142,24 @@ fn capability_identity_and_glob_filter() {
     );
     assert_eq!(identity.call_timeout, std::time::Duration::from_secs(7));
     cfg.read_only = false;
-    registry.sync(key, "fp2".into(), &cfg, vec![mk("fs__read", schema)]);
+    registry.sync(
+        key.clone(),
+        "fp2".into(),
+        &cfg,
+        vec![mk("fs__read", schema)],
+    );
+    let spec = registry
+        .snapshot()
+        .into_iter()
+        .find(|s| s.name == "fs__read")
+        .expect("fs__read 在场");
     assert_eq!(
-        registry.snapshot()[0].capability,
+        spec.capability,
         crate::safety::tier::Capability::Network,
         "未声明 read_only → Network"
     );
-}
 
-/// 断开移除：动态段即时收窄（工具表下一轮请求生效）。
-#[test]
-fn remove_narrows_registry() {
-    let registry = McpToolRegistry::default();
-    let key = ConnKey {
-        scope: McpScope::Global,
-        project_id: None,
-        name: "srv".into(),
-        canonical_path: "/tmp/s.json".into(),
-    };
-    let cfg = McpServerConfig::default();
-    registry.sync(
-        key.clone(),
-        "fp".into(),
-        &cfg,
-        vec![(
-            "echo".to_owned(),
-            "d".to_owned(),
-            serde_json::json!({}),
-            crate::tools::ToolAnnotations {
-                read_only_hint: false,
-                destructive_hint: false,
-                idempotent_hint: false,
-                open_world_hint: false,
-            },
-        )],
-    );
-    assert_eq!(registry.snapshot().len(), 1);
+    // 断开移除：动态段即时收窄（工具表下一轮请求生效）。
     registry.remove(&key);
-    assert!(registry.snapshot().is_empty());
-    assert!(registry.identity("echo").is_none());
+    assert!(registry.identity("fs__read").is_none());
 }

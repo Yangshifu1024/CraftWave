@@ -6,9 +6,10 @@
 
 use objc2_user_notifications::UNAuthorizationStatus;
 
-/// 全部五种系统授权态的映射口径：prompt/denied 保留，其余都视为可送达。
+/// 全部五种系统授权态的映射口径：prompt/denied 保留，其余都视为可送达；
+/// 以及四个前端口径常量的字面值（即 IPC 契约面，与 ui 侧 types 判别值一致）。
 #[test]
-fn authorization_status_maps_to_frontend_vocabulary() {
+fn authorization_mapping_and_contract_values() {
     assert_eq!(
         super::authorization_word(UNAuthorizationStatus::NotDetermined),
         super::AUTH_PROMPT,
@@ -34,11 +35,7 @@ fn authorization_status_maps_to_frontend_vocabulary() {
         super::AUTH_GRANTED,
         "Ephemeral 能送达 → granted"
     );
-}
 
-/// 四个前端口径常量的字面值即 IPC 契约面（与 ui 侧 types 判别值一致）。
-#[test]
-fn authorization_vocabulary_contract_values() {
     assert_eq!(super::AUTH_GRANTED, "granted");
     assert_eq!(super::AUTH_DENIED, "denied");
     assert_eq!(super::AUTH_PROMPT, "prompt");

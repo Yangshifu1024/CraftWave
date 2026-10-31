@@ -3,6 +3,7 @@
 //! 测试面覆盖：新建项目同时落注册表与主目录注册清单、重复 homeDir 拒绝、
 //! homeDir 变更时清单重绑（旧目录移除新目录出现）、仅改名不动清单、删除只清
 //! 注册痕迹而保留项目数据文件、home_of 根解析、更新不存在的项目报 NotFound。
+//! 同型用例在单个 #[test] 内顺序合并，断言消息带用例标识。
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -30,107 +31,79 @@ fn temp_home(tag: &str) -> String {
     dir.to_string_lossy().into_owned()
 }
 
-// 断言：新建项目返回非空 id，注册表列出该条目，且主目录写入 rootsSnapshot=[homeDir] 的清单。
+// 断言：注册与更新全语义——新建同时落注册表与主目录清单（rootsSnapshot=
+// [homeDir]）；同一主目录注册第二个项目被拒（一目录一项目 DuplicateHome）；
+// homeDir 变更触发清单重绑（旧目录移除新目录出现、项目 id 不变）；仅改名
+// 清单原地更新不搬移；更新不存在的项目报 NotFound（带原 id）。
 #[test]
-fn save_new_persists_registry_and_manifest() {
-    let root = temp_root("new");
+fn save_update_and_rebind_semantics() {
+    let root = temp_root("life");
     let store = ProjectStore::new(&root);
-    let home = temp_home("new-home");
+
+    // 新建：注册表列出该条目，主目录写入清单
+    let home = temp_home("life-home");
     let meta = store.save(None, "演示项目", &home).unwrap();
     assert!(!meta.id.is_empty());
-
     let listed = store.list().unwrap();
     assert_eq!(listed, vec![meta.clone()]);
-
-    // 主目录注册清单：rootsSnapshot=[homeDir]
     let manifest: ProjectManifest =
         serde_json::from_str(&fs::read_to_string(manifest_of(&home)).unwrap()).unwrap();
     assert_eq!(manifest.id, meta.id);
-    assert_eq!(manifest.roots_snapshot, vec![home]);
-}
+    assert_eq!(manifest.roots_snapshot, vec![home.clone()]);
 
-// 断言：同一主目录注册第二个项目被拒绝（一目录一项目），报 DuplicateHome。
-#[test]
-fn save_rejects_duplicate_home_dir() {
-    let root = temp_root("dup");
-    let store = ProjectStore::new(&root);
-    let home = temp_home("dup-home");
-    store.save(None, "甲", &home).unwrap();
+    // 重复 homeDir：一目录一项目
     match store.save(None, "乙", &home) {
         Err(ProjectError::DuplicateHome(h)) => assert_eq!(h, home),
         other => panic!("应拒绝重复 homeDir，实际 {other:?}"),
     }
-}
 
-// 断言：修改项目主目录触发重绑——旧目录清单消失、新目录清单出现，项目 id 不变。
-#[test]
-fn home_change_rebinds_manifest() {
-    let root = temp_root("rebind");
-    let store = ProjectStore::new(&root);
-    let old_home = temp_home("rebind-old");
-    let new_home = temp_home("rebind-new");
-    let meta = store.save(None, "迁移项目", &old_home).unwrap();
-
-    let updated = store.save(Some(&meta.id), "迁移项目", &new_home).unwrap();
+    // homeDir 变更：旧目录清单消失、新目录清单出现、项目 id 不变
+    let old_home = home;
+    let new_home = temp_home("life-new");
+    let updated = store.save(Some(&meta.id), "演示项目", &new_home).unwrap();
     assert_eq!(updated.id, meta.id);
-    assert!(!manifest_of(&old_home).exists());
-    assert!(manifest_of(&new_home).exists());
-}
+    assert!(!manifest_of(&old_home).exists(), "旧目录清单移除");
+    assert!(manifest_of(&new_home).exists(), "新目录清单出现");
 
-// 断言：仅改名（homeDir 未变）时清单原地更新为新名，不触发搬移。
-#[test]
-fn update_without_home_change_keeps_manifest() {
-    let root = temp_root("rename");
-    let store = ProjectStore::new(&root);
-    let home = temp_home("rename-home");
-    let meta = store.save(None, "旧名", &home).unwrap();
-    let updated = store.save(Some(&meta.id), "新名", &home).unwrap();
+    // 仅改名（homeDir 未变）：清单原地更新为新名，不触发搬移
+    let updated = store.save(Some(&meta.id), "新名", &new_home).unwrap();
     assert_eq!(updated.name, "新名");
     let manifest: ProjectManifest =
-        serde_json::from_str(&fs::read_to_string(manifest_of(&home)).unwrap()).unwrap();
+        serde_json::from_str(&fs::read_to_string(manifest_of(&new_home)).unwrap()).unwrap();
     assert_eq!(manifest.name, "新名");
+
+    // 更新不存在的项目：NotFound 带原 id
+    match store.save(Some("不存在的项目"), "名", &temp_home("missing")) {
+        Err(ProjectError::NotFound(id)) => assert_eq!(id, "不存在的项目"),
+        other => panic!("应返回 NotFound，实际 {other:?}"),
+    }
 }
 
-// 断言：删除项目清除注册表条目与主目录清单，但项目数据文件原样保留，重复删除返回 None。
+// 断言：删除与查询语义——删除项目清除注册表条目与主目录清单但项目数据文件
+// 原样保留、重复删除返回 None；home_of 按 id 解析项目主目录、未知 id 返回 None。
 #[test]
-fn delete_removes_registry_and_manifest_but_not_data() {
-    let root = temp_root("delete");
+fn delete_and_home_of_semantics() {
+    let root = temp_root("del");
     let store = ProjectStore::new(&root);
-    let home = temp_home("delete-home");
+
+    // 删除：清注册痕迹、保数据文件、重复删除 None
+    let home = temp_home("del-home");
     let marker = Path::new(&home).join("keep.txt");
     fs::write(&marker, b"keep").unwrap();
     let meta = store.save(None, "待删项目", &home).unwrap();
-
     let removed = store.delete(&meta.id).unwrap();
     assert_eq!(
         removed.as_ref().map(|m| m.id.as_str()),
         Some(meta.id.as_str())
     );
-    assert!(store.list().unwrap().is_empty());
-    assert!(!manifest_of(&home).exists());
+    assert!(store.list().unwrap().is_empty(), "注册表条目清除");
+    assert!(!manifest_of(&home).exists(), "主目录清单清除");
     assert!(marker.exists(), "绝不触碰项目数据目录");
-    assert_eq!(store.delete(&meta.id).unwrap(), None);
-}
+    assert_eq!(store.delete(&meta.id).unwrap(), None, "重复删除 None");
 
-// 断言：home_of 按 id 解析出项目主目录，未知 id 返回 None。
-#[test]
-fn home_of_resolves_project_root() {
-    let root = temp_root("homeof");
-    let store = ProjectStore::new(&root);
-    let home = temp_home("homeof-home");
-    let meta = store.save(None, "根解析", &home).unwrap();
-    assert_eq!(store.home_of(&meta.id), Some(PathBuf::from(home.as_str())));
+    // home_of：按 id 解析，未知 id None
+    let home2 = temp_home("homeof-home");
+    let meta = store.save(None, "根解析", &home2).unwrap();
+    assert_eq!(store.home_of(&meta.id), Some(PathBuf::from(home2.as_str())));
     assert_eq!(store.home_of("不存在的项目"), None);
-}
-
-// 断言：更新不存在的项目报 NotFound（带原 id）。
-#[test]
-fn update_missing_project_is_not_found() {
-    let root = temp_root("missing");
-    let store = ProjectStore::new(&root);
-    let home = temp_home("missing-home");
-    match store.save(Some("不存在的项目"), "名", &home) {
-        Err(ProjectError::NotFound(id)) => assert_eq!(id, "不存在的项目"),
-        other => panic!("应返回 NotFound，实际 {other:?}"),
-    }
 }

@@ -1,5 +1,5 @@
-//! read 工具测试：行窗口 offset/limit、512KB 截断、二进制拒绝、
-//! GBK 解码、image base64 与 3MiB 上限、越界拒绝。
+//! read 工具测试：行窗口 offset/limit、512KB 截断、GBK 解码、二进制拒绝、
+//! image base64 与上限（越界拒绝见 mod.rs 共享守卫测试 path_guard_test）。
 
 use serde_json::json;
 
@@ -27,9 +27,12 @@ fn write_project_file(ws: &TestWorkspace, rel: &str, content: &str) {
     std::fs::write(ws.project_file(rel), content).expect("写文件");
 }
 
-// 断言：默认参数读全文（3 行），encoding/totalLines/content 齐全、不截断。
+// 断言：文本读取矩阵——默认参数读全文（encoding/totalLines/content 齐全）、
+// offset/limit 切窗 + truncated 标记、offset 超总行数返回空不算截断、超
+// 512KB 在整行边界截断、GBK 经共用解码器正确解码、二进制（含 NUL）拒绝。
 #[test]
-fn reads_full_window_with_defaults() {
+fn text_window_encoding_and_truncation_matrix() {
+    // 默认参数读全文。
     let ws = TestWorkspace::new();
     write_project_file(&ws, "a.txt", "l1\nl2\nl3\n");
     let outcome = run(&ws.ctx(), &text_args("a.txt"));
@@ -41,16 +44,11 @@ fn reads_full_window_with_defaults() {
     assert_eq!(data["content"], json!("l1\nl2\nl3\n"));
     assert_eq!(data["truncated"], json!(false));
     assert!(outcome.ui_summary.contains("第 1–3 行"));
-}
 
-// 断言：offset/limit 切出行窗口，窗口后仍有行时 truncated=true。
-#[test]
-fn offset_limit_window_and_truncation_flag() {
-    let ws = TestWorkspace::new();
+    // offset/limit 切窗，窗口后仍有行时 truncated=true。
     let body: String = (1..=10).map(|i| format!("line{i}\n")).collect();
-    write_project_file(&ws, "a.txt", &body);
-
-    let mut args = text_args("a.txt");
+    write_project_file(&ws, "win.txt", &body);
+    let mut args = text_args("win.txt");
     args.offset = Some(4);
     args.limit = Some(3);
     let outcome = run(&ws.ctx(), &args);
@@ -59,26 +57,17 @@ fn offset_limit_window_and_truncation_flag() {
     assert_eq!(data["returnedLines"], json!(3));
     assert_eq!(data["truncated"], json!(true), "后面还有行应标 truncated");
     assert!(outcome.ui_summary.contains("第 4–6 行"));
-}
 
-// 断言：offset 超过总行数返回空内容且不算截断。
-#[test]
-fn offset_beyond_total_returns_empty_not_truncated() {
-    let ws = TestWorkspace::new();
-    write_project_file(&ws, "a.txt", "one\n");
-    let mut args = text_args("a.txt");
+    // offset 超过总行数返回空内容且不算截断。
+    write_project_file(&ws, "short.txt", "one\n");
+    let mut args = text_args("short.txt");
     args.offset = Some(100);
     let outcome = run(&ws.ctx(), &args);
     let data = outcome.data.expect("data");
     assert_eq!(data["content"], json!(""));
     assert_eq!(data["truncated"], json!(false));
-}
 
-// 断言：超 512KB 单响应上限时在整行边界截断（内容以换行结尾）。
-#[test]
-fn oversize_single_response_truncates_at_line_boundary() {
-    let ws = TestWorkspace::new();
-    // 每行 200KB × 5 行 = 1MB > 512KB。
+    // 超 512KB 单响应上限：整行边界截断。
     let line = "x".repeat(200 * 1024);
     let body = format!("{line}\n{line}\n{line}\n{line}\n{line}\n");
     write_project_file(&ws, "big.txt", &body);
@@ -88,24 +77,16 @@ fn oversize_single_response_truncates_at_line_boundary() {
     assert!(content.len() <= 512 * 1024, "应 ≤512KB");
     assert_eq!(data["truncated"], json!(true));
     assert!(content.ends_with('\n'), "整行边界截断");
-}
 
-// 断言：GBK 文件经共用解码器正确解码为中文文本（encoding 报 GBK）。
-#[test]
-fn gbk_file_decodes_via_shared_decoder() {
-    let ws = TestWorkspace::new();
+    // GBK 文件经共用解码器正确解码（encoding 报 GBK）。
     let (encoded, _, _) = encoding_rs::GBK.encode("第一行：中文\n第二行：GBK\n");
     std::fs::write(ws.project_file("gbk.txt"), &encoded).expect("写 GBK");
     let outcome = run(&ws.ctx(), &text_args("gbk.txt"));
     let data = outcome.data.expect("data");
     assert_eq!(data["encoding"], "GBK");
     assert_eq!(data["content"], json!("第一行：中文\n第二行：GBK\n"));
-}
 
-// 断言：二进制文件（前 8KB 含 NUL）不支持文本读取，报 E_INVALID_ARG。
-#[test]
-fn binary_file_is_rejected() {
-    let ws = TestWorkspace::new();
+    // 二进制文件（前 8KB 含 NUL）不支持文本读取。
     std::fs::write(ws.project_file("bin.dat"), b"abc\x00def\x00").expect("写二进制");
     let outcome = run(&ws.ctx(), &text_args("bin.dat"));
     assert!(!outcome.ok);
@@ -114,11 +95,13 @@ fn binary_file_is_rejected() {
     assert!(err.message.contains("二进制"));
 }
 
-// 断言：kind=image 返回 base64（可原样解码还原）与正确的 mediaType。
+// 断言：kind=image 通道矩阵——返回可解码的 base64 与正确 mediaType（含 NUL
+// 的 PNG 不受二进制判定影响）、超 3MiB 拒绝、不支持的格式（bmp）拒绝。
 #[test]
-fn image_returns_base64_within_limit() {
+fn image_kind_matrix() {
     let ws = TestWorkspace::new();
-    // 最小 PNG 头（含 NUL，但 kind=image 走图片通道不受二进制判定影响）。
+
+    // 正常路径：base64 可原样解码还原。
     let png: &[u8] = b"\x89PNG\r\n\x1a\n\x00\x00";
     std::fs::write(ws.project_file("icon.png"), png).expect("写 png");
     let mut args = text_args("icon.png");
@@ -134,12 +117,8 @@ fn image_returns_base64_within_limit() {
         .decode(b64)
         .expect("合法 base64");
     assert_eq!(decoded, png);
-}
 
-// 断言：超过 3MiB 的图片被拒绝（E_INVALID_ARG）。
-#[test]
-fn image_over_3mib_is_rejected() {
-    let ws = TestWorkspace::new();
+    // 超 3MiB 拒绝。
     let big = vec![0xFFu8; 3 * 1024 * 1024 + 1];
     std::fs::write(ws.project_file("big.jpg"), &big).expect("写大图");
     let mut args = text_args("big.jpg");
@@ -147,28 +126,11 @@ fn image_over_3mib_is_rejected() {
     let outcome = run(&ws.ctx(), &args);
     assert!(!outcome.ok);
     assert_eq!(outcome.error.expect("e").code, "E_INVALID_ARG");
-}
 
-// 断言：不支持的图片格式（bmp）被拒绝。
-#[test]
-fn unsupported_image_format_is_rejected() {
-    let ws = TestWorkspace::new();
+    // 不支持的图片格式拒绝。
     std::fs::write(ws.project_file("pic.bmp"), b"BMxx").expect("写 bmp");
     let mut args = text_args("pic.bmp");
     args.kind = Some(ReadKind::Image);
     let outcome = run(&ws.ctx(), &args);
     assert!(!outcome.ok);
-}
-
-// 断言：roots 外路径拒绝（E_PATH_OUTSIDE_ROOTS），不存在文件报 E_NOT_FOUND。
-#[test]
-fn outside_roots_and_missing_file() {
-    let ws = TestWorkspace::new();
-    let outcome = run(&ws.ctx(), &text_args("/etc/passwd"));
-    assert!(!outcome.ok);
-    assert_eq!(outcome.error.expect("e").code, "E_PATH_OUTSIDE_ROOTS");
-
-    let outcome = run(&ws.ctx(), &text_args("no-such-file.txt"));
-    assert!(!outcome.ok);
-    assert_eq!(outcome.error.expect("e").code, "E_NOT_FOUND");
 }

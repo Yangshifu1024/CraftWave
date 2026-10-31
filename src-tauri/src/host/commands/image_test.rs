@@ -21,13 +21,22 @@ fn app() -> (AppState, tempfile::TempDir) {
     )
 }
 
+/// 断言 attach_image 的承载与校验语义：base64 入口内容寻址落盘（哈希 =
+/// SHA-256 前 32 hex、重复上传幂等去重、文件落会话 imgblob 目录 §7.7 v1）；
+/// 拖拽路径入口与 base64 同内容同哈希（拖入与粘贴等价）、路径不存在
+/// E_NOT_FOUND；校验面表驱动——非白名单 mime、超 5MiB、魔数不过、非法
+/// base64、空会话 id、入口形态缺失/双填全部 E_INVALID_ARG；
+/// 以及 read_image_blob 的读取与边界语义：本会话读回字节与上传一致且 mime
+/// 按魔数嗅探；会话 B 读会话 A 的 blob 不可见（E_NOT_FOUND）；非法哈希
+/// （含路径穿越向量）E_INVALID_ARG；合法格式但不存在的哈希 E_NOT_FOUND
+/// （前端灰显占位的判定面）。
 #[test]
-fn attach_image_puts_content_addressed_blob() {
-    let (app, _dir) = app();
+fn attach_and_read_image_blob_semantics() {
+    let (app, dir) = app();
+    // base64 入口：内容寻址 + 幂等去重。
     let first = attach_image_core(&app, "sess-1", Some(PNG_1X1), None, "image/png").unwrap();
-    // 哈希 = SHA-256 前 32 hex，重复上传同图幂等去重（同哈希返回）
     let second = attach_image_core(&app, "sess-1", Some(PNG_1X1), None, "image/png").unwrap();
-    assert_eq!(first.blob_hash, second.blob_hash);
+    assert_eq!(first.blob_hash, second.blob_hash, "重复上传同图幂等去重");
     assert_eq!(first.blob_hash.len(), 32);
     // 文件落在会话 imgblob 目录（§7.7 v1 路径口径）
     let path = app
@@ -37,13 +46,9 @@ fn attach_image_puts_content_addressed_blob() {
         .join("sess-1.imgblob")
         .join(format!("{}.bin", first.blob_hash));
     assert!(path.exists());
-}
 
-#[test]
-fn attach_image_from_file_path_matches_base64_form() {
-    let (app, dir) = app();
     // 拖拽入口形态：后端读路径（不做 roots 校验——用户显式拖入与文件选择器
-    // 等价的 v1 决策），mime 按魔数嗅探
+    // 等价的 v1 决策），mime 按魔数嗅探；两种入口形态同内容同哈希。
     let png_path = dir.path().join("dropped.png");
     let png_bytes = base64::engine::general_purpose::STANDARD
         .decode(PNG_1X1)
@@ -57,10 +62,7 @@ fn attach_image_from_file_path_matches_base64_form() {
         "image/png",
     )
     .unwrap();
-    let from_b64 = attach_image_core(&app, "sess-1", Some(PNG_1X1), None, "image/png").unwrap();
-    // 内容寻址：两种入口形态同内容同哈希（拖入与粘贴等价）
-    assert_eq!(from_path.blob_hash, from_b64.blob_hash);
-    // 路径不存在按 E_NOT_FOUND
+    assert_eq!(from_path.blob_hash, first.blob_hash, "拖入与粘贴等价");
     let err = attach_image_core(
         &app,
         "sess-1",
@@ -70,48 +72,62 @@ fn attach_image_from_file_path_matches_base64_form() {
     )
     .unwrap_err();
     assert_eq!(err.code, "E_NOT_FOUND");
-}
 
-#[test]
-fn attach_image_rejects_bad_mime_oversize_and_base64() {
-    let (app, _dir) = app();
-    // 非白名单 mime 声明拒绝（防误传非图片内容）
-    let err = attach_image_core(&app, "sess-1", Some(PNG_1X1), None, "image/svg+xml").unwrap_err();
-    assert_eq!(err.code, "E_INVALID_ARG");
-    // 超过 5MiB 拒绝（解码后字节数判定）
+    // 校验面表驱动。
     let big = vec![0xffu8; 5 * 1024 * 1024 + 1];
     let big_b64 = base64::engine::general_purpose::STANDARD.encode(&big);
-    let err = attach_image_core(&app, "sess-1", Some(&big_b64), None, "image/png").unwrap_err();
-    assert_eq!(err.code, "E_INVALID_ARG");
-    // 声明 png 但字节是文本（魔数嗅探不过）拒绝——mime 声明与内容双保险
-    let err = attach_image_core(
-        &app,
-        "sess-1",
-        Some(&base64::engine::general_purpose::STANDARD.encode(b"not an image")),
-        None,
-        "image/png",
-    )
-    .unwrap_err();
-    assert_eq!(err.code, "E_INVALID_ARG");
-    // 非法 base64 拒绝
-    let err =
-        attach_image_core(&app, "sess-1", Some("!!!not-base64!!!"), None, "image/png").unwrap_err();
-    assert_eq!(err.code, "E_INVALID_ARG");
-    // 空会话 id 拒绝
-    let err = attach_image_core(&app, "", Some(PNG_1X1), None, "image/png").unwrap_err();
-    assert_eq!(err.code, "E_INVALID_ARG");
-    // 两种入口形态都空/都有按参数错误拒绝
-    let err = attach_image_core(&app, "sess-1", None, None, "image/png").unwrap_err();
-    assert_eq!(err.code, "E_INVALID_ARG");
-    let err =
-        attach_image_core(&app, "sess-1", Some(PNG_1X1), Some("/x.png"), "image/png").unwrap_err();
-    assert_eq!(err.code, "E_INVALID_ARG");
-}
+    for (why, b64, path, mime) in [
+        (
+            "非白名单 mime 声明拒绝（防误传非图片内容）",
+            Some(PNG_1X1),
+            None,
+            "image/svg+xml",
+        ),
+        (
+            "超过 5MiB 拒绝（解码后字节数判定）",
+            Some(big_b64.as_str()),
+            None,
+            "image/png",
+        ),
+        (
+            "声明 png 但字节是文本（魔数嗅探不过）——mime 声明与内容双保险",
+            Some("bm90IGFuIGltYWdl"),
+            None,
+            "image/png",
+        ),
+        (
+            "非法 base64 拒绝",
+            Some("!!!not-base64!!!"),
+            None,
+            "image/png",
+        ),
+        ("空会话 id 拒绝", Some(PNG_1X1), None, "image/png"),
+        ("两种入口形态都空按参数错误拒绝", None, None, "image/png"),
+        (
+            "两种入口形态都有按参数错误拒绝",
+            Some(PNG_1X1),
+            Some("/x.png"),
+            "image/png",
+        ),
+    ] {
+        let session = if why.starts_with("空会话") {
+            ""
+        } else {
+            "sess-1"
+        };
+        let err = attach_image_core(&app, session, b64, path, mime).unwrap_err();
+        assert_eq!(err.code, "E_INVALID_ARG", "「{why}」应 E_INVALID_ARG");
+    }
 
-#[test]
-fn read_image_blob_roundtrips_with_sniffed_mime() {
-    let (app, _dir) = app();
+    // read_image_blob 的读取与边界语义（独立数据根，避免与前段互相污染）。
+    let dir = tempfile::tempdir().unwrap();
+    let app = AppState::new_in(
+        dir.path().to_path_buf(),
+        std::sync::Arc::new(RecordingEventSink::default()),
+    );
     let attached = attach_image_core(&app, "sess-1", Some(PNG_1X1), None, "image/png").unwrap();
+
+    // 本会话读回一致。
     let got = read_image_blob_core(&app, "sess-1", &attached.blob_hash).unwrap();
     assert_eq!(got.mime_type, "image/png");
     let decoded = base64::engine::general_purpose::STANDARD
@@ -121,21 +137,16 @@ fn read_image_blob_roundtrips_with_sniffed_mime() {
         .decode(PNG_1X1)
         .unwrap();
     assert_eq!(decoded, expected, "读回字节与上传一致");
-}
 
-#[test]
-fn read_image_blob_enforces_session_root_and_hash_shape() {
-    let (app, _dir) = app();
-    let attached = attach_image_core(&app, "sess-1", Some(PNG_1X1), None, "image/png").unwrap();
-    // root 归属：会话 B 读会话 A 的 blob 必须不可见（E_NOT_FOUND）
+    // root 归属：会话 B 读会话 A 的 blob 必须不可见。
     let err = read_image_blob_core(&app, "sess-2", &attached.blob_hash).unwrap_err();
     assert_eq!(err.code, "E_NOT_FOUND");
-    // 非法哈希（含路径穿越向量）按参数错误拒绝
+    // 非法哈希（含路径穿越向量）按参数错误拒绝。
     for bad in ["../evil", "zzz", "AAAA"] {
         let err = read_image_blob_core(&app, "sess-1", bad).unwrap_err();
         assert_eq!(err.code, "E_INVALID_ARG", "非法哈希 {bad:?} 应被拒绝");
     }
-    // 合法格式但不存在的哈希按 E_NOT_FOUND（前端灰显占位的判定面）
+    // 合法格式但不存在的哈希按 E_NOT_FOUND。
     let missing = "0".repeat(32);
     let err = read_image_blob_core(&app, "sess-1", &missing).unwrap_err();
     assert_eq!(err.code, "E_NOT_FOUND");

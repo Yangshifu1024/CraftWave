@@ -1,13 +1,13 @@
 //! 配额域单测（21 号票，FR-02-15）：全本地、不发真实网络请求。
 //!
-//! 覆盖面（票面「测试」节）：
-//! - 每家适配器 `parse_*` 纯解析（正常 / 缺字段 / 数字字符串 / 超期窗口）；
-//! - host 匹配表驱动（子域 / 端口 / @ userinfo / 大小写陷阱 / 伪冒域）；
-//! - 六态分类（`FakeFetcher` 注入 + axum mock server 打 `fetch_json` 的
-//!   HTTP 面：200 / 401 首次 / 401 曾成功 / 超时 / 解析失败 / 无 Key /
-//!   未命中）；
-//! - `quota.json` 原子写与行合并（成功覆盖 / 失败继承 / 孤儿清理 / 损坏
-//!   备份）。
+//! 覆盖面（票面「测试」节，同型用例在单个 #[test] 内顺序/表驱动合并）：
+//! - host 匹配表驱动（白名单/伪冒域）与 host_of 剥离、展示名回退；
+//! - round1/clamp/sanitize 工具与六态失败归类判据；
+//! - 每家适配器 `parse_*` 纯解析（正常 + 代表性错误态）；
+//! - `fetch_json` 的 HTTP 面（axum mock server：200 / 401 / 解析失败 / 不可达）；
+//! - 快照主流程（六态、排序、不发包纪律、失败隔离）；
+//! - `quota.json` 原子写与行合并不变式（成功覆盖 / 失败继承 / 孤儿清理 /
+//!   损坏隔离 / serde roundtrip）。
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -130,11 +130,17 @@ fn states(rows: &[QuotaSnapshot]) -> Vec<QuotaStatus> {
     rows.iter().map(|row| row.state).collect()
 }
 
-// ---------- host 匹配（表驱动）----------
+// ---------- 工具与判据（host 匹配表驱动收拢） ----------
 
+// 断言：辅助函数全语义——host 白名单逐家正向命中（子域/端口大小写/多级子域）、
+// 自建中转与伪冒域（前缀粘连/后缀无关）一律不命中；host_of 剥端口/userinfo/
+// 大小写/无协议前缀；display_name 按名字→host→id 三级回退；round1 一位小数
+// 四舍五入、clamp_percent 夹取 0–100；sanitize 抹除长密钥、短于 8 不处理、
+// 超长截断 160；六态失败归类（401/403/404 首次 rejected、曾成功 error，
+// 超时/5xx/429/其余 4xx 恒 error）。
 #[test]
-fn kind_for_base_url_matches_whitelisted_hosts_only() {
-    // 白名单逐家正向命中
+fn helpers_host_display_round_clamp_sanitize_classify() {
+    // host 白名单正向命中
     let cases: &[(&str, AdapterKind)] = &[
         ("https://api.deepseek.com/v1", AdapterKind::DeepSeek),
         ("https://api.deepseek.com", AdapterKind::DeepSeek),
@@ -152,7 +158,6 @@ fn kind_for_base_url_matches_whitelisted_hosts_only() {
     for (url, kind) in cases {
         assert_eq!(kind_for_base_url(url), Some(*kind), "应命中：{url}");
     }
-    // 自建/中转网关、伪冒域（前缀粘连、后缀无关系）一律不命中
     let misses = [
         "https://my-gateway.example.com/v1",
         "https://evildeepseek.com/v1",
@@ -165,11 +170,8 @@ fn kind_for_base_url_matches_whitelisted_hosts_only() {
     for url in misses {
         assert_eq!(kind_for_base_url(url), None, "不应命中：{url}");
     }
-}
 
-#[test]
-fn host_of_handles_ports_userinfo_case_and_scheme_less() {
-    // 端口、userinfo（@ 前的凭据段）、大小写、无协议前缀都要剥干净
+    // host_of：端口、userinfo、大小写、无协议前缀都剥干净
     assert_eq!(
         host_of("https://API.DeepSeek.COM:8443/v1").as_deref(),
         Some("api.deepseek.com")
@@ -188,10 +190,8 @@ fn host_of_handles_ports_userinfo_case_and_scheme_less() {
     );
     assert_eq!(host_of("").as_deref(), None);
     assert_eq!(host_of("https://").as_deref(), None);
-}
 
-#[test]
-fn display_name_falls_back_to_base_url_host_then_id() {
+    // display_name：名字 → host → id 三级回退
     assert_eq!(
         display_name("  My Kimi  ", "https://api.kimi.com/x", "p1"),
         "My Kimi"
@@ -201,39 +201,27 @@ fn display_name_falls_back_to_base_url_host_then_id() {
         "api.kimi.com"
     );
     assert_eq!(display_name("", "", "p3"), "p3");
-}
 
-// ---------- 百分比与脱敏 ----------
-
-#[test]
-fn round1_and_clamp_percent_keep_one_decimal_in_range() {
+    // round1 / clamp_percent
     assert_eq!(round1(12.34), 12.3);
     assert_eq!(round1(12.35), 12.4);
     assert_eq!(round1(-0.04), -0.0);
     assert_eq!(clamp_percent(101.0), 100.0);
     assert_eq!(clamp_percent(-3.0), 0.0);
     assert_eq!(clamp_percent(33.333_333), 33.3);
-}
 
-#[test]
-fn sanitize_redacts_long_secrets_and_truncates() {
+    // sanitize：抹密钥、短密钥不处理、超长截断
     let secret = "sk-very-secret-key-12345";
     let text = format!("连接失败：Bearer {secret} 被拒");
     let sanitized = sanitize(&text, secret);
     assert!(!sanitized.contains(secret), "密钥必须被抹除：{sanitized}");
     assert!(sanitized.contains("[redacted]"));
-    // 短于 8 的「密钥」不处理（避免把普通词替换掉）
     assert_eq!(sanitize("包含 ab 的文本", "ab"), "包含 ab 的文本");
-    // 超长截断到 160 字符
     let long = "x".repeat(300);
     assert_eq!(sanitize(&long, "").chars().count(), 160);
-}
 
-// ---------- 失败归类（六态判据）----------
-
-#[test]
-fn classify_failure_rejects_only_never_succeeded_auth_statuses() {
-    // 401/403/404 且从未成功过 → rejected（密钥/套餐被拒）
+    // 六态失败归类：401/403/404 且从未成功过 → rejected；曾成功 → error；
+    // 超时（无状态）、5xx、429、其余 4xx → 恒 error
     for status in [401, 403, 404] {
         assert_eq!(
             classify_failure(&failure(Some(status)), false),
@@ -246,7 +234,6 @@ fn classify_failure_rejects_only_never_succeeded_auth_statuses() {
             "曾成功后的 {status} 应为 error"
         );
     }
-    // 超时/连接失败（无状态）、5xx、429、其余 4xx → 恒 error
     for status in [None, Some(500), Some(502), Some(429), Some(400)] {
         assert_eq!(
             classify_failure(&failure(status), false),
@@ -258,8 +245,12 @@ fn classify_failure_rejects_only_never_succeeded_auth_statuses() {
 
 // ---------- DeepSeek 解析 ----------
 
+// 断言：DeepSeek 解析——多币种余额各成一行（key=balance_<币种>、数值行不带
+// 百分比、字符串与数字余额都接受）；total 缺失回退 granted+topped 之和并标
+// 不可用；无可视余额（空体/无 total/无余额字段）报错。
 #[test]
-fn deepseek_parses_balance_entries_per_currency() {
+fn deepseek_parser_normal_and_error() {
+    // 正常：多币种
     let body = json!({
         "is_available": true,
         "balance_infos": [
@@ -273,13 +264,9 @@ fn deepseek_parses_balance_entries_per_currency() {
     assert_eq!(entries[0].value_text.as_deref(), Some("CNY 110.25"));
     assert_eq!(entries[1].key, "balance_usd");
     assert_eq!(entries[1].value_text.as_deref(), Some("USD 8.40"));
-    // 数值行不带百分比
-    assert!(entries[0].remaining_percent.is_none());
-}
+    assert!(entries[0].remaining_percent.is_none(), "数值行不带百分比");
 
-#[test]
-fn deepseek_falls_back_to_granted_plus_topped_and_marks_unavailable() {
-    // total 缺失 → granted + topped 之和
+    // 变体：total 缺失 → granted + topped 之和 + 不可用标记
     let body = json!({
         "is_available": false,
         "balance_infos": [
@@ -289,10 +276,8 @@ fn deepseek_falls_back_to_granted_plus_topped_and_marks_unavailable() {
     let entries = deepseek::parse_balance(&body).unwrap();
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].value_text.as_deref(), Some("CNY 30.50 · 不可用"));
-}
 
-#[test]
-fn deepseek_rejects_body_without_visible_balance() {
+    // 错误：无可视余额
     assert!(deepseek::parse_balance(&json!({})).is_err());
     assert!(
         deepseek::parse_balance(
@@ -305,8 +290,14 @@ fn deepseek_rejects_body_without_visible_balance() {
 
 // ---------- Kimi 解析 ----------
 
+// 断言：Kimi 解析——顶层 usage 行（已用/剩余百分比、RFC3339 归一时间戳）与
+// limits 各窗（name 标签、数字字符串 limit、reset_in 秒数→now+窗、remaining
+// 语义、窗口时长标签）；data 信封解包；有 limit 无 used/remaining 整行跳过
+// （不伪造剩余 0%）；空 body 失败；纯时间戳 reset_time 与 window.duration
+// 两种重置来源。
 #[test]
-fn kimi_parses_usage_and_limits_with_labels_and_reset_times() {
+fn kimi_parser_normal_and_error() {
+    // 正常：顶层 usage + 两档 limits
     let body = json!({
         "usage": {"limit": 100, "used": 25.5, "reset_at": "2026-11-02T00:00:00+08:00"},
         "limits": [
@@ -316,30 +307,39 @@ fn kimi_parses_usage_and_limits_with_labels_and_reset_times() {
     });
     let entries = kimi::parse_usage(&body, fixed_now()).unwrap();
     assert_eq!(entries.len(), 3);
-    // 顶层 usage 行：已用 25.5% → 剩余 74.5%；字符串时间戳按 RFC3339 归一
     assert_eq!(entries[0].key, "usage");
     assert_eq!(entries[0].used_percent, Some(25.5));
     assert_eq!(entries[0].remaining_percent, Some(74.5));
     assert_eq!(
         entries[0].resets_at.as_deref(),
-        Some("2026-11-01T16:00:00Z")
+        Some("2026-11-01T16:00:00Z"),
+        "字符串时间戳按 RFC3339 归一"
     );
-    // limit_1：数字字符串 limit 也接受；reset_in 秒数 → now + 1h
     assert_eq!(entries[1].key, "limit_1");
     assert_eq!(entries[1].label.as_deref(), Some("5h 窗口"));
-    assert_eq!(entries[1].used_percent, Some(25.0));
+    assert_eq!(
+        entries[1].used_percent,
+        Some(25.0),
+        "数字字符串 limit 也接受"
+    );
     assert_eq!(
         entries[1].resets_at.as_deref(),
-        Some("2026-10-30T09:00:00Z")
+        Some("2026-10-30T09:00:00Z"),
+        "reset_in 秒数 → now + 1h"
     );
-    // limit_2：remaining 语义（limit-remaining=已用）；标签按窗口时长生成
     assert_eq!(entries[2].key, "limit_2");
-    assert_eq!(entries[2].label.as_deref(), Some("5h"));
-    assert_eq!(entries[2].used_percent, Some(75.0));
-}
+    assert_eq!(
+        entries[2].label.as_deref(),
+        Some("5h"),
+        "按窗口时长生成标签"
+    );
+    assert_eq!(
+        entries[2].used_percent,
+        Some(75.0),
+        "remaining 语义（limit-remaining=已用）"
+    );
 
-#[test]
-fn kimi_unwraps_data_envelope_and_rejects_empty_results() {
+    // data 信封解包 + 错误态
     let body = json!({
         "data": {
             "usage": {"limit": 10, "used": 1},
@@ -347,16 +347,18 @@ fn kimi_unwraps_data_envelope_and_rejects_empty_results() {
         }
     });
     let entries = kimi::parse_usage(&body, fixed_now()).unwrap();
-    assert_eq!(entries.len(), 2);
-    // 有 limit 无 used/remaining → 不伪造「剩余 0%」，整行跳过
+    assert_eq!(entries.len(), 2, "data 信封解包");
     let only_limit = json!({"usage": {"limit": 10}, "limits": [{"detail": {"limit": 5}}]});
-    assert!(kimi::parse_usage(&only_limit, fixed_now()).is_err());
-    // 空 body → 失败
-    assert!(kimi::parse_usage(&json!({}), fixed_now()).is_err());
-}
+    assert!(
+        kimi::parse_usage(&only_limit, fixed_now()).is_err(),
+        "有 limit 无 used/remaining → 不伪造剩余 0%"
+    );
+    assert!(
+        kimi::parse_usage(&json!({}), fixed_now()).is_err(),
+        "空 body 失败"
+    );
 
-#[test]
-fn kimi_reset_time_accepts_plain_timestamp_and_window_duration() {
+    // 重置时间两种来源：纯时间戳 / window.duration 秒数
     let by_timestamp = json!({"limit": 10, "used": 1, "reset_time": "2026-11-01 12:00:00"});
     let entries =
         kimi::parse_usage(&json!({"usage": by_timestamp, "limits": []}), fixed_now()).unwrap();
@@ -364,12 +366,12 @@ fn kimi_reset_time_accepts_plain_timestamp_and_window_duration() {
         entries[0].resets_at.as_deref(),
         Some("2026-11-01T12:00:00Z")
     );
-    // 窗口时长（秒）→ now + duration
     let by_window = json!({"limit": 10, "used": 1, "window": {"duration": 60}});
     let entries = kimi::parse_usage(&json!({"usage": by_window}), fixed_now()).unwrap();
     assert_eq!(
         entries[0].resets_at.as_deref(),
-        Some("2026-10-30T08:01:00Z")
+        Some("2026-10-30T08:01:00Z"),
+        "窗口时长秒数 → now + duration"
     );
 }
 
@@ -388,8 +390,13 @@ fn minimax_model(name: &str, five_hour_remaining: i64, weekly_remaining: i64) ->
     })
 }
 
+// 断言：MiniMax 解析——国际端点 count=剩余语义 + 通配 minimax-m* 择优、
+// remains_time 毫秒→now+窗；中国端点 count=已用语义（剩余反转）+ 择优取剩余
+// 最差者；非套餐模型被滤空即失败；base_resp 业务错误带上游消息；video 作为
+// 中国站额外额度模型收纳。
 #[test]
-fn minimax_intl_counts_mean_remaining_and_prefers_wildcard() {
+fn minimax_parser_intl_cn_and_error() {
+    // 国际端点：count=剩余，通配择优
     let body = json!({
         "base_resp": {"status_code": 0},
         "model_remains": [
@@ -398,23 +405,19 @@ fn minimax_intl_counts_mean_remaining_and_prefers_wildcard() {
         ]
     });
     let entries = minimax::parse_usage(&body, Endpoint::International, fixed_now()).unwrap();
-    // 通配 minimax-m* 择优命中：5 小时剩余 60% → 已用 40%
     assert_eq!(entries.len(), 2);
     assert_eq!(entries[0].key, "five_hour");
-    assert_eq!(entries[0].remaining_percent, Some(60.0));
+    assert_eq!(entries[0].remaining_percent, Some(60.0), "通配 m* 择优命中");
     assert_eq!(entries[0].used_percent, Some(40.0));
-    // remains_time 毫秒 → now + 1h
     assert_eq!(
         entries[0].resets_at.as_deref(),
-        Some("2026-10-30T09:00:00Z")
+        Some("2026-10-30T09:00:00Z"),
+        "remains_time 毫秒 → now + 1h"
     );
     assert_eq!(entries[1].key, "week");
     assert_eq!(entries[1].remaining_percent, Some(90.0));
-}
 
-#[test]
-fn minimax_cn_counts_mean_used_and_picks_worst_model() {
-    // 中国端点：count 是「已用」——同字段值下剩余语义反转
+    // 中国端点：count=已用，剩余语义反转，择优 = 剩余最差者
     let body = json!({
         "base_resp": {"status_code": 0},
         "model_remains": [
@@ -423,23 +426,23 @@ fn minimax_cn_counts_mean_used_and_picks_worst_model() {
         ]
     });
     let entries = minimax::parse_usage(&body, Endpoint::China, fixed_now()).unwrap();
-    // 择优 = 剩余最差者：m2 的 5 小时已用 25/100 → 剩 75%；general 已用 80 → 剩 20%
+    // m2 的 5 小时已用 25/100 → 剩 75%；general 已用 80 → 剩 20%
     // （两家的周窗同为已用 70/700 → 剩 90%，不改变最差窗口归属）
     assert_eq!(entries[0].key, "five_hour");
-    assert_eq!(entries[0].remaining_percent, Some(20.0));
-}
+    assert_eq!(entries[0].remaining_percent, Some(20.0), "择优取剩余最差者");
 
-#[test]
-fn minimax_filters_non_coding_models_and_reports_base_resp_errors() {
-    // 非套餐模型（无重置提示 / 非 minimax-m* 且非 general|video）全被滤掉 → 失败
+    // 错误与过滤：非套餐模型全被滤掉 → 失败
     let filtered = json!({
         "base_resp": {"status_code": 0},
         "model_remains": [
             {"model_name": "abab-random", "current_interval_total_count": 100, "current_interval_usage_count": 10}
         ]
     });
-    assert!(minimax::parse_usage(&filtered, Endpoint::International, fixed_now()).is_err());
-    // base_resp.status_code != 0 → 上游业务错误
+    assert!(
+        minimax::parse_usage(&filtered, Endpoint::International, fixed_now()).is_err(),
+        "非套餐模型被滤空即失败"
+    );
+    // base_resp.status_code != 0 → 上游业务错误带消息
     let errored = json!({
         "base_resp": {"status_code": 1004, "status_msg": "invalid api key"},
         "model_remains": []
@@ -460,8 +463,13 @@ fn glm_limit(kind: &str, unit: i64, percentage: f64) -> Value {
     json!({"type": kind, "unit": unit, "percentage": percentage, "nextResetTime": 1_798_228_800_000i64})
 }
 
+// 断言：智谱/Z.ai 双 flavor 解析——智谱 data.limits 按 unit 语义分档
+//（3=5h 窗、6=周窗、TIME_LIMIT=MCP 时长）且未知类型跳过、nextResetTime 毫秒
+// →RFC3339；Z.ai data.limits 缺失回顶层 limits；业务错误（success=false）带
+// 消息失败且智谱不认 success 字段；CREDIT_LIMIT 只在 Z.ai 纳入。
 #[test]
-fn zhipu_parses_data_limits_with_unit_semantics() {
+fn glm_parser_zhipu_zai_and_error() {
+    // 智谱：unit 语义分档
     let body = json!({
         "data": {"limits": [
             glm_limit("TOKENS_LIMIT", 3, 10.0),
@@ -471,43 +479,49 @@ fn zhipu_parses_data_limits_with_unit_semantics() {
         ]}
     });
     let entries = glm::parse_limits(&body, Flavor::Zhipu).unwrap();
-    // unit 3 = 5 小时窗、unit 6 = 每周窗、TIME_LIMIT = MCP 时长；未知类型跳过
-    assert_eq!(entries.len(), 3);
+    assert_eq!(entries.len(), 3, "未知类型跳过");
     assert_eq!(entries[0].key, "five_hour");
     assert_eq!(entries[0].used_percent, Some(10.0));
     assert_eq!(entries[0].remaining_percent, Some(90.0));
     assert_eq!(entries[1].key, "weekly");
     assert_eq!(entries[2].key, "mcp");
-    // nextResetTime 毫秒时间戳 → RFC3339（1_798_228_800_000 ms = 2026-12-25T20:00:00Z）
     assert_eq!(
         entries[0].resets_at.as_deref(),
-        Some("2026-12-25T20:00:00Z")
+        Some("2026-12-25T20:00:00Z"),
+        "nextResetTime 毫秒 → RFC3339"
     );
-}
 
-#[test]
-fn zai_takes_top_level_limits_fallback_and_reports_api_errors() {
-    // Z.ai：data.limits 缺失时回顶层 limits
+    // Z.ai：顶层 limits 回退 + 业务错误 + flavor 差异
     let body = json!({"success": true, "limits": [glm_limit("TOKENS_LIMIT", 3, 55.5)]});
     let entries = glm::parse_limits(&body, Flavor::Zai).unwrap();
     assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].used_percent, Some(55.5));
-    // Z.ai 业务错误（success=false / code>=400）→ 带消息失败
+    assert_eq!(
+        entries[0].used_percent,
+        Some(55.5),
+        "data.limits 缺失回顶层"
+    );
     let failed = json!({"success": false, "msg": "token 无效", "code": 401});
     let err = glm::parse_limits(&failed, Flavor::Zai).unwrap_err();
-    assert_eq!(err, "token 无效");
-    // 智谱不认 Z.ai 的 success 字段（同体在智谱下按 data.limits 判缺失）
-    assert!(glm::parse_limits(&failed, Flavor::Zhipu).is_err());
-    // CREDIT_LIMIT 只在 Z.ai 纳入
+    assert_eq!(err, "token 无效", "业务错误带消息");
+    assert!(
+        glm::parse_limits(&failed, Flavor::Zhipu).is_err(),
+        "智谱不认 Z.ai 的 success 字段"
+    );
     let credit = json!({"success": true, "limits": [glm_limit("CREDIT_LIMIT", 3, 5.0)]});
-    assert!(glm::parse_limits(&credit, Flavor::Zai).is_ok());
+    assert!(
+        glm::parse_limits(&credit, Flavor::Zai).is_ok(),
+        "CREDIT_LIMIT 只在 Z.ai"
+    );
     assert!(glm::parse_limits(&credit, Flavor::Zhipu).is_err());
 }
 
 // ---------- OpenCode 解析 ----------
 
+// 断言：OpenCode 解析——rolling/weekly/monthly 三窗各成一行（percent 数字
+// 字符串也接受、resetsAt 直通、剩余=100-已用）；rate-limited 用满状态绝不
+// 被过滤（最该被看到的一档）；缺 usage / 全窗无百分比失败。
 #[test]
-fn opencode_parses_windows_and_keeps_rate_limited_status() {
+fn opencode_parser_normal_and_error() {
     let body = json!({
         "usage": {
             "rolling": {"status": "ok", "percent": 12.34, "resetsAt": "2026-11-02T00:00:00Z"},
@@ -524,20 +538,24 @@ fn opencode_parses_windows_and_keeps_rate_limited_status() {
         entries[0].resets_at.as_deref(),
         Some("2026-11-02T00:00:00Z")
     );
-    // 用满（rate-limited）绝不能被过滤——最该被看到的一档
-    assert_eq!(entries[1].status.as_deref(), Some("rate-limited"));
+    assert_eq!(
+        entries[1].status.as_deref(),
+        Some("rate-limited"),
+        "用满状态绝不能被过滤"
+    );
     assert_eq!(entries[1].remaining_percent, Some(0.0));
-    // 数字字符串 percent 也接受
-    assert_eq!(entries[2].used_percent, Some(40.0));
-}
+    assert_eq!(
+        entries[2].used_percent,
+        Some(40.0),
+        "数字字符串 percent 接受"
+    );
 
-#[test]
-fn opencode_rejects_missing_usage_and_empty_windows() {
+    // 错误：缺 usage / 全窗无百分比
     assert!(opencode::parse_usage(&json!({})).is_err());
     assert!(opencode::parse_usage(&json!({"usage": {"rolling": {"status": "ok"}}})).is_err());
 }
 
-// ---------- fetch_json 的 HTTP 面（axum mock server）----------
+// ---------- fetch_json 的 HTTP 面（axum mock server） ----------
 
 /// axum mock：/balance 按场景回放状态码与响应体。
 async fn status_mock(status: u16, body: Value) -> std::net::SocketAddr {
@@ -558,8 +576,12 @@ async fn status_mock(status: u16, body: Value) -> std::net::SocketAddr {
     addr
 }
 
+// 断言：fetch_json 的 HTTP 面——2xx 返回响应体；HTTP 错误带状态码（供
+// rejected 判定）且错误消息脱敏不回显 Key；非 JSON 响应报解析失败（无 HTTP
+// 状态）；不可达地址报无状态失败（status=None → error 态）。
 #[tokio::test]
-async fn fetch_json_returns_body_on_2xx() {
+async fn fetch_json_http_face() {
+    // 2xx：返回响应体
     let addr = status_mock(200, json!({"ok": true})).await;
     let client = crate::providers::http::build_proxy_client(None).unwrap();
     let body = fetch_json(
@@ -572,10 +594,8 @@ async fn fetch_json_returns_body_on_2xx() {
     .await
     .unwrap();
     assert_eq!(body, json!({"ok": true}));
-}
 
-#[tokio::test]
-async fn fetch_json_carries_status_and_sanitized_body_on_http_error() {
+    // HTTP 错误：带状态码 + 脱敏
     let secret = "sk-test-key-12345678";
     let addr = status_mock(401, json!({"error": "bad key sk-test-key-12345678"})).await;
     let client = crate::providers::http::build_proxy_client(None).unwrap();
@@ -599,10 +619,8 @@ async fn fetch_json_carries_status_and_sanitized_body_on_http_error() {
         err.message
     );
     assert!(err.message.contains("401"));
-}
 
-#[tokio::test]
-async fn fetch_json_reports_parse_failure_without_status() {
+    // 解析失败：无 HTTP 状态、消息带 JSON
     let app = axum::Router::new().route("/balance", get(|| async { "这不是 JSON" }));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -621,11 +639,8 @@ async fn fetch_json_reports_parse_failure_without_status() {
     .unwrap_err();
     assert_eq!(err.status, None, "解析失败无 HTTP 状态");
     assert!(err.message.contains("JSON"));
-}
 
-#[tokio::test]
-async fn fetch_json_reports_unreachable_as_stateless_failure() {
-    // 端口 1（保留端口）连接必然失败 → 无状态失败（status=None → error 态）
+    // 不可达：端口 1（保留端口）连接必然失败 → 无状态失败（status=None → error 态）
     let client = crate::providers::http::build_proxy_client(None).unwrap();
     let err = fetch_json(
         &client,
@@ -639,10 +654,17 @@ async fn fetch_json_reports_unreachable_as_stateless_failure() {
     assert_eq!(err.status, None);
 }
 
-// ---------- 快照主流程：六态与排序 ----------
+// ---------- 快照主流程：六态、排序与不发包纪律 ----------
 
+// 断言：快照主流程——可查询类在前、unsupported 殿后（均按配置序），只有真正
+// 要查的供应商发请求；无 Key（缺 Key 与空白 Key 归一后等价）不发请求且占位行
+// 不落盘；401 首次 rejected 且 lastOkAt=None 但失败行落盘（供孤儿清理与
+// 「曾成功」判定依据）；401 曾成功过 → error + 历史 lastOkAt + 离线兜底明细
+//（不变式：lastOkAt 恒上次成功时刻、data.entries 恒最近一次成功明细）；
+// 超时/5xx/解析错三家全败各得一行 error 且互不拦截。
 #[tokio::test]
-async fn unsupported_rows_never_send_requests_and_sort_last() {
+async fn snapshot_states_and_request_discipline() {
+    // 排序与不发包：unsupported 殿后、只有可查的一家发包
     let dir = tempfile::tempdir().unwrap();
     let cfg = config(vec![
         provider("p-empty", "空端点", "", Some("sk-empty")),
@@ -661,8 +683,6 @@ async fn unsupported_rows_never_send_requests_and_sort_last() {
     ]);
     let fake = FakeFetcher::new(vec![("sk-ok", Ok(vec![percent_entry("balance", 10.0)]))]);
     let out = snapshots_with(&cfg, dir.path(), &fake.fetcher()).await;
-
-    // 可查询类在前，unsupported 殿后（均按配置序）
     assert_eq!(ids(&out), vec!["p-ok", "p-empty", "p-gateway"]);
     assert_eq!(out[0].state, QuotaStatus::Ok);
     assert_eq!(
@@ -680,12 +700,9 @@ async fn unsupported_rows_never_send_requests_and_sort_last() {
         out[2].data.as_ref().unwrap().reason.as_deref(),
         Some(REASON_NO_ADAPTER)
     );
-    // 只有真正要查的那一家发了请求
-    assert_eq!(fake.calls(), 1);
-}
+    assert_eq!(fake.calls(), 1, "只有真正要查的那一家发了请求");
 
-#[tokio::test]
-async fn missing_key_yields_no_key_row_without_request() {
+    // 无 Key：不发请求、占位行不落盘
     let dir = tempfile::tempdir().unwrap();
     let cfg = config(vec![provider(
         "p-nokey",
@@ -697,12 +714,22 @@ async fn missing_key_yields_no_key_row_without_request() {
     let out = snapshots_with(&cfg, dir.path(), &fake.fetcher()).await;
     assert_eq!(states(&out), vec![QuotaStatus::NoKey]);
     assert_eq!(fake.calls(), 0, "no_key 不发请求");
-    // 占位行不落盘（无请求结果 → quota.json 不出现）
-    assert!(!dir.path().join(FILE_NAME).exists());
-}
+    assert!(!dir.path().join(FILE_NAME).exists(), "占位行不落盘");
 
-#[tokio::test]
-async fn first_auth_failure_is_rejected_and_recorded_without_history() {
+    // 空白 Key 归一后同无 Key
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = config(vec![provider(
+        "p-blank",
+        "空白 Key",
+        "https://api.deepseek.com/v1",
+        Some("   "),
+    )]);
+    let fake = FakeFetcher::new(vec![]);
+    let out = snapshots_with(&cfg, dir.path(), &fake.fetcher()).await;
+    assert_eq!(states(&out), vec![QuotaStatus::NoKey]);
+    assert_eq!(fake.calls(), 0);
+
+    // 首次 401 → rejected；lastOkAt=None 但失败行落盘
     let dir = tempfile::tempdir().unwrap();
     let cfg = config(vec![provider(
         "p-bad",
@@ -714,15 +741,11 @@ async fn first_auth_failure_is_rejected_and_recorded_without_history() {
     let out = snapshots_with(&cfg, dir.path(), &fake.fetcher()).await;
     assert_eq!(states(&out), vec![QuotaStatus::Rejected]);
     assert_eq!(out[0].last_ok_at, None, "从未成功恒 None");
-    // 失败行落盘（下次判「曾成功过」的依据 = lastOkAt 有值与否；rejected
-    // 从未成功 → lastOkAt 仍为 None，但行本身入文件清孤儿用）
     let persisted = state::load(dir.path());
-    assert_eq!(persisted.len(), 1);
+    assert_eq!(persisted.len(), 1, "失败行落盘（孤儿清理依据）");
     assert_eq!(persisted[0].state, QuotaStatus::Rejected);
-}
 
-#[tokio::test]
-async fn auth_failure_after_success_is_error_with_last_ok_at_and_history_entries() {
+    // 曾成功后的 401 → error + 历史 lastOkAt + 离线兜底明细
     let dir = tempfile::tempdir().unwrap();
     let cfg = config(vec![provider(
         "p-expired",
@@ -730,7 +753,6 @@ async fn auth_failure_after_success_is_error_with_last_ok_at_and_history_entries
         "https://api.deepseek.com/v1",
         Some("sk-expired"),
     )]);
-    // 第一批：成功（写快照 + lastOkAt）
     let ok = FakeFetcher::new(vec![(
         "sk-expired",
         Ok(vec![percent_entry("balance", 20.0)]),
@@ -738,24 +760,24 @@ async fn auth_failure_after_success_is_error_with_last_ok_at_and_history_entries
     let out = snapshots_with(&cfg, dir.path(), &ok.fetcher()).await;
     assert_eq!(states(&out), vec![QuotaStatus::Ok]);
     let last_ok = out[0].last_ok_at.clone().unwrap();
-
-    // 第二批：401（曾成功过）→ error + 历史 lastOkAt + 离线兜底明细
     let bad = FakeFetcher::new(vec![("sk-expired", Err(failure(Some(401))))]);
     let out = snapshots_with(&cfg, dir.path(), &bad.fetcher()).await;
     assert_eq!(states(&out), vec![QuotaStatus::Error]);
-    assert_eq!(out[0].last_ok_at.as_deref(), Some(last_ok.as_str()));
+    assert_eq!(
+        out[0].last_ok_at.as_deref(),
+        Some(last_ok.as_str()),
+        "不变式：lastOkAt 恒上次成功时刻"
+    );
     let data = out[0].data.as_ref().unwrap();
     assert!(data.error.is_some());
     assert_eq!(
         data.entries.len(),
         1,
-        "失败行带最近一次成功明细（离线兜底）"
+        "不变式：失败行带最近一次成功明细（离线兜底）"
     );
     assert_eq!(data.entries[0].key, "balance");
-}
 
-#[tokio::test]
-async fn stateless_failures_are_error_and_single_provider_failure_is_isolated() {
+    // 无状态失败（超时/5xx/解析错）：三家全败各得一行 error，互不拦截
     let dir = tempfile::tempdir().unwrap();
     let cfg = config(vec![
         provider(
@@ -783,7 +805,6 @@ async fn stateless_failures_are_error_and_single_provider_failure_is_isolated() 
         ("sk-parse", Err(failure(None))),
     ]);
     let out = snapshots_with(&cfg, dir.path(), &fake.fetcher()).await;
-    // 三家全失败也各得一行 error，互不影响
     assert_eq!(
         states(&out),
         vec![QuotaStatus::Error, QuotaStatus::Error, QuotaStatus::Error]
@@ -791,30 +812,19 @@ async fn stateless_failures_are_error_and_single_provider_failure_is_isolated() 
     assert_eq!(fake.calls(), 3, "每家独立取数，一家失败不拦截其余");
 }
 
-#[tokio::test]
-async fn blank_api_key_after_normalize_is_treated_as_no_key() {
-    let dir = tempfile::tempdir().unwrap();
-    let cfg = config(vec![provider(
-        "p-blank",
-        "空白 Key",
-        "https://api.deepseek.com/v1",
-        Some("   "),
-    )]);
-    let fake = FakeFetcher::new(vec![]);
-    let out = snapshots_with(&cfg, dir.path(), &fake.fetcher()).await;
-    assert_eq!(states(&out), vec![QuotaStatus::NoKey]);
-    assert_eq!(fake.calls(), 0);
-}
+// ---------- quota.json 行合并不变式、孤儿清理、损坏隔离与 wire 面 ----------
 
-// ---------- quota.json 行合并与原子写 ----------
-
+// 断言：quota.json 行合并全语义——成功行整行覆盖（entries/lastOkAt 取新值）；
+// 失败行继承盘上旧值（不变式：lastOkAt 恒上次成功时刻、data.entries 恒最近
+// 一次成功明细，离线兜底）；孤儿清理（ids 之外旧行删除）触发写盘，无变化不
+// 写盘（返回 false）；损坏文件隔离为 .corrupt 备份并按空快照继续；行格式
+// serde roundtrip（camelCase 键面 + snake_case 六态 wire 名）。
 #[tokio::test]
-async fn commit_overwrites_ok_rows_and_failure_rows_inherit_history() {
+async fn commit_merge_invariants_orphans_corrupt_serde() {
+    // 行合并：第一批一家成功一家失败，第二批成功覆盖、失败继承
     let dir = tempfile::tempdir().unwrap();
-    let ids = ["p-ok".to_string(), "p-fail".to_string()];
+    let ids_list = ["p-ok".to_string(), "p-fail".to_string()];
     let now_a = "2026-10-30T08:00:00Z";
-
-    // 第一批：一家成功、一家失败
     let ok_row = QuotaSnapshot {
         provider_id: "p-ok".into(),
         state: QuotaStatus::Ok,
@@ -841,9 +851,13 @@ async fn commit_overwrites_ok_rows_and_failure_rows_inherit_history() {
         fetched_at: now_a.into(),
         last_ok_at: None,
     };
-    assert!(state::commit(dir.path(), &ids, &[ok_row, fail_row], now_a));
-    let disk = state::load(dir.path());
-    assert_eq!(disk.len(), 2);
+    assert!(state::commit(
+        dir.path(),
+        &ids_list,
+        &[ok_row, fail_row],
+        now_a
+    ));
+    assert_eq!(state::load(dir.path()).len(), 2);
 
     // 第二批：成功行覆盖、失败行继承（entries/lastOkAt 来自盘上旧值）
     let now_b = "2026-10-30T09:00:00Z";
@@ -875,7 +889,7 @@ async fn commit_overwrites_ok_rows_and_failure_rows_inherit_history() {
     };
     assert!(state::commit(
         dir.path(),
-        &ids,
+        &ids_list,
         &[ok_row2, fail_row2],
         now_b
     ));
@@ -895,7 +909,7 @@ async fn commit_overwrites_ok_rows_and_failure_rows_inherit_history() {
         "失败行继承旧行 lastOkAt（此前从未成功）"
     );
 
-    // 第三批：此前成功过的 p-ok 现在超时 → error 行继承旧明细与 lastOkAt
+    // 第三批：此前成功过的 p-ok 超时 → error 行继承旧明细与 lastOkAt
     let now_c = "2026-10-30T10:00:00Z";
     let timeout_row = QuotaSnapshot {
         provider_id: "p-ok".into(),
@@ -910,20 +924,22 @@ async fn commit_overwrites_ok_rows_and_failure_rows_inherit_history() {
         fetched_at: now_c.into(),
         last_ok_at: None,
     };
-    assert!(state::commit(dir.path(), &ids, &[timeout_row], now_c));
+    assert!(state::commit(dir.path(), &ids_list, &[timeout_row], now_c));
     let disk = state::load(dir.path());
     let line = disk.iter().find(|r| r.provider_id == "p-ok").unwrap();
     assert_eq!(line.state, QuotaStatus::Error);
-    assert_eq!(line.last_ok_at.as_deref(), Some(now_b), "继承上次成功时刻");
+    assert_eq!(
+        line.last_ok_at.as_deref(),
+        Some(now_b),
+        "不变式：继承上次成功时刻"
+    );
     assert_eq!(
         line.data.as_ref().unwrap().entries.len(),
         1,
-        "离线兜底：失败行继承最近一次成功明细"
+        "不变式：失败行继承最近一次成功明细（离线兜底）"
     );
-}
 
-#[tokio::test]
-async fn commit_cleans_orphans_and_skips_write_when_nothing_changed() {
+    // 孤儿清理（ids 只剩 p-kept）→ 写盘；无请求结果且无孤儿 → 不写盘（false）
     let dir = tempfile::tempdir().unwrap();
     let kept_ids = ["p-kept".to_string()];
     let now = "2026-10-30T08:00:00Z";
@@ -940,7 +956,6 @@ async fn commit_cleans_orphans_and_skips_write_when_nothing_changed() {
         fetched_at: now.into(),
         last_ok_at: Some(now.into()),
     };
-    // 先写入两行（p-orphan 与 p-kept）
     let mut orphan = row.clone();
     orphan.provider_id = "p-orphan".into();
     assert!(state::commit(
@@ -949,18 +964,18 @@ async fn commit_cleans_orphans_and_skips_write_when_nothing_changed() {
         &[row.clone(), orphan],
         now
     ));
-    // 孤儿清理（ids 只剩 p-kept）→ 写盘
-    assert!(state::commit(dir.path(), &kept_ids, &[], now));
+    assert!(
+        state::commit(dir.path(), &kept_ids, &[], now),
+        "孤儿清理写盘"
+    );
     let disk = state::load(dir.path());
     assert_eq!(ids(&disk), vec!["p-kept"]);
-    // 无请求结果且无孤儿 → 不写盘（返回 false）
-    assert!(!state::commit(dir.path(), &kept_ids, &[], now));
-    // 纯占位批次（no_key/unsupported）不产生 result_rows → 文件不被触碰
-    assert!(!state::commit(dir.path(), &kept_ids, &[], now));
-}
+    assert!(
+        !state::commit(dir.path(), &kept_ids, &[], now),
+        "无变化不写盘"
+    );
 
-#[tokio::test]
-async fn corrupted_file_is_quarantined_and_treated_as_empty() {
+    // 损坏文件：隔离为 .corrupt、按空快照继续
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join(FILE_NAME), b"{broken json").unwrap();
     let rows = state::load(dir.path());
@@ -970,11 +985,8 @@ async fn corrupted_file_is_quarantined_and_treated_as_empty() {
         "损坏文件备份留证"
     );
     assert!(!dir.path().join(FILE_NAME).exists(), "原文件已被移走");
-}
 
-#[test]
-fn snapshot_row_survives_serde_roundtrip() {
-    // quota.json 行格式的 roundtrip（camelCase wire 面）
+    // wire 面：camelCase 键面 + snake_case 六态 wire 名 + roundtrip
     let row = QuotaSnapshot {
         provider_id: "p1".into(),
         state: QuotaStatus::Ok,
@@ -992,10 +1004,9 @@ fn snapshot_row_survives_serde_roundtrip() {
     assert!(text.contains("\"providerId\""));
     assert!(text.contains("\"lastOkAt\""));
     assert!(text.contains("\"usedPercent\""));
+    assert!(text.contains("\"state\":\"ok\""), "snake_case 六态 wire 名");
     let back: QuotaSnapshot = serde_json::from_str(&text).unwrap();
-    assert_eq!(back, row);
-    // snake_case 行态值（§11.5 六态 wire 名）
-    assert!(text.contains("\"state\":\"ok\""));
+    assert_eq!(back, row, "serde roundtrip");
     let rejected = QuotaSnapshot {
         state: QuotaStatus::Rejected,
         ..QuotaSnapshot::default()

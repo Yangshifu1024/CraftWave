@@ -1,9 +1,9 @@
 //! open_dir 白名单校验的表驱动测试（03 号票，FR-14-07，§3.3 #3）。
 //!
-//! 只测校验面 [`resolve_open_dir`]（headless、无系统副作用）：三个合法目录
-//! 放行、白名单外拒绝（E_PATH_OUTSIDE_ROOTS）、非目录/不存在拒绝
-//! （E_NOT_FOUND）、空参拒绝（E_INVALID_ARG）。OS 打开动作（open crate 一行
-//! 调用）留在命令层 [`open_dir_core`]，不进测试面。
+//! 只测校验面 [`resolve_open_dir`]（headless、无系统副作用）：合法目录放行、
+//! 白名单外拒绝（E_PATH_OUTSIDE_ROOTS）、非目录/不存在拒绝（E_NOT_FOUND）、
+//! 空参拒绝（E_INVALID_ARG）、残缺注册与 "~" 展开安全语义。OS 打开动作
+//! （open crate 一行调用）留在命令层 [`open_dir_core`]，不进测试面。
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -43,15 +43,25 @@ fn assert_rejected(state: &AppState, path: &Path, code: &str) {
     assert_eq!(err.code, code, "拒绝路径 {path:?} 的错误码不符");
 }
 
-/// 表驱动：三个合法白名单根 + 数据目录子路径全部放行。
+/// open_dir 白名单校验全集：三个合法白名单根 + 数据目录子路径全部放行；
+/// 白名单外路径一律 E_PATH_OUTSIDE_ROOTS——系统其他目录、项目主目录本体
+/// （白名单只收项目数据目录，不收工作区）、数据目录的上级、`..` 逃逸形态；
+/// 边界形态与残缺注册：空/空白 path 报 E_INVALID_ARG；数据目录下的文件
+/// （config.json）与不存在的子路径都是"授权范围内但目标不存在"，报
+/// E_NOT_FOUND（与越界的 E_PATH_OUTSIDE_ROOTS 分层）；项目主目录被外部
+/// 删除（残缺注册）时项目数据目录自动退出白名单，报越界不 panic；"~" 前缀
+/// 展开（纯函数表驱动）：`~` 与 `~/…` 展开为 HOME 前缀；无前缀与 "~user"
+/// 形态原样返回（后者交白名单拒绝）。展开后仍受白名单约束：测试进程的
+/// HOME 展开路径（真实用户主目录）不在临时数据目录白名单内，必须拒绝——
+/// 钉住"展开不绕过校验"的安全语义。
 #[test]
-fn whitelist_roots_and_subpaths_are_allowed() {
+fn whitelist_boundary_and_tilde_expansion_semantics() {
     let data = tempfile::tempdir().unwrap();
     let state = app(data.path());
     let home = tempfile::tempdir().unwrap();
     let project_data = register_project(&state, home.path());
 
-    let cases: Vec<(PathBuf, PathBuf)> = vec![
+    let allowed: Vec<(PathBuf, PathBuf)> = vec![
         // 数据目录本体
         (data.path().to_path_buf(), data.path().to_path_buf()),
         // 日志目录（open_dir_roots 幂等补建后放行）
@@ -61,23 +71,12 @@ fn whitelist_roots_and_subpaths_are_allowed() {
         // 白名单根之下的子路径（projects/ 目录存有注册表）
         (data.path().join("projects"), data.path().join("projects")),
     ];
-    for (path, expect) in cases {
+    for (path, expect) in allowed {
         assert_allowed(&state, &path, &expect);
     }
-}
 
-/// 表驱动：白名单外路径一律 E_PATH_OUTSIDE_ROOTS——系统其他目录、项目主
-/// 目录本体（白名单只收项目数据目录，不收工作区）、数据目录的上级与兄弟
-/// 目录、`..` 逃逸形态。
-#[test]
-fn outside_roots_are_rejected() {
-    let data = tempfile::tempdir().unwrap();
-    let state = app(data.path());
-    let home = tempfile::tempdir().unwrap();
-    register_project(&state, home.path());
     let unrelated = tempfile::tempdir().unwrap();
-
-    let cases: Vec<PathBuf> = vec![
+    let outside: Vec<PathBuf> = vec![
         // 系统任意目录（不在白名单）
         unrelated.path().to_path_buf(),
         // 项目主目录本体（工作区不在白名单，只有其 .craftwave）
@@ -87,16 +86,11 @@ fn outside_roots_are_rejected() {
         // `..` 逃逸形态（词法上落在数据目录内、解析后越界）
         data.path().join("..").join("elsewhere"),
     ];
-    for path in cases {
+    for path in outside {
         assert_rejected(&state, &path, E_PATH_OUTSIDE_ROOTS);
     }
-}
 
-/// 边界形态：空/空白 path 报 E_INVALID_ARG；数据目录下的文件（config.json）
-/// 与不存在的子路径都是"授权范围内但目标不存在"，报 E_NOT_FOUND（与越界
-/// 的 E_PATH_OUTSIDE_ROOTS 分层）。
-#[test]
-fn edge_shapes_rejected_with_expected_codes() {
+    // 边界形态与残缺注册。
     let data = tempfile::tempdir().unwrap();
     let state = app(data.path());
     // 造一个数据目录下的文件路径（非目录）
@@ -115,25 +109,14 @@ fn edge_shapes_rejected_with_expected_codes() {
     )
     .expect_err("不存在的子路径应拒绝");
     assert_eq!(err.code, E_NOT_FOUND);
-}
 
-/// 项目主目录被外部删除（残缺注册）时：该项目数据目录自动退出白名单，
-/// 请求打开报越界，不 panic。
-#[test]
-fn missing_project_home_leaves_whitelist_gracefully() {
-    let data = tempfile::tempdir().unwrap();
-    let state = app(data.path());
+    // 模拟外部删除：整个项目主目录消失。
     let home = tempfile::tempdir().unwrap();
     let project_data = register_project(&state, home.path());
-    // 模拟外部删除：整个项目主目录消失
     fs::remove_dir_all(home.path()).unwrap();
     assert_rejected(&state, &project_data, E_PATH_OUTSIDE_ROOTS);
-}
 
-/// "~" 前缀展开（纯函数表驱动）：`~` 与 `~/…` 展开为 HOME 前缀；无前缀与
-/// "~user" 形态原样返回（后者交白名单拒绝）。
-#[test]
-fn tilde_prefix_expansion_table() {
+    // "~" 前缀展开（纯函数表驱动）。
     let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE"));
     let cases: Vec<(&str, String)> = vec![
         ("~/x", format!("{}/x", home.as_deref().unwrap_or(""))),
@@ -145,12 +128,7 @@ fn tilde_prefix_expansion_table() {
     for (input, expect) in cases {
         assert_eq!(expand_home_prefix(input), expect, "输入 {input:?}");
     }
-}
 
-/// "~" 展开后仍受白名单约束：测试进程的 HOME 展开路径（真实用户主目录）
-/// 不在临时数据目录白名单内，必须拒绝——钉住"展开不绕过校验"的安全语义。
-#[test]
-fn tilde_expanded_path_still_checked_against_whitelist() {
     let data = tempfile::tempdir().unwrap();
     let state = app(data.path());
     assert_rejected(&state, Path::new("~/.craftwave/logs"), E_PATH_OUTSIDE_ROOTS);

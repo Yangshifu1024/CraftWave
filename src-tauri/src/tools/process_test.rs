@@ -6,9 +6,28 @@ use std::time::Duration;
 
 use super::{REAP_GRACE, enable_process_group, reap_process_group};
 
-// 断言：子进程忽略 SIGTERM 时，收割耗满宽限期后用 SIGKILL 兜底终止。
+// 断言：收割矩阵——SIGTERM 即终结的进程远小于宽限上界被收割；
+// 忽略 SIGTERM 的进程耗满宽限期后由 SIGKILL 兜底终止。
 #[tokio::test]
-async fn reap_sigterm_ignored_sigkill_fallback() {
+async fn reap_grace_and_sigkill_fallback_matrix() {
+    // 普通 sleep 进程：SIGTERM 即退出，耗时远小于宽限上界。
+    let mut cmd = tokio::process::Command::new("sleep");
+    cmd.arg("30").stdin(Stdio::null());
+    enable_process_group(&mut cmd);
+    let mut child = cmd.spawn().expect("spawn");
+    let started = std::time::Instant::now();
+    let status = reap_process_group(&mut child, REAP_GRACE)
+        .await
+        .expect("收割应成功");
+    let elapsed = started.elapsed();
+    // SIGTERM 即终结：远小于宽限上界（5ms 轮询粒度 + 信号处理）
+    assert!(!status.success(), "SIGTERM 终止的 sleep 非零退出");
+    assert!(
+        elapsed < Duration::from_millis(500),
+        "收割耗时 {elapsed:?} 应远小于 500ms（S5 实测 6–8ms 量级）"
+    );
+
+    // 忽略 SIGTERM 的 shell：耗满宽限期后 SIGKILL 兜底。
     let mut cmd = tokio::process::Command::new("sh");
     cmd.arg("-c")
         .arg("trap '' TERM; echo ready; sleep 30")
@@ -30,24 +49,4 @@ async fn reap_sigterm_ignored_sigkill_fallback() {
     assert!(!status.success(), "SIGKILL 兜底终止非零退出");
     // TERM 被忽略 → 必须耗满宽限期后才 SIGKILL
     assert!(elapsed >= REAP_GRACE, "宽限期应被用满（实际 {elapsed:?}）");
-}
-
-// 断言：普通 sleep 进程收到 SIGTERM 即退出，收割耗时远小于宽限上界。
-#[tokio::test]
-async fn reap_sleep_process_within_grace() {
-    let mut cmd = tokio::process::Command::new("sleep");
-    cmd.arg("30").stdin(Stdio::null());
-    enable_process_group(&mut cmd);
-    let mut child = cmd.spawn().expect("spawn");
-    let started = std::time::Instant::now();
-    let status = reap_process_group(&mut child, REAP_GRACE)
-        .await
-        .expect("收割应成功");
-    let elapsed = started.elapsed();
-    // SIGTERM 即终结：远小于宽限上界（5ms 轮询粒度 + 信号处理）
-    assert!(!status.success(), "SIGTERM 终止的 sleep 非零退出");
-    assert!(
-        elapsed < Duration::from_millis(500),
-        "收割耗时 {elapsed:?} 应远小于 500ms（S5 实测 6–8ms 量级）"
-    );
 }

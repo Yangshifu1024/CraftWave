@@ -4,21 +4,17 @@ use crate::host::IpcError;
 use crate::storage::StorageError;
 
 /// IPC 错误序列化形状：只含 code + message 两个字段（camelCase），
-/// 不携带 details 等附加信息。
+/// 不携带 details 等附加信息；存储层四种错误（NotFound / InvalidArg / Io /
+/// RevisionConflict）经 `From` 映射后各自落在正确的 IPC 错误码上。
 #[test]
-fn error_shape_camel_case_detail_omitted() {
+fn error_shape_and_storage_error_mapping() {
     let err = IpcError::session_rev("基线过期");
     let json = serde_json::to_value(&err).unwrap();
     assert_eq!(
         json,
         serde_json::json!({ "code": "E_SESSION_REV", "message": "基线过期" })
     );
-}
 
-/// 存储层四种错误（NotFound / InvalidArg / Io / RevisionConflict）经
-/// `From` 映射后各自落在正确的 IPC 错误码上。
-#[test]
-fn storage_error_to_ipc_error_code_mapping() {
     assert_eq!(
         serde_json::to_value(IpcError::from(StorageError::NotFound("s1".into()))).unwrap()["code"],
         "E_NOT_FOUND"

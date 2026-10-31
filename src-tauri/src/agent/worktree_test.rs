@@ -52,17 +52,6 @@ fn head_id(repo: &git2::Repository) -> String {
         .to_string()
 }
 
-/// 主仓库工作区（未暂存 + 已暂存 + 未跟踪）状态集合（整体状态快照）。
-fn status_set(repo: &git2::Repository) -> std::collections::BTreeSet<String> {
-    let mut opts = git2::StatusOptions::new();
-    opts.include_untracked(true).include_ignored(false);
-    repo.statuses(Some(&mut opts))
-        .expect("statuses")
-        .iter()
-        .map(|e| format!("{:?}:{}", e.status(), e.path().unwrap_or("?")))
-        .collect()
-}
-
 /// index 中某路径的 blob oid（「不改暂存状态」的精确断言基准：暂存面 =
 /// index 内容，回收只写工作区文件、绝不触碰 index）。
 fn index_blob_id(repo: &git2::Repository, path: &str) -> String {
@@ -92,10 +81,14 @@ impl WtFixture {
     }
 }
 
-/// 派发起点包含已暂存/未暂存修改与未忽略新文件（Q9），且 worktree 内容
-/// 与主工作区当前文件状态逐字节一致。
+// 断言（派发起点快照，Q9/Q12）：快照含已暂存+未暂存修改与未跟踪新文件
+// （基线 = 派发时主工作区内容指纹，worktree 内容与主工作区当前文件状态
+// 逐字节一致，基线 commit = 派发时 HEAD）；被忽略文件不进快照不进
+// worktree；派发后主工作区变化不自动同步；非 git 目录判定为非 git（写入
+// 子代理据此拒绝修改）；空仓库（无提交）创建快照直接报错不静默回退旧 HEAD。
 #[test]
-fn dispatch_snapshot_includes_uncommitted_and_untracked() {
+fn dispatch_snapshot_semantics() {
+    // 快照含未提交修改与未跟踪文件，worktree 内容一致。
     let fx = WtFixture::new();
     let root = fx.project_root();
     let repo = init_git_repo(&root);
@@ -139,7 +132,7 @@ fn dispatch_snapshot_includes_uncommitted_and_untracked() {
         "未跟踪新文件基线 = 派发时内容"
     );
 
-    // worktree 内容 = 主工作区当前状态（未提交修改与新文件都进来了）
+    // worktree 内容 = 主工作区当前状态（未提交修改与新文件都进来了）。
     let wt = std::path::PathBuf::from(&lease.worktree_root);
     assert_eq!(
         std::fs::read_to_string(wt.join("README.md")).unwrap(),
@@ -156,11 +149,8 @@ fn dispatch_snapshot_includes_uncommitted_and_untracked() {
         std::fs::read_to_string(root.join(".gitignore")).unwrap_or_default(),
     );
     assert_eq!(lease.base_commit, head_id(&repo), "基线 = 派发时 HEAD");
-}
 
-/// 被忽略文件不进快照（Q12：不批量复制主工作区忽略文件）。
-#[test]
-fn dispatch_snapshot_excludes_ignored_files() {
+    // 被忽略文件不进快照（Q12：不批量复制主工作区忽略文件）。
     let fx = WtFixture::new();
     let root = fx.project_root();
     let repo = init_git_repo(&root);
@@ -168,7 +158,6 @@ fn dispatch_snapshot_excludes_ignored_files() {
     commit_all(&repo, "add gitignore");
     std::fs::create_dir_all(root.join("ignored-dir")).unwrap();
     std::fs::write(root.join("ignored-dir").join("deps.bin"), "junk").unwrap();
-
     let lease =
         create_lease(&root, &fx.data_root(), "sub-2", "sess-1", "implementer").expect("创建快照");
     let wt = std::path::PathBuf::from(&lease.worktree_root);
@@ -177,16 +166,12 @@ fn dispatch_snapshot_excludes_ignored_files() {
         "被忽略文件不得复制进 worktree（依赖按项目现有方式在 worktree 内重建）"
     );
     assert!(lease.snapshot.is_empty(), "忽略文件不进起点快照");
-}
 
-/// 派发后主工作区变化不自动同步到 worktree（Q9：后续不自动同步）。
-#[test]
-fn main_workspace_changes_after_dispatch_not_synced() {
+    // 派发后主工作区变化不自动同步到 worktree（Q9：后续不自动同步）。
     let fx = WtFixture::new();
     let root = fx.project_root();
-    let repo = init_git_repo(&root);
+    init_git_repo(&root);
     let lease = create_lease(&root, &fx.data_root(), "sub-3", "sess-1", "implementer").unwrap();
-    // 派发之后用户改了主工作区
     std::fs::write(root.join("README.md"), "user edit after dispatch\n").unwrap();
     let wt = std::path::PathBuf::from(&lease.worktree_root);
     assert_eq!(
@@ -194,20 +179,51 @@ fn main_workspace_changes_after_dispatch_not_synced() {
         "base\n",
         "worktree 保持派发起点状态，不自动同步主工作区后续变化"
     );
-    let _ = repo;
+
+    // 非 git 项目判定：非 git 目录返回 false（写入子代理据此拒绝修改）。
+    let fx = WtFixture::new();
+    assert!(
+        !project_is_git(&fx.project_root()),
+        "临时项目目录默认不是 git 仓库"
+    );
+    let root = fx.project_root();
+    init_git_repo(&root);
+    assert!(project_is_git(&root), "init 后判定为 git 仓库");
+
+    // 快照创建失败不静默退回旧 HEAD（Q9）：空仓库（无提交）直接报错。
+    let fx = WtFixture::new();
+    let root = fx.project_root();
+    git2::Repository::init(&root).expect("init 空仓库（无任何提交）");
+    let err = create_lease(&root, &fx.data_root(), "sub-9", "sess-1", "implementer")
+        .expect_err("无提交仓库必须失败，不得静默回退");
+    assert!(err.0.contains("提交"), "错误信息说明原因：{err}");
 }
 
-/// 差量回收（Q10）：worktree 的新增/修改/删除按文件汇回主工作区。
+// 断言（差量回收与生命周期，Q10/Q11）：worktree 的新增/修改/删除按文件
+// 汇回主工作区；创建与回收都不自动 commit、不改用户已有暂存状态（回收只
+// 写工作区文件，index 内容原样，相对 index 呈现未暂存修改）；回收标注后
+// 清理成功（worktree 目录与 lease 一并消失）；失败/取消的 worktree 保留
+// 未汇回修改并标注 abandoned，重启（重新 list_leases）仍可找回、不自动
+// 汇回主工作区，事后人工回收有价部分。
 #[test]
-fn recover_applies_add_modify_delete() {
+fn recover_applies_add_modify_delete_and_lifecycle() {
     let fx = WtFixture::new();
     let root = fx.project_root();
     let repo = init_git_repo(&root);
     std::fs::write(root.join("legacy.txt"), "to be deleted\n").unwrap();
     commit_all(&repo, "add legacy");
-    let mut lease = create_lease(&root, &fx.data_root(), "sub-4", "sess-1", "implementer").unwrap();
+    // 用户有一个已暂存的修改（「不改暂存状态」的断言基准）。
+    std::fs::write(root.join("README.md"), "user staged\n").unwrap();
+    {
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("README.md")).unwrap();
+        index.write().unwrap();
+    }
+    let before_head = head_id(&repo);
+    let before_index = index_blob_id(&repo, "README.md");
 
-    // 子代理在 worktree 内：改 README、加 feature.rs、删 legacy.txt
+    let mut lease = create_lease(&root, &fx.data_root(), "sub-4", "sess-1", "implementer").unwrap();
+    // 子代理在 worktree 内：改 README、加 feature.rs、删 legacy.txt。
     let wt = std::path::PathBuf::from(&lease.worktree_root);
     std::fs::write(wt.join("README.md"), "base + subagent edit\n").unwrap();
     std::fs::write(wt.join("feature.rs"), "fn main() {}\n").unwrap();
@@ -231,29 +247,92 @@ fn recover_applies_add_modify_delete() {
         "fn main() {}\n"
     );
     assert!(!root.join("legacy.txt").exists(), "删除被同步");
-    // 生命周期：回收标注后清理成功（worktree 目录与 lease 一并消失）
+    // 不自动 commit、不改暂存状态（用户只暂存未改工作区时 = 无冲突）。
+    assert_eq!(head_id(&repo), before_head, "创建/回收不自动 commit");
+    assert_eq!(
+        index_blob_id(&repo, "README.md"),
+        before_index,
+        "用户暂存状态不被回收改变（回收只写工作区文件，index 内容原样）"
+    );
+    // 工作区文件 = 子代理版本（回收应用的结果），相对 index 呈现未暂存修改。
+    let mut opts = git2::StatusOptions::new();
+    opts.include_untracked(true).include_ignored(false);
+    let statuses: std::collections::BTreeSet<String> = repo
+        .statuses(Some(&mut opts))
+        .expect("statuses")
+        .iter()
+        .map(|e| format!("{:?}:{}", e.status(), e.path().unwrap_or("?")))
+        .collect();
+    assert!(
+        statuses
+            .iter()
+            .any(|s| s.contains("README.md") && s.contains("WT_MODIFIED")),
+        "回收应用后工作区内容为子代理版本（index 面未动，呈现为未暂存修改）"
+    );
+    // 生命周期：回收标注后清理成功（worktree 目录与 lease 一并消失）。
     mark_status(&mut lease, &fx.data_root(), LEASE_RECOVERED, None).unwrap();
     cleanup(&lease, &fx.data_root()).unwrap();
     assert!(!std::path::PathBuf::from(&lease.worktree_root).exists());
     assert!(load_lease(&fx.data_root(), "sub-4").unwrap().is_none());
-    // 回收不自动 commit：HEAD 保持在基线
-    assert_eq!(head_id(&repo), lease.base_commit);
+    assert_eq!(head_id(&repo), before_head, "清理也不 commit");
+
+    // 生命周期（Q11）：失败/取消的 worktree 保留未汇回修改并标注未完成；
+    // 重启（重新 list_leases）仍可找回，且不自动汇回主工作区。
+    let fx = WtFixture::new();
+    let root = fx.project_root();
+    init_git_repo(&root);
+    let mut lease = create_lease(&root, &fx.data_root(), "sub-8", "sess-1", "implementer").unwrap();
+    let wt = std::path::PathBuf::from(&lease.worktree_root);
+    std::fs::write(wt.join("unfinished.txt"), "precious work\n").unwrap();
+    // 取消 → 标注 abandoned（不汇回）。
+    mark_status(
+        &mut lease,
+        &fx.data_root(),
+        LEASE_ABANDONED,
+        Some("cancelled".into()),
+    )
+    .unwrap();
+    // 模拟重启：重新扫描恢复索引。
+    let leases = list_leases(&fx.data_root());
+    assert_eq!(leases.len(), 1, "重启后仍可找回保留的成果索引");
+    assert_eq!(leases[0].status, LEASE_ABANDONED);
+    assert_eq!(leases[0].sub_id, "sub-8");
+    assert!(
+        std::fs::read_to_string(wt.join("unfinished.txt")).unwrap() == "precious work\n",
+        "未汇回修改完整保留"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("README.md")).unwrap(),
+        "base\n",
+        "abandoned 成果不自动汇入主工作区"
+    );
+    // 事后人工回收（主代理检查后回收有价部分的路径）。
+    let report = recover(&leases[0]).unwrap();
+    assert!(report.applied.contains(&"unfinished.txt".to_owned()));
+    assert_eq!(
+        std::fs::read_to_string(root.join("unfinished.txt")).unwrap(),
+        "precious work\n"
+    );
+    let lease_after = list_leases(&fx.data_root()).into_iter().next().unwrap();
+    cleanup(&lease_after, &fx.data_root()).unwrap();
 }
 
-/// 冲突保留双方（Q10）：主工作区在子代理运行期间被改过 → 主文件不动，
-/// 子版本写到冲突副本；未冲突文件正常回收。
+// 断言（冲突保留双方，Q10）：主工作区在子代理运行期间被改过 → 主文件
+// 不动，子版本写到带 `.cw-conflict-` 标记的冲突副本，未冲突文件正常回收；
+// 主工作区在子代理删除同名文件期间被用户改过 → 冲突保留（不执行删除）。
 #[test]
-fn recover_conflict_keeps_both_versions() {
+fn recover_conflicts_keep_both_versions() {
+    // 修改冲突：主文件保留用户修改，子版本进冲突副本。
     let fx = WtFixture::new();
     let root = fx.project_root();
     init_git_repo(&root);
     let lease = create_lease(&root, &fx.data_root(), "sub-5", "sess-1", "implementer").unwrap();
-    // 主工作区（用户）先改 README
+    // 主工作区（用户）先改 README。
     std::fs::write(root.join("README.md"), "user concurrent edit\n").unwrap();
-    // 子代理随后也改 README（相对起点 = 冲突）
+    // 子代理随后也改 README（相对起点 = 冲突）。
     let wt = std::path::PathBuf::from(&lease.worktree_root);
     std::fs::write(wt.join("README.md"), "subagent edit\n").unwrap();
-    // 另一个文件无冲突地新增
+    // 另一个文件无冲突地新增。
     std::fs::write(wt.join("clean.txt"), "no conflict\n").unwrap();
 
     let report = recover(&lease).unwrap();
@@ -278,18 +357,14 @@ fn recover_conflict_keeps_both_versions() {
         report.applied.contains(&"clean.txt".to_owned()),
         "无冲突文件正常应用"
     );
-}
 
-/// 主工作区在子代理删除同名文件期间被用户改过 → 冲突保留（不执行删除）。
-#[test]
-fn recover_delete_conflict_preserves_user_file() {
+    // 删除冲突：用户改了文件、子代理删了它 → 冲突保留（用户版本不动）。
     let fx = WtFixture::new();
     let root = fx.project_root();
     let repo = init_git_repo(&root);
     std::fs::write(root.join("target.txt"), "origin\n").unwrap();
     commit_all(&repo, "add target");
     let lease = create_lease(&root, &fx.data_root(), "sub-6", "sess-1", "implementer").unwrap();
-    // 用户改了 target.txt；子代理删除了它
     std::fs::write(root.join("target.txt"), "user edit\n").unwrap();
     std::fs::remove_file(std::path::PathBuf::from(&lease.worktree_root).join("target.txt"))
         .unwrap();
@@ -304,111 +379,4 @@ fn recover_delete_conflict_preserves_user_file() {
         "user edit\n",
         "用户版本不动"
     );
-}
-
-/// 创建与回收都不自动 commit、不改变用户已有暂存状态（Q9/Q10）。
-#[test]
-fn snapshot_and_recover_never_commit_or_touch_index() {
-    let fx = WtFixture::new();
-    let root = fx.project_root();
-    let repo = init_git_repo(&root);
-    // 用户有一个已暂存的修改
-    std::fs::write(root.join("README.md"), "user staged\n").unwrap();
-    {
-        let mut index = repo.index().unwrap();
-        index.add_path(Path::new("README.md")).unwrap();
-        index.write().unwrap();
-    }
-    let before_head = head_id(&repo);
-    let before_index = index_blob_id(&repo, "README.md");
-
-    let mut lease = create_lease(&root, &fx.data_root(), "sub-7", "sess-1", "implementer").unwrap();
-    let wt = std::path::PathBuf::from(&lease.worktree_root);
-    std::fs::write(wt.join("README.md"), "subagent version\n").unwrap();
-    let report = recover(&lease).unwrap();
-    assert_eq!(report.conflicts.len(), 0, "用户只暂存未改工作区时 = 无冲突");
-    assert_eq!(head_id(&repo), before_head, "创建/回收不自动 commit");
-    assert_eq!(
-        index_blob_id(&repo, "README.md"),
-        before_index,
-        "用户暂存状态不被回收改变（回收只写工作区文件，index 内容原样）"
-    );
-    // 工作区文件 = 子代理版本（回收应用的结果），相对 index 呈现未暂存修改
-    assert!(
-        status_set(&repo)
-            .iter()
-            .any(|s| s.contains("README.md") && s.contains("WT_MODIFIED")),
-        "回收应用后工作区内容为子代理版本（index 面未动，呈现为未暂存修改）"
-    );
-    mark_status(&mut lease, &fx.data_root(), LEASE_RECOVERED, None).unwrap();
-    cleanup(&lease, &fx.data_root()).unwrap();
-    assert_eq!(head_id(&repo), before_head, "清理也不 commit");
-}
-
-/// 生命周期（Q11）：失败/取消的 worktree 保留未汇回修改并标注未完成；
-/// 重启（重新 list_leases）仍可找回，且不自动汇回主工作区。
-#[test]
-fn abandoned_lease_kept_across_restart_and_not_recovered() {
-    let fx = WtFixture::new();
-    let root = fx.project_root();
-    init_git_repo(&root);
-    let mut lease = create_lease(&root, &fx.data_root(), "sub-8", "sess-1", "implementer").unwrap();
-    let wt = std::path::PathBuf::from(&lease.worktree_root);
-    std::fs::write(wt.join("unfinished.txt"), "precious work\n").unwrap();
-
-    // 取消 → 标注 abandoned（不汇回）
-    mark_status(
-        &mut lease,
-        &fx.data_root(),
-        LEASE_ABANDONED,
-        Some("cancelled".into()),
-    )
-    .unwrap();
-    // 模拟重启：重新扫描恢复索引
-    let leases = list_leases(&fx.data_root());
-    assert_eq!(leases.len(), 1, "重启后仍可找回保留的成果索引");
-    assert_eq!(leases[0].status, LEASE_ABANDONED);
-    assert_eq!(leases[0].sub_id, "sub-8");
-    assert!(
-        std::fs::read_to_string(wt.join("unfinished.txt")).unwrap() == "precious work\n",
-        "未汇回修改完整保留"
-    );
-    assert_eq!(
-        std::fs::read_to_string(root.join("README.md")).unwrap(),
-        "base\n",
-        "abandoned 成果不自动汇入主工作区"
-    );
-    // 事后人工回收（主代理检查后回收有价部分的路径）
-    let report = recover(&leases[0]).unwrap();
-    assert!(report.applied.contains(&"unfinished.txt".to_owned()));
-    assert_eq!(
-        std::fs::read_to_string(root.join("unfinished.txt")).unwrap(),
-        "precious work\n"
-    );
-    let lease_after = list_leases(&fx.data_root()).into_iter().next().unwrap();
-    cleanup(&lease_after, &fx.data_root()).unwrap();
-}
-
-/// 非 git 项目判定：非 git 目录返回 false（写入子代理据此拒绝修改）。
-#[test]
-fn non_git_project_detected() {
-    let fx = WtFixture::new();
-    assert!(
-        !project_is_git(&fx.project_root()),
-        "临时项目目录默认不是 git 仓库"
-    );
-    let root = fx.project_root();
-    init_git_repo(&root);
-    assert!(project_is_git(&root), "init 后判定为 git 仓库");
-}
-
-/// 快照创建失败不静默退回旧 HEAD（Q9）：空仓库（无提交）直接报错。
-#[test]
-fn create_lease_fails_loudly_on_repo_without_commits() {
-    let fx = WtFixture::new();
-    let root = fx.project_root();
-    git2::Repository::init(&root).expect("init 空仓库（无任何提交）");
-    let err = create_lease(&root, &fx.data_root(), "sub-9", "sess-1", "implementer")
-        .expect_err("无提交仓库必须失败，不得静默回退");
-    assert!(err.0.contains("提交"), "错误信息说明原因：{err}");
 }

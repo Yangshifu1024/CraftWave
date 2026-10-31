@@ -1,5 +1,6 @@
 //! 审批 AskPayload 构造与 suggest 上下文提取的纯逻辑单测（14 号票）；
-//! 27 号票增补自动起名纯函数（触发三态表 / 标题归一 / prompt 截断）。
+//! 27 号票增补自动起名纯函数（触发三态表 / 标题归一 / prompt 截断）与
+//! 标题后台任务直驱（剧本假模型 + 录音事件汇 + 临时数据根）。
 
 use crate::backend::ask::{AskMode, AskPayload, DiffLineKind};
 use crate::backend::run_loop::PendingCall;
@@ -22,30 +23,40 @@ fn pending(name: &str, args_json: &str) -> PendingCall {
     }
 }
 
-/// write 工具的审批载荷：标题含路径、diff 全为新增行（新文件整体是增量）、
-/// 选项固定「允许（推荐）/ 拒绝」两项（write 非命令类，③ 开也不出
-/// always_session）。
-#[test]
-fn write_payload_new_file_all_add() {
-    let payload = build_approval_payload(
-        &pending(
-            "write",
-            r#"{"path":"src/new.rs","content":"fn main() {}\n"}"#,
-        ),
-        true,
-        None,
-        None,
-    );
-    let AskPayload::Approval {
-        title,
-        diff,
-        command,
-        options,
-        ..
-    } = payload
-    else {
-        panic!("应为 Approval 形态")
+/// 解构 Approval 载荷的简写（非 Approval 直接 panic）：把选定字段绑定到
+/// 调用处作用域，如 `approval_of!(expr, { title, options })`。
+macro_rules! approval_of {
+    ($payload:expr, { $($fields:tt)* }) => {
+        let AskPayload::Approval { $($fields)* , .. } = $payload else {
+            panic!("应为 Approval 形态")
+        };
     };
+}
+
+/// 断言三类工具的审批载荷形状：write 新文件 diff 全为新增行（标题含路径、
+/// 选项固定允许/拒绝两项）；edit 旧文本逐行删除 + 新文本逐行新增拼成替换块；
+/// command 命令行原文随载荷、围栏原因透传、不带 diff，且 ③ 会话内记忆开
+/// 关控制 always_session 选项的有无（23 号票）；计划范围卡载荷（25 号票，
+/// FR-06-03/§8.6）——write 范围卡 title 固定「计划范围确认」、planScope 带
+/// 计划外路径、fenceReason 带基线对照、选项固定三枚且无推荐项（不参与
+/// autoConfirm 自动批准），command 范围卡附命令行原文并吸收围栏原因；
+/// suggest 上下文提取优先取最后一条 assistant 的正文、没有 assistant 时退
+/// 而取最后一条 user、完全为空则返回空串（suggest 静默放弃）。
+#[test]
+fn approval_plan_scope_and_suggest_payload_semantics() {
+    // write：新文件整体是增量（write 非命令类，③ 开也不出 always_session）。
+    approval_of!(
+        build_approval_payload(
+            &pending(
+                "write",
+                r#"{"path":"src/new.rs","content":"fn main() {}\n"}"#,
+            ),
+            true,
+            None,
+            None,
+        ),
+        { title, diff, command, options }
+    );
     assert!(title.contains("src/new.rs"));
     assert!(command.is_none());
     let diff = diff.expect("write 带 diff");
@@ -60,23 +71,20 @@ fn write_payload_new_file_all_add() {
     assert_eq!(options[0].id, "allow_once");
     assert_eq!(options[0].recommended, Some(true));
     assert_eq!(options[1].id, "deny");
-}
 
-/// edit 工具的审批载荷：旧文本逐行标删除、新文本逐行标新增，拼成一个替换块。
-#[test]
-fn edit_payload_replacement_hunk_del_add() {
-    let payload = build_approval_payload(
-        &pending(
-            "edit",
-            r#"{"path":"a.txt","oldText":"旧一\n旧二","newText":"新一"}"#,
+    // edit：旧文本逐行标删除、新文本逐行标新增。
+    approval_of!(
+        build_approval_payload(
+            &pending(
+                "edit",
+                r#"{"path":"a.txt","oldText":"旧一\n旧二","newText":"新一"}"#,
+            ),
+            true,
+            None,
+            None,
         ),
-        true,
-        None,
-        None,
+        { diff }
     );
-    let AskPayload::Approval { diff, .. } = payload else {
-        panic!("应为 Approval")
-    };
     let diff = diff.expect("edit 带 diff");
     let kinds: Vec<DiffLineKind> = diff.hunks[0].lines.iter().map(|l| l.kind).collect();
     assert_eq!(
@@ -84,12 +92,8 @@ fn edit_payload_replacement_hunk_del_add() {
         vec![DiffLineKind::Del, DiffLineKind::Del, DiffLineKind::Add]
     );
     assert_eq!(diff.hunks[0].lines[2].text, "新一");
-}
 
-/// command 工具的审批载荷：命令行原文随载荷展示、围栏确认原因透传、不带 diff；
-/// ③ 会话内记忆开启时选项含 always_session（23 号票），关闭时不出。
-#[test]
-fn command_payload_with_fence_reason() {
+    // command：③ 开三选项、③ 关两项。
     let p = PendingCall {
         model_call_id: "c".to_owned(),
         name: "command".to_owned(),
@@ -98,17 +102,7 @@ fn command_payload_with_fence_reason() {
         external_dir: None,
         plan_scope: None,
     };
-    let AskPayload::Approval {
-        title,
-        diff,
-        command,
-        fence_reason,
-        options,
-        ..
-    } = build_approval_payload(&p, true, None, None)
-    else {
-        panic!("应为 Approval")
-    };
+    approval_of!(build_approval_payload(&p, true, None, None), { title, diff, command, fence_reason, options });
     assert_eq!(command.as_deref(), Some("echo hi > out.txt"));
     assert!(fence_reason.is_some(), "围栏 Confirm 原因随载荷展示");
     assert!(diff.is_none(), "命令不走 diff");
@@ -119,17 +113,11 @@ fn command_payload_with_fence_reason() {
     assert_eq!(options[1].mode, Some(AskMode::AlwaysSession));
     assert_eq!(options[1].recommended, None, "非推荐项不参与自动确认");
     // ③ 关：不出该选项（M1 两项口径不变）
-    let AskPayload::Approval { options, .. } = build_approval_payload(&p, false, None, None) else {
-        panic!("应为 Approval")
-    };
+    approval_of!(build_approval_payload(&p, false, None, None), { options });
     assert_eq!(options.len(), 2, "③ 关闭时保持允许/拒绝两项");
     assert!(!options.iter().any(|o| o.id == "always_session"));
-}
 
-/// suggest 上下文提取优先取最后一条 assistant 的正文；没有 assistant 时
-/// 退而取最后一条 user；完全为空则返回空串（suggest 静默放弃）。
-#[test]
-fn suggest_context_prefers_last_assistant_text() {
+    // suggest 上下文提取（最后一条 assistant 正文优先）。
     let entry = |role: MessageRole, text: &str| MessageEntry {
         id: format!("m-{text:?}"),
         parent_id: None,
@@ -155,27 +143,16 @@ fn suggest_context_prefers_last_assistant_text() {
 
     // 全空：空串（suggest 静默不发）
     assert_eq!(context_tail(&[]), "");
-}
 
-// ---- 计划范围卡载荷（25 号票，FR-06-03/§8.6）----
-
-/// 范围门挂起的载荷：title 固定「计划范围确认」、planScope 带计划外路径、
-/// fenceReason 带基线对照、选项固定三枚（允许一次 / 本会话始终允许 / 拒绝）
-/// 且无推荐项（不参与 autoConfirm 自动批准——计划范围须用户明确同意）。
-#[test]
-fn plan_scope_payload_three_options_without_recommended() {
+    // ---- 计划范围卡载荷（25 号票，FR-06-03/§8.6）：write 范围卡 title 固定
+    // ---- 「计划范围确认」、选项三枚无推荐项；command 范围卡附命令行原文。
+    // write 范围卡。
     let mut p = pending("write", r#"{"path":"src/b.rs","content":"x"}"#);
     p.plan_scope = Some("src/b.rs".to_owned());
-    let AskPayload::Approval {
-        title,
-        plan_scope,
-        fence_reason,
-        options,
-        ..
-    } = build_approval_payload(&p, true, Some("src/a.rs、tests/"), None)
-    else {
-        panic!("范围门应为 Approval 形态")
-    };
+    approval_of!(
+        build_approval_payload(&p, true, Some("src/a.rs、tests/"), None),
+        { title, plan_scope, fence_reason, options }
+    );
     assert_eq!(title, "计划范围确认");
     assert_eq!(plan_scope.as_deref(), Some("src/b.rs"));
     let reason = fence_reason.expect("带基线对照说明");
@@ -194,29 +171,17 @@ fn plan_scope_payload_three_options_without_recommended() {
         "无推荐项（不参与 autoConfirm）"
     );
     // 无对照基线（空范围批准后的首写询问）时 fenceReason 说明首写须确认
-    let AskPayload::Approval { fence_reason, .. } = build_approval_payload(&p, false, None, None)
-    else {
-        panic!("应为 Approval 形态")
-    };
+    approval_of!(build_approval_payload(&p, false, None, None), {
+        fence_reason
+    });
     let reason = fence_reason.expect("仍带说明");
     assert!(reason.contains("不在已批准计划的范围内"), "{reason}");
-}
 
-/// 范围门挂起的 command 调用：范围卡附命令行原文（用户需知道执行什么）。
-#[test]
-fn plan_scope_payload_carries_command_line() {
+    // command 范围卡。
     let mut p = pending("command", r#"{"command":"echo x > src/b.rs"}"#);
     p.plan_scope = Some("src/b.rs".to_owned());
     p.fence_reason = Some("命令含写目标，需确认".to_owned());
-    let AskPayload::Approval {
-        command,
-        fence_reason,
-        plan_scope,
-        ..
-    } = build_approval_payload(&p, true, None, None)
-    else {
-        panic!("应为 Approval 形态")
-    };
+    approval_of!(build_approval_payload(&p, true, None, None), { command, fence_reason, plan_scope });
     assert_eq!(plan_scope.as_deref(), Some("src/b.rs"));
     assert_eq!(
         command.as_deref(),
@@ -229,44 +194,58 @@ fn plan_scope_payload_carries_command_line() {
 
 // ---- 自动起名纯函数（27 号票，FR-01-09）----
 
-/// 触发判定三态表（票面）：默认标题 + 恰好一条 user → 触发；已改名 → 不触发
-/// （user 数任意）；默认标题但非首条（含编辑重发的兄弟分支节点）→ 不触发。
+/// 断言触发判定三态表与标题归一表：默认标题 + 恰好一条 user → 触发；已改名
+/// （#17）→ 不触发；非首条 → 不触发；索引缺失防御不触发。归一：trim + 首个
+/// 非空行 + ≤30 字符截断（多字节安全）+ 全空白空串兜底。另钉死默认标题
+/// 常量字面值（create_session 与三态判定同源，漂移即永久失配）。以及 prompt
+/// 组装与首条消息提取：prompt 含指令骨架 + 消息正文、超长输入截 2000 字符；
+/// first_user_text 取第一条 user（忽略 assistant）的 Text parts 拼接，纯图片
+/// / 无 user → 空串（调用方放弃起名）；标题任务的辅助调用 runId 后缀
+/// `:title`（Q37/Q40，与 suggest/compact 同族命名防漂移）。
 #[test]
-fn title_trigger_three_states() {
+fn title_trigger_normalize_prompt_and_first_user_text() {
     const DEFAULT: &str = crate::host::commands::session::DEFAULT_SESSION_TITLE;
-    // 命中：默认标题 + 仅一条 user
-    assert!(title_should_trigger(Some(DEFAULT), 1));
-    // 不触发：用户 rename_session 改过名（#17）
-    assert!(!title_should_trigger(Some("我的调试会话"), 1));
-    // 不触发：非首条消息（重启续聊 / 连发第二问 / 编辑重发使树内 user 计数为 2）
-    assert!(!title_should_trigger(Some(DEFAULT), 2));
-    // 防御面：索引缺失（None）不触发
-    assert!(!title_should_trigger(None, 1));
-}
+    // 触发判定三态（票面）。
+    assert!(
+        title_should_trigger(Some(DEFAULT), 1),
+        "默认标题 + 仅一条 user 应触发"
+    );
+    assert!(
+        !title_should_trigger(Some("我的调试会话"), 1),
+        "用户 rename_session 改过名（#17）不触发"
+    );
+    assert!(
+        !title_should_trigger(Some(DEFAULT), 2),
+        "非首条消息（重启续聊 / 连发第二问 / 编辑重发）不触发"
+    );
+    assert!(!title_should_trigger(None, 1), "索引缺失（None）防御不触发");
 
-/// 标题归一表驱动：trim + 首个非空行 + ≤30 字符截断（多字节安全）+ 前后
-/// 空白归一；兜底输入（首条消息全文多行）同函数收敛。
-#[test]
-fn normalize_title_table() {
-    // 常规：首尾空白归一
-    assert_eq!(normalize_title("  帮我修好登录页  "), "帮我修好登录页");
-    // 多行生成（模型输出解释）：取第一个非空行
+    // 标题归一表驱动。
+    assert_eq!(
+        normalize_title("  帮我修好登录页  "),
+        "帮我修好登录页",
+        "首尾空白归一"
+    );
     assert_eq!(
         normalize_title("\n  修复登录超时\n第二行解释"),
-        "修复登录超时"
+        "修复登录超时",
+        "多行生成取第一个非空行"
     );
     // 超 30 字符截断（中文按字符计，不多不少）
     let long = "这是一个特别特别特别长的标题输入用来验证三十个字符的截断行为是否正确无误";
     let got = normalize_title(long);
     assert_eq!(got.chars().count(), TITLE_MAX_CHARS);
     assert_eq!(got, long.chars().take(TITLE_MAX_CHARS).collect::<String>());
-    // 全空白 → 空串（调用方据此放弃落盘）
-    assert_eq!(normalize_title("  \n \n"), "");
-}
+    assert_eq!(
+        normalize_title("  \n \n"),
+        "",
+        "全空白 → 空串（调用方据此放弃落盘）"
+    );
 
-/// prompt 组装：含指令骨架 + 消息正文；超长输入截 2000 字符。
-#[test]
-fn title_prompt_clips_long_input() {
+    // 默认标题常量与判定同源自检。
+    assert_eq!(DEFAULT, "新会话");
+
+    // prompt 组装与首条消息提取。
     let short = title_prompt("帮我写个爬虫");
     assert!(short.contains("不超过 20 个字"));
     assert!(short.contains("帮我写个爬虫"));
@@ -275,12 +254,8 @@ fn title_prompt_clips_long_input() {
     let long = title_prompt(&long_text);
     let body = long.split("消息内容：").nth(1).expect("应含消息段");
     assert_eq!(body.chars().count(), 2000);
-}
 
-/// 首条 user 消息正文提取：取第一条 user（忽略 assistant），Text parts 拼接；
-/// 无 user / 纯图片 → 空串（调用方放弃起名）。
-#[test]
-fn first_user_text_extracts_first_user() {
+    // 首条 user 消息正文提取。
     let text_part = |t: &str| WirePart::Text { text: t.to_owned() };
     let image_part = |hash: &str| WirePart::Image {
         blob_hash: hash.to_owned(),
@@ -303,35 +278,21 @@ fn first_user_text_extracts_first_user() {
         msg(MessageRole::Assistant, vec![text_part("答")]),
         msg(MessageRole::User, vec![text_part("第二问")]),
     ];
-    assert_eq!(first_user_text(&messages), "第一问补充");
-    // 纯图片首条：空串
+    assert_eq!(
+        first_user_text(&messages),
+        "第一问补充",
+        "取第一条 user 的 Text 拼接"
+    );
     let image_only = vec![msg(MessageRole::User, vec![image_part("abc")])];
-    assert_eq!(first_user_text(&image_only), "");
-    // 无 user：空串
+    assert_eq!(first_user_text(&image_only), "", "纯图片首条：空串");
     assert_eq!(
         first_user_text(&[msg(MessageRole::Assistant, vec![text_part("答")])]),
-        ""
+        "",
+        "无 user：空串"
     );
-}
 
-/// 默认标题常量与判定同源自检：create_session（session.rs）写入
-/// DEFAULT_SESSION_TITLE，三态判定引用同一常量——常量漂移会让判定永久
-/// 失配，此处钉住字面值。
-#[test]
-fn default_title_matches_create_session_value() {
-    assert_eq!(
-        crate::host::commands::session::DEFAULT_SESSION_TITLE,
-        "新会话"
-    );
-}
-
-/// 标题任务的辅助调用身份钉死（Q37/Q40）：runId 后缀 `:title`、kind=aux、
-/// runs 计数不增——与 suggest（`:suggest`）/ 压缩（`:compact`）同族命名，
-/// 锁定命名规则防漂移。
-#[test]
-fn title_aux_run_id_suffix() {
-    let run_id = "run-1";
-    assert_eq!(format!("{run_id}:title"), "run-1:title");
+    // 标题辅助调用身份钉死（Q37/Q40）。
+    assert_eq!(format!("{}:title", "run-1"), "run-1:title");
 }
 
 // ---- 标题后台任务直驱（27 号票：剧本假模型 + 录音事件汇 + 临时数据根）----
@@ -401,6 +362,31 @@ fn text_driver(
     ))
 }
 
+/// spawn_title_task 的参数打包简写（model 固定 model-1/gpt-4o-mock）。
+#[allow(clippy::too_many_arguments)]
+fn spawn(
+    driver: Arc<TurnDriver<rig::test_utils::MockScript, rig::test_utils::MockRuntime>>,
+    app: &AppState,
+    events: Arc<RecordingEventSink>,
+    session_id: &str,
+    run_id: &str,
+    message: &str,
+    timeout: Duration,
+) {
+    spawn_title_task(
+        driver,
+        app.store.clone(),
+        events,
+        app.session_usage.clone(),
+        app.ledger.clone(),
+        session_id.to_owned(),
+        run_id.to_owned(),
+        message.to_owned(),
+        ("model-1".to_owned(), "gpt-4o-mock".to_owned()),
+        timeout,
+    );
+}
+
 /// 事件桥的等待辅助（轮询录音汇，不阻塞 worker 线程）。
 async fn wait_event(
     events: &RecordingEventSink,
@@ -433,22 +419,26 @@ fn meta_title_on_disk(root: &std::path::Path, session_id: &str) -> Option<String
     })
 }
 
-/// 成功路径全链：生成标题 → meta 行 + index 双写（事件时点已落盘）→
-/// C-9 计量（aux 明细 + tokens:update 照发 + runs 不增）→ session:title 事件。
+/// 标题后台任务直驱全链（票面）：成功路径——生成标题 → meta 行 + index 双写
+/// （事件时点已落盘）→ C-9 计量（aux 明细 + tokens:update 照发 + runs 不增）
+/// → session:title 事件；三条兜底路径（失败与超时共用兜底臂）——剧本错误 →
+/// 标题 = 首条消息首行截断、无 tokens:update（无 usage 不伪造）、无重试、
+/// `session:title` 照常发出，超时（悬空 transport + 短超时确定性触发）→ 同
+/// 兜底臂、零计量，空会话防御——首条消息全空白 → 无标题可落（不写盘不事件）；
+/// 两道并发复判——复判一（并发防护/改名保护）进入任务即查 index，标题已非
+/// 默认直接放弃（零请求、零事件、零写盘），复判二（先写者为准）并发任务在
+/// 生成期间 index 已被先写者更新 → 放弃落盘与事件。
 #[tokio::test]
-async fn title_task_success_writes_both_and_records_usage() {
+async fn title_task_success_fallback_and_concurrency_guards() {
     let (app, events, session_id, root) = title_fixture("sess-title-ok");
     let driver = text_driver("修复登录页超时");
-    spawn_title_task(
+    spawn(
         driver,
-        app.store.clone(),
+        &app,
         events.clone(),
-        app.session_usage.clone(),
-        app.ledger.clone(),
-        session_id.clone(),
-        "run-1".to_owned(),
-        "帮我修好登录页".to_owned(),
-        ("model-1".to_owned(), "gpt-4o-mock".to_owned()),
+        &session_id,
+        "run-1",
+        "帮我修好登录页",
         TITLE_TIMEOUT,
     );
     let payload = wait_event(&events, "session:title", Duration::from_secs(5)).await;
@@ -490,29 +480,22 @@ async fn title_task_success_writes_both_and_records_usage() {
         Some(0),
         "辅助调用不计 runs"
     );
-}
 
-/// 失败静默兜底（票面 PRD 口径）：剧本错误 → 标题 = 首条消息首行截断、
-/// 无 tokens:update（无 usage 不伪造）、无重试；`session:title` 照常发出
-/// （兜底标题也是成功落盘）。
-#[tokio::test]
-async fn title_task_failure_falls_back_silently() {
+    // 兜底路径（失败与超时共用兜底臂）。
+    // 1) 失败静默兜底。
     let (app, events, session_id, root) = title_fixture("sess-title-fail");
     let driver = Arc::new(TurnDriver::new(
         MockCompletionModel::from_turns([MockTurn::error("boom")]),
         RunSpec::new(),
         Vec::new(),
     ));
-    spawn_title_task(
+    spawn(
         driver,
-        app.store.clone(),
+        &app,
         events.clone(),
-        app.session_usage.clone(),
-        app.ledger.clone(),
-        session_id.clone(),
-        "run-2".to_owned(),
-        "帮我把这个特别长的第一行消息和\n第二行内容都收敛成标题".to_owned(),
-        ("model-1".to_owned(), "gpt-4o-mock".to_owned()),
+        &session_id,
+        "run-2",
+        "帮我把这个特别长的第一行消息和\n第二行内容都收敛成标题",
         TITLE_TIMEOUT,
     );
     let payload = wait_event(&events, "session:title", Duration::from_secs(5)).await;
@@ -528,15 +511,11 @@ async fn title_task_failure_falls_back_silently() {
         !detail.runs.contains_key("run-2:title"),
         "失败无 usage 不伪造明细"
     );
-}
 
-/// 超时兜底：悬空 transport（非流式响应永 Pending）+ 短超时确定性触发
-/// 超时分支（与失败共用同一兜底臂）——标题 = 首条消息首行截断、零计量。
-#[tokio::test]
-async fn title_task_timeout_falls_back() {
+    // 2) 超时兜底：悬空非流式 transport（请求发出后永不产出，MockScript 的
+    //    Unary 帧流用 stream::pending() 挂起，watchdog_test 流式悬空先例的
+    //    非流式版）+ 50ms 短超时确定性触发。
     let (app, events, session_id, _root) = title_fixture("sess-title-timeout");
-    // 悬空非流式 transport：请求发出后永不产出（MockScript 的 Unary 帧流
-    // 用 stream::pending() 挂起，watchdog_test 流式悬空先例的非流式版）
     type MockFrame = <rig::test_utils::MockScript as rig::wire::Wire>::Frame;
     #[derive(Clone)]
     struct PendingUnary;
@@ -569,29 +548,44 @@ async fn title_task_timeout_falls_back() {
     let payload = wait_event(&events, "session:title", Duration::from_secs(5)).await;
     assert_eq!(payload["title"], "第一行兜底标题");
     assert!(events.payloads_of("tokens:update").is_empty());
-}
 
-/// 复判一（并发防护/改名保护，票面）：进入任务即查 index——标题已非默认
-/// 直接放弃：零请求、零事件、零写盘。
-#[tokio::test]
-async fn title_task_skipped_when_renamed() {
+    // 3) 空会话防御。
+    let (app, events, session_id, _root) = title_fixture("sess-title-blank");
+    spawn(
+        text_driver("  "),
+        &app,
+        events.clone(),
+        &session_id,
+        "run-5",
+        "  \n ",
+        TITLE_TIMEOUT,
+    );
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(
+        events.payloads_of("session:title").is_empty(),
+        "空白消息不应起名"
+    );
+    assert_eq!(
+        app.store.index().get(&session_id).unwrap().title,
+        DEFAULT_SESSION_TITLE
+    );
+
+    // 并发复判：复判一（改名保护）进入任务即查 index，标题已非默认直接放弃；
+    // 复判二（先写者为准）在生成期间 index 已被先写者更新 → 放弃落盘与事件。
+    // 复判一：改名保护。
     let (app, events, session_id, _root) = title_fixture("sess-title-renamed");
     // 模拟 rename_session 已改过名
     app.store
         .index()
         .mutate(&session_id, |m| m.title = "我的调试会话".to_owned())
         .expect("rename");
-    let driver = text_driver("不该出现的标题");
-    spawn_title_task(
-        driver,
-        app.store.clone(),
+    spawn(
+        text_driver("不该出现的标题"),
+        &app,
         events.clone(),
-        app.session_usage.clone(),
-        app.ledger.clone(),
-        session_id.clone(),
-        "run-4".to_owned(),
-        "帮我修好登录页".to_owned(),
-        ("model-1".to_owned(), "gpt-4o-mock".to_owned()),
+        &session_id,
+        "run-4",
+        "帮我修好登录页",
         TITLE_TIMEOUT,
     );
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -608,15 +602,10 @@ async fn title_task_skipped_when_renamed() {
         "我的调试会话",
         "标题不应被覆盖"
     );
-}
 
-/// 复判二（先写者为准）：并发任务在生成期间 index 已被先写者更新 →
-/// 放弃落盘与事件（后写覆盖同值无害口径下的确定性收口面）。
-#[tokio::test]
-async fn title_task_second_writer_yields() {
+    // 复判二：先写者为准。剧本两个 turn：任务 A 消费第一个、任务 B 消费
+    // 第二个；B 的复判二在 A 已写入后执行（用事件 A 作为同步锚）。
     let (app, events, session_id, _root) = title_fixture("sess-title-race");
-    // 剧本两个 turn：任务 A 消费第一个、任务 B 消费第二个；B 的复判二
-    // 在 A 已写入后执行（用事件 A 作为同步锚）。
     let driver = Arc::new(TurnDriver::new(
         MockCompletionModel::from_turns([
             MockTurn::text("任务甲的标题").with_usage(scripted_usage()),
@@ -666,30 +655,5 @@ async fn title_task_second_writer_yields() {
         app.store.index().get(&session_id).unwrap().title,
         "任务甲的标题",
         "后写者不复写"
-    );
-}
-
-/// 空会话防御：首条消息全空白 → 无标题可落（不写盘不事件）。
-#[tokio::test]
-async fn title_task_blank_message_skipped() {
-    let (app, events, session_id, _root) = title_fixture("sess-title-blank");
-    let driver = text_driver("  ");
-    spawn_title_task(
-        driver,
-        app.store.clone(),
-        events.clone(),
-        app.session_usage.clone(),
-        app.ledger.clone(),
-        session_id.clone(),
-        "run-5".to_owned(),
-        "  \n ".to_owned(),
-        ("model-1".to_owned(), "gpt-4o-mock".to_owned()),
-        TITLE_TIMEOUT,
-    );
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    assert!(events.payloads_of("session:title").is_empty());
-    assert_eq!(
-        app.store.index().get(&session_id).unwrap().title,
-        DEFAULT_SESSION_TITLE
     );
 }

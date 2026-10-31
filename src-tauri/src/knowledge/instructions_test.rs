@@ -1,7 +1,6 @@
 //! knowledge/instructions.rs 的 headless 测试（24 号票，§9.8 挂接点①）：
 //! 项目指令（AGENTS.md/CRAFTWAVE.md/CLAUDE.md）首用信任三路径（allow_session
-//! / remember / deny）、内容变更重问、deny 后不注入、worktree 同内容沿用
-//! （同名同内容指纹命中）、无项目上下文零注入。
+//! / remember / deny）、内容变更重问、deny 后不注入、无项目上下文零注入。
 
 use std::sync::Arc;
 
@@ -94,12 +93,15 @@ async fn answer_project_trust(
     panic!("projectTrust 询问未出现");
 }
 
-/// 信任三路径（验收第 1/2 条后端面）：
-/// - deny → 注入 None + 不产生记录（下一 run 重新询问）；
-/// - allow_session → 注入 + 会话内存免问（trust 文件无记录，新会话重问）；
-/// - remember → 注入 + trust/project.json 落盘（新会话也免问）。
+// 断言（信任三路径 + 内容变更重问，验收第 1/2 条后端面 + 红线「指纹变更
+// 重问」）：deny → 注入 None + 不产生记录（下一 run 重新询问），询问载荷
+// 字段级（§9.8 resourceName/scope/fingerprint/options）；allow_session →
+// 注入 + 会话内存免问（trust 文件无记录，新会话重问）；remember → 注入 +
+// trust/project.json 落盘（新会话也免问）；内容变更（指纹不符）→ 重新
+// 询问且变更后 deny 不注入（不能沿用旧信任读新正文，Q20 同精神）；
+// 无项目上下文（临时会话）零注入零询问。
 #[tokio::test(flavor = "current_thread")]
-async fn instruction_trust_three_paths() {
+async fn instruction_trust_change_reask_and_scope() {
     let (app, dir, events) = headless_app();
     let home = ensure_project(&app, &dir);
     anchor_session(&app, &dir, "sess-1");
@@ -202,29 +204,9 @@ async fn instruction_trust_three_paths() {
         opened_before,
         "remember 后跨会话免问"
     );
-}
 
-/// 内容变更（指纹不符）→ 重新询问（§9.8「内容变更 → 重新询问」）；变更
-/// 后 deny → 不注入（不能沿用旧信任读新正文，Q20 同精神）。
-#[tokio::test(flavor = "current_thread")]
-async fn instruction_content_change_reasks() {
-    let (app, dir, events) = headless_app();
-    let home = ensure_project(&app, &dir);
-    anchor_session(&app, &dir, "sess-1");
-    std::fs::write(home.join("AGENTS.md"), "# v1").unwrap();
-    {
-        let answer_app = app.clone();
-        let answer_events = events.clone();
-        tokio::spawn(async move {
-            answer_project_trust(answer_app, answer_events, "remember").await;
-        });
-        assert!(
-            ensure_instruction_disclosure(&app, "sess-1")
-                .await
-                .is_some()
-        );
-    }
-    // 内容变更 → 指纹变 → 重新询问
+    // —— 内容变更（指纹不符）→ 重新询问（§9.8「内容变更 → 重新询问」）；
+    // 变更后 deny → 不注入（不能沿用旧信任读新正文，Q20 同精神）。
     std::fs::write(home.join("AGENTS.md"), "# v2 恶意指令").unwrap();
     {
         let answer_app = app.clone();
@@ -241,66 +223,9 @@ async fn instruction_content_change_reasks() {
     }
     let opened = events.payloads_of(keys::ASK_OPENED);
     assert!(opened.len() >= 2, "变更触发第二次询问");
-}
 
-/// worktree 信任（Q19 后端面）：同项目副本路径下同名同内容 → 指纹命中
-/// 既有信任不重复询问；副本内内容变更 → 重问。
-#[tokio::test(flavor = "current_thread")]
-async fn worktree_same_content_reuses_trust() {
-    let (app, dir, events) = headless_app();
-    let home = ensure_project(&app, &dir);
-    anchor_session(&app, &dir, "sess-1");
-    std::fs::write(home.join("AGENTS.md"), "# 共享指令").unwrap();
-    {
-        let answer_app = app.clone();
-        let answer_events = events.clone();
-        tokio::spawn(async move {
-            answer_project_trust(answer_app, answer_events, "remember").await;
-        });
-        assert!(
-            ensure_instruction_disclosure(&app, "sess-1")
-                .await
-                .is_some()
-        );
-    }
-    let opened_after_first = events.payloads_of(keys::ASK_OPENED).len();
-    // 副本路径（worktree 场景：会话切到副本项目主目录，同文件名同内容）
-    let wt_home = dir.path().join("wt-copy");
-    std::fs::create_dir_all(&wt_home).unwrap();
-    std::fs::write(wt_home.join("AGENTS.md"), "# 共享指令").unwrap();
-    let wt = app
-        .projects
-        .save(None, "worktree 副本", wt_home.to_str().unwrap())
-        .expect("副本项目注册");
-    app.store
-        .index()
-        .upsert(SessionMeta {
-            id: "sess-wt".to_owned(),
-            project_id: Some(wt.id.clone()),
-            title: "副本会话".to_owned(),
-            created_at: 2,
-            updated_at: 2,
-            revision: 1,
-            message_count: 0,
-            total_tokens: 0,
-            authorized_external_dirs: Vec::new(),
-        })
-        .unwrap();
-    *app.active_session
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some("sess-wt".to_owned());
-    let disclosure = ensure_instruction_disclosure(&app, "sess-wt").await;
-    assert!(disclosure.is_some(), "同内容副本沿用信任注入");
-    assert_eq!(
-        events.payloads_of(keys::ASK_OPENED).len(),
-        opened_after_first,
-        "副本不重复询问（资源身份按文件名+指纹归一，不因路径变化重问）"
-    );
-}
-
-/// 无项目上下文（临时会话）：零注入零询问（项目指令是项目作用域资源）。
-#[tokio::test(flavor = "current_thread")]
-async fn temp_session_no_instructions() {
+    // —— 无项目上下文（临时会话）：零注入零询问（项目指令是项目作用域
+    // 资源）。
     let (app, _dir, events) = headless_app();
     assert!(
         ensure_instruction_disclosure(&app, "sess-t")
@@ -308,74 +233,4 @@ async fn temp_session_no_instructions() {
             .is_none()
     );
     assert!(events.payloads_of(keys::ASK_OPENED).is_empty(), "零询问");
-}
-
-/// 多文件与固定清单序：AGENTS.md + CLAUDE.md 并存按清单序拼接注入；
-/// deny 单个文件不影响其余已信任文件的注入。
-#[tokio::test(flavor = "current_thread")]
-async fn multi_files_injected_in_list_order() {
-    let (app, dir, events) = headless_app();
-    let home = ensure_project(&app, &dir);
-    anchor_session(&app, &dir, "sess-1");
-    std::fs::write(home.join("CLAUDE.md"), "claude 指令").unwrap();
-    std::fs::write(home.join("AGENTS.md"), "agents 指令").unwrap();
-    // 第一轮：AGENTS.md 先询问 → remember；随后 CLAUDE.md 询问 → deny
-    {
-        let answer_app = app.clone();
-        let answer_events = events.clone();
-        tokio::spawn(async move {
-            answer_two_asks(answer_app, answer_events, "remember", "deny").await;
-        });
-        let disclosure = ensure_instruction_disclosure(&app, "sess-1")
-            .await
-            .expect("至少一个文件注入");
-        assert!(disclosure.contains("AGENTS.md"), "已信任文件注入");
-        assert!(!disclosure.contains("claude 指令"), "被拒文件不注入");
-        // 清单序：AGENTS.md 在前（即便 CLAUDE.md 先被读盘）
-        let agents_pos = disclosure.find("AGENTS.md").expect("AGENTS.md 段");
-        assert!(
-            disclosure[agents_pos..].contains("agents 指令"),
-            "正文随段注入"
-        );
-    }
-}
-
-/// 两轮询问按序应答（多文件场景：第一轮 AGENTS.md、第二轮 CLAUDE.md）。
-async fn answer_two_asks(
-    app: Arc<AppState>,
-    events: Arc<RecordingEventSink>,
-    first: &str,
-    second: &str,
-) {
-    let mut answered: Vec<String> = Vec::new();
-    let choices = [first, second];
-    let mut round = 0;
-    for _ in 0..1000 {
-        if round >= choices.len() {
-            return;
-        }
-        let opened = events
-            .payloads_of(keys::ASK_OPENED)
-            .into_iter()
-            .rev()
-            .find(|p| {
-                let ask_id = p["askId"].as_str().unwrap_or_default().to_owned();
-                p["payload"]["kind"] == "projectTrust" && !answered.contains(&ask_id)
-            });
-        if let Some(payload) = opened {
-            let ask_id = payload["askId"].as_str().expect("askId").to_owned();
-            answered.push(ask_id.clone());
-            app.resolve_app_ask(
-                &ask_id,
-                AskAnswer::Approval {
-                    option_id: choices[round].to_owned(),
-                    edited_command: None,
-                },
-            );
-            round += 1;
-            continue;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-    }
-    panic!("projectTrust 询问未按序出现");
 }

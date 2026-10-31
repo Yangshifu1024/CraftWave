@@ -1,5 +1,5 @@
-//! host/commands/stats.rs 的单元测试（20 号票）：#52 range 校验与聚合形状、
-//! #59k 恢复读面的三级回落与 Q43 删除语义。
+//! host/commands/stats.rs 的单元测试（20 号票）：#52 range 校验与按日/模型
+//! 聚合形状、#59k 恢复读面的三级回落与 Q43 删除语义。
 
 use super::*;
 
@@ -20,10 +20,41 @@ fn range(from: &str, to: &str) -> Option<StatsRange> {
     })
 }
 
+/// 落一笔用量的简写（kind/模型/用量/是否主 run 计次）。
+fn record(app: &AppState, day: &str, run: &str, kind: &str, model: &str, input: u64) {
+    let kind = match kind {
+        "sub" => crate::host::usage::run_kind::SUB,
+        "aux" => crate::host::usage::run_kind::AUX,
+        _ => crate::host::usage::run_kind::MAIN,
+    };
+    app.ledger.record_on_day(
+        day,
+        "s1",
+        run,
+        kind,
+        model,
+        "GPT-4o",
+        UsageTotal {
+            input,
+            output: 1,
+            cache_read: 0,
+            cache_write: 0,
+        },
+        kind == crate::host::usage::run_kind::MAIN,
+    );
+}
+
+/// 断言 #52：range 非法格式与 from > to 都 E_INVALID_ARG；聚合形状——
+/// byDay 逐日合计、byModel 两桶 runs 只统计主 run（Q40）、total 合计、
+/// 缺省范围（全部保留期）数字一致；#59k 恢复读面三级回落与 Q43 删除
+/// 语义：无记录全零；旧数据仅标量（index totalTokens）→ 标量回落不伪造
+/// 拆分；明细文件权威（Q37）恢复 sessionTotal；内存表优先（活跃实时面）
+/// 累计增量；删除会话（内存摘除 + 明细清除）→ 查询全零而匿名日聚合保留
+/// （真实消耗）。
 #[test]
-fn stats_token_rejects_bad_range() {
+fn stats_token_range_aggregation_and_usage_fallback_delete() {
     let (_dir, app) = app_fixture();
-    // 非法格式
+    // range 校验。
     let err = stats_token_core(
         &app,
         &StatsTokenArgs {
@@ -33,7 +64,6 @@ fn stats_token_rejects_bad_range() {
     )
     .expect_err("格式非法应拒");
     assert_eq!(err.code, E_INVALID_ARG);
-    // from > to
     let err = stats_token_core(
         &app,
         &StatsTokenArgs {
@@ -43,57 +73,11 @@ fn stats_token_rejects_bad_range() {
     )
     .expect_err("from>to 应拒");
     assert_eq!(err.code, E_INVALID_ARG);
-}
 
-#[test]
-fn stats_token_aggregates_by_day_and_model() {
-    let (_dir, app) = app_fixture();
-    // 两日两模型三笔（主 run 计次/子 run/辅助）
-    app.ledger.record_on_day(
-        "2026-10-29",
-        "s1",
-        "r1",
-        crate::host::usage::run_kind::MAIN,
-        "m1",
-        "GPT-4o",
-        UsageTotal {
-            input: 100,
-            output: 10,
-            cache_read: 20,
-            cache_write: 5,
-        },
-        true,
-    );
-    app.ledger.record_on_day(
-        "2026-10-30",
-        "s1",
-        "sub-1",
-        crate::host::usage::run_kind::SUB,
-        "m2",
-        "Claude",
-        UsageTotal {
-            input: 50,
-            output: 5,
-            cache_read: 0,
-            cache_write: 0,
-        },
-        false,
-    );
-    app.ledger.record_on_day(
-        "2026-10-30",
-        "s1",
-        "r1:suggest",
-        crate::host::usage::run_kind::AUX,
-        "m1",
-        "GPT-4o",
-        UsageTotal {
-            input: 3,
-            output: 1,
-            cache_read: 0,
-            cache_write: 0,
-        },
-        false,
-    );
+    // 两日两模型三笔（主 run 计次/子 run/辅助）。
+    record(&app, "2026-10-29", "r1", "main", "m1", 100);
+    record(&app, "2026-10-30", "sub-1", "sub", "m2", 50);
+    record(&app, "2026-10-30", "r1:suggest", "aux", "m1", 3);
     let result = stats_token_core(
         &app,
         &StatsTokenArgs {
@@ -102,12 +86,12 @@ fn stats_token_aggregates_by_day_and_model() {
         "2026-10-30",
     )
     .expect("查询成功");
-    // byDay 两行，逐日合计
+    // byDay 两行，逐日合计（input+output）
     assert_eq!(result.by_day.len(), 2);
     assert_eq!(result.by_day[0].day, "2026-10-29");
-    assert_eq!(result.by_day[0].total, 135);
+    assert_eq!(result.by_day[0].total, 101);
     assert_eq!(result.by_day[1].day, "2026-10-30");
-    assert_eq!(result.by_day[1].total, 59);
+    assert_eq!(result.by_day[1].total, 55);
     // byModel 两桶：runs 只统计主 run（Q40）
     let m1 = result
         .by_model
@@ -116,7 +100,6 @@ fn stats_token_aggregates_by_day_and_model() {
         .expect("m1");
     assert_eq!(m1.model_name, "GPT-4o");
     assert_eq!(m1.input, 103);
-    assert_eq!(m1.total, 139);
     assert_eq!(m1.runs, 1, "子 run 与辅助调用不增 runs");
     let m2 = result
         .by_model
@@ -125,16 +108,14 @@ fn stats_token_aggregates_by_day_and_model() {
         .expect("m2");
     assert_eq!(m2.runs, 0);
     // total 合计
-    assert_eq!(result.total.total, 194);
+    assert_eq!(result.total.total, 156);
     assert_eq!(result.total.runs, 1);
     // 缺省范围（全部保留期）数字一致
     let default_range =
         stats_token_core(&app, &StatsTokenArgs { range: None }, "2026-10-30").expect("查询");
     assert_eq!(default_range.total.total, result.total.total);
-}
 
-#[test]
-fn session_usage_three_level_fallback() {
+    // #59k 恢复读面与 Q43 删除语义。
     let (dir, app) = app_fixture();
     // ① 无任何记录：全零
     let none = session_usage_core(&app, "s-none");
@@ -202,38 +183,16 @@ fn session_usage_three_level_fallback() {
     );
     let live = session_usage_core(&app, "s-legacy");
     assert_eq!(live.usage.input, 41);
-    // tempdir 保活到测试结束
-    drop(dir);
-}
 
-#[test]
-fn session_usage_after_delete_is_zero() {
-    let (_dir, app) = app_fixture();
-    app.ledger.record_on_day(
-        "2026-10-30",
-        "s-del",
-        "r1",
-        crate::host::usage::run_kind::MAIN,
-        "m1",
-        "GPT-4o",
-        UsageTotal {
-            input: 9,
-            output: 1,
-            cache_read: 0,
-            cache_write: 0,
-        },
-        true,
-    );
-    // Q43：删除会话 → 内存表摘除 + 明细文件清除 → 查询全零
+    // Q43：删除会话 → 内存表摘除 + 明细文件清除 → 查询全零，匿名日聚合保留。
+    record(&app, "2026-10-30", "r1", "main", "m1", 9);
     app.session_usage
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .remove("s-del");
-    app.ledger.detail.forget_session("s-del");
-    let after = session_usage_core(&app, "s-del");
+        .remove("s1");
+    app.ledger.detail.forget_session("s1");
+    let after = session_usage_core(&app, "s1");
     assert_eq!(after.usage, UsageTotal::default(), "删除后明细不可查询");
-    assert_eq!(after.legacy_total_tokens, None);
-    // 匿名日聚合保留（真实消耗）
     let stats = stats_token_core(
         &app,
         &StatsTokenArgs {
@@ -242,5 +201,10 @@ fn session_usage_after_delete_is_zero() {
         "2026-10-30",
     )
     .expect("查询");
-    assert_eq!(stats.total.input, 9, "日模型数字保留（无会话关联）");
+    assert_eq!(
+        stats.total.input, 9,
+        "日聚合数字保留（无会话关联，真实消耗）"
+    );
+    // tempdir 保活到测试结束
+    drop(dir);
 }

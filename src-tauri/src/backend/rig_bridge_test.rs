@@ -1,5 +1,6 @@
 //! 流事件桥接器的单元测试：文本与参数增量透传（半截 JSON 保留）、
-//! "模型调用 id ↔ 帧面 id"同源映射的登记与反查、跨轮 id 不冲突。
+//! "模型调用 id ↔ 帧面 id"同源映射的登记与反查、跨轮 id 不冲突、
+//! 未带名 Start 的占位登记（OpenAI 边缘形态）。
 
 use rig::message::{AssistantContent, ToolCall, ToolFunction, ToolName};
 use rig::streaming::{Item, Part, PartKind, StreamEvent};
@@ -88,52 +89,50 @@ fn text_and_args_deltas_passthrough_partial_json_kept() {
     );
 }
 
-/// 断言 End 事件登记"模型调用 id → 桥接 id"映射并可反查；未命中映射时
-/// 回退用模型 id 本身（异常路径容错）。
+/// 断言桥接 id 映射面：End 定稿模型调用 id 登记后可反查（toolResult 同源
+/// 用）、同轮多工具一一对应、跨轮 part 序号复用不撞帧面 id（14 号票：无
+/// turn 前缀会撞同一帧面 id，前端卡片按 id 合并会丢卡片）、未命中映射回退
+/// 模型 id 本身（异常路径容错）、未带名 Start 不出帧且首个参数增量补登记
+/// （OpenAI 首个分片只带序号的边缘形态）。
 #[test]
-fn end_registers_model_call_mapping_reverse_lookup() {
+fn bridge_id_mapping_and_edge_cases() {
     let mut b = RigEventBridge::new();
-    let _ = b.bridge(&tool_start(1, "read"), 1);
-    let _ = b.bridge(&tool_args(1, "{}"), 1);
-    // End 定稿模型 call id
-    let _ = b.bridge(&tool_end_event(1, "call_model_9"), 1);
+    // 轮 1：两个工具分片（各分片各得其所）；轮 2：part 1 复用（跨轮撞车面）
+    for item in [tool_start(1, "read"), tool_args(1, "{}")] {
+        let _ = b.bridge(&item, 1);
+    }
+    let _ = b.bridge(&tool_end_event(1, "call_A"), 1);
+    for item in [tool_start(2, "grep"), tool_args(2, "{}")] {
+        let _ = b.bridge(&item, 1);
+    }
+    let _ = b.bridge(&tool_end_event(2, "call_B"), 1);
+    for item in [tool_start(1, "read"), tool_args(1, "{}")] {
+        let _ = b.bridge(&item, 2);
+    }
+    let _ = b.bridge(&tool_end_event(1, "call_t2"), 2);
 
     assert_eq!(
-        b.frame_call_id_for_model("call_model_9"),
+        b.frame_call_id_for_model("call_A"),
         "call_part_1_1",
-        "模型 call id 反查到帧面桥接 id（toolResult 同源用）"
+        "模型 call id 反查到帧面桥接 id（轮 1 分片 1，toolResult 同源用）"
+    );
+    assert_eq!(
+        b.frame_call_id_for_model("call_B"),
+        "call_part_1_2",
+        "同轮多工具一一对应（分片 2）"
+    );
+    assert_eq!(
+        b.frame_call_id_for_model("call_t2"),
+        "call_part_2_1",
+        "轮 2 的 part 1 与轮 1 不同 id（无 turn 前缀会撞帧面 id 丢卡片）"
     );
     assert_eq!(
         b.frame_call_id_for_model("call_unknown"),
         "call_unknown",
         "未命中映射回退模型 id 本身（异常路径容错）"
     );
-}
 
-/// 断言同一轮内多个工具调用的映射一一对应（各分片各得其所）。
-#[test]
-fn multi_tool_calls_map_one_to_one() {
-    let mut b = RigEventBridge::new();
-    for item in [
-        tool_start(1, "read"),
-        tool_args(1, "{}"),
-        tool_end_event(1, "call_A"),
-        tool_start(2, "grep"),
-        tool_args(2, "{}"),
-        tool_end_event(2, "call_B"),
-    ] {
-        let _ = b.bridge(&item, 1);
-    }
-    assert_eq!(b.frame_call_id_for_model("call_A"), "call_part_1_1");
-    assert_eq!(b.frame_call_id_for_model("call_B"), "call_part_1_2");
-}
-
-/// 断言未带工具名的 Start 事件不出帧，首个参数增量事件到来时补登记
-/// 桥接 id（OpenAI 首个分片只带序号的边缘形态）。
-#[test]
-fn anonymous_start_placeholder_first_args_registers() {
-    let mut b = RigEventBridge::new();
-    // Start 未带名（OpenAI 首个 tool_calls chunk 只有 index 的边缘形态）
+    // 未带工具名的 Start 不出帧；首个参数增量事件补登记桥接 id
     let anonymous = Item::Event(StreamEvent::Start {
         part: Part::new(3),
         kind: PartKind::ToolCall,
@@ -151,27 +150,4 @@ fn anonymous_start_placeholder_first_args_registers() {
         panic!("应为 toolArgs 帧");
     };
     assert_eq!(call_id, "call_part_1_3", "首参数事件补登记桥接 id");
-}
-
-/// 断言派生 id 带轮次前缀：两轮各自的分片 1 不会撞同一个帧面 id
-/// （前端卡片按 id 合并，撞车会丢卡片）。
-#[test]
-fn derived_ids_no_collision_across_turns() {
-    // 14 号票修正：part 序号按响应各自从 0 计，两轮各自的 part 1 若无
-    // turn 前缀会撞同一帧面 id（前端卡片 Map 合并丢失）。
-    let mut b = RigEventBridge::new();
-    let _ = b.bridge(&tool_start(1, "read"), 1);
-    let _ = b.bridge(&tool_end_event(1, "call_t1"), 1);
-    let _ = b.bridge(&tool_start(1, "grep"), 2);
-    let _ = b.bridge(&tool_end_event(1, "call_t2"), 2);
-    assert_eq!(
-        b.frame_call_id_for_model("call_t1"),
-        "call_part_1_1",
-        "第一轮 part 1"
-    );
-    assert_eq!(
-        b.frame_call_id_for_model("call_t2"),
-        "call_part_2_1",
-        "第二轮 part 1 —— 与第一轮不同 id"
-    );
 }

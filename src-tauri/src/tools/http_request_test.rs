@@ -1,5 +1,5 @@
-//! http_request 工具测试（12 号票）：方法白名单、§8.8 响应 spill 治理、
-//! 自定义请求头透传与规格 schema 面。
+//! http_request 工具测试（12 号票）：GET/POST 往返、§8.8 响应 spill 治理、
+//! 方法白名单与请求头校验（spec 注册表面见 tests/tools_registry_test.rs）。
 //!
 //! 集成用例经本地 fixture HTTP server（127.0.0.1 随机端口、零外网）+
 //! 例外策略（回环放行）走完整 execute 链路。
@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
 
-use super::http_request::{ALLOWED_METHODS, HttpRequestArgs, RequestExit, execute, spec};
+use super::http_request::{ALLOWED_METHODS, HttpRequestArgs, RequestExit, execute};
 use crate::safety::ssrf::{HostThrottle, SsrfPolicy};
 use crate::tools::{ToolsContext, command::SPILL_THRESHOLD};
 
@@ -54,8 +54,16 @@ async fn run(
     }
 }
 
+/// 测试辅助：从 JSON 构造参数。
+fn args_from(value: serde_json::Value) -> HttpRequestArgs {
+    serde_json::from_value(value).expect("参数")
+}
+
+// 断言：往返矩阵——GET 返回 status/headers/body 且不截断不 spill；POST
+// 携带 body 与自定义请求头透传（服务端断言收到 method/body/自定义头）。
 #[tokio::test(flavor = "current_thread")]
-async fn get_round_trips_status_headers_and_body() {
+async fn get_post_round_trip_matrix() {
+    // GET 往返。
     let app = axum::Router::new().route(
         "/ping",
         axum::routing::get(|| async {
@@ -71,11 +79,10 @@ async fn get_round_trips_status_headers_and_body() {
     let outcome = run(
         &fixture_ctx(&dir),
         &no_throttle(),
-        &serde_json::from_value::<HttpRequestArgs>(serde_json::json!({
+        &args_from(serde_json::json!({
             "method": "get",
             "url": format!("http://{addr}/ping"),
-        }))
-        .expect("参数"),
+        })),
     )
     .await;
     assert!(outcome.ok, "GET 应成功：{outcome:?}");
@@ -85,11 +92,8 @@ async fn get_round_trips_status_headers_and_body() {
     assert_eq!(data["body"], "响应体内容");
     assert_eq!(data["bodyTruncated"], false);
     assert!(data["spillPath"].is_null());
-}
 
-#[tokio::test(flavor = "current_thread")]
-async fn post_carries_body_and_custom_headers() {
-    // POST 回显：服务端断言收到的 method/body/自定义头并回显
+    // POST 回显：服务端断言收到的 method/body/自定义头并回显。
     use axum::http::HeaderMap as AxumHeaders;
     let seen: std::sync::Arc<std::sync::Mutex<Option<(String, String, String)>>> =
         Default::default();
@@ -113,13 +117,12 @@ async fn post_carries_body_and_custom_headers() {
     let outcome = run(
         &fixture_ctx(&dir),
         &no_throttle(),
-        &serde_json::from_value::<HttpRequestArgs>(serde_json::json!({
+        &args_from(serde_json::json!({
             "method": "POST",
             "url": format!("http://{addr}/echo"),
             "headers": { "x-custom": "cw-test", "content-type": "text/plain" },
             "body": "请求体文本",
-        }))
-        .expect("参数"),
+        })),
     )
     .await;
     assert!(outcome.ok, "POST 应成功：{outcome:?}");
@@ -129,9 +132,12 @@ async fn post_carries_body_and_custom_headers() {
     assert_eq!(custom, "cw-test");
 }
 
+// 断言：治理与校验矩阵——>96KB 响应全量 spill 至 <data>/logs/spill/ 且结果
+// 只带尾部 16KB（多字节字符边界取整）；白名单外方法参数预检即拒（不发请求）；
+// 非法头名/头值（换行注入）拒绝。
 #[tokio::test(flavor = "current_thread")]
-async fn oversized_body_spills_with_tail() {
-    // §8.8：>96KB 全量 spill 至 <data>/logs/spill/<callId>.txt + 尾 16KB
+async fn spill_governance_and_validation_matrix() {
+    // —— spill 治理（§8.8）——
     let served: String = "中".repeat(SPILL_THRESHOLD); // 96KB+ 的多字节文本
     assert!(served.len() > SPILL_THRESHOLD);
     let for_handler = served.clone();
@@ -147,11 +153,10 @@ async fn oversized_body_spills_with_tail() {
     let outcome = run(
         &fixture_ctx(&dir),
         &no_throttle(),
-        &serde_json::from_value::<HttpRequestArgs>(serde_json::json!({
+        &args_from(serde_json::json!({
             "method": "GET",
             "url": format!("http://{addr}/big"),
-        }))
-        .expect("参数"),
+        })),
     )
     .await;
     assert!(outcome.ok, "spill 情形请求本身应成功：{outcome:?}");
@@ -171,41 +176,29 @@ async fn oversized_body_spills_with_tail() {
     );
     // spill 文件落在数据根的 logs/spill/ 下（§7.1/§8.8）
     assert!(spill_path.contains("logs/spill/"));
-}
 
-#[test]
-fn method_whitelist_rejects_others() {
-    // 白名单外方法在参数预检即拒（不发请求）
+    // —— 方法白名单：白名单外在参数预检即拒（不发请求）——
     for method in ["CONNECT", "TRACE", "OPTIONS", "get;", ""] {
-        let outcome = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap()
-            .block_on(async {
-                let dir = tempfile::tempdir().unwrap();
-                run(
-                    &fixture_ctx(&dir),
-                    &no_throttle(),
-                    &HttpRequestArgs {
-                        method: method.to_owned(),
-                        url: "http://127.0.0.1:1/".to_owned(),
-                        headers: None,
-                        body: None,
-                    },
-                )
-                .await
-            });
+        let dir = tempfile::tempdir().expect("临时目录");
+        let outcome = run(
+            &fixture_ctx(&dir),
+            &no_throttle(),
+            &HttpRequestArgs {
+                method: method.to_owned(),
+                url: "http://127.0.0.1:1/".to_owned(),
+                headers: None,
+                body: None,
+            },
+        )
+        .await;
         assert!(!outcome.ok, "方法 {method:?} 应拒绝");
         assert_eq!(outcome.error.expect("error").code, "E_INVALID_ARG");
     }
-    // 白名单内方法（大小写不敏感）可解析
+    // 白名单内方法（大小写不敏感）共 6 个。
     assert_eq!(ALLOWED_METHODS.len(), 6);
-}
 
-#[tokio::test(flavor = "current_thread")]
-async fn invalid_header_name_or_value_rejected() {
+    // —— 请求头校验：非法头名（含空格）与头值（换行注入）拒绝 ——
     let dir = tempfile::tempdir().expect("临时目录");
-    // 非法头名（含空格）
     let outcome = run(
         &fixture_ctx(&dir),
         &no_throttle(),
@@ -219,7 +212,6 @@ async fn invalid_header_name_or_value_rejected() {
     .await;
     assert!(!outcome.ok);
     assert_eq!(outcome.error.expect("error").code, "E_INVALID_ARG");
-    // 非法头值（含换行注入）
     let outcome = run(
         &fixture_ctx(&dir),
         &no_throttle(),
@@ -235,24 +227,4 @@ async fn invalid_header_name_or_value_rejected() {
     )
     .await;
     assert!(!outcome.ok);
-}
-
-#[test]
-fn spec_is_registered_as_network_tool() {
-    let spec = spec();
-    assert!(crate::tools::STATIC_TOOL_NAMES.contains(&spec.name.as_str()));
-    assert!(matches!(
-        spec.capability,
-        crate::safety::tier::Capability::Network
-    ));
-    // schema 形状（与前端 CW_TOOL_PARAMETERS 逐字镜像的源）
-    let required = spec.params_schema["required"].as_array().expect("required");
-    assert!(required.contains(&serde_json::json!("method")));
-    assert!(required.contains(&serde_json::json!("url")));
-    let methods = spec.params_schema["properties"]["method"]["enum"]
-        .as_array()
-        .expect("enum");
-    assert_eq!(methods.len(), 6);
-    assert!(!spec.annotations.read_only_hint, "POST 有副作用，非只读");
-    assert!(spec.annotations.open_world_hint);
 }

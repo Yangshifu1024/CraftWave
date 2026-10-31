@@ -20,31 +20,27 @@ fn text_entry(id: &str, role: MessageRole, text: &str) -> MessageEntry {
     }
 }
 
-// 断言：首次压缩（无旧摘要）范围 = 调用方传入的候选集全量（run 开始前
-// 场景调用方已剔除末条 prompt）；cut = 候选集链尾。
+/// 候选集条目 id 序列（断言辅助）。
+fn entry_ids(entries: &[MessageEntry]) -> Vec<&str> {
+    entries.iter().map(|e| e.id.as_str()).collect()
+}
+
+// 断言：压缩范围场景表——首次压缩（无旧摘要）范围 = 候选集全量（run 开始
+// 前场景调用方已剔除末条 prompt）、增量压缩（Q31）= 旧边界之后的新增内容
+// 且旧摘要随行、空候选集 None、边界锚点缺失时从头保守压缩且保留旧摘要。
 #[test]
-fn first_compression_scope_covers_history_excluding_prompt() {
-    // run 开始前场景：调用方剔除末条 prompt 后传 [u1, a1]
+fn compression_scope_cases() {
+    // 首次：cut = 候选集链尾
     let body = vec![
         text_entry("u1", MessageRole::User, "你好"),
         text_entry("a1", MessageRole::Assistant, "你好呀"),
     ];
     let scope = compression_scope(&body, None).expect("应有范围");
     assert_eq!(scope.cut_entry_id, "a1");
-    assert_eq!(
-        scope
-            .entries
-            .iter()
-            .map(|e| e.id.as_str())
-            .collect::<Vec<_>>(),
-        vec!["u1", "a1"]
-    );
+    assert_eq!(entry_ids(&scope.entries), vec!["u1", "a1"]);
     assert!(scope.old_summary.is_none(), "首次压缩无旧摘要");
-}
 
-// 断言：增量压缩（Q31）范围 = 旧边界之后的新增内容；旧摘要随行。
-#[test]
-fn incremental_scope_starts_after_previous_cut() {
+    // 增量：旧边界之后的新增内容；旧摘要随行
     let body = vec![
         text_entry("old", MessageRole::User, "已压缩区"),
         text_entry("cut1", MessageRole::Assistant, "上次边界"),
@@ -53,22 +49,12 @@ fn incremental_scope_starts_after_previous_cut() {
     ];
     let scope = compression_scope(&body, Some(("cut1", "上次摘要内容"))).expect("应有范围");
     assert_eq!(scope.cut_entry_id, "mid2");
-    assert_eq!(
-        scope
-            .entries
-            .iter()
-            .map(|e| e.id.as_str())
-            .collect::<Vec<_>>(),
-        vec!["mid", "mid2"]
-    );
+    assert_eq!(entry_ids(&scope.entries), vec!["mid", "mid2"]);
     assert_eq!(scope.old_summary.as_deref(), Some("上次摘要内容"));
-}
 
-// 断言：候选集为空 → None；边界锚点不在候选集上 → 从头保守压缩。
-#[test]
-fn scope_edge_cases() {
-    // 空候选集（如首次请求只有 prompt、ask 后无史册）
+    // 空候选集（如首次请求只有 prompt、ask 后无史册）→ None
     assert!(compression_scope(&[], None).is_none());
+
     // 锚点缺失：从头压缩且保留旧摘要（增量语义不破坏）
     let body = vec![text_entry("x", MessageRole::User, "甲")];
     let scope = compression_scope(&body, Some(("missing", "旧摘要"))).expect("应有范围");
@@ -76,9 +62,12 @@ fn scope_edge_cases() {
     assert_eq!(scope.old_summary.as_deref(), Some("旧摘要"));
 }
 
-// 断言：条目文本化（Q38）——工具调用与结果带工具名/callId/来源标记转普通文本。
+// 断言：条目文本化（Q38）——工具调用与结果带工具名/callId/来源标记转普通
+// 文本、runMarker 不进摘要输入；分块装箱——多块超窗拆批、单块超窗按字符
+// 切段不丢字、空输入空批；compaction 条目 id 规则（§6.1 {owner}:compact:{n}）。
 #[test]
-fn entry_block_marks_tools_with_sources() {
+fn entry_blocks_bucketing_and_id_cases() {
+    // 文本化：角色/条目 id/工具名/callId/结果来源与成败标记
     let entry = MessageEntry {
         id: "r1:1.tools".to_owned(),
         parent_id: None,
@@ -133,12 +122,8 @@ fn entry_block_marks_tools_with_sources() {
         !entry_to_block(&marker).contains("runMarker"),
         "marker 不进摘要输入"
     );
-}
 
-// 断言：分块装箱——多块超窗拆批、单块自身超窗按字符切段、小内容单批。
-#[test]
-fn plan_blocks_buckets_and_splits_oversize() {
-    // 窗口 14 token：中文字每字 1.5 → "一二三四五"=8、"六七八九十"=8（8+8>14 分批）、
+    // 装箱：窗口 14 token——"一二三四五"=8、"六七八九十"=8（8+8>14 分批）、
     // "甲乙丙"=5（8+5=13≤14 与第二块同批）
     let blocks = vec![
         "一二三四五".to_owned(),
@@ -159,11 +144,8 @@ fn plan_blocks_buckets_and_splits_oversize() {
 
     // 空输入 → 空批
     assert!(plan_blocks(Vec::new(), 10).is_empty());
-}
 
-// 断言：compaction 条目 id 规则（§6.1 {owner}:compact:{n}）。
-#[test]
-fn compaction_id_uses_owner_and_sequence() {
+    // id 规则（§6.1 {owner}:compact:{n}）
     assert_eq!(compaction_entry_id("run-abc", 1), "run-abc:compact:1");
     assert_eq!(compaction_entry_id("manual", 3), "manual:compact:3");
 }

@@ -1,6 +1,6 @@
 //! 并发闸与注册表测试（10 号票，FR-07-04/Q13 热调整语义）：
-//! 满额排队不拒绝、降低不取消已有任务且低于新上限才补入、提高立即放行
-//! 排队任务、取消传播级联、审批路由反查。
+//! 满额排队不拒绝、降低不取消已有任务且低于新上限才补入（欠账湮灭）、
+//! 提高立即放行排队任务、取消传播级联、审批路由反查。
 
 use super::*;
 use std::sync::Arc;
@@ -14,9 +14,13 @@ async fn acquired_within(gate: &ConcurrencyGate, token: &CancellationToken, ms: 
         .unwrap_or(false)
 }
 
-/// 满额排队不拒绝：limit=1，第二个名额等待；释放后排队者获得名额。
+// 断言（并发闸，Q13）：满额排队不拒绝、释放后排队者获得名额；热降档
+// 不取消已有任务，抽空闲名额抽不到记欠账、释放时名额湮灭（不归还信号
+// 量），活跃数低于新上限才补入；热升档立即按新上限放行排队任务；排队中
+// 取消 → 未取得名额即退出（委派未启动面）。
 #[tokio::test]
-async fn gate_queues_when_full_and_admits_after_release() {
+async fn gate_queuing_hot_resize_and_cancel() {
+    // 满额排队不拒绝：limit=1，第二个名额等待；释放后排队者获得名额。
     let gate = Arc::new(ConcurrencyGate::new(1));
     let token = CancellationToken::new();
     assert!(
@@ -39,17 +43,15 @@ async fn gate_queues_when_full_and_admits_after_release() {
         .expect("释放后排队者应获得名额")
         .unwrap();
     assert!(got);
-}
 
-/// 热降档（Q13）：4 运行降到 2 不取消已有任务；不补入直到运行数低于新上限。
-#[tokio::test]
-async fn lower_limit_waits_until_active_below_new_limit() {
+    // 热降档（Q13）：4 运行降到 2 不取消已有任务；不补入直到运行数低于
+    // 新上限（释放时欠账湮灭）。
     let gate = Arc::new(ConcurrencyGate::new(2));
     let token = CancellationToken::new();
-    // 占满 2 个名额
+    // 占满 2 个名额。
     assert!(gate.acquire(&token).await);
     assert!(gate.acquire(&token).await);
-    // 降到 1：抽空闲名额抽不到 → 记欠账 1（已有任务不取消）
+    // 降到 1：抽空闲名额抽不到 → 记欠账 1（已有任务不取消）。
     gate.set_limit(1);
     let queued = CancellationToken::new();
     let waiter = tokio::spawn({
@@ -61,23 +63,19 @@ async fn lower_limit_waits_until_active_below_new_limit() {
         !waiter.is_finished(),
         "降档后活跃数(2) ≥ 新上限(1)：排队任务不补入"
     );
-    // 释放 1 个：欠账清 1（名额湮灭，不归还信号量）→ 活跃数 1 仍 ≥ 上限 → 继续排队
+    // 释放 1 个：欠账清 1（名额湮灭，不归还信号量）→ 活跃数 1 仍 ≥ 上限 → 继续排队。
     gate.release();
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert!(!waiter.is_finished(), "活跃数(1) ≥ 新上限(1)：仍不补入");
-    // 再释放：活跃数 0 < 1 → 排队任务获得名额
+    // 再释放：活跃数 0 < 1 → 排队任务获得名额。
     gate.release();
     let got = tokio::time::timeout(Duration::from_millis(500), waiter)
         .await
         .expect("活跃数低于新上限后应补入")
         .unwrap();
     assert!(got);
-}
 
-/// 热升档（Q13）：提高后立即按新上限启动排队任务。
-#[tokio::test]
-async fn raise_limit_admits_immediately() {
-    // Arc 包装便于把同一闸移进两个 spawn 闭包（tokio::spawn 需 'static）
+    // 热升档（Q13）：提高后立即按新上限启动排队任务。
     let gate = Arc::new(ConcurrencyGate::new(1));
     let token = CancellationToken::new();
     assert!(gate.acquire(&token).await, "占满初始名额");
@@ -98,11 +96,8 @@ async fn raise_limit_admits_immediately() {
     );
     assert!(ra.unwrap().unwrap(), "升档后排队者 A 立即获得名额");
     assert!(rb.unwrap().unwrap(), "升档后排队者 B 立即获得名额");
-}
 
-/// 排队中取消：名额未取得即退出（委派未启动面）。
-#[tokio::test]
-async fn acquire_aborts_when_cancelled_while_queued() {
+    // 排队中取消：名额未取得即退出（委派未启动面）。
     let gate = Arc::new(ConcurrencyGate::new(1));
     let holder = CancellationToken::new();
     assert!(gate.acquire(&holder).await);
@@ -122,10 +117,13 @@ async fn acquire_aborts_when_cancelled_while_queued() {
     gate.release();
 }
 
-/// 父取消级联（S5）：子令牌是父令牌的子令牌——父取消传播到全部子代理；
-/// 子代理单独取消不影响父。
+// 断言：父取消级联（S5）——子令牌是父令牌的子令牌，父取消传播到全部
+// 子代理，子代理单独取消不影响父；注册表登记/摘除/active_count 与
+// cancel_by_session 按会话级联兜底；审批路由 askId 反查命中活跃子代理
+// （resolve_ask 兜底链，查询幂等）。
 #[test]
-fn parent_cancel_cascades_to_children() {
+fn cancel_cascade_and_registry_routing() {
+    // 父取消级联到全部子；单独取消子不波及父。
     let parent = CancellationToken::new();
     let child_a = parent.child_token();
     let child_b = parent.child_token();
@@ -133,7 +131,6 @@ fn parent_cancel_cascades_to_children() {
     parent.cancel();
     assert!(child_a.is_cancelled(), "父取消级联到子 A");
     assert!(child_b.is_cancelled(), "父取消级联到子 B");
-    // 反向：单独取消子不波及父
     let parent2 = CancellationToken::new();
     let child = parent2.child_token();
     child.cancel();
@@ -141,11 +138,8 @@ fn parent_cancel_cascades_to_children() {
         !parent2.is_cancelled(),
         "stop_subagent 单独取消不影响父 run"
     );
-}
 
-/// 注册表：登记/摘除/active_count 与 cancel_by_session 级联兜底。
-#[test]
-fn registry_register_remove_and_cancel_by_session() {
+    // 注册表：登记/摘除/active_count 与 cancel_by_session 级联兜底。
     let registry = SubRegistry::new(4);
     let mk = |sub_id: &str, session: &str| {
         Arc::new(SubHandle {
@@ -161,20 +155,16 @@ fn registry_register_remove_and_cancel_by_session() {
     registry.register(mk("s1", "sess-1"));
     registry.register(mk("s2", "sess-2"));
     assert_eq!(registry.active_count(), 2);
-    // 按会话级联：只取消 sess-1 的子代理
+    // 按会话级联：只取消 sess-1 的子代理。
     assert_eq!(registry.cancel_by_session("sess-1"), 1);
     assert!(registry.get("s1").unwrap().cancel.is_cancelled());
     assert!(!registry.get("s2").unwrap().cancel.is_cancelled());
     registry.remove("s1");
     assert!(registry.get("s1").is_none());
     assert_eq!(registry.active_count(), 1);
-}
 
-/// 审批路由：askId 反查命中活跃子代理（resolve_ask 兜底链）。
-#[test]
-fn registry_find_by_ask_routes_to_sub() {
+    // 审批路由：askId 反查命中活跃子代理（resolve_ask 兜底链）。
     use crate::backend::ask::{AskAnswer, AskSlot};
-    let registry = SubRegistry::new(4);
     let (tx, rx) = tokio::sync::oneshot::channel::<AskAnswer>();
     let handle = Arc::new(SubHandle {
         sub_id: "s9".to_owned(),
@@ -204,12 +194,12 @@ fn registry_find_by_ask_routes_to_sub() {
     registry.register(handle);
     let hit = registry.find_by_ask("ask-1").expect("askId 反查命中");
     assert_eq!(hit.sub_id, "s9");
-    // find_by_ask 是幂等查询（resolve_ask 才取走槽位）
+    // find_by_ask 是幂等查询（resolve_ask 才取走槽位）。
     assert!(
         registry.find_by_ask("ask-1").is_some(),
         "查询不改状态（幂等）"
     );
-    // 模拟 resolve_ask 的 take：槽位清空后不再命中
+    // 模拟 resolve_ask 的 take：槽位清空后不再命中。
     *hit.ask.lock().unwrap() = None;
     assert!(registry.find_by_ask("ask-1").is_none());
     drop(rx);

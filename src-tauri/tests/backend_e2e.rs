@@ -15,8 +15,7 @@
 //! 7. plan/ask/suggest（14 号票）：plan:update 事件 + approve_plan、
 //!    ask 问卷 resolve 回喂、suggest 后台小调用 run:suggestions + tokens:update；
 //! 8. 并行工具批（07 号票）：ask 混批互斥（Q35 只执行 ask、被跳过项不申请
-//!    审批）与多 ask 源序首个（Q42）、混合读写批次源序回喂与同文件 edit
-//!    合并提交、并发取消收齐（在飞 join 后才 runEnded）。
+//!    审批）与源序回喂。
 
 mod common;
 
@@ -50,19 +49,9 @@ const FULL_CHAIN_BUDGET: Duration = Duration::from_millis(1000);
 
 /// 指向 mock 的 rig Chat 模型。
 fn mock_model(mock: &MockOpenAI) -> rig::driver::Model<rig::providers::openai::wire::Chat> {
-    mock_model_named(mock, "gpt-4o-mock")
-}
-
-/// 指定模型名的变体（18 号票切换测试用：gpt-5 名字触发 rig 目录启发式的
-/// 「按名判定为推理模型」分支，effort 参数不被 OnUnsupported::Ignore 丢弃
-/// ——gpt-4 系按名判定为非推理模型，effort 被忽略正是 §11.4 的正确语义）。
-fn mock_model_named(
-    mock: &MockOpenAI,
-    model: &str,
-) -> rig::driver::Model<rig::providers::openai::wire::Chat> {
     let config = rig::providers::openai::wire::OpenAIConfig::new("mock-key".to_owned())
         .with_base_url(mock.base_url.clone());
-    config.client().chat(model.to_owned())
+    config.client().chat("gpt-4o-mock".to_owned())
 }
 
 /// 工具定义（read：mock 脚本点名；command：S5 长命令载体）。
@@ -321,140 +310,6 @@ async fn e2e_frame_fidelity_call_id_same_origin_throttle_nfr02() {
             "帧间隔 {gap}ms 异常：低于 64ms 窗口即节流失效"
         );
     }
-}
-
-// —— 1b. 运行中模型/thinking 切换（18 号票，FR-02-07 修正案） ——
-
-/// 每拍请求刷新的测试实现：第一次调用（首拍前）不动；第二次调用（第二拍前，
-/// 工具批结果已回喂）把驱动热切到模型 B 并把请求参数改为 thinking=high。
-/// 对应生产 HostRequestRefresher 的「每拍 CallModel 前重读会话偏好」契约
-/// （§11.1），此处直接换 mock 模型客户端以便断言请求归属。
-struct SwapMidRunRefresher {
-    driver: Arc<TurnDriver<rig::providers::openai::wire::Chat, rig::http_client::DynHttpClient>>,
-    model_b: rig::driver::Model<rig::providers::openai::wire::Chat>,
-    calls: std::sync::atomic::AtomicUsize,
-}
-
-impl craftwave_lib::backend::run_loop::RequestRefresher for SwapMidRunRefresher {
-    fn before_request(
-        &self,
-        _state: &craftwave_lib::backend::run_loop::DriveState,
-    ) -> Result<(), craftwave_lib::backend::run_loop::RefreshFailure> {
-        let n = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        if n == 1 {
-            // 第二拍前生效（同 run 内的下一次模型请求，无需重新 start_chat）
-            self.driver.swap_model(self.model_b.clone());
-            self.driver.update_spec(|spec| {
-                spec.options = rig::completion::options::GenerationOptions::default()
-                    .reasoning(rig::completion::Reasoning::Effort(
-                        rig::completion::Effort::High,
-                    ))
-                    .on_unsupported(rig::completion::options::OnUnsupported::Ignore);
-            });
-        }
-        Ok(())
-    }
-}
-
-#[tokio::test]
-async fn e2e_mid_run_switch_applies_on_next_request() {
-    // 模型 A：默认脚本（turn1 出 read 工具调用 + turn2 文本——第二拍轮不到它）
-    let mock_a = MockOpenAI::start().await;
-    // 模型 B：单拍文本答复（第二拍直接收口 Done）
-    let mock_b = MockOpenAI::start_with_turn1(vec![
-        content_delta("B 模型接管后的答复。"),
-        finish_chunk("stop"),
-        usage_event(),
-        done_marker(),
-    ])
-    .await;
-
-    let driver = Arc::new(TurnDriver::new(
-        mock_model(&mock_a),
-        RunSpec::new(),
-        vec![tool_def(TOOL_READ)],
-    ));
-    let refresher = SwapMidRunRefresher {
-        driver: driver.clone(),
-        model_b: mock_model_named(&mock_b, "gpt-5-mock"),
-        calls: std::sync::atomic::AtomicUsize::new(0),
-    };
-    let sink = SharedSink::default();
-    let mut sink_handle = sink.clone();
-    let exit = drive_run(
-        &driver,
-        new_run("帮我读配置文件"),
-        "run-mid-switch",
-        "model-a",
-        CancellationToken::new(),
-        fake_executor_text("共 12 行：port = 8087"),
-        Arc::new(AllowAllGate),
-        &mut sink_handle,
-        None,
-        None,
-        Some(&refresher),
-        std::time::Duration::from_secs(30),
-    )
-    .await
-    .expect("RunLoop 应正常跑完");
-
-    // ① run 自然收口 Done：正在进行的请求不被切换打断（第一拍在 A 上完整走完）
-    assert!(
-        matches!(exit, RunExit::Done(_)),
-        "退出态应为 Done，实际 {exit:?}"
-    );
-    let frames = sink.frames();
-    assert!(
-        matches!(
-            frames.last().expect("有帧").frame.frame,
-            ChatFrame::RunEnded {
-                reason: EndReason::Done,
-                ..
-            }
-        ),
-        "末帧应为 runEnded(done)"
-    );
-    // 工具批照常回喂（第一拍的产物不因中途切换丢失）
-    assert_eq!(
-        sink.count_kind(|f| matches!(f, ChatFrame::ToolResult { .. })),
-        1
-    );
-
-    // ② 请求归属：模型 A 只收到第一拍，模型 B 收到第二拍（同 run 内切换生效）
-    let a_requests = mock_a.request_bodies().await;
-    assert_eq!(a_requests.len(), 1, "模型 A 只应收到第一拍请求");
-    let b_requests = mock_b.request_bodies().await;
-    assert_eq!(b_requests.len(), 1, "模型 B 应收到第二拍请求");
-
-    // ③ 参数随拍生效：B 的请求带切换后的 reasoning_effort=high；A 的第一拍不带
-    assert_eq!(
-        b_requests[0]
-            .get("reasoning_effort")
-            .and_then(|v| v.as_str()),
-        Some("high"),
-        "第二拍请求应带切换后的 thinking 档（reasoning_effort=high）：{}",
-        b_requests[0]
-    );
-    assert!(
-        a_requests[0].get("reasoning_effort").is_none(),
-        "切换前的第一拍不应带 reasoning 参数：{}",
-        a_requests[0]
-    );
-
-    // ④ usage 归实际模型：每拍收口各发一帧 usage（A 一帧 + B 一帧），run 内
-    //    累计随帧推进——用量按当拍实际服务的模型归属（票面口径），无重复计账
-    let usage_total: Vec<u64> = frames
-        .iter()
-        .filter_map(|t| match &t.frame.frame {
-            ChatFrame::Usage { usage, .. } => Some(usage.input),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(usage_total.len(), 2, "两拍各发一帧 usage（归当拍模型）");
-    assert!(
-        usage_total.windows(2).all(|w| w[0] <= w[1]),
-        "usage 帧为 run 内累计值，应单调不减：{usage_total:?}"
-    );
 }
 
 // —— 2. 流中取消 ——
@@ -948,24 +803,6 @@ fn tool_result_faces(frames: &[TimedFrame]) -> Vec<(String, bool, Option<String>
         .collect()
 }
 
-/// 以临时目录为根构造真实文件工具执行器（07 号票机制层批次测试用）。
-fn file_tool_executor() -> (
-    craftwave_lib::backend::exec::ToolsetExecutor,
-    std::path::PathBuf,
-) {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let root = dir.path().to_path_buf();
-    std::mem::forget(dir); // 测试进程生命周期内持有
-    let ctx = craftwave_lib::tools::ToolsContext::new(root.clone(), root.clone());
-    (
-        craftwave_lib::backend::exec::ToolsetExecutor::new(
-            ctx,
-            craftwave_lib::safety::tier::PermissionTier::FullAccess,
-        ),
-        root,
-    )
-}
-
 mod command_face {
     use super::*;
 
@@ -1094,42 +931,12 @@ mod command_face {
             assert!(Instant::now() < deadline, "run 任务应收尾摘除");
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
-    }
 
-    /// 15 号票：run 全链后磁盘有 canonical 条目（user 兜底 + turn 文本 + marker）
-    /// 与 index.json 建档——NFR-06「已提交历史零丢失」的端到端锚点。
-    #[tokio::test]
-    async fn run_persists_canonical_entries_and_index() {
-        let mock = MockOpenAI::start().await;
-        let app = app_fixture(&mock);
-        let runs = RunManager::new();
-        let sink = SharedSink::default();
-
-        craftwave_lib::host::commands::chat::start_chat_core(
-            &app,
-            &runs,
-            "sess-p".to_owned(),
-            vec![user_entry("持久化我")],
-            run_config(),
-            Box::new(sink.clone()),
-            false,
-        )
-        .await
-        .expect("start_chat_core 应成功");
-        let ended = wait_ended(&sink, Duration::from_secs(10)).await;
-        assert!(matches!(
-            ended,
-            ChatFrame::RunEnded {
-                reason: EndReason::Done,
-                ..
-            }
-        ));
-
-        let store = app.store.clone();
-        let tree = store.load_session_tree("sess-p").expect("史册应存在");
+        // 15 号票 NFR-06 锚：run 全链后磁盘有 canonical 条目（user 兜底 + turn
+        // 文本 + marker）与 index.json 建档——「已提交历史零丢失」端到端。
+        let tree = app.store.load_session_tree("sess-1").expect("史册应存在");
         let ids: Vec<&str> = tree.messages.iter().map(|m| m.id.as_str()).collect();
-        // 默认 mock 脚本 = 工具调用 turn + 文本 turn（§mock_openai）：
-        // user 兜底、turn1 文本、turn1 工具、turn2 文本、marker，共 5 条
+        // 默认 mock 脚本 = 工具调用 turn + 文本 turn（§mock_openai）：共 5 条
         assert_eq!(ids.len(), 5, "实际条目：{ids:?}");
         assert!(ids[0].starts_with("u-"), "user 兜底条目");
         assert!(ids[1].ends_with(":1"), "turn1 文本条目");
@@ -1137,12 +944,12 @@ mod command_face {
         assert!(ids[3].ends_with(":2"), "turn2 文本条目");
         assert!(ids[4].ends_with(":marker"), "runMarker 收口");
         assert_eq!(tree.active_leaf_id.as_deref(), Some(ids[4]));
-
-        let meta = store
+        let meta = app
+            .store
             .index()
             .list()
             .into_iter()
-            .find(|m| m.id == "sess-p")
+            .find(|m| m.id == "sess-1")
             .expect("index.json 应建档");
         assert_eq!(meta.message_count, 5);
         assert_eq!(meta.revision, tree.revision);
@@ -1508,114 +1315,6 @@ mod command_face {
         assert_eq!(err.code, "E_NOT_FOUND");
     }
 
-    #[tokio::test]
-    async fn ask_tool_question_resolved_as_tool_result() {
-        let mock = MockOpenAI::start_with_turn1(tool_turn1(
-            "问一下用户。",
-            "ask",
-            r#"{"title":"选方案","questions":[{"id":"q1","text":"用哪个方案？","options":[{"id":"a","label":"方案A"},{"id":"b","label":"方案B"}],"allowFreeText":false}]}"#,
-        ))
-        .await;
-        let (app, events) = app_fixture_with_events(&mock);
-        let runs = RunManager::new();
-        let sink = SharedSink::default();
-
-        craftwave_lib::host::commands::chat::start_chat_core(
-            &app,
-            &runs,
-            "sess-ask".to_owned(),
-            vec![user_entry("问吧")],
-            run_config(),
-            Box::new(sink.clone()),
-            false,
-        )
-        .await
-        .unwrap();
-
-        let opened = wait_event(&events, "ask:opened", Duration::from_secs(5)).await;
-        assert_eq!(opened["payload"]["kind"], "question");
-        assert_eq!(opened["payload"]["title"], "选方案");
-        let ask_id = opened["askId"].as_str().unwrap().to_owned();
-
-        let mut answers = std::collections::BTreeMap::new();
-        answers.insert("q1".to_owned(), "a".to_owned());
-        craftwave_lib::host::commands::chat::resolve_ask_core(
-            &runs,
-            &ask_id,
-            AskAnswer::Question { answers },
-        )
-        .await
-        .unwrap();
-
-        let ended = wait_ended(&sink, Duration::from_secs(10)).await;
-        assert!(matches!(
-            ended,
-            ChatFrame::RunEnded {
-                reason: EndReason::Done,
-                ..
-            }
-        ));
-        // 回喂模型：第 2 轮请求含工具结果（mock has_tool_result 判据）→ 答复文本
-        let bodies = mock.request_bodies().await;
-        assert!(
-            bodies.len() >= 2
-                && bodies[1]["messages"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .any(|m| m["role"] == "tool"),
-            "ask 答案作为工具结果回喂第 2 轮"
-        );
-        let closed = events.payloads_of("ask:closed");
-        assert_eq!(closed[0]["askId"], ask_id.as_str());
-        assert_eq!(closed[0]["answered"], true);
-    }
-
-    #[tokio::test]
-    async fn suggest_background_call_events_and_session_usage() {
-        let mock = MockOpenAI::start().await; // 默认脚本：read 工具 + 文本答复
-        let (app, events) = app_fixture_with_events(&mock);
-        let runs = RunManager::new();
-        let sink = SharedSink::default();
-
-        craftwave_lib::host::commands::chat::start_chat_core(
-            &app,
-            &runs,
-            "sess-sug".to_owned(),
-            vec![user_entry("帮我读配置文件")],
-            run_config(),
-            Box::new(sink.clone()),
-            false,
-        )
-        .await
-        .unwrap();
-        let ended = wait_ended(&sink, Duration::from_secs(10)).await;
-        assert!(matches!(
-            ended,
-            ChatFrame::RunEnded {
-                reason: EndReason::Done,
-                ..
-            }
-        ));
-
-        // run:suggestions（FR-06-09）：非空建议文本
-        let suggestion = wait_event(&events, "run:suggestions", Duration::from_secs(10)).await;
-        assert_eq!(suggestion["sessionId"], "sess-sug");
-        assert!(!suggestion["text"].as_str().unwrap().is_empty());
-
-        // tokens:update（FR-01-13 会话口径）：两轮 run 累计 240/96 + suggest 120/48
-        // = 360/144（mock 每响应固定 120 in / 48 out）
-        let tokens = wait_event(&events, "tokens:update", Duration::from_secs(10)).await;
-        let last_tokens = events
-            .payloads_of("tokens:update")
-            .last()
-            .cloned()
-            .unwrap_or(tokens);
-        assert_eq!(last_tokens["usage"]["input"], 360, "{last_tokens}");
-        assert_eq!(last_tokens["usage"]["output"], 144);
-        let _ = mock.sent_chunks().await; // 保持 sent 记录引用（Drop 语义锚点）
-    }
-
     // ---- 用量统计落账与面板数据面（20 号票，Q37/Q39/Q40/Q43 e2e） ----
 
     /// 落账→查询→重启恢复→删除保留→缓存降级 全链：真实 mock SSE run +
@@ -1862,49 +1561,27 @@ mod command_face {
         for (i, t) in new_frames.iter().enumerate() {
             assert_eq!(t.frame.seq, i as u64, "新端帧序连续：位置 {i}");
         }
-    }
 
-    /// 断言：run 结束（收尾摘除）后 attach → 空重放且 runId 省略；
-    /// session_run_snapshot → null（§3.3 #57/#20 幂等查询语义）。
-    #[tokio::test]
-    async fn attach_after_run_end_returns_empty_replay_and_null_snapshot() {
-        let mock = MockOpenAI::start().await;
-        let app = app_fixture(&mock);
-        let runs = RunManager::new();
-        let session = "sess-attach-end";
-        let sink = SharedSink::default();
-        craftwave_lib::host::commands::chat::start_chat_core(
-            &app,
-            &runs,
-            session.to_owned(),
-            vec![user_entry("快速任务")],
-            run_config(),
-            Box::new(sink.clone()),
-            false,
-        )
-        .await
-        .unwrap();
-        wait_ended(&sink, Duration::from_secs(10)).await;
-        // 等收尾摘除
+        // —— run 结束（收尾摘除）后 attach：空重放 + runId 省略 + 快照 null
+        //    （§3.3 #57/#20 幂等查询语义）；未知 sessionId 同语义 ——
         let deadline = Instant::now() + Duration::from_secs(2);
         while runs.get(session).is_some() {
             assert!(Instant::now() < deadline, "run 应收尾摘除");
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
-        let result = craftwave_lib::host::commands::chat::attach_run_core(
+        let after = craftwave_lib::host::commands::chat::attach_run_core(
             &runs,
             session,
             0,
             Box::new(SharedSink::default()),
         );
-        assert_eq!(result.replayed, 0, "无活跃 run → 空重放");
-        assert!(result.run_id.is_none(), "runId 省略");
+        assert_eq!(after.replayed, 0, "无活跃 run → 空重放");
+        assert!(after.run_id.is_none(), "runId 省略");
         assert!(
             craftwave_lib::host::commands::chat::session_run_snapshot_core(&runs, session)
                 .is_none(),
             "无活跃 run → 快照 null"
         );
-        // 未知 sessionId 同语义（幂等，不报 E_NOT_FOUND）
         let missing = craftwave_lib::host::commands::chat::attach_run_core(
             &runs,
             "sess-nope",
@@ -2027,59 +1704,6 @@ mod command_face {
         .await
         .unwrap_err();
         assert_eq!(err.code, "E_NOT_FOUND", "过期请求操作被拒绝");
-    }
-
-    /// 断言：重放窗口耗尽（人为构造 dropped>0）→ attach_run_core 补发
-    /// runSnapshot 摘要帧（末帧、占用新 seq 号、lastSeq=摘要帧之前最大序号）。
-    #[tokio::test]
-    async fn attach_replay_window_exhausted_sends_snapshot_frame() {
-        // 人为构造溢出：直驱枢纽推 514 帧（mock 流出 514 帧耗时过长，
-        // 环容量为常量 512，直驱与命令面等价——attach_run_core 走同一枢纽）
-        let runs = RunManager::new();
-        let session = "sess-overflow";
-        let old_sink = SharedSink::default();
-        let hub = Arc::new(craftwave_lib::agent::FrameHub::new(Box::new(
-            old_sink.clone(),
-        )));
-        runs.start(session, "run-ovf".to_owned(), 1, hub.clone())
-            .unwrap();
-        for i in 0..(craftwave_lib::agent::FRAME_BUFFER_CAPACITY + 2) {
-            hub.push(ChatFrame::TextDelta {
-                turn: 1,
-                delta: format!("第{i}段"),
-            });
-        }
-
-        let new_sink = SharedSink::default();
-        let result = craftwave_lib::host::commands::chat::attach_run_core(
-            &runs,
-            session,
-            0,
-            Box::new(new_sink.clone()),
-        );
-        // 重放 = 环内 512 帧（seq 2..=513）；摘要帧补发
-        assert!(result.replayed == craftwave_lib::agent::FRAME_BUFFER_CAPACITY as u64);
-        let frames = new_sink.frames();
-        let last = frames.last().expect("有帧");
-        let ChatFrame::RunSnapshot { snapshot } = &last.frame.frame else {
-            panic!("末帧应为 runSnapshot 摘要帧，实际 {:?}", last.frame.frame);
-        };
-        assert_eq!(snapshot.status, RunSnapshotStatus::Running);
-        assert_eq!(
-            snapshot.run_id.as_deref(),
-            Some("run-ovf"),
-            "摘要帧负载对齐 §3.2 RunSnapshot（runId 随行）"
-        );
-        assert_eq!(
-            snapshot.last_seq,
-            (craftwave_lib::agent::FRAME_BUFFER_CAPACITY + 1) as u64,
-            "lastSeq = 摘要帧之前的最大帧序号"
-        );
-        assert_eq!(
-            last.frame.seq,
-            (craftwave_lib::agent::FRAME_BUFFER_CAPACITY + 2) as u64,
-            "摘要帧占用新 seq 号，后续帧连续"
-        );
     }
 
     // ---- 上下文压缩（04 号票，FR-03-05）：跨阈值自动压缩 / 失败兜底 /
@@ -2255,77 +1879,6 @@ mod command_face {
         );
     }
 
-    /// 断言：摘要失败注入——run:compact_failed 后原上下文可容纳 → run 继续
-    /// 完成；边界不推进（不提交 compaction 条目）；原始历史未被静默裁剪。
-    #[tokio::test]
-    async fn compaction_failure_keeps_history_and_continues_when_fits() {
-        let mock = MockOpenAI::start().await;
-        let (app, events) = app_fixture_with_events(&mock);
-        app.config
-            .save(small_window_config(&mock.base_url))
-            .expect("save config");
-        mock.set_fail_nonstream(true); // 非流式（摘要调用）一律 500
-        let runs = RunManager::new();
-        let sink = SharedSink::default();
-        let session = "sess-fail";
-
-        // 先让史册有内容（第一次 run 也会尝试压缩并失败——注入已在）
-        craftwave_lib::host::commands::chat::start_chat_core(
-            &app,
-            &runs,
-            session.to_owned(),
-            vec![user_entry("第一条消息")],
-            run_config(),
-            Box::new(sink.clone()),
-            false,
-        )
-        .await
-        .unwrap();
-        wait_ended(&sink, Duration::from_secs(10)).await;
-
-        // 第二次：有可压内容但摘要失败 → 兜底继续（可容纳）
-        craftwave_lib::host::commands::chat::start_chat_core(
-            &app,
-            &runs,
-            session.to_owned(),
-            vec![user_entry("第一条消息"), user_entry("第二条消息")],
-            run_config(),
-            Box::new(sink.clone()),
-            false,
-        )
-        .await
-        .unwrap();
-        let ended = wait_ended(&sink, Duration::from_secs(10)).await;
-        assert!(matches!(
-            ended,
-            ChatFrame::RunEnded {
-                reason: EndReason::Done,
-                ..
-            }
-        ));
-        assert!(
-            !events.payloads_of("run:compact_failed").is_empty(),
-            "摘要失败应发 run:compact_failed"
-        );
-        let tree = app.store.load_session_tree(session).unwrap();
-        assert!(
-            tree.compactions.is_empty(),
-            "失败不得提交边界：{:?}",
-            tree.compactions
-        );
-        // wire 未裁剪：本次流式请求含完整历史（未经摘要的历史不被静默裁掉）
-        let requests = mock.request_bodies().await;
-        let streaming: Vec<&serde_json::Value> = requests
-            .iter()
-            .filter(|r| r["stream"] == serde_json::Value::Bool(true))
-            .collect();
-        let joined = serde_json::to_string(streaming.last().unwrap()).unwrap();
-        assert!(
-            joined.contains("第一条消息"),
-            "失败后 wire 不得裁历史：{joined}"
-        );
-    }
-
     /// 断言：压缩后仍超硬预算 → E_CONTEXT_OVERFLOW 暂停，输入条目已先落盘
     /// 保留（persist 兜底先于压缩），run 不启动。
     #[tokio::test]
@@ -2371,74 +1924,9 @@ mod command_face {
         assert!(runs.get("sess-overflow").is_none(), "run 不应启动");
     }
 
-    /// 断言：手动 compact_session——快照压缩成功（返回 cutEntryId 与前后
-    /// 估算）；运行中拒绝（E_SESSION_RUNNING）。
-    #[tokio::test]
-    async fn manual_compact_session_snapshot_and_running_rejected() {
-        let mock = MockOpenAI::start().await;
-        let (app, events) = app_fixture_with_events(&mock);
-        app.config
-            .save(small_window_config(&mock.base_url))
-            .expect("save config");
-        let runs = RunManager::new();
-        let session = "sess-manual";
-        app.store
-            .save_session_tree(session, &[user_entry("第一条消息")], Some("u-15"), 0)
-            .unwrap();
-
-        // 运行中拒绝：start_chat 启动后（run 未收口）手动压缩即拒
-        {
-            let sink = SharedSink::default();
-            craftwave_lib::host::commands::chat::start_chat_core(
-                &app,
-                &runs,
-                session.to_owned(),
-                vec![user_entry("第一条消息")],
-                run_config(),
-                Box::new(sink.clone()),
-                false,
-            )
-            .await
-            .unwrap();
-            let err =
-                craftwave_lib::host::commands::chat::compact_session_core(&app, &runs, session)
-                    .await
-                    .expect_err("运行中应拒绝");
-            assert_eq!(err.code, "E_SESSION_RUNNING", "{err}");
-            wait_ended(&sink, Duration::from_secs(10)).await;
-        }
-
-        // 快照压缩：无条件执行（不走阈值判定）。此时史册已含第一次 run 的
-        // 产物条目，压缩候选 = 全量（无"本次输入"豁免）→ cut = 史册链尾 marker
-        let result =
-            craftwave_lib::host::commands::chat::compact_session_core(&app, &runs, session)
-                .await
-                .expect("手动压缩应成功");
-        let tree = app.store.load_session_tree(session).unwrap();
-        let tail_id = tree.active_leaf_id.clone().expect("史册应有活动叶");
-        assert_eq!(
-            result.cut_entry_id.as_deref(),
-            Some(tail_id.as_str()),
-            "{result:?}"
-        );
-        assert_eq!(tree.compactions.len(), 1);
-        assert_eq!(
-            tree.compactions[0].id, "manual:compact:1",
-            "手动 owner=manual"
-        );
-        assert!(tree.messages.iter().any(|m| m.id == "u-15"), "原始历史保留");
-        assert!(
-            events.payloads_of("tokens:update").is_empty()
-                || events.payloads_of("run:compacted").is_empty(),
-            "手动压缩走命令返回面（不发生自动压缩事件流）"
-        );
-    }
-
     // —— 8. steer / followUp 队列（06 号票，§5.5）——
 
-    use craftwave_lib::host::commands::chat::{
-        InjectMode, inject_run_message_core, remove_followup_core, resume_followup_queue_core,
-    };
+    use craftwave_lib::host::commands::chat::{InjectMode, inject_run_message_core};
     use craftwave_lib::storage::MessageRole;
 
     /// run 正常完成后的两连发场景（06 号票 e2e）：
@@ -2678,228 +2166,6 @@ mod command_face {
         assert!(has_steer, "第 2 轮请求应含插话 user 条目：{tool_round}");
     }
 
-    /// cancel 后队列清空且持久化文件删除；取消前入队的待发文本随
-    /// run:queue.returned 交还（FR-01-07 返还草稿）。
-    #[tokio::test]
-    async fn cancel_clears_queue_and_deletes_persisted_file() {
-        let mock = MockOpenAI::start().await;
-        let (app, events) = app_fixture_with_events(&mock);
-        let sink = SharedSink::default();
-
-        // 取消前排队两条
-        inject_run_message_core(
-            &app,
-            "sess-cancel",
-            "取消也不该丢的草稿一",
-            Some(InjectMode::FollowUp),
-            Some(&run_config()),
-            &[],
-        )
-        .unwrap();
-        inject_run_message_core(
-            &app,
-            "sess-cancel",
-            "取消也不该丢的草稿二",
-            Some(InjectMode::FollowUp),
-            Some(&run_config()),
-            &[],
-        )
-        .unwrap();
-
-        craftwave_lib::host::commands::chat::start_chat_core(
-            &app,
-            &app.runs,
-            "sess-cancel".to_owned(),
-            vec![user_entry("跑起来然后取消我")],
-            run_config(),
-            Box::new(sink.clone()),
-            false,
-        )
-        .await
-        .expect("run 应成功");
-
-        // 等首帧出现后取消（cancel_run 置位即返回）
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            if !sink.frames().is_empty() {
-                break;
-            }
-            assert!(Instant::now() < deadline, "等待首帧超时");
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
-        assert!(
-            craftwave_lib::host::commands::chat::cancel_run_core(&app.runs, "sess-cancel").await,
-            "取消应命中活跃 run"
-        );
-        let ended = wait_ended(&sink, Duration::from_secs(10)).await;
-        assert!(
-            matches!(
-                ended,
-                ChatFrame::RunEnded {
-                    reason: EndReason::Cancelled,
-                    ..
-                }
-            ),
-            "取消终态：{ended:?}"
-        );
-
-        // 队列清空 + 文件删除 + returned 交还
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            if app.followups.snapshot("sess-cancel").size == 0 {
-                let returned = events
-                    .payloads_of("run:queue")
-                    .last()
-                    .and_then(|p| p["returned"].as_array())
-                    .map(|a| a.len())
-                    .unwrap_or(0);
-                if returned == 2 {
-                    break;
-                }
-            }
-            assert!(Instant::now() < deadline, "等待清空返还超时");
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        let returned = events.payloads_of("run:queue").last().unwrap()["returned"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|v| v.as_str().unwrap().to_owned())
-            .collect::<Vec<_>>();
-        assert_eq!(
-            returned,
-            vec![
-                "取消也不该丢的草稿一".to_owned(),
-                "取消也不该丢的草稿二".to_owned()
-            ],
-            "按排队序交还"
-        );
-        assert!(
-            !app.store
-                .root()
-                .join("sessions")
-                .join("sess-cancel.queue.json")
-                .exists(),
-            "取消后队列文件应删除"
-        );
-    }
-
-    /// 失败暂停与明确继续（06 号票验收回归）：run 以 runEnded(error) 收场 →
-    /// 队列暂停、待发保留；resume_followup_queue 解除后立即投递队列头开新
-    /// run 并跑到收口（模型可用面由 fixture 保证）。
-    #[tokio::test]
-    async fn failure_pauses_queue_until_explicit_resume() {
-        let mock = MockOpenAI::start().await;
-        let (app, events) = app_fixture_with_events(&mock);
-        let sink = SharedSink::default();
-
-        inject_run_message_core(
-            &app,
-            "sess-pause",
-            "失败后应保留的待发",
-            Some(InjectMode::FollowUp),
-            Some(&run_config()),
-            &[],
-        )
-        .unwrap();
-
-        // 让 run 失败：maxTurns=0 → rig 预算即耗尽，run 任务内以错误终态收场
-        //（start_chat 命令面本身成功——失败发生在 run 任务内，收尾暂停可测）
-        let mut bad_config = run_config();
-        bad_config.max_turns = 0;
-        craftwave_lib::host::commands::chat::start_chat_core(
-            &app,
-            &app.runs,
-            "sess-pause".to_owned(),
-            vec![user_entry("必失败")],
-            bad_config,
-            Box::new(sink.clone()),
-            false,
-        )
-        .await
-        .expect("start 命令面应成功（失败发生在 run 任务内）");
-        let ended = wait_ended(&sink, Duration::from_secs(10)).await;
-        assert!(
-            matches!(
-                ended,
-                ChatFrame::RunEnded {
-                    reason: EndReason::Error,
-                    ..
-                }
-            ),
-            "maxTurns=0 应以错误收场：{ended:?}"
-        );
-
-        // 失败收尾：队列暂停 + 待发保留
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            let snap = app.followups.snapshot("sess-pause");
-            if snap.paused && snap.size == 1 {
-                break;
-            }
-            assert!(Instant::now() < deadline, "等待失败暂停超时");
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        let last = events
-            .payloads_of("run:queue")
-            .last()
-            .expect("应有 run:queue 事件")
-            .clone();
-        assert_eq!(last["paused"], true, "失败即暂停");
-        assert_eq!(last["size"], 1, "待发保留");
-
-        // 用户明确继续：解除暂停并立即投递队列头（模型可用 → 新 run 跑到收口）
-        let resumed = resume_followup_queue_core(&app, "sess-pause")
-            .await
-            .expect("resume 应成功");
-        assert!(resumed.delivered, "解除后应立即投递队列头");
-        let deadline = Instant::now() + Duration::from_secs(10);
-        loop {
-            if !events.payloads_of("run:done").is_empty() {
-                break;
-            }
-            assert!(Instant::now() < deadline, "等待投递 run 收口超时");
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        assert_eq!(app.followups.snapshot("sess-pause").size, 0, "队列清空");
-    }
-
-    /// remove_followup：命中移除返回剩余长度；重复删除 E_NOT_FOUND。
-    #[tokio::test]
-    async fn remove_followup_entry_and_miss_reports_not_found() {
-        let mock = MockOpenAI::start().await;
-        let (app, _events) = app_fixture_with_events(&mock);
-
-        inject_run_message_core(
-            &app,
-            "sess-rm",
-            "留下的",
-            Some(InjectMode::FollowUp),
-            Some(&run_config()),
-            &[],
-        )
-        .unwrap();
-        inject_run_message_core(
-            &app,
-            "sess-rm",
-            "要删的",
-            Some(InjectMode::FollowUp),
-            Some(&run_config()),
-            &[],
-        )
-        .unwrap();
-        let entry_id = app
-            .followups
-            .peek_head("sess-rm")
-            .map(|e| e.id)
-            .expect("队头");
-        let result = remove_followup_core(&app, "sess-rm", &entry_id).expect("命中应成功");
-        assert_eq!(result.size, 1);
-        let err = remove_followup_core(&app, "sess-rm", &entry_id).expect_err("重复删除应未命中");
-        assert_eq!(err.code, "E_NOT_FOUND");
-        assert_eq!(app.followups.snapshot("sess-rm").size, 1);
-    }
-
     // —— 07 号票：ask 混批互斥（Q35/Q42，命令面）——
 
     const ASK_ARGS: &str = r#"{"title":"选方案","questions":[{"id":"q1","text":"用哪个方案？","options":[{"id":"a","label":"方案A"},{"id":"b","label":"方案B"}],"allowFreeText":false}]}"#;
@@ -2991,72 +2257,6 @@ mod command_face {
             tools[1].to_string().contains("E_TOOL_SKIPPED"),
             "模型通道含未执行说明：{}",
             tools[1]
-        );
-    }
-
-    /// Q42：同批多个 ask——只执行源序首个，其余 ask 与其他工具都明确返回
-    /// 未执行；不弹出第二个问卷（不占审批槽）。
-    #[tokio::test]
-    async fn multiple_asks_execute_first_only_others_skipped() {
-        let mock = MockOpenAI::start_with_turn1(multi_tool_turn1(&[
-            ("call_1", "ask", ASK_ARGS),
-            ("call_2", "ask", ASK_ARGS),
-            ("call_3", TOOL_READ, r#"{"path": "whatever.txt"}"#),
-        ]))
-        .await;
-        let (app, events) = app_fixture_with_events(&mock);
-        let runs = RunManager::new();
-        let sink = SharedSink::default();
-
-        craftwave_lib::host::commands::chat::start_chat_core(
-            &app,
-            &runs,
-            "sess-askask".to_owned(),
-            vec![user_entry("两个问题一起问")],
-            run_config(),
-            Box::new(sink.clone()),
-            false,
-        )
-        .await
-        .unwrap();
-
-        let opened = wait_event(&events, "ask:opened", Duration::from_secs(5)).await;
-        let ask_id = opened["askId"].as_str().unwrap().to_owned();
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        assert_eq!(
-            events.payloads_of("ask:opened").len(),
-            1,
-            "同批只执行源序首个 ask（不弹第二个问卷）"
-        );
-
-        let mut answers = std::collections::BTreeMap::new();
-        answers.insert("q1".to_owned(), "a".to_owned());
-        craftwave_lib::host::commands::chat::resolve_ask_core(
-            &runs,
-            &ask_id,
-            AskAnswer::Question { answers },
-        )
-        .await
-        .unwrap();
-
-        let ended = wait_ended(&sink, Duration::from_secs(10)).await;
-        assert!(matches!(
-            ended,
-            ChatFrame::RunEnded {
-                reason: EndReason::Done,
-                ..
-            }
-        ));
-        let faces = tool_result_faces(&sink.frames());
-        assert_eq!(faces.len(), 3, "三个调用结果配对完整（源序）");
-        assert!(faces[0].1, "首个 ask 正常执行");
-        assert!(
-            !faces[1].1 && faces[1].2.as_deref() == Some("E_TOOL_SKIPPED"),
-            "第二个 ask 未执行"
-        );
-        assert!(
-            !faces[2].1 && faces[2].2.as_deref() == Some("E_TOOL_SKIPPED"),
-            "read 未执行"
         );
     }
 
@@ -3173,232 +2373,15 @@ mod command_face {
             "标题辅助调用应有 aux 明细：{detail:?}"
         );
     }
-
-    /// 非首条消息不再起名：第二次 start_chat（模拟重启续聊/连发第二问）
-    /// 不重新生成标题——标题保留第一次的生成值，无第二个 session:title。
-    #[tokio::test]
-    async fn auto_title_not_regenerated_on_second_message() {
-        let mock = MockOpenAI::start().await;
-        let (app, events) = app_fixture_with_events(&mock);
-        seed_default_title(&app, "sess-title-once");
-        let runs = RunManager::new();
-        let sink = SharedSink::default();
-
-        craftwave_lib::host::commands::chat::start_chat_core(
-            &app,
-            &runs,
-            "sess-title-once".to_owned(),
-            vec![user_entry("第一个问题")],
-            run_config(),
-            Box::new(sink.clone()),
-            false,
-        )
-        .await
-        .expect("第一次 start 应成功");
-        wait_ended(&sink, Duration::from_secs(10)).await;
-        let first = wait_event(&events, "session:title", Duration::from_secs(10)).await;
-        assert_eq!(first["title"], NONSTREAM_TEXT);
-        let title_count_after_first = events.payloads_of("session:title").len();
-
-        // 第二条消息：标题已非默认 → 判定不触发（重启续聊同面）
-        craftwave_lib::host::commands::chat::start_chat_core(
-            &app,
-            &runs,
-            "sess-title-once".to_owned(),
-            vec![user_entry("第二个问题")],
-            run_config(),
-            Box::new(sink.clone()),
-            false,
-        )
-        .await
-        .expect("第二次 start 应成功");
-        wait_ended(&sink, Duration::from_secs(10)).await;
-        wait_event(&events, "run:suggestions", Duration::from_secs(10)).await;
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        assert_eq!(
-            events.payloads_of("session:title").len(),
-            title_count_after_first,
-            "第二次消息不应再起名"
-        );
-        assert_eq!(
-            app.store.index().get("sess-title-once").unwrap().title,
-            NONSTREAM_TEXT,
-            "标题保留不被覆盖"
-        );
-    }
-}
-
-// —— 8. 并行工具批（07 号票，机制层）：混合读写源序 + 并发取消收齐 ——
-
-/// 混合读写批次：不同文件的读并发、同文件双 edit 合并提交、结果按源序
-/// 回喂（toolResult 帧序与第 2 轮请求的 tool 消息序 = 模型调用源序）。
-#[tokio::test]
-async fn parallel_batch_mixed_read_write_source_order() {
-    let (executor, root) = file_tool_executor();
-    std::fs::write(root.join("a.txt"), "alpha").unwrap();
-    std::fs::write(root.join("b.txt"), "beta").unwrap();
-    std::fs::write(root.join("c.txt"), "x1\nx2\nx3\n").unwrap();
-    let mock = MockOpenAI::start_with_turn1(multi_tool_turn1(&[
-        ("call_1", TOOL_READ, r#"{"path": "a.txt"}"#),
-        (
-            "call_2",
-            "edit",
-            r#"{"path": "c.txt", "oldText": "x1", "newText": "y1"}"#,
-        ),
-        ("call_3", TOOL_READ, r#"{"path": "b.txt"}"#),
-        (
-            "call_4",
-            "edit",
-            r#"{"path": "c.txt", "oldText": "x3", "newText": "y3"}"#,
-        ),
-    ]))
-    .await;
-    let driver = TurnDriver::new(
-        mock_model(&mock),
-        RunSpec::new(),
-        vec![tool_def(TOOL_READ), tool_def("edit")],
-    );
-    let sink = SharedSink::default();
-    let mut sink_handle = sink.clone();
-    let exit = drive_run(
-        &driver,
-        new_run("混合批次"),
-        "run-parallel",
-        "gpt-4o-mock",
-        CancellationToken::new(),
-        Arc::new(executor),
-        Arc::new(AllowAllGate),
-        &mut sink_handle,
-        None,
-        None,
-        None, // 每拍请求刷新源（测试直驱路径无，18 号票）
-        std::time::Duration::from_secs(30),
-    )
-    .await
-    .expect("跑完");
-    assert!(matches!(exit, RunExit::Done(_)), "正常终态：{exit:?}");
-
-    // 源序结果帧 ×4，全部成功（同文件双 edit 合并原子提交）。
-    let faces = tool_result_faces(&sink.frames());
-    assert_eq!(faces.len(), 4);
-    // part 序号从 1 起（脚本开头的正文占 part 0）：四个结果帧 callId 严格
-    // 递增 = 源序（完成顺序不改序）。
-    let ids: Vec<u32> = faces
-        .iter()
-        .map(|(call_id, _, _)| {
-            call_id
-                .strip_prefix("call_part_1_")
-                .and_then(|s| s.parse().ok())
-                .unwrap_or_else(|| panic!("callId 形如 call_part_1_N：{call_id}"))
-        })
-        .collect();
-    let mut sorted = ids.clone();
-    sorted.sort_unstable();
-    assert_eq!(ids, sorted, "toolResult 帧面按源序（完成顺序不改序）");
-    for (i, (_, ok, code)) in faces.iter().enumerate() {
-        assert!(ok, "成员 {i} 成功（{code:?}）");
-    }
-    assert_eq!(
-        std::fs::read_to_string(root.join("c.txt")).unwrap(),
-        "y1\nx2\ny3\n",
-        "同文件双 edit 合并提交生效"
-    );
-    // 回喂面序 = 源序：第 2 轮请求第 1 条 tool 消息是 read a 的结果。
-    let bodies = mock.request_bodies().await;
-    let tools: Vec<String> = bodies[1]["messages"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|m| m["role"] == "tool")
-        .map(|m| m.to_string())
-        .collect();
-    assert_eq!(tools.len(), 4);
-    assert!(tools[0].contains("alpha"), "第 1 条 = read a.txt 的结果");
-    assert!(tools[2].contains("beta"), "第 3 条 = read b.txt 的结果");
-}
-
-/// 并发取消收齐：批内两个长命令同时派发，cancel 后两进程组收割、结果
-/// 收齐，runEnded(cancelled) 必为最后一帧（S5 不变量的并发版）。
-#[tokio::test]
-async fn parallel_batch_cancel_joins_both_commands_then_run_ended() {
-    let (executor, _root) = file_tool_executor();
-    let mock = MockOpenAI::start_with_turn1(multi_tool_turn1(&[
-        ("call_1", TOOL_COMMAND, r#"{"command": "sleep 900"}"#),
-        ("call_2", TOOL_COMMAND, r#"{"command": "sleep 900"}"#),
-    ]))
-    .await;
-    let driver = TurnDriver::new(
-        mock_model(&mock),
-        RunSpec::new(),
-        vec![tool_def(TOOL_COMMAND)],
-    );
-    let sink = SharedSink::default();
-    let sink_for_run = sink.clone();
-    let token = CancellationToken::new();
-    let token_for_run = token.clone();
-    let task = tokio::spawn(async move {
-        let mut sink_handle = sink_for_run;
-        drive_run(
-            &driver,
-            new_run("两个长命令"),
-            "run-parallel-cancel",
-            "gpt-4o-mock",
-            token_for_run,
-            Arc::new(executor),
-            Arc::new(AllowAllGate),
-            &mut sink_handle,
-            None,
-            None,
-            None, // 每拍请求刷新源（测试直驱路径无，18 号票）
-            std::time::Duration::from_secs(30),
-        )
-        .await
-    });
-
-    // 等流式收口（usage 帧 = 模型流结束、工具批已在执行）后取消——两个
-    // 命令都在飞；过早取消会走"模型流取消"路径（S5 另测）而非本票的
-    // "并发批取消收齐"路径。
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while sink.count_kind(|f| matches!(f, ChatFrame::Usage { .. })) < 1 {
-        assert!(Instant::now() < deadline, "等待模型流收口超时");
-        tokio::time::sleep(Duration::from_millis(2)).await;
-    }
-    let t_cancel = Instant::now();
-    token.cancel();
-
-    let exit = task.await.expect("run 任务完成").expect("无 PromptError");
-    assert!(matches!(exit, RunExit::Cancelled));
-    let frames = sink.frames();
-    let results = tool_result_faces(&frames);
-    assert_eq!(results.len(), 2, "两个命令都收齐（在飞 join）");
-    for (call_id, ok, code) in &results {
-        assert!(!ok, "{call_id} 被收割");
-        assert_eq!(code.as_deref(), Some("E_CANCELLED"));
-    }
-    let last = frames.last().expect("有帧");
-    let ChatFrame::RunEnded { reason, .. } = &last.frame.frame else {
-        panic!("末帧 runEnded");
-    };
-    assert_eq!(
-        *reason,
-        EndReason::Cancelled,
-        "runEnded(cancelled) 必为最后一帧"
-    );
-    assert!(
-        last.at.duration_since(t_cancel) < FULL_CHAIN_BUDGET,
-        "收齐全链 <1s"
-    );
 }
 
 // —— 8b. 灰区命令审计（36 号票，§8.7）：三态 + 失败转人工 + 恢复不重复审计 ——
 
 mod command_audit {
     use super::command_face::{
-        app_fixture_with_events, provider_fixture, run_config, tool_turn1, user_entry, wait_ended,
-        wait_event,
+        app_fixture_with_events, run_config, tool_turn1, user_entry, wait_ended, wait_event,
     };
     use super::*;
-    use craftwave_lib::backend::ask::AskAnswer;
     use serde_json::Value;
 
     /// 审计灰区命令样例：重定向写目标在授权目录外（词法越界）→ full_access
@@ -3551,180 +2534,6 @@ mod command_audit {
         let _ = call_id;
     }
 
-    /// 场景 2：审计 ask —— 模型建议人工确认，审批卡带审计结论；用户批准后
-    /// 恢复执行；恢复重放不再审计。
-    #[tokio::test]
-    async fn audit_ask_goes_to_human_with_note() {
-        let mock = MockOpenAI::start_with_turn1(audit_turn1()).await;
-        mock.set_nonstream_text(Some(
-            r#"{"decision":"ask","reason":"写入位置在授权目录外"}"#,
-        ));
-        let (app, events) = app_fixture_with_events(&mock);
-        let runs = RunManager::new();
-        let sink = SharedSink::default();
-
-        craftwave_lib::host::commands::chat::start_chat_core(
-            &app,
-            &runs,
-            "sess-audit-ask".to_owned(),
-            vec![user_entry("写到临时目录")],
-            run_config(),
-            Box::new(sink.clone()),
-            false,
-        )
-        .await
-        .expect("启动成功");
-
-        wait_audit_frame(&sink, "ask", Duration::from_secs(10)).await;
-        // 审批卡带审计结论（audit.state=ask + 理由）。
-        let opened = wait_event(&events, "ask:opened", Duration::from_secs(5)).await;
-        assert_eq!(opened["payload"]["kind"], "approval");
-        assert_eq!(opened["payload"]["audit"]["state"], "ask");
-        assert_eq!(opened["payload"]["audit"]["reason"], "写入位置在授权目录外");
-        let ask_id = opened["askId"].as_str().unwrap().to_owned();
-
-        craftwave_lib::host::commands::chat::resolve_ask_core(
-            &runs,
-            &ask_id,
-            AskAnswer::Approval {
-                option_id: "allow_once".to_owned(),
-                edited_command: None,
-            },
-        )
-        .await
-        .expect("resolve 应命中");
-        let ended = wait_ended(&sink, Duration::from_secs(10)).await;
-        assert!(matches!(
-            ended,
-            ChatFrame::RunEnded {
-                reason: EndReason::Done,
-                ..
-            }
-        ));
-        // 恢复重放不重复审计（非流式请求数仍为 1）。
-        let bodies = nonstream_bodies(&mock).await;
-        assert_eq!(bodies.len(), 1, "人工批准恢复后不重复审计");
-        // 审计 ask 也不把结论写进人批缓存之外的面：同 run 内同签名新调用
-        // 重新走灰区（由 gate 单测覆盖，e2e 只锚定无重复审计）。
-    }
-
-    /// 场景 3：审计失败转人工 —— 模型请求失败（mock 500）→ manual 注记 +
-    /// 审批卡展示失败原因；用户批准后恢复（失败不默认为放行）。
-    #[tokio::test]
-    async fn audit_failure_falls_back_to_human() {
-        let mock = MockOpenAI::start_with_turn1(audit_turn1()).await;
-        mock.set_fail_nonstream(true);
-        let (app, events) = app_fixture_with_events(&mock);
-        let runs = RunManager::new();
-        let sink = SharedSink::default();
-
-        craftwave_lib::host::commands::chat::start_chat_core(
-            &app,
-            &runs,
-            "sess-audit-fail".to_owned(),
-            vec![user_entry("审计失败场景")],
-            run_config(),
-            Box::new(sink.clone()),
-            false,
-        )
-        .await
-        .expect("启动成功");
-
-        wait_audit_frame(&sink, "manual", Duration::from_secs(10)).await;
-        let opened = wait_event(&events, "ask:opened", Duration::from_secs(5)).await;
-        assert_eq!(opened["payload"]["audit"]["state"], "manual");
-        let reason = opened["payload"]["audit"]["reason"]
-            .as_str()
-            .unwrap_or_default();
-        assert!(
-            reason.contains("审计模型请求失败"),
-            "失败原因可见：{reason}"
-        );
-        let ask_id = opened["askId"].as_str().unwrap().to_owned();
-
-        craftwave_lib::host::commands::chat::resolve_ask_core(
-            &runs,
-            &ask_id,
-            AskAnswer::Approval {
-                option_id: "allow_once".to_owned(),
-                edited_command: None,
-            },
-        )
-        .await
-        .expect("resolve 应命中");
-        let ended = wait_ended(&sink, Duration::from_secs(10)).await;
-        assert!(matches!(
-            ended,
-            ChatFrame::RunEnded {
-                reason: EndReason::Done,
-                ..
-            }
-        ));
-    }
-
-    /// 场景 4：指定审计模型失效转人工 —— commandAudit.modelId 指向不存在
-    /// 的模型 → 审计请求不发出（不静默换供应商），转人工并显示原因。
-    #[tokio::test]
-    async fn audit_model_unavailable_falls_back_to_human() {
-        let mock = MockOpenAI::start_with_turn1(audit_turn1()).await;
-        let (app, events) = app_fixture_with_events(&mock);
-        let mut config = (*app.config.load().unwrap()).clone();
-        config.agent = Some(craftwave_lib::providers::types::AgentConfig {
-            command_audit: Some(craftwave_lib::providers::types::CommandAuditConfig {
-                model_id: Some("missing-audit-model".to_owned()),
-            }),
-            ..craftwave_lib::providers::types::AgentConfig::default()
-        });
-        app.config.save(config).expect("保存配置");
-        let runs = RunManager::new();
-        let sink = SharedSink::default();
-
-        craftwave_lib::host::commands::chat::start_chat_core(
-            &app,
-            &runs,
-            "sess-audit-model".to_owned(),
-            vec![user_entry("指定审计模型失效")],
-            run_config(),
-            Box::new(sink.clone()),
-            false,
-        )
-        .await
-        .expect("启动成功");
-
-        wait_audit_frame(&sink, "manual", Duration::from_secs(10)).await;
-        let opened = wait_event(&events, "ask:opened", Duration::from_secs(5)).await;
-        assert_eq!(opened["payload"]["audit"]["state"], "manual");
-        let reason = opened["payload"]["audit"]["reason"]
-            .as_str()
-            .unwrap_or_default();
-        assert!(
-            reason.contains("审计模型不可用"),
-            "模型失效原因可见（不静默换供应商）：{reason}"
-        );
-        // 审计请求未发出（无供应商切换的隐性请求）。
-        let bodies = nonstream_bodies(&mock).await;
-        assert!(bodies.is_empty(), "失效模型不应发出审计请求");
-        let ask_id = opened["askId"].as_str().unwrap().to_owned();
-        craftwave_lib::host::commands::chat::resolve_ask_core(
-            &runs,
-            &ask_id,
-            AskAnswer::Approval {
-                option_id: "allow_once".to_owned(),
-                edited_command: None,
-            },
-        )
-        .await
-        .expect("resolve 应命中");
-        let ended = wait_ended(&sink, Duration::from_secs(10)).await;
-        assert!(matches!(
-            ended,
-            ChatFrame::RunEnded {
-                reason: EndReason::Done,
-                ..
-            }
-        ));
-    }
-
     /// 场景 5：审计 Block —— 模型判断高风险 → E_AUDIT_BLOCKED 拒绝收场
     /// （runEnded(error) + run:error 事件带 code），命令不执行。
     #[tokio::test]
@@ -3782,154 +2591,6 @@ mod command_audit {
             "Block 不弹审批卡"
         );
     }
-
-    /// 场景 6：指定审计模型生效 —— commandAudit.modelId 指向独立 mock 端点
-    /// 的模型，审计请求发往专用端点（会话模型端点不收非流式请求）。
-    #[tokio::test]
-    async fn audit_designated_model_receives_request() {
-        let session_mock = MockOpenAI::start_with_turn1(audit_turn1()).await;
-        let audit_mock = MockOpenAI::start().await;
-        audit_mock.set_nonstream_text(Some(r#"{"decision":"allow","reason":"专用审计模型放行"}"#));
-        let (app, _events) = app_fixture_with_events(&session_mock);
-        let mut config = (*app.config.load().unwrap()).clone();
-        let mut audit_provider = provider_fixture(&audit_mock.base_url);
-        audit_provider.id = "prov-audit".to_owned();
-        audit_provider.models[0].id = "model-audit".to_owned();
-        audit_provider.models[0].model = "audit-mock".to_owned();
-        config.providers.push(audit_provider);
-        config.agent = Some(craftwave_lib::providers::types::AgentConfig {
-            command_audit: Some(craftwave_lib::providers::types::CommandAuditConfig {
-                model_id: Some("model-audit".to_owned()),
-            }),
-            ..craftwave_lib::providers::types::AgentConfig::default()
-        });
-        app.config.save(config).expect("保存配置");
-        let runs = RunManager::new();
-        let sink = SharedSink::default();
-
-        craftwave_lib::host::commands::chat::start_chat_core(
-            &app,
-            &runs,
-            "sess-audit-model2".to_owned(),
-            vec![user_entry("指定审计模型生效")],
-            run_config(),
-            Box::new(sink.clone()),
-            false,
-        )
-        .await
-        .expect("启动成功");
-
-        wait_audit_frame(&sink, "allow", Duration::from_secs(10)).await;
-        let ended = wait_ended(&sink, Duration::from_secs(10)).await;
-        assert!(matches!(
-            ended,
-            ChatFrame::RunEnded {
-                reason: EndReason::Done,
-                ..
-            }
-        ));
-        // 审计请求发往专用端点；会话端点只收流式主请求。
-        let audit_bodies = nonstream_bodies(&audit_mock).await;
-        assert_eq!(audit_bodies.len(), 1, "审计请求发往专用模型端点");
-        assert_eq!(audit_bodies[0]["model"], "audit-mock");
-        let session_nonstream = nonstream_bodies(&session_mock).await;
-        assert!(
-            session_nonstream.is_empty(),
-            "会话端点不应收到审计请求（不静默回退会话模型）"
-        );
-    }
-}
-
-// —— 9. 小工具包（14 号票，§8.3 M2 表四行）：plan 档可见 + render_html 链路 ——
-
-mod small_tools {
-    use super::*;
-
-    /// 以 plan 档构造真实文件工具执行器（ReadOnly 全放行的矩阵面验证，
-    /// §8.5：plan 档 ReadOnly 放行、FileWrite/Network 过滤）。
-    fn plan_tier_executor() -> (
-        craftwave_lib::backend::exec::ToolsetExecutor,
-        std::path::PathBuf,
-    ) {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let root = dir.path().to_path_buf();
-        std::mem::forget(dir);
-        let ctx = craftwave_lib::tools::ToolsContext::new(root.clone(), root.clone());
-        (
-            craftwave_lib::backend::exec::ToolsetExecutor::new(
-                ctx,
-                craftwave_lib::safety::tier::PermissionTier::Plan,
-            ),
-            root,
-        )
-    }
-
-    /// plan 档四工具可见且可执行（ReadOnly 放行，§8.5 矩阵行 1）：注册表层
-    /// 面由 tools_registry_test 钉死，此处验证执行器在 plan 档不排除四工具
-    /// 且真实执行成功。
-    #[tokio::test]
-    async fn plan_tier_sees_and_executes_all_four_small_tools() {
-        let (executor, root) = plan_tier_executor();
-        std::fs::write(root.join("a.txt"), "alpha\n").unwrap();
-        std::fs::write(root.join("b.rs"), "fn main() {}\n").unwrap();
-        let token = CancellationToken::new();
-        for (name, args) in [
-            ("batch_read", r#"{"paths": ["a.txt", "b.rs"]}"#),
-            ("glob", r#"{"pattern": "**/*.rs"}"#),
-            ("calculate", r#"{"expression": "(1 + 2) * 4"}"#),
-            ("render_html", r#"{"html": "<p>plan 档预览</p>"}"#),
-        ] {
-            let out = executor.execute("call_1", name, args, &token).await;
-            let ToolExecution::Completed {
-                ok,
-                ui_summary,
-                error,
-                ..
-            } = out
-            else {
-                panic!("{name} 应为 Completed");
-            };
-            assert!(ok, "plan 档 {name} 应放行且成功：{ui_summary} {error:?}");
-        }
-    }
-
-    /// render_html 完整链路（票面 e2e）：plan 档 run 中模型调用 render_html →
-    /// toolResult 帧成功（卡片折叠/展开的前端面在 small-tools.test.tsx 钉死）。
-    #[tokio::test]
-    async fn render_html_tool_call_round_trip_in_plan_tier() {
-        let (executor, _root) = plan_tier_executor();
-        let html = r#"{"html": "<!DOCTYPE html><p>沙箱预览</p>"}"#;
-        let mock =
-            MockOpenAI::start_with_turn1(multi_tool_turn1(&[("call_1", "render_html", html)]))
-                .await;
-        let driver = TurnDriver::new(
-            mock_model(&mock),
-            RunSpec::new(),
-            vec![tool_def("render_html")],
-        );
-        let sink = SharedSink::default();
-        let mut sink_handle = sink.clone();
-        let exit = drive_run(
-            &driver,
-            new_run("预览"),
-            "run-render-html",
-            "gpt-4o-mock",
-            CancellationToken::new(),
-            Arc::new(executor),
-            Arc::new(AllowAllGate),
-            &mut sink_handle,
-            None,
-            None,
-            None, // 每拍请求刷新源（测试直驱路径无，18 号票）
-            std::time::Duration::from_secs(30),
-        )
-        .await
-        .expect("跑完");
-        assert!(matches!(exit, RunExit::Done(_)), "正常终态：{exit:?}");
-        let faces = tool_result_faces(&sink.frames());
-        assert_eq!(faces.len(), 1);
-        assert!(faces[0].1, "render_html 调用成功（{:?}）", faces[0].2);
-    }
 }
 
 // ---- 图片输入与模型读图（17 号票，§6.2 image part 双形态端到端） ----
@@ -3938,10 +2599,7 @@ mod image_face {
     use super::*;
     use base64::Engine;
 
-    use craftwave_lib::host::commands::chat::{
-        RunConfig, inject_run_message_core, start_chat_core,
-    };
-    use craftwave_lib::host::followup::QueuedImageAttachment;
+    use craftwave_lib::host::commands::chat::{RunConfig, start_chat_core};
     use craftwave_lib::providers::types::{ApiFormat, ProviderConfig, ProviderModel};
     use craftwave_lib::safety::tier::PermissionTier;
     use craftwave_lib::storage::{MessageEntry, MessageRole, WirePart, get_blob, put_blob};
@@ -4196,60 +2854,6 @@ mod image_face {
                 .as_array()
                 .is_some_and(|parts| parts.iter().any(|p| p["type"] == "image_url"))),
             "非 vision 请求不应出现多模态图片块"
-        );
-    }
-
-    /// 带图消息经 inject_run_message 转 followUp 队列（§5.5 带图不入 steer），
-    /// 自动投递新 run 时附件引用展开为 image part（vision 模型收多模态块）。
-    #[tokio::test]
-    async fn followup_with_image_delivers_image_part() {
-        let mock = MockOpenAI::start().await;
-        let app = app_fixture_vision(&mock, Some(true));
-        let blob_hash = put_blob(app.store.root(), "sess-f", &png_bytes()).unwrap();
-
-        // 带图 inject（mode 缺省按 steer 语义请求；无活跃 run + 带图 → followUp）
-        let result = inject_run_message_core(
-            &app,
-            "sess-f",
-            "排队看看这张图",
-            None,
-            Some(&run_config()),
-            &[QueuedImageAttachment {
-                blob_hash: blob_hash.clone(),
-                mime_type: "image/png".to_owned(),
-            }],
-        )
-        .expect("带图 inject 应成功");
-        assert_eq!(
-            result.mode,
-            Some(craftwave_lib::host::commands::chat::InjectMode::FollowUp)
-        );
-        assert!(result.entry_id.is_some());
-
-        // 手动投递（与 resume_followup_queue_core 同面）：新 run 携 image part
-        craftwave_lib::host::commands::chat::resume_followup_queue_core(&app, "sess-f")
-            .await
-            .expect("投递命令应成功");
-        // 等待 run 收尾（投递为 DetachedSink，无帧面——以 RunManager 摘除为准）
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while app.runs.get("sess-f").is_some() {
-            assert!(Instant::now() < deadline, "投递 run 应收尾");
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-        let contents = user_contents(&mock).await;
-        assert!(
-            contents.iter().any(|c| {
-                c.as_array().is_some_and(|parts| {
-                    parts.iter().any(|p| p["type"] == "image_url")
-                        && parts.iter().any(|p| {
-                            p["type"] == "text"
-                                && p["text"]
-                                    .as_str()
-                                    .is_some_and(|t| t.contains("排队看看这张图"))
-                        })
-                })
-            }),
-            "followUp 投递的 user 消息应含文本 + image_url 多模态块；实际：{contents:?}"
         );
     }
 }

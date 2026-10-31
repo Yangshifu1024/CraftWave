@@ -1,5 +1,6 @@
-//! host/usage.rs 的单元测试（20 号票）：三面落账同源、跨午夜拆日、切时区
-//! 不重算、缓存命中与降级直读一致、90 天惰性清理联动。
+//! host/usage.rs 的单元测试（20 号票）：三面落账同源与 run 计次、跨午夜
+//! 拆日与历史不重算（含删除明细保留匿名聚合）、缓存命中/回填/降级与 90 天
+//! 惰性清理联动。
 
 use std::fs;
 
@@ -33,35 +34,16 @@ fn main_record(
     ledger.record_on_day(day, session, run, run_kind::MAIN, model, "显示名", d, true);
 }
 
+/// 断言三面落账同源与 run 计次（Q40：子 run 与辅助调用不增 runs、用量照计、
+/// 缓存写穿面按日/模型聚合），以及跨午夜拆日（Q39）与历史不重算——
+/// 后续帧不重复计次、run 次数只在首个有计量日计一次、切时区不搬移历史日
+/// 数字、Q43 删除会话明细后日/模型匿名数字保留。
 #[test]
-fn record_writes_all_three_faces() {
-    let (_dir, root) = temp_root();
-    let ledger = UsageLedger::new(&root);
-    main_record(&ledger, "2026-10-30", "s1", "r1", "m1", delta(100, 10));
-    // ① 聚合面
-    let day = ledger.stats.read_day("2026-10-30");
-    assert_eq!(day.models["m1"].input, 100);
-    assert_eq!(day.models["m1"].runs, 1);
-    // ② 明细面（Q37）
-    let detail = ledger.detail.load("s1");
-    assert_eq!(detail.session_total.input, 100);
-    assert_eq!(detail.runs["r1"].kind, "main");
-    // ③ 缓存面（写穿）
-    let rows = ledger
-        .cache
-        .query_stats_range("2026-10-30", "2026-10-30")
-        .expect("缓存可用");
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].usage.input, 100);
-    assert_eq!(rows[0].runs, 1);
-}
-
-#[test]
-fn sub_and_aux_never_count_runs_but_count_usage() {
+fn record_faces_run_counting_and_midnight_split() {
     let (_dir, root) = temp_root();
     let ledger = UsageLedger::new(&root);
     main_record(&ledger, "2026-10-30", "s1", "r1", "m1", delta(50, 5));
-    // 子 run 两拍（首帧也不计次，Q40）
+    // 子 run 两拍（首帧也不计次，Q40）与辅助调用（suggest）。
     ledger.record_on_day(
         "2026-10-30",
         "s1",
@@ -72,7 +54,6 @@ fn sub_and_aux_never_count_runs_but_count_usage() {
         delta(10, 1),
         false,
     );
-    // 辅助调用（suggest）
     ledger.record_on_day(
         "2026-10-30",
         "s1",
@@ -83,21 +64,33 @@ fn sub_and_aux_never_count_runs_but_count_usage() {
         delta(3, 1),
         false,
     );
+    // ① 聚合面：runs 只算主 run，用量含主/子/辅助。
     let day = ledger.stats.read_day("2026-10-30");
     assert_eq!(
         day.models["m1"].runs, 1,
         "子 run 与辅助调用不增 runs（Q40）"
     );
     assert_eq!(day.models["m1"].input, 63, "用量照计");
+    // ② 明细面（Q37）：会话累计含主/子/辅助，run kind 归档正确。
     let detail = ledger.detail.load("s1");
     assert_eq!(detail.session_total.input, 63, "会话累计含主/子/辅助");
-}
+    assert_eq!(detail.runs["r1"].kind, "main");
+    // ③ 缓存面（写穿）：行为日/模型聚合（同日多会话多 run 合并一行）。
+    main_record(&ledger, "2026-10-30", "s2", "r2", "m1", delta(100, 10));
+    let rows = ledger
+        .cache
+        .query_stats_range("2026-10-30", "2026-10-30")
+        .expect("缓存可用");
+    assert_eq!(rows.len(), 1, "缓存面按日/模型聚合：{rows:?}");
+    assert_eq!(
+        rows[0].usage.input, 163,
+        "四笔（主+子+辅+主）合并 50+10+3+100"
+    );
+    assert_eq!(rows[0].runs, 2, "两次主 run 计次");
 
-#[test]
-fn midnight_split_and_timezone_never_rewrites_history() {
+    // 跨午夜 run：前半程落 10-30、后半程落 10-31（Q39 拆日）
     let (_dir, root) = temp_root();
     let ledger = UsageLedger::new(&root);
-    // 跨午夜 run：前半程落 10-30、后半程落 10-31（Q39 拆日）
     main_record(&ledger, "2026-10-30", "s1", "r1", "m1", delta(40, 4));
     ledger.record_on_day(
         "2026-10-31",
@@ -120,10 +113,20 @@ fn midnight_split_and_timezone_never_rewrites_history() {
     main_record(&ledger, "2026-11-15", "s2", "r2", "m1", delta(1, 0));
     assert_eq!(ledger.stats.read_day("2026-10-30").models["m1"].input, 40);
     assert_eq!(ledger.stats.read_day("2026-10-31").models["m1"].input, 7);
+    // Q43：删除会话明细 → 日/模型匿名数字保留（逐日 40 与 7 都在）
+    ledger.detail.forget_session("s1");
+    assert_eq!(
+        ledger.detail.load("s1"),
+        crate::storage::stats::SessionUsage::default()
+    );
+    let rows = ledger.query_range("2026-10-01", "2026-10-31");
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].models["m1"].input, 40, "聚合数字保留（无会话关联）");
+    assert_eq!(rows[1].models["m1"].input, 7);
 }
 
 #[test]
-fn query_range_prefers_cache_and_refills_when_missing() {
+fn query_cache_backfill_degraded_and_retention_prune() {
     let (_dir, root) = temp_root();
     let ledger = UsageLedger::new(&root);
     main_record(&ledger, "2026-10-30", "s1", "r1", "m1", delta(100, 10));
@@ -136,29 +139,18 @@ fn query_range_prefers_cache_and_refills_when_missing() {
     ledger.cache.backfill_stats(&[]);
     let after_backfill = ledger.query_range("2026-10-01", "2026-10-31");
     assert_eq!(after_backfill[0].models["m1"].input, 100, "回填后数字一致");
-}
 
-#[test]
-fn degraded_cache_falls_back_to_truth_files() {
-    let (_dir, root) = temp_root();
-    let ledger = UsageLedger::new(&root);
-    main_record(&ledger, "2026-10-30", "s1", "r1", "m1", delta(100, 10));
-    // 占位文件让 cache/ 目录不可重建 → 降级态
-    // （重新建一个 ledger 走降级路径：cache/ 变成文件后 open 降级）
+    // 占位文件让 cache/ 目录不可重建 → 降级态直读 stats/*.json
     fs::remove_dir_all(root.join("cache")).expect("清缓存");
     fs::write(root.join("cache"), "not a dir").expect("占位");
     let degraded = UsageLedger::new(&root);
-    assert!(degraded.cache.degraded());
+    assert!(degraded.cache.degraded(), "cache/ 被文件占位后应进降级态");
     let truth_only = degraded.query_range("2026-10-01", "2026-10-31");
     assert_eq!(truth_only.len(), 1, "降级直读 stats/*.json");
     assert_eq!(truth_only[0].models["m1"].input, 100);
-}
 
-#[test]
-fn retention_prune_runs_alongside_record() {
-    let (_dir, root) = temp_root();
-    let ledger = UsageLedger::new(&root);
-    // 直接手写一个 100 天前的统计文件（绕过 record 的今天日期）
+    // 90 天惰性清理：手写一个 100 天前的统计文件（绕过 record 的今天日期），
+    // 落账顺带清理过期日（91 天窗口外即删）。
     let old_day = crate::storage::stats::shift_day("2026-10-30", -100).expect("合法日期");
     fs::create_dir_all(root.join("stats")).expect("目录");
     fs::write(
@@ -169,24 +161,6 @@ fn retention_prune_runs_alongside_record() {
     main_record(&ledger, "2026-10-30", "s1", "r1", "m1", delta(1, 0));
     assert!(
         !root.join(format!("stats/{old_day}.json")).exists(),
-        "落账顺带清理过期日（91 天窗口外即删）"
-    );
-}
-
-#[test]
-fn session_deletion_clears_detail_but_keeps_anonymous_stats() {
-    let (_dir, root) = temp_root();
-    let ledger = UsageLedger::new(&root);
-    main_record(&ledger, "2026-10-30", "s1", "r1", "m1", delta(9, 1));
-    // Q43：删除会话明细 → 日/模型匿名数字保留
-    ledger.detail.forget_session("s1");
-    assert_eq!(
-        ledger.detail.load("s1"),
-        crate::storage::stats::SessionUsage::default()
-    );
-    assert_eq!(
-        ledger.query_range("2026-10-01", "2026-10-31")[0].models["m1"].input,
-        9,
-        "聚合数字保留（无会话关联）"
+        "落账顺带清理过期日"
     );
 }

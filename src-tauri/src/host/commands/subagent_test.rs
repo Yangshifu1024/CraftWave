@@ -3,9 +3,8 @@
 //! - 四象限各取代表（report / partial(E_SUB_BUDGET) / cancelled）；
 //! - 帧序不变量（subStarted 先于全部子帧、subDone 必收尾）；
 //! - 事件六键、用量归属（tokens:update 单一出口）、子代理历史落盘与回看；
-//! - 取消级联（stop_subagent → 子 runEnded(cancelled) 收齐）；
-//! - 公共操作/角色边界（子环境拒绝再委派、白名单外工具拦截、非 Git 项目
-//!   写入子代理拒绝）与请求面两形态（cleanContext / 父历史注入）。
+//! - 拒绝路径（参数错误 / 非 Git 项目写入拒绝 / 公共操作与白名单边界）；
+//! - Git 写入角色的 worktree 创建与清理；请求面两形态与历史转换（纯逻辑）。
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -37,6 +36,18 @@ fn chunk(delta: serde_json::Value, finish: Option<&str>) -> String {
     )
 }
 
+/// usage 收口帧（OpenAI 流式格式的末段）。
+fn usage_chunk(prompt: u64, completion: u64) -> String {
+    format!(
+        "data: {}\n\n",
+        serde_json::json!({
+            "id": "chatcmpl-mock", "object": "chat.completion.chunk", "created": 1,
+            "model": "gpt-4o-mock", "choices": [],
+            "usage": {"prompt_tokens": prompt, "completion_tokens": completion, "total_tokens": prompt + completion}
+        })
+    )
+}
+
 /// 启动 mock（随机端口），返回 base_url（含 /v1）。
 async fn spawn_mock(mode: Arc<MockMode>) -> String {
     async fn handler(mode: Arc<MockMode>, _body: serde_json::Value) -> axum::response::Response {
@@ -53,28 +64,14 @@ async fn spawn_mock(mode: Arc<MockMode>) -> String {
                     None,
                 ),
                 chunk(serde_json::json!({}), Some("tool_calls")),
-                format!(
-                    "data: {}\n\n",
-                    serde_json::json!({
-                        "id": "chatcmpl-mock", "object": "chat.completion.chunk", "created": 1,
-                        "model": "gpt-4o-mock", "choices": [],
-                        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
-                    })
-                ),
+                usage_chunk(10, 5),
                 "data: [DONE]\n\n".to_string(),
             ]
         } else if delay > 0 {
             // 慢响应（取消场景）：先发一段正文再挂起
             vec![
                 chunk(serde_json::json!({"content": "开工"}), None),
-                format!(
-                    "data: {}\n\n",
-                    serde_json::json!({
-                        "id": "chatcmpl-mock", "object": "chat.completion.chunk", "created": 1,
-                        "model": "gpt-4o-mock", "choices": [],
-                        "usage": {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5}
-                    })
-                ),
+                usage_chunk(3, 2),
                 "data: [DONE]\n\n".to_string(),
             ]
         } else {
@@ -84,14 +81,7 @@ async fn spawn_mock(mode: Arc<MockMode>) -> String {
                 chunk(serde_json::json!({"content": "调研完成："}), None),
                 chunk(serde_json::json!({"content": "README 共一行。"}), None),
                 chunk(serde_json::json!({}), Some("stop")),
-                format!(
-                    "data: {}\n\n",
-                    serde_json::json!({
-                        "id": "chatcmpl-mock", "object": "chat.completion.chunk", "created": 1,
-                        "model": "gpt-4o-mock", "choices": [],
-                        "usage": {"prompt_tokens": 7, "completion_tokens": 4, "total_tokens": 11}
-                    })
-                ),
+                usage_chunk(7, 4),
                 "data: [DONE]\n\n".to_string(),
             ]
         };
@@ -231,12 +221,16 @@ async fn wait_event(events: &crate::util::events::RecordingEventSink, key: &str,
     panic!("等待事件 {key} 超时");
 }
 
-// ---- 全链场景 ----
-
-/// explore 委派端到端（report 象限）：subStarted 先于子帧、子 runEnded(done)
-/// 先于 subReport/subDone、<report> 回父工具结果、事件六键到位、历史可回看。
+/// 断言 mock SSE 全链的收口语义（四象限三面）：
+/// 1) explore 委派端到端（report 象限）：subStarted 先于子帧、子
+///    runEnded(done) 先于 subReport/subDone、<report> 回父工具结果、事件
+///    六键到位、历史可回看；
+/// 2) 预算耗尽（partial）：max_turns 顶格 → rig MaxTurns → E_SUB_BUDGET 工具
+///    结果 + subDone(partial) + 事件带 outcome=partial（不是 error 事件）；
+/// 3) stop_subagent 级联（cancelled）：慢响应期间点名取消 → 子
+///    runEnded(cancelled) 帧收齐 + subDone(cancelled) + 注册表摘除。
 #[tokio::test]
-async fn subagent_full_chain_report() {
+async fn subagent_report_partial_and_cancel_outcomes() {
     let base_url = spawn_mock(Arc::new(MockMode::default())).await;
     let (app, dir, events) = app_with_mock(&base_url);
     let (ctx, frames) = ctx_with_frames("sess-r", "run-parent");
@@ -358,12 +352,8 @@ async fn subagent_full_chain_report() {
     let err = load_subagent_history_core(&app, "sess-r", "nope").unwrap_err();
     assert_eq!(err.code, crate::util::errors::E_NOT_FOUND);
     drop(dir);
-}
 
-/// 预算耗尽（partial 象限）：max_turns 顶格 → rig MaxTurns →
-/// E_SUB_BUDGET 工具结果 + subDone(partial) + 事件带 outcome=partial。
-#[tokio::test]
-async fn subagent_budget_exhausted_partial() {
+    // 2) 预算耗尽（partial 象限）。
     let mode = Arc::new(MockMode::default());
     mode.tool_calls.store(true, Ordering::SeqCst);
     let base_url = spawn_mock(mode).await;
@@ -417,12 +407,8 @@ async fn subagent_budget_exhausted_partial() {
     // 注册表摘除 + 名额释放（活跃数归零）
     assert_eq!(app.subs.active_count(), 0);
     drop(dir);
-}
 
-/// stop_subagent 级联（cancelled 象限）：慢响应期间点名取消 →
-/// 子 runEnded(cancelled) 帧收齐 + subDone(cancelled) + 注册表摘除。
-#[tokio::test]
-async fn subagent_stop_cascades_and_settles_clean() {
+    // 2) stop_subagent 级联（cancelled 象限）。
     let mode = Arc::new(MockMode::default());
     mode.delay_ms.store(10_000, Ordering::SeqCst);
     let base_url = spawn_mock(mode).await;
@@ -490,9 +476,13 @@ async fn subagent_stop_cascades_and_settles_clean() {
     drop(dir);
 }
 
-/// 参数错误面：未知角色 / 空 task → 工具级失败（不启动子 run、不发帧）。
+/// 断言三条拒绝路径（不发 subStarted、不启动子 run）：参数错误面表驱动
+/// （未知角色 / 空 task / 解析失败）；非 Git 项目写入子代理拒绝（Q7：修改
+/// 由主代理负责，子代理只读）；子环境公共操作边界（Q13：无委派面时绕过
+/// 工具表直接调用也 E_TOOL_BLOCKED）与白名单外工具拦截（工具可见面 =
+/// 执行许可）。
 #[tokio::test]
-async fn subagent_rejects_bad_args() {
+async fn subagent_rejection_paths() {
     let base_url = spawn_mock(Arc::new(MockMode::default())).await;
     let (app, dir, events) = app_with_mock(&base_url);
     let (ctx, frames) = ctx_with_frames("sess-x", "run-x");
@@ -501,6 +491,8 @@ async fn subagent_rejects_bad_args() {
         ctx,
     };
     let token = tokio_util::sync::CancellationToken::new();
+
+    // 1) 参数错误面：工具级失败（不启动子 run、不发帧）。
     for (args, expects) in [
         (r#"{"role":"ceo","task":"x"}"#, "未知子代理角色"),
         (r#"{"role":"explore","task":"   "}"#, "task 不能为空"),
@@ -517,20 +509,8 @@ async fn subagent_rejects_bad_args() {
     assert!(frames.snapshot().is_empty(), "失败委派不发任何帧");
     assert!(events.payloads_of(keys::SUB_SPAWN).is_empty());
     assert_eq!(app.subs.active_count(), 0);
-    drop(dir);
-}
 
-/// 非 Git 项目写入子代理拒绝（Q7：修改由主代理负责，子代理只读）。
-#[tokio::test]
-async fn subagent_write_role_rejected_on_non_git_project() {
-    let base_url = spawn_mock(Arc::new(MockMode::default())).await;
-    let (app, dir, events) = app_with_mock(&base_url);
-    let (ctx, frames) = ctx_with_frames("sess-g", "run-g");
-    let spawner = SubagentSpawnerImpl {
-        app: (*app).share_handles(),
-        ctx,
-    };
-    let token = tokio_util::sync::CancellationToken::new();
+    // 2) 非 Git 项目写入子代理拒绝（Q7）。
     // 临时会话的 project_root = <data>/workspace（非 git）
     let workspace = app.store.root().join("workspace");
     std::fs::create_dir_all(&workspace).unwrap();
@@ -545,74 +525,9 @@ async fn subagent_write_role_rejected_on_non_git_project() {
     assert!(frames.snapshot().is_empty(), "拒绝路径不发 subStarted");
     assert!(events.payloads_of(keys::SUB_SPAWN).is_empty());
     drop(dir);
-}
 
-/// Git 项目的写入子代理：worktree 创建成功、无改动回收后清理干净
-/// （worktree 目录与 lease 消失），子 run 正常 report。
-#[tokio::test]
-async fn subagent_write_role_uses_worktree_and_cleans_up() {
-    let base_url = spawn_mock(Arc::new(MockMode::default())).await;
-    let (app, dir, events) = app_with_mock(&base_url);
-    // 把临时会话工作区变成 git 仓库（基线提交）
-    let workspace = app.store.root().join("workspace");
-    std::fs::create_dir_all(&workspace).unwrap();
-    let repo = git2::Repository::init(&workspace).unwrap();
-    std::fs::write(workspace.join("README.md"), "base\n").unwrap();
-    {
-        let mut index = repo.index().unwrap();
-        index
-            .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
-            .unwrap();
-        index.write().unwrap();
-        let tree_id = index.write_tree().unwrap();
-        let tree = repo.find_tree(tree_id).unwrap();
-        let sig = git2::Signature::now("t", "t@t").unwrap();
-        repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
-            .unwrap();
-    }
-    let (ctx, _frames) = ctx_with_frames("sess-w", "run-w");
-    let spawner = SubagentSpawnerImpl {
-        app: (*app).share_handles(),
-        ctx,
-    };
-    let token = tokio_util::sync::CancellationToken::new();
-    let result = spawner
-        .spawn(
-            r#"{"role":"implementer","task":"检查基线即可，无需改动"}"#,
-            &token,
-        )
-        .await;
-    let crate::backend::run_loop::ToolExecution::Completed { ok, model_text, .. } = result else {
-        panic!("委派应完成")
-    };
-    assert!(ok);
-    // mock 不改文件 → 回收报告为空差量，worktree 已清理（成功汇回验证后清理）
-    assert!(model_text.contains("无文件改动需要回收"), "{model_text}");
-    let worktrees = app.store.root().join("worktrees");
-    assert!(
-        std::fs::read_dir(&worktrees)
-            .map(|entries| entries.count() == 0)
-            .unwrap_or(true),
-        "worktrees 目录应已清空（无 lease、无 worktree 残留）"
-    );
-    assert!(
-        events.payloads_of(keys::SUB_DONE)[0]["outcome"] == "report",
-        "正常 report 收尾"
-    );
-    drop(dir);
-}
-
-// ---- 角色边界与执行入口（公共操作限制的工具面落实） ----
-
-/// 子环境拒绝再委派（Q13）：工具表过滤 + 绕过工具表直接调用也在执行入口
-/// 拒绝（E_TOOL_BLOCKED）；白名单外工具同样拦截（工具可见面 = 执行许可）。
-#[tokio::test]
-async fn child_env_rejects_delegation_and_outside_tools() {
-    let ctx = crate::tools::ToolsContext::new(
-        std::env::temp_dir().join("cw-subagent-test"),
-        std::env::temp_dir().join("cw-subagent-test"),
-    );
-    let _ = std::fs::create_dir_all(&ctx.project_root);
+    // 3) 子环境公共操作边界（Q13）与白名单拦截。
+    let _ = std::fs::create_dir_all(std::env::temp_dir().join("cw-subagent-test"));
     let base_env = |allowed: Option<Vec<String>>| {
         let ctx = crate::tools::ToolsContext::new(
             std::env::temp_dir().join("cw-subagent-test"),
@@ -699,14 +614,69 @@ async fn child_env_rejects_delegation_and_outside_tools() {
     let _ = std::fs::remove_dir_all(std::env::temp_dir().join("cw-subagent-test"));
 }
 
-// ---- 请求面与历史转换（纯逻辑单测） ----
+/// 断言 Git 项目的写入子代理（worktree 创建成功、无改动回收后清理干净——
+/// worktree 目录与 lease 消失、子 run 正常 report），以及子代理请求面两形态
+/// （§5.9 末行）与子历史 JSONL 转换：cleanContext=true（生产默认）→
+/// [系统提示, task]；cleanContext=false → 父历史尾至多 6 条注入（8 条取尾 6），
+/// 尾条 = task 消息；JSONL → WireMessage：toolCall/toolResult 同条目配对、
+/// parent 链串行、End 行产出 report 条目、坏行忽略。
+#[tokio::test]
+async fn subagent_worktree_cleanup_and_request_shape_semantics() {
+    let base_url = spawn_mock(Arc::new(MockMode::default())).await;
+    let (app, dir, events) = app_with_mock(&base_url);
+    // 把临时会话工作区变成 git 仓库（基线提交）
+    let workspace = app.store.root().join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let repo = git2::Repository::init(&workspace).unwrap();
+    std::fs::write(workspace.join("README.md"), "base\n").unwrap();
+    {
+        let mut index = repo.index().unwrap();
+        index
+            .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
+            .unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let sig = git2::Signature::now("t", "t@t").unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
+            .unwrap();
+    }
+    let (ctx, _frames) = ctx_with_frames("sess-w", "run-w");
+    let spawner = SubagentSpawnerImpl {
+        app: (*app).share_handles(),
+        ctx,
+    };
+    let token = tokio_util::sync::CancellationToken::new();
+    let result = spawner
+        .spawn(
+            r#"{"role":"implementer","task":"检查基线即可，无需改动"}"#,
+            &token,
+        )
+        .await;
+    let crate::backend::run_loop::ToolExecution::Completed { ok, model_text, .. } = result else {
+        panic!("委派应完成")
+    };
+    assert!(ok);
+    // mock 不改文件 → 回收报告为空差量，worktree 已清理（成功汇回验证后清理）
+    assert!(model_text.contains("无文件改动需要回收"), "{model_text}");
+    let worktrees = app.store.root().join("worktrees");
+    assert!(
+        std::fs::read_dir(&worktrees)
+            .map(|entries| entries.count() == 0)
+            .unwrap_or(true),
+        "worktrees 目录应已清空（无 lease、无 worktree 残留）"
+    );
+    assert!(
+        events.payloads_of(keys::SUB_DONE)[0]["outcome"] == "report",
+        "正常 report 收尾"
+    );
+    drop(dir);
 
-/// cleanContext 与父历史注入两形态的消息构造（§5.9 末行）。
-#[test]
-fn build_subagent_history_two_shapes() {
+    // ---- 请求面与历史转换（纯逻辑面） ----
+
+    // 请求面两形态。
     let role = find_role("explore").unwrap();
     let task = "调研";
-    // cleanContext=true（生产默认）：[系统提示, task]
     let clean = build_subagent_history(task, role, &[], true);
     assert_eq!(clean.len(), 2);
     assert!(matches!(
@@ -715,7 +685,6 @@ fn build_subagent_history_two_shapes() {
     ));
     assert!(matches!(&*clean[1], rig::completion::Message::User { .. }));
 
-    // cleanContext=false：父历史尾至多 6 条注入（8 条取尾 6）
     let parent_entry = |i: usize| crate::storage::MessageEntry {
         id: format!("m{i}"),
         parent_id: None,
@@ -759,12 +728,8 @@ fn build_subagent_history_two_shapes() {
         &*injected[7],
         rig::completion::Message::User { .. }
     ));
-}
 
-/// 子历史 JSONL → WireMessage 转换：toolCall/toolResult 同条目配对、
-/// parent 链串行、End 行产出 report 条目、坏行忽略。
-#[test]
-fn load_sub_history_messages_conversion() {
+    // 2) 子历史 JSONL → WireMessage 转换。
     let dir = tempfile::tempdir().unwrap();
     let lines = [
         r#"{"type":"message","turn":1,"text":"第一轮结论","reasoning":"想一想"}"#,

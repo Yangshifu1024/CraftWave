@@ -43,9 +43,14 @@ fn ok(name: &str, args: &str) -> super::ToolRecord {
     make_record(name, args, true)
 }
 
-/// §5.7 阈值表钉死（常量防漂移）。
+/// 断言看门狗定义面：§5.7 阈值表常量钉死（防漂移）；签名稳定性（同工具
+/// 同参数同签名、参数/工具名不同签名不同）；make_record 能力分级与 read
+/// 路径提取（畸形 JSON 返回 None）；有效模型增量判定表——三类增量帧刷新、
+/// 其余帧（UI 面/工具进度/重连摘要）不刷新（前端帧与重连不能给停滞计时
+/// 续命）。
 #[test]
-fn thresholds_match_spec_table() {
+fn watchdog_definitions_cases() {
+    // 阈值表钉死
     assert_eq!(SAME_SIGNATURE_FAIL_CORRECT, 3);
     assert_eq!(SAME_SIGNATURE_FAIL_TERMINATE, 5);
     assert_eq!(NO_PROGRESS_CORRECT, 8);
@@ -53,24 +58,135 @@ fn thresholds_match_spec_table() {
     assert_eq!(READONLY_REPEAT_CORRECT, 4);
     assert_eq!(SEGMENTED_READ_CORRECT, 10);
     assert_eq!(WINDOW_CAPACITY, 32);
+
+    // 签名稳定性
+    let a = tool_signature("grep", r#"{"pattern":"x"}"#);
+    let a_again = tool_signature("grep", r#"{"pattern":"x"}"#);
+    let b = tool_signature("grep", r#"{"pattern":"y"}"#);
+    let c = tool_signature("read", r#"{"pattern":"x"}"#);
+    assert_eq!(a, a_again, "同工具同参数同签名");
+    assert_ne!(a, b, "参数不同签名不同");
+    assert_ne!(a, c, "工具名不同签名不同");
+
+    // make_record 能力分级与 read 路径提取
+    let read = make_record("read", r#"{"path":"src/main.rs","offset":5}"#, true);
+    assert!(read.read_only);
+    assert_eq!(read.read_path.as_deref(), Some("src/main.rs"));
+    assert!(make_record("grep", "{}", true).read_only);
+    assert!(make_record("list_files", "{}", true).read_only);
+    assert!(!make_record("write", "{}", true).read_only);
+    assert!(!make_record("command", "{}", true).read_only);
+    // 非 read 工具不提路径；畸形 JSON 路径为 None（不是分段读信号的数据源）
+    assert_eq!(make_record("grep", r#"{"path":"x"}"#, true).read_path, None);
+    assert_eq!(make_record("read", "{oops", true).read_path, None);
+
+    // 有效模型增量判定表：(帧, 是否刷新停滞计时)
+    for (frame, want) in [
+        (
+            ChatFrame::TextDelta {
+                turn: 1,
+                delta: "a".into(),
+            },
+            true,
+        ),
+        (
+            ChatFrame::ReasoningDelta {
+                turn: 1,
+                delta: "r".into(),
+            },
+            true,
+        ),
+        (
+            ChatFrame::ToolArgs {
+                call_id: "c".into(),
+                chunk: "{}".into(),
+            },
+            true,
+        ),
+        (
+            ChatFrame::RunStarted {
+                run_id: "r".into(),
+                model: "m".into(),
+            },
+            false,
+        ),
+        (ChatFrame::StepStarted { turn: 1 }, false),
+        (
+            ChatFrame::ToolStarted {
+                call_id: "c".into(),
+                name: "grep".into(),
+            },
+            false,
+        ),
+        (
+            ChatFrame::ToolResult {
+                call_id: "c".into(),
+                ok: true,
+                ui_summary: "s".into(),
+                error: None,
+            },
+            false,
+        ),
+        (
+            ChatFrame::Usage {
+                usage: Default::default(),
+                rate: None,
+            },
+            false,
+        ),
+        (
+            ChatFrame::RunEnded {
+                reason: EndReason::Done,
+                duration_ms: 0,
+                tool_count: 0,
+                turn: 1,
+                error: None,
+            },
+            false,
+        ),
+        (
+            ChatFrame::CompactDone {
+                cut_entry_id: "e".into(),
+                tokens_before: 0,
+                tokens_after: 0,
+            },
+            false,
+        ),
+    ] {
+        assert_eq!(
+            is_model_delta(&frame),
+            want,
+            "frame 刷新判定不符：{frame:?}"
+        );
+    }
 }
 
-/// 信号①阈值上下界：2 次无动作、3 次纠偏、4 次不重复纠偏、5 次终止。
+/// 断言信号①（同签名连续失败）与信号②（无进展空转）的阈值与重置：
+/// 信号①——2 次无动作、3 次纠偏、4 次段内不重复纠偏、5 次终止（消息说明
+/// 重复失败原因）、同签名成功打断连续段重开累计、不同签名各段互不叠加；
+/// 信号②——7 步无动作、8 步纠偏、继续空转不重复纠偏、14 步终止、有文本
+/// 的步（或工具成功的步）清零计数重转空转后满 8 再纠偏（空转步用互异参数
+/// 失败隔离同签名信号）。
 #[test]
-fn same_signature_fail_2_none_3_corrective_5_terminate() {
+fn signal1_and_signal2_cases() {
+    // ---- 信号①：阈值上下界 2 无 / 3 纠偏 / 4 不重复 / 5 终止 ----
     let args = r#"{"pattern":"x","path":"a"}"#;
     let mut w = RunWatchdog::default();
     w.record_step([fail("grep", args)], false);
     assert_eq!(w.evaluate(), WatchdogAction::None);
     w.record_step([fail("grep", args)], false);
     assert_eq!(w.evaluate(), WatchdogAction::None);
-    // 第 3 次：纠偏
     w.record_step([fail("grep", args)], false);
-    assert!(matches!(w.evaluate(), WatchdogAction::Corrective(_)));
-    // 第 4 次：段内已纠偏，不重复
+    assert!(
+        matches!(w.evaluate(), WatchdogAction::Corrective(_)),
+        "第 3 次：纠偏"
+    );
     w.record_step([fail("grep", args)], false);
-    assert_eq!(w.evaluate(), WatchdogAction::None);
-    // 第 5 次：终止
+    assert_eq!(
+        w.evaluate(),
+        WatchdogAction::None,
+        "第 4 次：段内已纠偏，不重复"
+    );
     w.record_step([fail("grep", args)], false);
     let action = w.evaluate();
     assert!(
@@ -83,58 +199,49 @@ fn same_signature_fail_2_none_3_corrective_5_terminate() {
             "终止消息说明重复失败原因：{message}"
         );
     }
-}
 
-/// 信号①重置条件：同签名成功打断连续段——重开后重新累计，满 3 再纠偏。
-#[test]
-fn same_signature_fail_resets_on_success() {
-    let args = r#"{"pattern":"x","path":"a"}"#;
+    // 信号①：同签名成功打断连续段——重开后重新累计，满 3 再纠偏
     let mut w = RunWatchdog::default();
     w.record_step([fail("grep", args)], false);
     w.record_step([fail("grep", args)], false);
     assert_eq!(w.evaluate(), WatchdogAction::None);
-    // 同签名成功：连续段打断
     w.record_step([ok("grep", args)], false);
-    assert_eq!(w.evaluate(), WatchdogAction::None);
-    // 重开后累计 2 次：不纠偏
+    assert_eq!(w.evaluate(), WatchdogAction::None, "同签名成功：连续段打断");
     w.record_step([fail("grep", args)], false);
     w.record_step([fail("grep", args)], false);
-    assert_eq!(w.evaluate(), WatchdogAction::None);
-    // 第 3 次（新段）：再纠偏
+    assert_eq!(
+        w.evaluate(),
+        WatchdogAction::None,
+        "重开后累计 2 次：不纠偏"
+    );
     w.record_step([fail("grep", args)], false);
-    assert!(matches!(w.evaluate(), WatchdogAction::Corrective(_)));
-}
+    assert!(
+        matches!(w.evaluate(), WatchdogAction::Corrective(_)),
+        "第 3 次（新段）：再纠偏"
+    );
 
-/// 信号①连续段语义：不同签名调用打断——每段各自累计，互不叠加。
-#[test]
-fn different_signature_interrupts_fail_run() {
+    // 信号①：不同签名调用打断——每段各自累计互不叠加（A 段 2 + B 段 1 +
+    // A 段 2：任何一段都不满 3）
     let a = r#"{"pattern":"x","path":"a"}"#;
     let b = r#"{"pattern":"y","path":"a"}"#;
     let mut w = RunWatchdog::default();
-    w.record_step([fail("grep", a)], false);
-    w.record_step([fail("grep", a)], false);
-    w.record_step([fail("grep", b)], false);
-    w.record_step([fail("grep", a)], false);
-    w.record_step([fail("grep", a)], false);
-    // A 段 2 + B 段 1 + A 段 2：任何一段都不满 3，无动作
+    for step in [a, a, b, a, a] {
+        w.record_step([fail("grep", step)], false);
+    }
     assert_eq!(w.evaluate(), WatchdogAction::None);
-}
 
-/// 信号②阈值上下界：7 步无动作、8 步纠偏、继续空转不重复纠偏、14 步终止。
-/// 每步失败用不同参数（签名互异）——隔离无进展信号，不与同签名失败信号耦合。
-#[test]
-fn no_progress_thresholds() {
+    // ---- 信号②：阈值 7 无 / 8 纠偏 / 不重复 / 14 终止 ----
     let mut w = RunWatchdog::default();
-    // 空转步 = 无正文 + 全部失败（或无工具）
     for step in 1..=7 {
         let args = format!(r#"{{"pattern":"x{step}","path":"a"}}"#);
         w.record_step([fail("grep", &args)], false);
         assert_eq!(w.evaluate(), WatchdogAction::None, "第 {step} 步应无动作");
     }
-    // 第 8 步：纠偏
     w.record_step([fail("grep", r#"{"pattern":"x8","path":"a"}"#)], false);
-    assert!(matches!(w.evaluate(), WatchdogAction::Corrective(_)));
-    // 9–13 步：不再重复纠偏（无工具的空转步）
+    assert!(
+        matches!(w.evaluate(), WatchdogAction::Corrective(_)),
+        "第 8 步：纠偏"
+    );
     for step in 9..14 {
         w.record_step(std::iter::empty(), false);
         assert_eq!(
@@ -143,70 +250,74 @@ fn no_progress_thresholds() {
             "第 {step} 步不应重复纠偏"
         );
     }
-    // 第 14 步：终止
     w.record_step(std::iter::empty(), false);
-    assert!(matches!(w.evaluate(), WatchdogAction::Terminate(_)));
-}
+    assert!(
+        matches!(w.evaluate(), WatchdogAction::Terminate(_)),
+        "第 14 步：终止"
+    );
 
-/// 信号②重置：有文本的步（或工具成功的步）清零计数，重转空转后满 8 再纠偏。
-#[test]
-fn no_progress_resets_on_productive_step() {
+    // 信号②：有进展步清零计数并复位纠偏水位，重转空转后满 8 再纠偏
     let mut w = RunWatchdog::default();
     for step in 0..7 {
         let args = format!(r#"{{"pattern":"x{step}","path":"a"}}"#);
         w.record_step([fail("grep", &args)], false);
         assert_eq!(w.evaluate(), WatchdogAction::None);
     }
-    // 有进展步（模型输出了正文）：清零并复位纠偏水位
     w.record_step([fail("grep", r#"{"pattern":"zz","path":"a"}"#)], true);
-    assert_eq!(w.evaluate(), WatchdogAction::None);
-    // 重新累计 7 步仍无动作（空转步与轮换参数失败交替）
+    assert_eq!(
+        w.evaluate(),
+        WatchdogAction::None,
+        "有正文步：清零并复位纠偏水位"
+    );
     for step in 0..7 {
         let args = format!(r#"{{"pattern":"y{step}","path":"a"}}"#);
         w.record_step([fail("grep", &args)], false);
-        assert_eq!(w.evaluate(), WatchdogAction::None);
+        assert_eq!(w.evaluate(), WatchdogAction::None, "重转空转重新累计");
     }
-    // 第 8 步：纠偏（水位已复位）
     w.record_step(std::iter::empty(), false);
-    assert!(matches!(w.evaluate(), WatchdogAction::Corrective(_)));
+    assert!(
+        matches!(w.evaluate(), WatchdogAction::Corrective(_)),
+        "第 8 步（水位已复位）：纠偏"
+    );
 }
 
-/// 信号③阈值：同参数只读成功重复 3 次无动作、4 次纠偏、不重复、8 次按级再纠偏。
+/// 断言信号③（同参数只读成功重复）与信号④（同文件连续分段读）及窗口
+/// 容量：信号③——3 次无动作、4 次纠偏、不重复纠偏、8 次按级（level=2）
+/// 再纠偏、非只读工具同参数成功重复不触发；信号④——同文件连续分段读
+/// 9 次无动作、10 次纠偏（提示带文件路径）、读别的文件打断重开累计；
+/// 窗口容量 32 满后丢最旧——只读重复计数随滑动下降不再触发。
 #[test]
-fn readonly_repeat_thresholds() {
+fn signal3_signal4_and_window_capacity_cases() {
+    // ---- 信号③：阈值 3 无 / 4 纠偏 / 不重复 / 8 按级再纠偏 ----
     let args = r#"{"path":"a.txt"}"#;
     let mut w = RunWatchdog::default();
     for _ in 0..3 {
         w.record_step([ok("read", args)], true);
         assert_eq!(w.evaluate(), WatchdogAction::None);
     }
-    // 第 4 次：纠偏
     w.record_step([ok("read", args)], true);
-    assert!(matches!(w.evaluate(), WatchdogAction::Corrective(_)));
-    // 5–7 次：不重复纠偏
+    assert!(
+        matches!(w.evaluate(), WatchdogAction::Corrective(_)),
+        "第 4 次：纠偏"
+    );
     for _ in 5..8 {
         w.record_step([ok("read", args)], true);
-        assert_eq!(w.evaluate(), WatchdogAction::None);
+        assert_eq!(w.evaluate(), WatchdogAction::None, "段内不重复纠偏");
     }
-    // 第 8 次：level=2 > 1，按级再纠偏
     w.record_step([ok("read", args)], true);
-    assert!(matches!(w.evaluate(), WatchdogAction::Corrective(_)));
-}
+    assert!(
+        matches!(w.evaluate(), WatchdogAction::Corrective(_)),
+        "第 8 次：level=2 > 1，按级再纠偏"
+    );
 
-/// 信号③只对只读工具生效：非只读工具同参数成功重复不触发。
-#[test]
-fn readonly_repeat_ignores_non_readonly_tools() {
-    let args = r#"{"path":"a.txt","content":"x"}"#;
+    // 信号③只对只读工具生效：非只读工具同参数成功重复不触发
     let mut w = RunWatchdog::default();
     for _ in 0..6 {
-        w.record_step([ok("write", args)], true);
-        assert_eq!(w.evaluate(), WatchdogAction::None);
+        w.record_step([ok("write", r#"{"path":"a.txt","content":"x"}"#)], true);
+        assert_eq!(w.evaluate(), WatchdogAction::None, "非只读工具不触发");
     }
-}
 
-/// 信号④阈值：同文件连续分段读 9 次无动作、10 次纠偏；读别的文件打断重开。
-#[test]
-fn segmented_read_thresholds_and_reset() {
+    // ---- 信号④：9 次无动作 / 10 次纠偏 / 换文件打断重开 ----
     let mut w = RunWatchdog::default();
     for offset in 1..=9u64 {
         let args = format!(r#"{{"path":"big.txt","offset":{offset}}}"#);
@@ -217,10 +328,12 @@ fn segmented_read_thresholds_and_reset() {
             "第 {offset} 次分段读应无动作"
         );
     }
-    // 第 10 次：纠偏（提示避免碎片化读取）
     w.record_step([ok("read", r#"{"path":"big.txt","offset":10}"#)], true);
     let action = w.evaluate();
-    assert!(matches!(action, WatchdogAction::Corrective(_)));
+    assert!(
+        matches!(action, WatchdogAction::Corrective(_)),
+        "第 10 次：纠偏"
+    );
     if let WatchdogAction::Corrective(text) = action {
         assert!(text.contains("big.txt"), "纠偏提示带文件路径：{text}");
     }
@@ -236,12 +349,9 @@ fn segmented_read_thresholds_and_reset() {
             offset - 10
         );
     }
-}
 
-/// 窗口容量 32：满后丢最旧——只读重复计数随滑动下降，不再重复纠偏。
-/// 填充用不同签名的成功记录（隔离滑动语义，不触发其他信号）。
-#[test]
-fn window_capacity_slides_and_reduces_count() {
+    // ---- 窗口容量 32：满后丢最旧，计数随滑动下降不再触发 ----
+    // 填充用不同签名的成功记录（隔离滑动语义，不触发其他信号）
     let target = r#"{"path":"t.txt"}"#;
     let mut w = RunWatchdog::default();
     // 同签名成功 ×4：纠偏一次（count=4，level=1）
@@ -254,99 +364,24 @@ fn window_capacity_slides_and_reduces_count() {
         let args = format!(r#"{{"path":"f{i}.txt"}}"#);
         w.record_step([ok("grep", &args)], true);
     }
-    // target 记录只剩 2 条：count=2 不再触发
-    assert_eq!(w.evaluate(), WatchdogAction::None);
+    assert_eq!(
+        w.evaluate(),
+        WatchdogAction::None,
+        "target 记录只剩 2 条：count=2 不再触发"
+    );
     // 再成功 ×2：count 回到 4，level=1 不大于已纠偏水位 1——不重复纠偏
     w.record_step([ok("read", target)], true);
     w.record_step([ok("read", target)], true);
     assert_eq!(w.evaluate(), WatchdogAction::None);
 }
 
-/// 签名稳定性：同工具同参数同签名；参数不同签名不同；工具名不同签名不同。
-#[test]
-fn signature_stability() {
-    let a = tool_signature("grep", r#"{"pattern":"x"}"#);
-    let a_again = tool_signature("grep", r#"{"pattern":"x"}"#);
-    let b = tool_signature("grep", r#"{"pattern":"y"}"#);
-    let c = tool_signature("read", r#"{"pattern":"x"}"#);
-    assert_eq!(a, a_again);
-    assert_ne!(a, b);
-    assert_ne!(a, c);
-}
-
-/// make_record 的能力分级与 read 路径提取：read/grep/list_files 只读；
-/// write/command 非只读；read 的 path 字段提取（畸形 JSON 返回 None）。
-#[test]
-fn make_record_classifies_readonly_and_read_path() {
-    let read = make_record("read", r#"{"path":"src/main.rs","offset":5}"#, true);
-    assert!(read.read_only);
-    assert_eq!(read.read_path.as_deref(), Some("src/main.rs"));
-
-    assert!(make_record("grep", "{}", true).read_only);
-    assert!(make_record("list_files", "{}", true).read_only);
-    assert!(!make_record("write", "{}", true).read_only);
-    assert!(!make_record("command", "{}", true).read_only);
-
-    // 非 read 工具不提路径
-    assert_eq!(make_record("grep", r#"{"path":"x"}"#, true).read_path, None);
-    // 畸形 JSON：路径为 None（不是分段读信号的数据源）
-    assert_eq!(make_record("read", "{oops", true).read_path, None);
-}
-
-/// 有效模型增量判定：三类增量帧刷新；其余帧（含 UI 面/工具进度/重连摘要）
-/// 不刷新——前端帧与重连不能给停滞计时续命。
-#[test]
-fn is_model_delta_only_matches_three_delta_frames() {
-    assert!(is_model_delta(&ChatFrame::TextDelta {
-        turn: 1,
-        delta: "a".into()
-    }));
-    assert!(is_model_delta(&ChatFrame::ReasoningDelta {
-        turn: 1,
-        delta: "r".into()
-    }));
-    assert!(is_model_delta(&ChatFrame::ToolArgs {
-        call_id: "c".into(),
-        chunk: "{}".into()
-    }));
-    assert!(!is_model_delta(&ChatFrame::RunStarted {
-        run_id: "r".into(),
-        model: "m".into()
-    }));
-    assert!(!is_model_delta(&ChatFrame::StepStarted { turn: 1 }));
-    assert!(!is_model_delta(&ChatFrame::ToolStarted {
-        call_id: "c".into(),
-        name: "grep".into()
-    }));
-    assert!(!is_model_delta(&ChatFrame::ToolResult {
-        call_id: "c".into(),
-        ok: true,
-        ui_summary: "s".into(),
-        error: None
-    }));
-    assert!(!is_model_delta(&ChatFrame::Usage {
-        usage: Default::default(),
-        rate: None
-    }));
-    assert!(!is_model_delta(&ChatFrame::RunEnded {
-        reason: EndReason::Done,
-        duration_ms: 0,
-        tool_count: 0,
-        turn: 1,
-        error: None
-    }));
-    assert!(!is_model_delta(&ChatFrame::CompactDone {
-        cut_entry_id: "e".into(),
-        tokens_before: 0,
-        tokens_after: 0
-    }));
-}
-
 // ---- 停滞计时（tokio 定时器 + 毫秒级注入超时，不依赖真实 300 秒）----
 
-/// 无增量：停滞截止按注入超时触发。
+/// 断言 StallGuard 计时两态：无增量时按注入超时触发（等待满超时才返回）、
+/// 有效增量周期性刷新顺延截止（停止刷新后才触发）。
 #[tokio::test]
-async fn stall_guard_fires_without_refresh() {
+async fn stall_guard_fires_and_refresh_extends() {
+    // 无刷新：按注入超时触发
     let guard = StallGuard::armed(Duration::from_millis(40));
     let started = std::time::Instant::now();
     guard.expired().await;
@@ -355,14 +390,10 @@ async fn stall_guard_fires_without_refresh() {
         "应等待注入超时后才触发，实际 {:?}",
         started.elapsed()
     );
-}
 
-/// 有效增量刷新：周期性刷新顺延截止，停止刷新后才触发。
-#[tokio::test]
-async fn stall_guard_refresh_extends_deadline() {
+    // 周期刷新：每 20ms 刷新一次 ×5（共 100ms），截止被顺延 5 次
     let guard = Arc::new(StallGuard::armed(Duration::from_millis(50)));
     let refresher = Arc::clone(&guard);
-    // 每 20ms 刷新一次 ×5（共 100ms）：截止被顺延 5 次
     tokio::spawn(async move {
         for _ in 0..5 {
             tokio::time::sleep(Duration::from_millis(20)).await;
@@ -512,10 +543,28 @@ fn ended_frames(sink: &CollectingSink) -> Vec<(EndReason, Option<FrameError>)> {
         .collect()
 }
 
-/// 同签名连续失败：第 3 次纠偏注入 hidden system 提示（第 4 拍请求携带），
-/// 第 5 次终止——E_RUN_STALLED 收尾唯一、结果保留、副作用不重放。
+/// E_RUN_STALLED 的失败收口断言（终态唯一 + 错误码）。
+fn assert_stalled_ended(sink: &CollectingSink) {
+    let ended = ended_frames(sink);
+    assert_eq!(ended.len(), 1, "runEnded 终态帧唯一：{ended:?}");
+    assert_eq!(ended[0].0, EndReason::Error);
+    assert_eq!(
+        ended[0].1.as_ref().expect("错误终态带 error 面").code,
+        "E_RUN_STALLED"
+    );
+}
+
+/// drive_run 全链看门狗场景合并（毫秒级注入超时）：
+/// ① 同签名连续失败——第 3 次纠偏注入 hidden system 提示（第 4 拍请求
+///    携带一次、段内不重复），第 5 次终止：E_RUN_STALLED 收尾唯一、结果
+///    保留、副作用不重放（第 6 轮模型调用不发生）；
+/// ② 悬空流（请求发出后一直无增量）——停滞超时触发，无工具执行；
+/// ③ 慢速增量流（间隔 20ms 短于超时 80ms）持续喂增量——不误杀正常完成；
+/// ④ 增量停发后停滞——首个增量已产出的帧保留（结果不撤回）；
+/// ⑤ 工具执行等待（120ms）超过停滞超时（40ms）不计入停滞计时——正常收尾。
 #[tokio::test]
-async fn drive_run_repeated_failures_corrective_then_terminate() {
+async fn drive_run_watchdog_cases() {
+    // ---- ① 同签名连续失败：纠偏注入 + 终止 ----
     let args = serde_json::json!({"pattern": "x", "path": "a"});
     // 6 轮剧本（第 6 轮不应被消费——第 5 次失败即终止）
     let model = scripted_model(
@@ -536,21 +585,11 @@ async fn drive_run_repeated_failures_corrective_then_terminate() {
     )
     .await
     .expect("看门狗终止是 Ok 退出态");
-
-    // 终态：Stalled（message 说明重复失败）
     let RunExit::Stalled { message } = &exit else {
         panic!("应为看门狗终止，实际 {exit:?}");
     };
     assert!(message.contains("连续失败"), "终止消息说明原因：{message}");
-
-    // runEnded(error, E_RUN_STALLED) 恰好一条（终态唯一）
-    let ended = ended_frames(&sink);
-    assert_eq!(ended.len(), 1, "终态帧唯一：{ended:?}");
-    let (reason, error) = &ended[0];
-    assert_eq!(*reason, EndReason::Error);
-    let error = error.as_ref().expect("错误终态带 error 面");
-    assert_eq!(error.code, "E_RUN_STALLED");
-
+    assert_stalled_ended(&sink);
     // 结果保留：5 次失败的 toolResult 帧都在（不撤回）
     let tool_results = sink
         .frames
@@ -558,12 +597,9 @@ async fn drive_run_repeated_failures_corrective_then_terminate() {
         .filter(|f| matches!(f.frame, ChatFrame::ToolResult { .. }))
         .count();
     assert_eq!(tool_results, 5, "第 5 次失败触发终止，前 5 批结果帧保留");
-
     // 副作用不重放：恰好执行 5 次（第 6 轮模型调用不发生）
     assert_eq!(executor.executed.load(Ordering::SeqCst), 5);
-
-    // 纠偏注入：模型共收到 5 拍请求；纠偏在第 3 次失败评估（turn 3 收口）
-    // 产生、第 4 拍（下标 3）注入一次——段内已纠偏不重复，其余拍不带。
+    // 纠偏注入：5 拍请求中仅第 4 拍（下标 3）携带（第 3 次失败评估产生）
     let requests = model.requests();
     assert_eq!(requests.len(), 5, "5 拍模型请求");
     for (idx, request) in requests.iter().enumerate() {
@@ -576,12 +612,8 @@ async fn drive_run_repeated_failures_corrective_then_terminate() {
             assert!(!has_corrective, "第 {} 拍请求不应携带纠偏提示", idx + 1);
         }
     }
-}
 
-/// 悬空流（请求发出后一直无增量）：停滞超时触发 E_RUN_STALLED，runEnded
-/// 唯一终态，无工具执行。
-#[tokio::test]
-async fn drive_run_stall_on_silent_stream() {
+    // ---- ② 悬空流：停滞触发，无工具执行 ----
     let driver = TurnDriver::new(
         Model::new(MockScript::default(), HangingTransport::hanging(Vec::new())),
         RunSpec {
@@ -606,19 +638,14 @@ async fn drive_run_stall_on_silent_stream() {
         matches!(exit, RunExit::Stalled { .. }),
         "悬空流应停滞终止：{exit:?}"
     );
+    assert_stalled_ended(&sink);
+    assert_eq!(
+        executor.executed.load(Ordering::SeqCst),
+        0,
+        "停滞发生在模型请求阶段，无工具执行"
+    );
 
-    let ended = ended_frames(&sink);
-    assert_eq!(ended.len(), 1);
-    assert_eq!(ended[0].0, EndReason::Error);
-    assert_eq!(ended[0].1.as_ref().expect("error 面").code, "E_RUN_STALLED");
-    // 无工具执行（停滞发生在模型请求阶段）
-    assert_eq!(executor.executed.load(Ordering::SeqCst), 0);
-}
-
-/// 有效增量刷新：慢速增量流（间隔 20ms 短于超时 80ms）持续喂增量 → 不误杀，
-/// 正常完成。
-#[tokio::test]
-async fn drive_run_delta_refresh_prevents_false_stall() {
+    // ---- ③ 持续增量刷新：不误杀 ----
     let mut events: Vec<MockStreamEvent> = Vec::new();
     for _ in 0..10 {
         events.push(MockStreamEvent::text("x"));
@@ -648,12 +675,8 @@ async fn drive_run_delta_refresh_prevents_false_stall() {
     let ended = ended_frames(&sink);
     assert_eq!(ended.len(), 1);
     assert_eq!(ended[0].0, EndReason::Done);
-}
 
-/// 增量停发后停滞：先来一个增量（刷新计时），随后悬空 → 超时终止；
-/// 首个增量已产出的帧保留（结果不撤回）。
-#[tokio::test]
-async fn drive_run_stall_after_delta_stops() {
+    // ---- ④ 增量停发后停滞：已产出帧保留 ----
     let driver = TurnDriver::new(
         Model::new(
             MockScript::default(),
@@ -682,12 +705,8 @@ async fn drive_run_stall_after_delta_stops() {
             .any(|f| matches!(&f.frame, ChatFrame::TextDelta { .. })),
         "停滞前已产出的增量保留"
     );
-}
 
-/// 工具执行等待不计入停滞计时：执行耗时（120ms）超过停滞超时（40ms）但
-/// 不触发停滞——慢工具正常完成、run 正常收尾。
-#[tokio::test]
-async fn drive_run_tool_wait_not_counted_as_stall() {
+    // ---- ⑤ 工具执行等待不计入停滞计时 ----
     let driver = TurnDriver::new(
         scripted_model(vec![
             tool_call_turn("call-1", serde_json::json!({"pattern": "x", "path": "a"})),
@@ -720,12 +739,10 @@ async fn drive_run_tool_wait_not_counted_as_stall() {
     let ended = ended_frames(&sink);
     assert_eq!(ended.len(), 1);
     assert_eq!(ended[0].0, EndReason::Done);
-}
 
-/// 审批等待不误杀由结构保证（挂起时 drive_run 已退出、计时器随请求生灭）；
-/// 队列收尾动作纯函数钉住 E_RUN_STALLED 的失败暂停归属。
-#[test]
-fn stalled_exit_maps_to_queue_pause() {
+    // ---- E_RUN_STALLED 收尾的队列归属（收尾动作纯函数钉住：失败暂停；
+    // 对照取消终态清空返还。审批等待不误杀由结构保证——挂起时 drive_run
+    // 已退出、计时器随请求生灭）----
     use crate::host::commands::chat::{QueueDisposition, RunFailure, followup_disposition};
     let stalled = RunExit::Stalled {
         message: "停滞".to_owned(),
@@ -739,10 +756,10 @@ fn stalled_exit_maps_to_queue_pause() {
         QueueDisposition::PauseKeep,
         "E_RUN_STALLED 收尾队列按失败暂停"
     );
-    // 对照：取消终态清空返还
     assert_eq!(
         followup_disposition(&RunExit::Cancelled, &None),
-        QueueDisposition::ClearReturn
+        QueueDisposition::ClearReturn,
+        "对照：取消终态清空返还"
     );
 }
 

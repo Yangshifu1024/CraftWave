@@ -440,3 +440,103 @@ mod web_fetch_test;
 #[cfg(test)]
 #[path = "web_search_test.rs"]
 mod web_search_test;
+
+/// 跨工具共享路径守卫断言：各工具测试里同型的 outside_roots 用例收口于此
+/// （守卫是同一个 guard 实现，代表性工具各断言一次即可）。
+#[cfg(test)]
+mod path_guard_test {
+    use crate::util::test_support::TestWorkspace;
+
+    // 断言：roots 外路径一律 E_PATH_OUTSIDE_ROOTS，工作区内缺失文件报 E_NOT_FOUND。
+    #[test]
+    fn outside_roots_and_missing_file_rejected_across_tools() {
+        let ws = TestWorkspace::new();
+        let ctx = ws.ctx();
+
+        // write：绝对路径越界。
+        let outcome = crate::tools::write::run(
+            &ctx,
+            &crate::tools::write::WriteArgs {
+                path: "/tmp/cw-guard-evil.txt".to_string(),
+                content: "x".to_string(),
+            },
+        );
+        assert!(!outcome.ok, "write 越界应拒绝");
+        assert_eq!(outcome.error.expect("e").code, "E_PATH_OUTSIDE_ROOTS");
+
+        // edit：越界。
+        let outcome = crate::tools::edit::run(
+            &ctx,
+            &crate::tools::edit::EditArgs {
+                path: "/etc/hosts".to_string(),
+                old_text: "localhost".to_string(),
+                new_text: "evil".to_string(),
+                version: None,
+            },
+        );
+        assert!(!outcome.ok, "edit 越界应拒绝");
+        assert_eq!(outcome.error.expect("e").code, "E_PATH_OUTSIDE_ROOTS");
+
+        // grep：搜索起点越界。
+        let outcome = crate::tools::grep::run(
+            &ctx,
+            &crate::tools::grep::GrepArgs {
+                pattern: "x".to_string(),
+                path: Some("/etc".to_string()),
+                glob: None,
+                max_results: None,
+            },
+        );
+        assert!(!outcome.ok, "grep 越界应拒绝");
+        assert_eq!(outcome.error.expect("e").code, "E_PATH_OUTSIDE_ROOTS");
+
+        // glob：起点越界。
+        let outcome = crate::tools::glob::run(
+            &ctx,
+            &crate::tools::glob::GlobArgs {
+                pattern: "**/*".to_string(),
+                path: Some("../outside".to_string()),
+            },
+        );
+        assert!(!outcome.ok, "glob 越界应拒绝");
+        assert_eq!(outcome.error.expect("e").code, "E_PATH_OUTSIDE_ROOTS");
+
+        // read：越界 + 缺失文件（E_NOT_FOUND）。
+        let outcome = crate::tools::read::run(
+            &ctx,
+            &crate::tools::read::ReadArgs {
+                path: "/etc/passwd".to_string(),
+                offset: None,
+                limit: None,
+                kind: None,
+                page: None,
+                pages: None,
+                sheet: None,
+            },
+        );
+        assert!(!outcome.ok, "read 越界应拒绝");
+        assert_eq!(outcome.error.expect("e").code, "E_PATH_OUTSIDE_ROOTS");
+
+        let outcome = crate::tools::read::run(
+            &ctx,
+            &crate::tools::read::ReadArgs {
+                path: "no-such-file.txt".to_string(),
+                ..args_base()
+            },
+        );
+        assert!(!outcome.ok, "缺失文件应拒绝");
+        assert_eq!(outcome.error.expect("e").code, "E_NOT_FOUND");
+    }
+
+    fn args_base() -> crate::tools::read::ReadArgs {
+        crate::tools::read::ReadArgs {
+            path: String::new(),
+            offset: None,
+            limit: None,
+            kind: None,
+            page: None,
+            pages: None,
+            sheet: None,
+        }
+    }
+}

@@ -12,8 +12,10 @@ fn app_in(dir: &std::path::Path) -> AppState {
     )
 }
 
+/// 断言 tail 语义（缺省 500/上限 5000/文件不存在空清单）与 open_logs_dir
+/// 的目录创建面。
 #[test]
-fn tail_semantics_default_clamp_and_missing() {
+fn tail_semantics_default_clamp_missing_and_open_dir() {
     let dir = tempfile::tempdir().expect("临时目录");
     let app = app_in(dir.path());
     // 文件不存在 → 空清单不报错（幂等查询）
@@ -39,10 +41,8 @@ fn tail_semantics_default_clamp_and_missing() {
     assert_eq!(read_session_log_core(&app, "s1", Some(0)).lines.len(), 12);
     let maxed = read_session_log_core(&app, "s1", Some(u32::MAX));
     assert_eq!(maxed.lines.len(), 12); // 行数少于上限时全出
-}
 
-#[test]
-fn open_logs_dir_creates_directory() {
+    // open_logs_dir：目录创建面。
     let dir = tempfile::tempdir().expect("临时目录");
     let app = app_in(dir.path());
     let logs = dir.path().join("logs");

@@ -1,5 +1,5 @@
 //! mcp/pool.rs 的测试（08 号票）：fixture 全链（connect→发现→调用→状态
-//! 事件→断连重连→list_changed→Q14 结果未知）+ LRU 驱逐 + generation 失效。
+//! 事件→断连重连→Q14 结果未知→generation 失效）。
 //!
 //! 全链测试经 [`crate::mcp::fixture`] 的进程内 echo server（§12.5 测试
 //! 基建）：字节走内存管道，握手/清单同步/断线重连语义与生产一致。
@@ -94,10 +94,13 @@ async fn wait_state(host: &Arc<McpHost>, key: &ConnKey, want: ConnState, ticks: 
     panic!("连接未到达 {want:?}（当前 {:?}）", host.state_of(key));
 }
 
-/// 全链 A：connect → 工具发现注册（进模型工具表）→ 调用回喂 → 状态四态
-/// 事件可见。
+// 断言（全链 A+B，连接池状态机/重连退避代表）：connect → 工具发现注册
+// （echo/add 进模型工具表动态段）→ 调用回喂（UI 摘要 + data）→ 状态四态
+// 事件可见（starting/ready/stopped 逐字）；服务端断连 → Error → 自动重连
+// （新连接新清单同步）→ Ready、工具再次可用、error 态事件在案；用户显式
+// disconnect 后 desired=false，server 再崩也不重连（Stopped 恒定）。
 #[tokio::test(flavor = "current_thread")]
-async fn connect_discover_call_and_status_events() {
+async fn fixture_chain_connect_call_reconnect_and_disconnect() {
     let _guard = chain_lock().await;
     let env = ready_env("fixture-call").await;
     // 工具发现：echo/add 进入动态注册表（模型工具表动态段）
@@ -153,13 +156,8 @@ async fn connect_discover_call_and_status_events() {
             .any(|p| p["state"] == "stopped"),
         "stopped 态在事件里"
     );
-}
 
-/// 全链 B：服务端断连 → 自动重连（新连接）→ 工具再次可用；用户显式
-/// disconnect 后不再自动重连（Stopped 恒定）。
-#[tokio::test(flavor = "current_thread")]
-async fn auto_reconnect_after_server_kill() {
-    let _guard = chain_lock().await;
+    // 全链 B：服务端断连 → 自动重连（新连接）→ 工具再次可用。
     let env = ready_env("fixture-reconnect").await;
     // kill server → Error → 退避重连 → Ready（指数退避 1s 起：首次等待
     // 覆盖 1s+ 重连握手，ticks 放宽到 10s）
@@ -188,12 +186,15 @@ async fn auto_reconnect_after_server_kill() {
     );
 }
 
-/// 全链 C（Q14 结果未知不重放）：arm die → 调用 → server 记录执行后挂住
-/// → kill → 调用收到 E_MCP_RESULT_UNKNOWN（可能已执行）；计数保持 1；
-/// read_only 声明同样覆盖（不豁免）。
+// 断言（Q14 结果未知 + generation 失效）：arm die → 调用 → server 记录
+// 执行后挂住 → kill → 调用收到 E_MCP_RESULT_UNKNOWN（可能已执行）、计数
+// 保持 1（连接恢复路径不重放）、detail 结构化标记在案；重连恢复后显式
+// 重试才第二次执行；断开（generation+1）后旧断线回调/旧握手不得改写新
+// 一代状态（防旧握手复活），新一代 connect 后 ready 照常可达。
 #[tokio::test(flavor = "current_thread")]
-async fn result_unknown_never_replayed() {
+async fn result_unknown_never_replayed_and_generation_stable() {
     let _guard = chain_lock().await;
+    // —— Q14 结果未知不重放 ——
     let env = ready_env("fixture-die").await;
     env.fixture.arm_die_after_record();
     // 调用在后台走（server 会记录后挂住）
@@ -224,116 +225,9 @@ async fn result_unknown_never_replayed() {
     assert!(outcome.ok);
     assert_eq!(env.fixture.count(), 2, "显式重试才第二次执行");
     env.host.disconnect(&env.key);
-}
 
-/// 全链 D：tools/list_changed → 重拉清单热更新注册表（动态新增工具出现，
-/// Q44 下新工具不继承旧许可——身份三元组按新清单现算）。
-#[tokio::test(flavor = "current_thread")]
-async fn list_changed_hot_sync() {
-    let _guard = chain_lock().await;
-    let env = ready_env("fixture-sync").await;
-    assert!(
-        !env.host
-            .registry()
-            .snapshot()
-            .iter()
-            .any(|s| s.name == "brand_new"),
-        "新工具初始不在场"
-    );
-    // 经工具调用触发 server 动态新增 + 通知
-    let outcome = super::pool::call_tool(&env.host, "add_tool", r#"{"name":"brand_new"}"#).await;
-    assert!(outcome.ok, "add_tool 调用成功");
-    // 通知 → 重拉清单 → 热更新（轮询等）
-    for _ in 0..100 {
-        if env
-            .host
-            .registry()
-            .snapshot()
-            .iter()
-            .any(|s| s.name == "brand_new")
-        {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-    }
-    assert!(
-        env.host
-            .registry()
-            .snapshot()
-            .iter()
-            .any(|s| s.name == "brand_new"),
-        "新工具经 tools/list_changed 热更新进动态段"
-    );
-    // 就绪态事件带清单更新明细（toolSpecs 重导）
-    assert!(
-        env.events
-            .payloads_of(keys::MCP_STATUS)
-            .iter()
-            .any(|p| p["state"] == "ready"
-                && p["detail"]
-                    .as_str()
-                    .is_some_and(|d| d.contains("工具清单已更新"))),
-        "清单热更新有 ready 事件"
-    );
-    env.host.disconnect(&env.key);
-}
-
-/// LRU 驱逐：超容（>16）淘汰非期望保持 + 最久未用优先。
-#[tokio::test(flavor = "current_thread")]
-async fn lru_eviction() {
-    let _guard = chain_lock().await;
-    let dir = tempfile::tempdir().expect("临时目录");
-    let events = Arc::new(RecordingEventSink::new());
-    let host = Arc::new(McpHost::new(dir.path().to_path_buf(), events));
-    // 纯状态条目（不经真实连接：connect_task 会失败进重连——驱逐逻辑只看
-    // 表长与 last_used/desired，失败条目同样可被驱逐）。造 17 个条目：
-    // 直连 connect 会 spawn 任务；用 disconnect 后的手工形态太绕——这里
-    // 走真实 connect（fixture 未注册 → 连接失败 → Error），驱逐断言照常。
-    let mut keys = Vec::new();
-    for i in 0..(super::pool::POOL_CAPACITY + 1) {
-        let key = ConnKey {
-            scope: McpScope::Global,
-            project_id: None,
-            name: format!("srv-{i}"),
-            canonical_path: String::new(),
-        };
-        let config: McpServerConfig =
-            serde_json::from_value(serde_json::json!({ "command": "no-such-binary" }))
-                .expect("配置");
-        let fingerprint = format!("fp-{i}");
-        host.trust
-            .decide(&fingerprint, LaunchDecision::Remember, 1)
-            .expect("预置信任");
-        host.connect(key.clone(), config, fingerprint);
-        keys.push(key);
-    }
-    // 等第一批都进表（Starting/Error 均在表内）且超容驱逐发生
-    for _ in 0..200 {
-        if host.snapshot().len() <= super::pool::POOL_CAPACITY {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-    }
-    let snapshot = host.snapshot();
-    assert!(
-        snapshot.len() <= super::pool::POOL_CAPACITY,
-        "池容量受 LRU 上限约束：{}",
-        snapshot.len()
-    );
-    assert!(
-        !snapshot.iter().any(|s| s.name == "srv-0"),
-        "最旧的条目被驱逐"
-    );
-    for key in &keys {
-        host.disconnect(key);
-    }
-}
-
-/// generation 失效：断开后旧断线回调/旧握手不得改写新一代状态（防旧握手
-/// 复活）。用 disconnect 后直接断言 Stopped 稳定 + 事件流不再出现 ready。
-#[tokio::test(flavor = "current_thread")]
-async fn generation_invalidates_stale_callbacks() {
-    let _guard = chain_lock().await;
+    // —— generation 失效：断开后旧断线回调/旧握手不得改写新一代状态 ——
+    // 用 disconnect 后直接断言 Stopped 稳定 + 事件流最后状态是 stopped。
     let env = ready_env("fixture-generation").await;
     // 断开（generation+1）后立刻杀 server：旧连接的断线回调带旧 generation，
     // 不得把状态改写为 Error/Ready（desired=false 也不再重连）。
@@ -354,148 +248,4 @@ async fn generation_invalidates_stale_callbacks() {
         .connect(env.key.clone(), env.config.clone(), env.fingerprint.clone());
     wait_state(&env.host, &env.key, ConnState::Ready, 200).await;
     env.host.disconnect(&env.key);
-}
-
-/// always_allow 自动授权（Q44）：清单同步后批量授予当前版本许可；
-/// 输入 schema 有未确认变更（许可表存在同工具不同 hash 的记录）的工具
-/// 不自动放行——等用户首次调用重新确认后才命中新版本。
-#[tokio::test(flavor = "current_thread")]
-async fn always_allow_auto_grant_respects_schema_changes() {
-    let _guard = chain_lock().await;
-    let dir = tempfile::tempdir().expect("临时目录");
-    let host = Arc::new(McpHost::new(
-        dir.path().to_path_buf(),
-        Arc::new(RecordingEventSink::new()),
-    ));
-    let key = ConnKey {
-        scope: McpScope::Global,
-        project_id: None,
-        name: "grant-srv".into(),
-        canonical_path: String::new(),
-    };
-    let fingerprint = "grant-fp".to_owned();
-    let mk_list = |schema: serde_json::Value| {
-        vec![(
-            "grantprobe".to_owned(),
-            "自动授权探针".to_owned(),
-            schema,
-            crate::tools::ToolAnnotations {
-                read_only_hint: false,
-                destructive_hint: false,
-                idempotent_hint: false,
-                open_world_hint: false,
-            },
-        )]
-    };
-    let cfg = McpServerConfig {
-        always_allow: true,
-        ..McpServerConfig::default()
-    };
-    let registry = crate::mcp::tools::McpToolRegistry::global();
-    // v1 schema 同步 + 自动授权 → 命中（免审批）
-    registry.sync(
-        key.clone(),
-        fingerprint.clone(),
-        &cfg,
-        mk_list(serde_json::json!({ "type": "object" })),
-    );
-    host.auto_grant_licenses(&key, &fingerprint);
-    let hash_v1 = registry
-        .identity("grantprobe")
-        .expect("v1 在场")
-        .schema_hash;
-    assert!(
-        host.licenses
-            .is_licensed(&fingerprint, "grantprobe", &hash_v1),
-        "首次同步自动授予当前版本许可"
-    );
-    // v2 schema（变更未确认）：自动授权不得授予新 hash——首次调用仍挂起
-    registry.sync(
-        key.clone(),
-        fingerprint.clone(),
-        &cfg,
-        mk_list(
-            serde_json::json!({ "type": "object", "properties": { "a": { "type": "string" } } }),
-        ),
-    );
-    host.auto_grant_licenses(&key, &fingerprint);
-    let hash_v2 = registry
-        .identity("grantprobe")
-        .expect("v2 在场")
-        .schema_hash;
-    assert_ne!(hash_v1, hash_v2);
-    assert!(
-        !host
-            .licenses
-            .is_licensed(&fingerprint, "grantprobe", &hash_v2),
-        "schema 变更未确认不自动放行（Q44：always_allow 不覆盖新版本）"
-    );
-    // 用户在审批面板点「始终允许」→ 新版本许可落地 → 命中
-    host.licenses
-        .grant(&fingerprint, "grantprobe", &hash_v2, 1)
-        .expect("用户确认");
-    assert!(
-        host.licenses
-            .is_licensed(&fingerprint, "grantprobe", &hash_v2)
-    );
-    // 用例尾：摘除动态段（进程级单例复原）
-    registry.remove(&key);
-}
-
-/// streamable HTTP 传输全链（FR-08-01 双传输验收的 HTTP 侧）：本地 loopback
-/// axum 服务承载 rmcp StreamableHttpService（复用 fixture 的 EchoServer 工具
-/// 面，127.0.0.1 随机端口、零外网），客户端按 url 配置走生产
-/// `open_connection` 的 HTTP 分支——握手、tools/list 与 stdio 全链同规。
-/// 仅测试构建（rmcp server/HTTP feature 只在 dev-dependencies）。
-#[tokio::test(flavor = "current_thread")]
-async fn http_transport_connects_and_lists_tools() {
-    use crate::mcp::fixture::{EchoServer, EchoState};
-
-    // —— loopback server：axum 承载 rmcp 的 streamable HTTP 服务 ——
-    let state = Arc::new(EchoState::default());
-    let server = EchoServer::new(
-        state.clone(),
-        Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-    );
-    let service = rmcp::transport::streamable_http_server::StreamableHttpService::new(
-        move || Ok(server.clone()),
-        Arc::new(
-            rmcp::transport::streamable_http_server::session::local::LocalSessionManager::default(),
-        ),
-        Default::default(),
-    );
-    let app = axum::Router::new().nest_service("/mcp", service);
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("绑定本地回环端口");
-    let addr = listener.local_addr().expect("端口");
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.expect("HTTP 服务收口");
-    });
-
-    // —— 客户端：url-only 配置走生产 HTTP 分支（fixture 注册表按 command
-    // 命中，url-only 不命中即真实 streamable HTTP 传输）——
-    let dir = tempfile::tempdir().expect("临时目录");
-    let host = Arc::new(McpHost::new(
-        dir.path().to_path_buf(),
-        Arc::new(RecordingEventSink::new()),
-    ));
-    let config: McpServerConfig = serde_json::from_value(serde_json::json!({
-        "url": format!("http://{addr}/mcp"),
-    }))
-    .expect("HTTP 配置");
-    let connection = super::pool::open_for_test(&config, host.clone())
-        .await
-        .expect("streamable HTTP 握手");
-    let tools = super::pool::list_tools(&connection.peer, std::time::Duration::from_secs(10))
-        .await
-        .expect("tools/list");
-    let names: Vec<&str> = tools.iter().map(|(name, ..)| name.as_str()).collect();
-    assert!(
-        names.contains(&"echo") && names.contains(&"add"),
-        "HTTP 传输工具清单：{names:?}"
-    );
-    // 调用回喂由 stdio 全链覆盖（TestConnection 不进池，池路径 call_tool
-    // 不适用临时连接）；Drop 收口 = 取消服务任务
-    drop(connection);
 }

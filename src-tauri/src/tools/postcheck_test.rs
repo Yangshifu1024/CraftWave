@@ -1,5 +1,5 @@
 //! 写后完整性自检测试（22 号票）：正常写、故障注入（重读不一致）、
-//! CRLF 保持、拒绝写二进制、错误回喂构造。
+//! CRLF 保持、拒绝写二进制、错误回喂构造（矩阵化合并）。
 
 use std::path::Path;
 
@@ -26,17 +26,18 @@ fn assert_fail(result: Result<(), PostcheckFailure>, stage: &str) -> PostcheckFa
     f
 }
 
+// 断言：verify_written 校验矩阵——内容一致（Any/LF 保持）通过；故障注入
+// 磁盘不一致卡哈希阶段；目标缺失卡重读阶段；NUL 内容卡 UTF-8 阶段；
+// CRLF 保持被破坏（裸 LF）与 LF 被引入 CRLF 均卡 EOL 阶段；失败构造的
+// ToolError 带 E_INTERNAL 码与路径、校验阶段。
 #[test]
-fn normal_write_passes() {
+fn verify_written_pass_and_failure_matrix() {
+    // 正常写：Any 与 LF 保持（Preserve(false)）都通过。
     let path = write_tmp("ok", b"hello craftwave\n");
     verify_written(&path, b"hello craftwave\n", EolExpect::Any).expect("正常写应通过");
-    // 内容一致时 Preserve(false) 也应通过（LF 文件无 CRLF）。
     verify_written(&path, b"hello craftwave\n", EolExpect::Preserve(false)).expect("LF 保持应通过");
-}
 
-#[test]
-fn injected_mismatch_fails_at_hash_stage() {
-    // 故障注入：磁盘实际内容与写入预期不符（等价坏块/篡改场景）。
+    // 故障注入：磁盘实际内容与写入预期不符（等价坏块/篡改场景）→ 哈希阶段。
     let path = write_tmp("mismatch", b"actual bytes on disk");
     let failure = assert_fail(
         verify_written(&path, b"expected bytes", EolExpect::Any),
@@ -46,37 +47,25 @@ fn injected_mismatch_fails_at_hash_stage() {
         failure.message.contains("不一致"),
         "描述应指明不一致：{failure:?}"
     );
-}
 
-#[test]
-fn injected_reread_failure_is_reported() {
-    // 注入：目标不存在（重读失败）。
+    // 注入：目标不存在（重读失败）→ 重读阶段。
     let missing = Path::new("/nonexistent/cw-postcheck-probe.txt");
     let failure = assert_fail(verify_written(missing, b"x", EolExpect::Any), "重读");
     assert!(failure.message.contains("重读失败"), "{failure:?}");
-}
 
-#[test]
-fn binary_content_is_rejected() {
-    // 拒绝写二进制：内容含 NUL（非严格 UTF-8 时按 UTF-8 阶段拦截；
-    // NUL 字节在哈希一致的前提下也应被 UTF-8 阶段拦下）。
+    // 拒绝写二进制：NUL 字节在哈希一致的前提下被 UTF-8 阶段拦下。
     let binary: &[u8] = b"ok\x00\xff\xfe binary";
     let path = write_tmp("binary", binary);
-    // 哈希一致（磁盘内容 = 预期）→ 落到 UTF-8 阶段失败。
     let failure = assert_fail(verify_written(&path, binary, EolExpect::Any), "UTF-8");
     assert!(failure.message.contains("UTF-8"), "{failure:?}");
-}
 
-#[test]
-fn crlf_preserve_is_enforced() {
     // CRLF 文件（写回保持 CRLF）→ 通过。
     let crlf: &[u8] = b"a\r\nb\r\n";
     let path = write_tmp("crlf-ok", crlf);
     verify_written(&path, crlf, EolExpect::Preserve(true)).expect("CRLF 保持应通过");
 
-    // 故障注入：EOL 还原被破坏——磁盘上混入裸 LF（与预期不一致也会先卡
-    // 哈希，故此处构造「哈希一致但风格错」：预期与磁盘同为含裸 LF 的
-    // 内容，Preserve(true) 要求下 EOL 阶段必须拦下）。
+    // 故障注入：EOL 还原被破坏——「哈希一致但风格错」（预期与磁盘同为含
+    // 裸 LF 的内容），Preserve(true) 要求下 EOL 阶段拦下。
     let broken: &[u8] = b"a\nb\r\n";
     let path = write_tmp("crlf-broken", broken);
     let failure = assert_fail(
@@ -92,10 +81,8 @@ fn crlf_preserve_is_enforced() {
         "EOL",
     );
     assert!(failure.message.contains("CRLF"), "{failure:?}");
-}
 
-#[test]
-fn postcheck_error_carries_path_and_stage() {
+    // 错误回喂构造：E_INTERNAL 码 + 路径 + 校验阶段。
     let failure = PostcheckFailure {
         stage: "哈希",
         message: "内容不一致".to_string(),

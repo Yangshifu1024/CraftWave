@@ -8,10 +8,15 @@ use super::trust::{
 };
 use crate::mcp::config::McpScope as Scope;
 
-/// 指纹稳定性：同输入同指纹；字段级敏感性（config 内容/名称/路径/作用域
-/// 任一变化 → 指纹变化，§9.7 元组逐字段）。
+// 断言：TOFU 指纹稳定（同输入同指纹）且字段级敏感（config 内容/名称/
+// 路径/作用域任一变化 → 指纹变化，§9.7 元组逐字段），指纹是 64 位 hex；
+// schema 哈希同 schema 同哈希、输入 schema 变化 → 哈希变化（Q44：不继承
+// 旧免审批许可的判定输入）；信任存储 remember 后同指纹免问、revoke 后
+// 重新询问（状态机 Pending/Trusted/Revoked）；Q44 许可三元组全等命中、
+// 任一元变化不命中、revoke_server 按指纹清全部工具许可。
 #[test]
-fn fingerprint_stable_and_sensitive() {
+fn fingerprint_trust_and_license_semantics() {
+    // 指纹稳定性与字段级敏感性。
     let base = TrustSubject {
         scope: McpScope::Global,
         project_id: None,
@@ -47,22 +52,15 @@ fn fingerprint_stable_and_sensitive() {
     // 指纹是 64 位 hex
     assert_eq!(f1.len(), 64);
     assert!(f1.chars().all(|c| c.is_ascii_hexdigit()));
-}
 
-/// schema 哈希：同 schema 同哈希；输入 schema 变化 → 哈希变化（Q44：不
-/// 继承旧免审批许可的判定输入）。
-#[test]
-fn schema_fingerprint_changes_with_schema() {
+    // schema 哈希：同 schema 同哈希；输入 schema 变化 → 哈希变化。
     let a = serde_json::json!({"type": "object", "properties": {"x": {"type": "string"}}});
     let b = serde_json::json!({"type": "object", "properties": {"x": {"type": "number"}}});
     assert_eq!(schema_fingerprint(&a), schema_fingerprint(&a));
     assert_ne!(schema_fingerprint(&a), schema_fingerprint(&b));
     assert_eq!(schema_fingerprint(&a).len(), 16);
-}
 
-/// 信任存储：remember 后同指纹免问；revoke 后重新询问；不同指纹不混淆。
-#[test]
-fn trust_store_decide_and_status() {
+    // 信任存储：remember 后同指纹免问；revoke 后重新询问。
     let dir = tempfile::tempdir().expect("临时目录");
     let store = TrustStore::new(dir.path());
     assert!(!store.is_trusted("fp1"));
@@ -78,12 +76,9 @@ fn trust_store_decide_and_status() {
         .expect("撤销");
     assert!(!store.is_trusted("fp1"));
     assert_eq!(store.status_of("fp1"), super::trust::TrustStatus::Revoked);
-}
 
-/// Q44 许可三元组：全等命中；任一元变化不命中；revoke_server 按指纹清
-/// 全部工具许可。
-#[test]
-fn tool_license_triple_binding() {
+    // Q44 许可三元组：全等命中；任一元变化不命中；revoke_server 按指纹
+    // 清全部工具许可。
     let dir = tempfile::tempdir().expect("临时目录");
     let store = ToolLicenseStore::new(dir.path());
     store

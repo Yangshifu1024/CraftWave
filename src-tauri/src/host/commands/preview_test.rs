@@ -1,10 +1,13 @@
-//! preview_register 命令测试：注册往返、幂等、超限拒绝、URL 形态。
+//! preview_register 命令测试：注册往返、幂等、不同内容不同 token、超限拒绝。
 
 use super::{PreviewRegisterArgs, preview_register};
 
-// 断言：注册返回 token + URL，注册表按 token 可取回原文。
+/// 断言注册语义全链：返回 token + URL、注册表按 token 可取回原文；同内容
+/// 幂等（token 稳定）、不同内容不同 token；超过 50,000 字符拒绝
+/// （E_INVALID_ARG，与 render_html 同款口径）。
 #[test]
-fn registers_and_returns_url() {
+fn preview_register_semantics() {
+    // 注册往返。
     let html = "<p>hello preview</p>";
     let result = preview_register(PreviewRegisterArgs {
         html: html.to_string(),
@@ -21,11 +24,8 @@ fn registers_and_returns_url() {
             .as_deref(),
         Some(html)
     );
-}
 
-// 断言：同内容幂等（token 稳定），不同内容不同 token。
-#[test]
-fn registration_is_idempotent() {
+    // 幂等与差异。
     let a = preview_register(PreviewRegisterArgs {
         html: "<p>a</p>".to_string(),
     })
@@ -38,13 +38,10 @@ fn registration_is_idempotent() {
         html: "<p>b</p>".to_string(),
     })
     .expect("b");
-    assert_eq!(a.token, a2.token);
-    assert_ne!(a.token, b.token);
-}
+    assert_eq!(a.token, a2.token, "同内容 token 稳定");
+    assert_ne!(a.token, b.token, "不同内容不同 token");
 
-// 断言：超过 50,000 字符拒绝（E_INVALID_ARG），与 render_html 同款口径。
-#[test]
-fn rejects_over_limit() {
+    // 超限拒绝。
     let err = preview_register(PreviewRegisterArgs {
         html: "x".repeat(crate::tools::render_html::MAX_HTML_CHARS + 1),
     })

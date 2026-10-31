@@ -23,12 +23,6 @@ use crate::backend::turn::TurnDriver;
 /// 提醒文本的判别子串（与 §5.7 看门狗纠偏文本区分）。
 const REMINDER_MARK: &str = "计划纪律提醒";
 
-/// 阈值常量钉死（附录 B：N=8）。
-#[test]
-fn reminder_threshold_matches_spec() {
-    assert_eq!(PLAN_REMINDER_EVERY, 8);
-}
-
 /// 剧本流一轮：一个 command 工具调用（变更工具，FileWrite/Network 能力）
 /// + 收尾。args 在批内无重（看门狗同签名失败计数不受影响——工具恒成功）。
 fn command_turn(i: usize) -> Vec<MockStreamEvent> {
@@ -148,11 +142,35 @@ fn trailing_systems(request: &CompletionRequest) -> Vec<String> {
     }
 }
 
-/// 场景 A（阈值与一次性）：连续 8 次 command 后第 9 拍请求携带一次性提醒；
-/// 注入后计数清零（第 9 批后仅累计 1），第 10 拍不再携带。
+/// 逐拍断言提醒携带面（场景共用）。
+fn assert_reminder_only_on(requests: &[CompletionRequest], only_at: Option<usize>, why: &str) {
+    for (idx, request) in requests.iter().enumerate() {
+        let has_reminder = trailing_systems(request)
+            .iter()
+            .any(|t| t.contains(REMINDER_MARK));
+        match only_at {
+            Some(at) if idx == at => {
+                assert!(has_reminder, "第 {} 拍应携带提醒（{why}）", idx + 1);
+            }
+            _ => {
+                assert!(!has_reminder, "第 {} 拍不应携带提醒（{why}）", idx + 1);
+            }
+        }
+    }
+}
+
+/// 全链场景合并（25 号票，FR-06-04/§8.6）：阈值常量钉死（附录 B N=8）；
+/// 场景 A——连续 8 次 command 后第 9 拍请求携带一次性提醒、注入后清零
+/// （第 10 拍不再携带）；场景 B——plan 成功更新清零后计数不达阈值全程
+/// 不注入；场景 C——开关关闭（子代理/缺省装配）全程不计数不注入；场景
+/// D——初始计数 7 经 resume 链传入（DriveState 挂起恢复延续，宿主恢复
+/// 循环把 SuspendedInfo.state 原样传回 drive_run），1 次变更即达阈值。
 #[tokio::test]
-async fn reminder_injected_on_eighth_change_then_once() {
-    // 9 轮 command + 1 轮文本 = 10 拍请求
+async fn plan_reminder_chain_cases() {
+    assert_eq!(PLAN_REMINDER_EVERY, 8, "附录 B：N=8 阈值钉死");
+
+    // 场景 A：9 轮 command + 1 轮文本 = 10 拍请求；第 9 拍（8 次变更后）
+    // 携带一次性提醒，注入后计数清零
     let mut turns: Vec<Vec<MockStreamEvent>> = (1..=9).map(command_turn).collect();
     turns.push(text_turn());
     let (_sink, requests) = drive_with(
@@ -164,26 +182,10 @@ async fn reminder_injected_on_eighth_change_then_once() {
     )
     .await;
     assert_eq!(requests.len(), 10, "10 拍模型请求");
-    for (idx, request) in requests.iter().enumerate() {
-        let has_reminder = trailing_systems(request)
-            .iter()
-            .any(|t| t.contains(REMINDER_MARK));
-        if idx == 8 {
-            assert!(has_reminder, "第 9 拍请求（8 次变更后）应携带提醒");
-        } else {
-            assert!(
-                !has_reminder,
-                "第 {} 拍请求不应携带提醒（一次性注入 + 清零）",
-                idx + 1
-            );
-        }
-    }
-}
+    assert_reminder_only_on(&requests, Some(8), "第 9 拍一次性注入 + 清零后不再携带");
 
-/// 场景 B（plan:update 清零）：7 次 command + 1 次 plan 成功——plan 批清零
-/// 后计数不达阈值，第 9 拍请求不携带提醒（无清零时第 8 批恰达 8 会注入）。
-#[tokio::test]
-async fn plan_update_resets_count() {
+    // 场景 B：7 次 command + 1 次 plan 成功——plan 批清零后计数不达阈值，
+    // 第 9 拍不携带提醒（无清零时第 8 批恰达 8 会注入）
     let mut turns: Vec<Vec<MockStreamEvent>> = (1..=7).map(command_turn).collect();
     turns.push(plan_turn(1));
     turns.push(text_turn());
@@ -196,42 +198,15 @@ async fn plan_update_resets_count() {
     )
     .await;
     assert_eq!(requests.len(), 9, "9 拍模型请求");
-    for (idx, request) in requests.iter().enumerate() {
-        let has_reminder = trailing_systems(request)
-            .iter()
-            .any(|t| t.contains(REMINDER_MARK));
-        assert!(
-            !has_reminder,
-            "第 {} 拍不应有提醒（plan 更新清零）",
-            idx + 1
-        );
-    }
-}
+    assert_reminder_only_on(&requests, None, "plan 更新清零后不达阈值");
 
-/// 场景 C（开关面）：同场景 A 剧本但开关关闭（子代理/缺省装配）——全程
-/// 不计数不注入（"根会话"口径）。
-#[tokio::test]
-async fn reminder_disabled_without_flag() {
+    // 场景 C：同场景 A 剧本但开关关闭——全程不计数不注入（"根会话"口径）
     let mut turns: Vec<Vec<MockStreamEvent>> = (1..=9).map(command_turn).collect();
     turns.push(text_turn());
     let (_sink, requests) = drive_with(turns, DriveState::default()).await;
-    for (idx, request) in requests.iter().enumerate() {
-        let has_reminder = trailing_systems(request)
-            .iter()
-            .any(|t| t.contains(REMINDER_MARK));
-        assert!(
-            !has_reminder,
-            "第 {} 拍不应有提醒（开关关闭不计数）",
-            idx + 1
-        );
-    }
-}
+    assert_reminder_only_on(&requests, None, "开关关闭不计数");
 
-/// 场景 D（跨挂起延续的机制面）：初始计数 7 经 resume 链传入——1 次变更
-/// 即达阈值，第 2 拍请求携带提醒（计数随 DriveState 挂起恢复延续，宿主
-/// 恢复循环把 SuspendedInfo.state 原样传回 drive_run）。
-#[tokio::test]
-async fn reminder_count_carries_over_resume() {
+    // 场景 D：初始计数 7 跨挂起延续——1 次变更即达阈值，第 2 拍请求携带提醒
     let turns = vec![command_turn(1), text_turn()];
     let (_sink, requests) = drive_with(
         turns,
@@ -243,10 +218,5 @@ async fn reminder_count_carries_over_resume() {
     )
     .await;
     assert_eq!(requests.len(), 2);
-    assert!(
-        trailing_systems(&requests[1])
-            .iter()
-            .any(|t| t.contains(REMINDER_MARK)),
-        "第 2 拍请求应携带提醒（延续计数 7 + 1 次变更）"
-    );
+    assert_reminder_only_on(&requests, Some(1), "延续计数 7 + 1 次变更达阈值");
 }

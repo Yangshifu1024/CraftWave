@@ -35,8 +35,15 @@ fn lit(s: &str) -> TargetPath {
     TargetPath::Literal(s.to_string())
 }
 
+// 断言：解析与写目标提取全表——重定向（>、>>、fd 重定向、多重重定向、
+// heredoc 重定向）、引号内 `>`/`|` 不算语法面、变量/命令替换写路径掩码
+// 命中（Opaque）、写命令表（tee/sed -i/rm/mv/chmod/cp/install/dd/mkfs）、
+// 只读命令与变量赋值不产目标、PowerShell 面（重定向、流合并、Set-Content
+// 大小写、Remove-Item、Copy-Item、Tee-Object、变量掩码、只读管道）；
+// git_classify（26 号票接缝）只读/写/破坏性三分表，非 git 输入保守归写。
 #[test]
-fn redirect_targets_are_extracted() {
+fn parse_extraction_and_git_classify_tables() {
+    // 重定向各形态。
     assert_targets(
         Shell::Posix,
         "echo hi > out.txt",
@@ -62,20 +69,12 @@ fn redirect_targets_are_extracted() {
             (WriteKind::Redirect, lit("f2"), "f2"),
         ],
     );
-}
-
-#[test]
-fn quoted_redirect_and_pipe_are_not_targets() {
     // 引号内的 `>`/`|` 是字符串内容，不是语法层面的重定向/管道。
     assert_targets(Shell::Posix, "grep \"a|b\" file", &[]);
     assert_targets(Shell::Posix, "echo \"hello > world\"", &[]);
     assert_targets(Shell::Posix, "echo 'x >> y'", &[]);
     // 管道右段无写命令 → 无写目标（cat x | grep y 只读）。
     assert_targets(Shell::Posix, "cat x | grep y", &[]);
-}
-
-#[test]
-fn variable_in_write_path_hits_literal_mask() {
     // 绕过向量：变量拼接的写路径 → 字面量掩码命中 → Opaque（保守 Confirm）。
     assert_targets(
         Shell::Posix,
@@ -95,21 +94,14 @@ fn variable_in_write_path_hits_literal_mask() {
     );
     // 普通参数里的变量不影响只读判定（无写目标）。
     assert_targets(Shell::Posix, "cat $FILE", &[]);
-}
-
-#[test]
-fn heredoc_redirect_target_extracted() {
     // 绕过向量：heredoc 重定向的目标嵌在 heredoc_redirect 内，须提取。
-    let cmd = "cat <<EOF > out.txt\nhello\nEOF";
     assert_targets(
         Shell::Posix,
-        cmd,
+        "cat <<EOF > out.txt\nhello\nEOF",
         &[(WriteKind::Redirect, lit("out.txt"), "out.txt")],
     );
-}
 
-#[test]
-fn write_command_table_extraction() {
+    // 写命令表。
     // tee（含 -a 追加）。
     assert_targets(
         Shell::Posix,
@@ -170,36 +162,17 @@ fn write_command_table_extraction() {
         "mkfs.ext4 /dev/sda1",
         &[(WriteKind::Format, lit("/dev/sda1"), "/dev/sda1")],
     );
-    // 只读命令不产目标。
+    // 只读命令不产目标；变量赋值（FOO=bar）不是文件写。
     assert_targets(Shell::Posix, "ls -la && rg TODO src/", &[]);
-    // 变量赋值（FOO=bar）不是文件写。
     assert_targets(Shell::Posix, "FOO=bar echo hi", &[]);
-}
 
-#[test]
-fn malformed_and_deeply_nested_fail_closed() {
     // 畸形命令（未闭合引号）→ 解析失败。
     assert_eq!(
         parse_command(Shell::Posix, "echo \"unterminated"),
         ParsedCommand::Failed
     );
-    // 超深嵌套命令替换 → 超限按解析失败（防炸）。
-    let depth = 80; // 超过 MAX_DEPTH=64
-    let mut nested = "echo x".to_string();
-    for _ in 0..depth {
-        nested = format!("$({nested})");
-    }
-    assert_eq!(
-        parse_command(Shell::Posix, &nested),
-        ParsedCommand::Failed,
-        "超深嵌套应判解析失败（fail-closed）"
-    );
-}
 
-// ---- PowerShell 面 ----
-
-#[test]
-fn powershell_redirect_and_cmdlets() {
+    // PowerShell 面。
     assert_targets(
         Shell::PowerShell,
         "echo hi > out.txt",
@@ -245,12 +218,8 @@ fn powershell_redirect_and_cmdlets() {
     );
     // PowerShell 只读管道无写目标。
     assert_targets(Shell::PowerShell, "Get-Content x | Measure-Object", &[]);
-}
 
-// ---- git_classify（26 号票接缝，表驱动）----
-
-#[test]
-fn git_classify_table() {
+    // git_classify 表（26 号票接缝）。
     let readonly = [
         vec!["git", "status"],
         vec!["git", "diff", "HEAD~1"],
@@ -325,46 +294,45 @@ fn ws_of<'a>(roots: &'a [PathBuf], base: &'a Path, fs: &'a MockFs) -> Workspace<
     Workspace { roots, base, fs }
 }
 
+/// WriteTarget 构造简写（Redirect 词法目标）。
+fn redirect(raw: &str) -> WriteTarget {
+    WriteTarget {
+        kind: WriteKind::Redirect,
+        path: lit(raw),
+        raw: raw.to_owned(),
+    }
+}
+
+// 断言：四象限判定——词法+canonical 都在 roots → Allow；词法在 roots 但
+// canonical 逃逸（symlink）→ Confirm（原因带 symlink 逃逸）；词法不在
+// roots 但 canonical 落界内 → 保守 Confirm；词法不在 roots → 普通写
+// Confirm（越出工作区），删除类越界直接 Block；字面量掩码（未解析变量/
+// 波浪号）→ Confirm；组合目标取最严判定（Allow+Block → Block）；
+// 空清单 = 未发现写信号 → Allow。
 #[test]
-fn four_quadrant_verdicts() {
+fn four_quadrant_verdicts_and_strictest_merge() {
     let (roots, base, fs) = mock_ws(&[("/proj/escape", "/outside")]);
     let ws = ws_of(&roots, &base, &fs);
 
     // 第一象限：词法在 roots 且 canonical 在 roots → Allow。
-    let t = WriteTarget {
-        kind: WriteKind::Redirect,
-        path: lit("src/main.rs"),
-        raw: "src/main.rs".into(),
-    };
-    assert_eq!(judge_target(&t, &ws).verdict, FenceVerdict::Allow);
+    assert_eq!(
+        judge_target(&redirect("src/main.rs"), &ws).verdict,
+        FenceVerdict::Allow
+    );
 
     // 第二象限：词法在 roots 但 canonical 逃逸（symlink）→ Confirm。
-    let t = WriteTarget {
-        kind: WriteKind::Redirect,
-        path: lit("escape/f.txt"),
-        raw: "escape/f.txt".into(),
-    };
-    let v = judge_target(&t, &ws);
+    let v = judge_target(&redirect("escape/f.txt"), &ws);
     assert_eq!(v.verdict, FenceVerdict::Confirm);
     assert!(v.reason.unwrap().contains("symlink 逃逸"));
 
     // 第三象限：词法不在 roots 但 canonical 落界内 → 保守 Confirm。
-    let t = WriteTarget {
-        kind: WriteKind::Redirect,
-        path: lit("/outside/back"),
-        raw: "/outside/back".into(),
-    };
+    let t = redirect("/outside/back");
     let (roots2, base2, fs2) = mock_ws(&[("/outside/back", "/proj/inside")]);
     let v = judge_target(&t, &ws_of(&roots2, &base2, &fs2));
     assert_eq!(v.verdict, FenceVerdict::Confirm);
 
     // 第四象限：词法不在 roots → 普通写 Confirm。
-    let t = WriteTarget {
-        kind: WriteKind::Redirect,
-        path: lit("/outside/x.txt"),
-        raw: "/outside/x.txt".into(),
-    };
-    let v = judge_target(&t, &ws);
+    let v = judge_target(&redirect("/outside/x.txt"), &ws);
     assert_eq!(v.verdict, FenceVerdict::Confirm);
     assert!(v.reason.unwrap().contains("越出工作区"));
 
@@ -381,13 +349,11 @@ fn four_quadrant_verdicts() {
         raw: "/outside/keep.txt".into(),
     };
     assert_eq!(judge_target(&t, &ws).verdict, FenceVerdict::Block);
-}
 
-#[test]
-fn literal_mask_and_unresolvable_confirm() {
+    // 字面量掩码：写路径含变量 → Confirm（防 $HOME/.. 逃逸）；波浪号路径
+    // （shell 会展开 home）→ Opaque 同口径。
     let (roots, base, fs) = mock_ws(&[]);
     let ws = ws_of(&roots, &base, &fs);
-    // 字面量掩码：写路径含变量 → Confirm（防 $HOME/.. 逃逸）。
     let t = WriteTarget {
         kind: WriteKind::Redirect,
         path: TargetPath::Opaque,
@@ -396,26 +362,16 @@ fn literal_mask_and_unresolvable_confirm() {
     let v = judge_target(&t, &ws);
     assert_eq!(v.verdict, FenceVerdict::Confirm);
     assert!(v.reason.unwrap().contains("未解析变量"));
-    // 波浪号路径（shell 会展开 home）→ Opaque 同口径。
     let t = WriteTarget {
         kind: WriteKind::Redirect,
         path: TargetPath::Opaque,
         raw: "~/x.txt".into(),
     };
     assert_eq!(judge_target(&t, &ws).verdict, FenceVerdict::Confirm);
-}
 
-#[test]
-fn combined_targets_take_strictest_verdict() {
-    let (roots, base, fs) = mock_ws(&[]);
-    let ws = ws_of(&roots, &base, &fs);
-    // 一个 Allow + 一个 Block → 整条 Block。
+    // 组合取最严：一个 Allow + 一个 Block → 整条 Block；空清单 → Allow。
     let targets = vec![
-        WriteTarget {
-            kind: WriteKind::Redirect,
-            path: lit("inside.txt"),
-            raw: "inside.txt".into(),
-        },
+        redirect("inside.txt"),
         WriteTarget {
             kind: WriteKind::Delete,
             path: lit("/outside/x"),
@@ -423,7 +379,6 @@ fn combined_targets_take_strictest_verdict() {
         },
     ];
     assert_eq!(judge_targets(&targets, &ws).verdict, FenceVerdict::Block);
-    // 空清单 = 未发现写信号 → Allow。
     assert_eq!(judge_targets(&[], &ws).verdict, FenceVerdict::Allow);
 }
 
@@ -483,51 +438,46 @@ mod unix_fs_tests {
         fence.judge_in_workspace(cmd, PermissionTier::AutoEdit, Shell::Posix, Some(ws))
     }
 
-    #[test]
-    fn bypass_vectors_reduce_conservatively() {
-        // 绕过向量一：变量拼接写路径 → Confirm（字面量掩码）。
-        let tmp = TempRoot::new("var");
+    /// 判定辅助：临时 root + 围栏一次到位。
+    fn judge_with(tag: &str, cmd: &str) -> FenceOutcome {
+        let tmp = TempRoot::new(tag);
         let (roots, base, fs) = tmp.workspace();
         let ws = Workspace {
             roots: &roots,
             base: &base,
             fs: &fs,
         };
-        let fence = Fence::new();
-        let out = judge_in(&fence, "echo x > $HOME/evil.txt", &ws);
+        judge_in(&Fence::new(), cmd, &ws)
+    }
+
+    // 断言（全链 + 真实文件系统）：AST 绕过向量三例——变量拼接写路径
+    // → Confirm（字面量掩码）、symlink 穿越界外 → Confirm（symlink 逃逸）、
+    // heredoc 重定向 → 提取目标并判定（roots 内 → Allow）；界外写 Confirm、
+    // 界外删除 Block（硬拦）、tee/tee -a/sed -i 越界保守 Confirm、roots 内
+    // 普通写 Allow（auto_edit 档直写语义由 §8.5 矩阵合成）；解析失败路径
+    // （未闭合引号/超深嵌套）恒 Confirm 无 fail-open；dd of=/dev/… 黑名单
+    // 先行 Block。
+    #[test]
+    fn full_chain_vectors_failclosed_and_blacklist() {
+        // 绕过向量一：变量拼接写路径 → Confirm（字面量掩码）。
+        let out = judge_with("var", "echo x > $HOME/evil.txt");
         assert_eq!(out.verdict, FenceVerdict::Confirm);
         assert!(out.reason.unwrap().contains("未解析变量"));
 
         // 绕过向量二：symlink 穿越界外 → Confirm（symlink 逃逸）。
-        let tmp = TempRoot::new("symlink");
-        let (roots, base, fs) = tmp.workspace();
-        let ws = Workspace {
-            roots: &roots,
-            base: &base,
-            fs: &fs,
-        };
-        let out = judge_in(&fence, "echo x > link/evil.txt", &ws);
+        let out = judge_with("symlink", "echo x > link/evil.txt");
         assert_eq!(out.verdict, FenceVerdict::Confirm);
         assert!(out.reason.unwrap().contains("symlink 逃逸"));
 
         // 绕过向量三：heredoc 重定向 → 提取目标并判定（roots 内 → Allow）。
-        let tmp = TempRoot::new("heredoc");
-        let (roots, base, fs) = tmp.workspace();
-        let ws = Workspace {
-            roots: &roots,
-            base: &base,
-            fs: &fs,
-        };
-        let out = judge_in(&fence, "cat <<EOF > out.txt\nhello\nEOF", &ws);
+        let out = judge_with("heredoc", "cat <<EOF > out.txt\nhello\nEOF");
         assert_eq!(
             out.verdict,
             FenceVerdict::Allow,
             "roots 内 heredoc 写应放行"
         );
-    }
 
-    #[test]
-    fn escape_and_destructive_outside_roots() {
+        // 界外普通写 → Confirm；界外删除 → Block（删除类直接硬拦）。
         let tmp = TempRoot::new("escape2");
         let (roots, base, fs) = tmp.workspace();
         let ws = Workspace {
@@ -536,16 +486,12 @@ mod unix_fs_tests {
             fs: &fs,
         };
         let fence = Fence::new();
-
-        // 界外普通写 → Confirm。
         let out = judge_in(
             &fence,
             &format!("echo x > {}", tmp.outside.join("x.txt").display()),
             &ws,
         );
         assert_eq!(out.verdict, FenceVerdict::Confirm);
-
-        // 界外删除 → Block（删除类直接硬拦）。
         let out = judge_in(
             &fence,
             &format!("rm {}", tmp.outside.join("keep.txt").display()),
@@ -564,15 +510,13 @@ mod unix_fs_tests {
         );
         assert_eq!(out.verdict, FenceVerdict::Confirm);
 
-        // sed -i 越界 → Confirm。
+        // sed -i 越界 → Confirm；tee -a 追加越界 → Confirm。
         let out = judge_in(
             &fence,
             &format!("sed -i 's/a/b/' {}/f.txt", tmp.outside.display()),
             &ws,
         );
         assert_eq!(out.verdict, FenceVerdict::Confirm);
-
-        // tee -a 追加越界 → Confirm。
         let out = judge_in(
             &fence,
             &format!("echo x | tee -a {}/log.txt", tmp.outside.display()),
@@ -583,43 +527,21 @@ mod unix_fs_tests {
         // roots 内普通写 → Allow（auto_edit 档直写语义由 §8.5 矩阵合成）。
         let out = judge_in(&fence, "echo done > build.log", &ws);
         assert_eq!(out.verdict, FenceVerdict::Allow);
-    }
 
-    #[test]
-    fn parse_failure_is_fail_closed_not_open() {
-        let tmp = TempRoot::new("failclosed");
-        let (roots, base, fs) = tmp.workspace();
-        let ws = Workspace {
-            roots: &roots,
-            base: &base,
-            fs: &fs,
-        };
-        let fence = Fence::new();
         // 构造解析失败路径（未闭合引号）：行为为 Confirm，无 fail-open。
-        let out = judge_in(&fence, "echo \"unterminated > out.txt", &ws);
+        let out = judge_with("failclosed", "echo \"unterminated > out.txt");
         assert_eq!(out.verdict, FenceVerdict::Confirm);
         assert!(out.reason.unwrap().contains("解析失败"));
-        // 超深嵌套同样 fail-closed。
+        // 超深嵌套同样 fail-closed（超过 MAX_DEPTH=64 按解析失败，防炸）。
         let mut nested = "echo x".to_string();
         for _ in 0..80 {
             nested = format!("$({nested})");
         }
-        let out = judge_in(&fence, &nested, &ws);
+        let out = judge_with("failclosed", &nested);
         assert_eq!(out.verdict, FenceVerdict::Confirm);
-    }
 
-    #[test]
-    fn dd_to_device_still_blocked_by_blacklist() {
-        let tmp = TempRoot::new("dd");
-        let (roots, base, fs) = tmp.workspace();
-        let ws = Workspace {
-            roots: &roots,
-            base: &base,
-            fs: &fs,
-        };
-        let fence = Fence::new();
         // dd of=/dev/… 黑名单先行 Block（AST 提取不到判界机会）。
-        let out = judge_in(&fence, "dd if=x of=/dev/sda", &ws);
+        let out = judge_with("dd", "dd if=x of=/dev/sda");
         assert_eq!(out.verdict, FenceVerdict::Block);
     }
 }

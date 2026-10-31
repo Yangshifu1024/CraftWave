@@ -54,8 +54,15 @@ fn status_of<'a>(result: &'a super::GitStatusResult, path: &str) -> &'a str {
         .unwrap_or_else(|| panic!("状态列表缺 {path}：{:?}", result.files))
 }
 
+// 断言（状态矩阵与降级路径）：真实仓库 status 各状态——工作区修改（M）、
+// 删除（D）、未跟踪（untracked）、已暂存新文件（A）、.gitignore 尊重、
+// user info 回读（FR-11-01）；主状态归一位标志表（冲突 > 删除 > 新增 >
+// 修改 > 未跟踪，冲突态纯函数面核对）；非仓库 isRepo=false 空结果；空
+// 仓库（无 HEAD）untracked 照常；写坏 HEAD 的脏仓库降级空结果不报错
+// （status/log/diff 三面）。
 #[test]
-fn status_reports_each_state() {
+fn status_matrix_and_degraded_paths() {
+    // 真实仓库各状态 + user info。
     let dir = tempfile::tempdir().expect("临时目录");
     init_git_repo(dir.path());
     // 工作区修改（M）
@@ -90,10 +97,7 @@ fn status_reports_each_state() {
     let user = result.user.as_ref().expect("user 应有值");
     assert_eq!(user.name.as_deref(), Some("tester"));
     assert_eq!(user.email.as_deref(), Some("tester@test"));
-}
 
-#[test]
-fn main_status_priority_table() {
     // 主状态归一的位标志表驱动（冲突 > 删除 > 新增 > 修改 > 未跟踪）；
     // 冲突态的仓库级构造依赖合并拓扑，纯函数面直接以位标志核对。
     assert_eq!(
@@ -122,32 +126,26 @@ fn main_status_priority_table() {
         super::main_status(git2::Status::INDEX_MODIFIED),
         STATUS_MODIFIED
     );
-}
 
-#[test]
-fn status_non_repo_returns_not_a_repo() {
+    // 非仓库：isRepo=false + 空结果。
     let dir = tempfile::tempdir().expect("临时目录");
     let result = status_core(dir.path());
     assert!(!result.is_repo, "非仓库 isRepo=false");
     assert!(result.files.is_empty());
     assert!(result.user.is_none());
-}
 
-#[test]
-fn status_empty_repo_has_no_head() {
+    // 空仓库（无 HEAD）：untracked 照常。
     let dir = tempfile::tempdir().expect("临时目录");
     git2::Repository::init(dir.path()).expect("init");
     std::fs::write(dir.path().join("only.txt"), "only\n").expect("写");
     let result = status_core(dir.path());
     assert!(result.is_repo);
     assert_eq!(status_of(&result, "only.txt"), STATUS_UNTRACKED);
-}
 
-#[test]
-fn corrupted_git_degrades_to_empty() {
+    // 脏仓库容错：写坏 HEAD（引用格式非法）→ 打开成功但操作失败 → 降级
+    // 空结果不报错（status/log/diff 三面）。
     let dir = tempfile::tempdir().expect("临时目录");
     init_git_repo(dir.path());
-    // 写坏 HEAD（引用格式非法）→ 打开成功但操作失败 → 降级空结果不报错
     std::fs::write(dir.path().join(".git").join("HEAD"), "not a valid ref\n").expect("写坏 HEAD");
     let status = status_core(dir.path());
     assert!(status.is_repo, "仓库打开成功 isRepo=true");
@@ -164,11 +162,17 @@ fn corrupted_git_degrades_to_empty() {
     assert!(diff.patches.is_empty(), "脏仓库降级空补丁");
 }
 
+// 断言（diff 面）：修改一行 + 新增一行的 hunk 行数与 header（@@ 形态）、
+// 行种类（删/增/上下文）与删除行文本（CRLF/换行已剥离）；untracked 文件
+// 计入差异（全行为新增）；二进制文件（NUL 字节）binary 标记 + 无内容行；
+// CRLF 文件行文本不带 \r；空仓库 diff 含 untracked 文件（全行为新增）且
+// log 空列表；staged 参数本票不支持（票面边界）——传 true/false 返回同一
+// 聚合视图。
 #[test]
-fn diff_hunks_match_changes() {
+fn diff_hunks_binary_crlf_and_edge_cases() {
+    // 修改一行 + 新增一行 + untracked 新文件。
     let dir = tempfile::tempdir().expect("临时目录");
     init_git_repo(dir.path());
-    // 修改一行 + 新增一行
     std::fs::write(dir.path().join("a.txt"), "line1\nline2-changed\nline3\n").expect("改 a.txt");
     std::fs::write(dir.path().join("b.txt"), "brand new\n").expect("写 b.txt");
 
@@ -207,16 +211,12 @@ fn diff_hunks_match_changes() {
         .expect("b.txt 补丁");
     assert_eq!(b.add_lines, 1);
     assert_eq!(b.del_lines, 0);
-}
 
-#[test]
-fn diff_binary_flag_and_crlf() {
+    // 二进制文件：bytes 含 NUL → binary 标记；CRLF 文件：行文本不带 \r。
     let dir = tempfile::tempdir().expect("临时目录");
     init_git_repo(dir.path());
-    // 二进制文件：bytes 含 NUL → binary 标记 + 无内容行
     let bytes: Vec<u8> = vec![0x00, 0xff, 0xfe, 0x01, 0x02];
     std::fs::write(dir.path().join("blob.bin"), &bytes).expect("写二进制");
-    // CRLF 文件：行文本不带 \r
     std::fs::write(dir.path().join("crlf.txt"), b"first\r\nsecond\r\n").expect("写 CRLF");
     let result = diff_core(dir.path(), None);
     let bin = result
@@ -240,8 +240,35 @@ fn diff_binary_flag_and_crlf() {
         assert!(!line.text.ends_with('\n'), "行文本不带 \\n");
     }
     assert_eq!(crlf.add_lines, 2, "CRLF 两行均新增");
+
+    // 空仓库 diff：untracked 文件全行为新增；log 空仓库 → 空列表（无 HEAD）。
+    let dir = tempfile::tempdir().expect("临时目录");
+    git2::Repository::init(dir.path()).expect("init");
+    std::fs::write(dir.path().join("only.txt"), "only\n").expect("写");
+    let result = diff_core(dir.path(), None);
+    assert!(result.is_repo);
+    let only = result
+        .patches
+        .iter()
+        .find(|p| p.path == "only.txt")
+        .expect("空仓库 diff 应含 untracked 文件");
+    assert_eq!(only.add_lines, 1);
+    assert_eq!(only.del_lines, 0);
+    let log = log_core(dir.path(), None);
+    assert!(log.is_repo);
+    assert!(log.commits.is_empty());
+
+    // staged 参数本票不支持（票面边界）：传 true/false 返回同一聚合视图。
+    let dir = tempfile::tempdir().expect("临时目录");
+    init_git_repo(dir.path());
+    std::fs::write(dir.path().join("a.txt"), "changed\n").expect("改");
+    let with_staged = diff_core(dir.path(), Some(true));
+    let without = diff_core(dir.path(), None);
+    assert_eq!(with_staged, without, "staged 参数忽略——两视图一致");
 }
 
+// 断言（log 面）：缺省全量、最新在前、sha 全量 40 位；limit 生效；超上限
+// clamp 到 100（结构有效不 panic）。
 #[test]
 fn log_order_and_limit() {
     let dir = tempfile::tempdir().expect("临时目录");
@@ -264,35 +291,4 @@ fn log_order_and_limit() {
     // 超上限 clamp 到 100（不 panic 即可，结构有效）
     let clamped = log_core(dir.path(), Some(usize::MAX));
     assert_eq!(clamped.commits.len(), 3);
-}
-
-#[test]
-fn empty_repo_diff_shows_all_added() {
-    let dir = tempfile::tempdir().expect("临时目录");
-    git2::Repository::init(dir.path()).expect("init");
-    std::fs::write(dir.path().join("only.txt"), "only\n").expect("写");
-    let result = diff_core(dir.path(), None);
-    assert!(result.is_repo);
-    let only = result
-        .patches
-        .iter()
-        .find(|p| p.path == "only.txt")
-        .expect("空仓库 diff 应含 untracked 文件");
-    assert_eq!(only.add_lines, 1);
-    assert_eq!(only.del_lines, 0);
-    // log 空仓库 → 空列表（无 HEAD）
-    let log = log_core(dir.path(), None);
-    assert!(log.is_repo);
-    assert!(log.commits.is_empty());
-}
-
-#[test]
-fn staged_param_is_ignored_by_design() {
-    // staged 参数本票不支持（票面边界）：传 true/false 返回同一聚合视图
-    let dir = tempfile::tempdir().expect("临时目录");
-    init_git_repo(dir.path());
-    std::fs::write(dir.path().join("a.txt"), "changed\n").expect("改");
-    let with_staged = diff_core(dir.path(), Some(true));
-    let without = diff_core(dir.path(), None);
-    assert_eq!(with_staged, without, "staged 参数忽略——两视图一致");
 }

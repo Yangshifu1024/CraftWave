@@ -9,10 +9,12 @@ fn judge(cmd: &str, tier: PermissionTier) -> FenceVerdict {
     Fence::new().judge(cmd, tier)
 }
 
-// 断言：全部黑名单命令（rm -rf、sudo、关机、格式化、下载即执行等）
-// 在任何档位（含 full_access）都判 Block（灾难级无豁免）。
+// 断言：全部黑名单命令在任何档位（含 full_access）都判 Block（灾难级无
+// 豁免）；管道/逻辑与组合中任意一段命中黑名单，整条命令即 Block（层叠
+// 判定序：Block 最严）；plan 档只放行只读白名单命令（含管道组合逐段
+// 判定），白名单外（含 git push、npm run、echo）一律 Confirm（fail-closed）。
 #[test]
-fn blacklist_hits_block_on_every_tier() {
+fn blacklist_blocks_every_tier_and_plan_allows_whitelist_only() {
     let commands = [
         "rm -rf /",
         "rm -fr ./build",
@@ -46,12 +48,13 @@ fn blacklist_hits_block_on_every_tier() {
             );
         }
     }
-}
+    // 管道组合中任意段命中黑名单即整条 Block。
+    assert_eq!(
+        judge("cat a.txt && sudo ls", PermissionTier::ConfirmEach),
+        FenceVerdict::Block
+    );
 
-// 断言：plan 档只放行只读白名单命令（含管道组合逐段判定）；
-// 白名单外（含 git push、npm run、echo）一律 Confirm。
-#[test]
-fn plan_tier_allows_readonly_whitelist_only() {
+    // plan 档白名单内放行。
     let allowed = [
         "ls -la",
         "cat src/main.rs",
@@ -77,6 +80,7 @@ fn plan_tier_allows_readonly_whitelist_only() {
             "白名单 {cmd:?} @ plan 应 Allow"
         );
     }
+    // 白名单外一律 Confirm。
     let not_allowed = [
         "node script.js",
         "python main.py",
@@ -95,9 +99,11 @@ fn plan_tier_allows_readonly_whitelist_only() {
 }
 
 // 断言：plan 之外的档位，命中写信号（重定向、tee、sed -i、包安装、
-// make/cargo 等）的命令一律 Confirm（须审批）。
+// make/cargo 等）的命令一律 Confirm；无写信号的普通只读命令直接 Allow；
+// 引号内的 `|`/`>` 不再触发切段/写信号（22 号票验收 2，v0.1 误拦消除）；
+// 规则集编译失败时判定恒 Confirm，绝不 fail-open。
 #[test]
-fn write_signals_require_confirm_outside_plan() {
+fn write_signals_confirm_and_fail_closed_when_rules_broken() {
     let confirms = [
         "echo hi > out.txt",
         "echo more >> log.txt",
@@ -125,12 +131,25 @@ fn write_signals_require_confirm_outside_plan() {
                 "写信号 {cmd:?} @ {tier:?} 应 Confirm"
             );
         }
+        // 引号内的 `|`/`>` 不是语法层面的重定向/管道 → 不触发写信号。
+        assert_eq!(
+            judge("grep \"a|b\" file", tier),
+            FenceVerdict::Allow,
+            "引号内管道字符不应触发写信号"
+        );
+        assert_eq!(
+            judge("echo \"hello > world\" | grep x", tier),
+            FenceVerdict::Allow,
+            "引号内重定向符号不应触发写信号（管道本身无写目标）"
+        );
     }
-}
+    // plan 档：grep 是只读白名单命令，引号内容不参与切段 → Allow。
+    assert_eq!(
+        judge("grep \"a|b\" file", PermissionTier::Plan),
+        FenceVerdict::Allow
+    );
 
-// 断言：plan 之外档位下，无写信号的普通只读命令直接 Allow。
-#[test]
-fn plain_readonly_commands_allow_outside_plan() {
+    // plan 之外档位下，无写信号的普通只读命令直接 Allow。
     let tier = PermissionTier::ConfirmEach;
     assert_eq!(judge("ls -la", tier), FenceVerdict::Allow);
     assert_eq!(judge("rg pattern src/", tier), FenceVerdict::Allow);
@@ -139,25 +158,11 @@ fn plain_readonly_commands_allow_outside_plan() {
         judge("node --version", PermissionTier::FullAccess),
         FenceVerdict::Allow
     );
-}
 
-// 断言：管道/逻辑与组合中任意一段命中黑名单，整条命令即 Block。
-#[test]
-fn block_beats_everything_even_in_pipe_combination() {
-    // 管道组合中任意段命中黑名单即整条 Block。
-    assert_eq!(
-        judge("cat a.txt && sudo ls", PermissionTier::ConfirmEach),
-        FenceVerdict::Block
-    );
-}
-
-// 断言：规则集编译失败（人为置 None）时判定恒 Confirm，
-// 绝不因内部错误而放行（fail-closed）。write_signals 字段语义自 22 号票
-// 起收窄为「安装类命令」词法信号（重定向/tee/sed 已由 AST 接管），
-// None → 恒 Confirm 的 fail-closed 语义不变。
-#[test]
-fn fail_closed_when_rules_fail_to_compile() {
     // 构造编译必失败的规则集，验证恒 Confirm（不 fail-open）。
+    // write_signals 字段语义自 22 号票起收窄为「安装类命令」词法信号
+    // （重定向/tee/sed 已由 AST 接管），None → 恒 Confirm 的 fail-closed
+    // 语义不变。
     let mut fence = Fence::new();
     fence.blacklist = None;
     assert_eq!(
@@ -170,32 +175,4 @@ fn fail_closed_when_rules_fail_to_compile() {
         fence.judge("ls", PermissionTier::ConfirmEach),
         FenceVerdict::Confirm
     );
-}
-
-// 断言（22 号票验收 2）：AST 升级后引号内的 `|` 不再被当作管道切段、
-// 引号内的 `>` 不再被当作重定向——v0.1 的已知误拦消除。
-#[test]
-fn quoted_pipe_and_redirect_are_not_write_signals() {
-    // plan 档：grep 是只读白名单命令，引号内容不参与切段 → Allow。
-    assert_eq!(
-        judge("grep \"a|b\" file", PermissionTier::Plan),
-        FenceVerdict::Allow
-    );
-    // 非 plan 档：引号内 `>`/`|` 不是语法层面的重定向/管道 → Allow。
-    for tier in [
-        PermissionTier::ConfirmEach,
-        PermissionTier::AutoEdit,
-        PermissionTier::FullAccess,
-    ] {
-        assert_eq!(
-            judge("grep \"a|b\" file", tier),
-            FenceVerdict::Allow,
-            "引号内管道字符不应触发写信号"
-        );
-        assert_eq!(
-            judge("echo \"hello > world\" | grep x", tier),
-            FenceVerdict::Allow,
-            "引号内重定向符号不应触发写信号（管道本身无写目标）"
-        );
-    }
 }

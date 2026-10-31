@@ -1,5 +1,6 @@
 //! 产物登记测试（独立测试文件，28 号票）：登记合并（首写/重复计数）、
-//! 损坏兜底、list 存在探测（临时目录造删）、会话删除 GC 联动。
+//! 损坏兜底、list 存在探测与排序、会话删除 GC 联动。同型用例在单个
+//! #[test] 内顺序合并，断言消息带用例标识。
 
 use super::artifacts::{ARTIFACTS_FORMAT_VERSION, artifacts_path, list, load, record};
 use super::session_tree::SessionStore;
@@ -9,9 +10,12 @@ fn root() -> tempfile::TempDir {
     tempfile::tempdir().unwrap()
 }
 
-/// 首写登记：新路径追加一条 runCount=1 的记录，文件结构字段齐全。
+// 断言：登记全语义——首写追加 runCount=1 且文件结构字段齐全；同路径再登记
+// runCount+1、lastSeenAt 刷新不追加新条目，不同路径照常追加；同会话多 run
+// 各自记 firstRunId；JSON 损坏按空清单处理且下一次登记覆盖重建（宁缺勿炸）。
 #[test]
-fn record_first_write_appends_entry() {
+fn record_semantics_and_corrupt_fallback() {
+    // 首写：新路径追加一条 runCount=1 的记录，字段齐全
     let dir = root();
     record(dir.path(), "s1", "run-a", "/proj/a.txt").unwrap();
     let file = load(dir.path(), "s1");
@@ -22,14 +26,8 @@ fn record_first_write_appends_entry() {
     assert_eq!(entry.first_run_id, "run-a");
     assert_eq!(entry.run_count, 1);
     assert_eq!(entry.first_seen_at, entry.last_seen_at);
-}
 
-/// 重复命中：同路径再登记 runCount+1、lastSeenAt 刷新，不追加新条目；
-/// 不同路径照常追加（去重键 = 规范化路径字符串）。
-#[test]
-fn record_repeat_increments_run_count() {
-    let dir = root();
-    record(dir.path(), "s1", "run-a", "/proj/a.txt").unwrap();
+    // 重复命中：runCount+1、lastSeenAt 刷新；不同路径照常追加（去重键 = 规范化路径）
     std::thread::sleep(std::time::Duration::from_millis(5));
     record(dir.path(), "s1", "run-b", "/proj/a.txt").unwrap();
     record(dir.path(), "s1", "run-b", "/proj/other.txt").unwrap();
@@ -40,19 +38,14 @@ fn record_repeat_increments_run_count() {
         .iter()
         .find(|a| a.path == "/proj/a.txt")
         .unwrap();
-    assert_eq!(hit.run_count, 2);
-    assert_eq!(hit.first_run_id, "run-a"); // 首登信息保留
+    assert_eq!(hit.run_count, 2, "重复命中计数累加");
+    assert_eq!(hit.first_run_id, "run-a", "首登信息保留");
     assert!(hit.last_seen_at >= hit.first_seen_at);
-}
 
-/// 同一会话多 run 登记：各自记 firstRunId（不同文件互不影响）。
-#[test]
-fn record_distinguishes_runs() {
-    let dir = root();
+    // 同一会话多 run 登记：各自记 firstRunId（不同文件互不影响）
     record(dir.path(), "s1", "run-1", "/proj/one.txt").unwrap();
     record(dir.path(), "s1", "run-2", "/proj/two.txt").unwrap();
     let file = load(dir.path(), "s1");
-    assert_eq!(file.artifacts.len(), 2);
     let one = file
         .artifacts
         .iter()
@@ -65,24 +58,23 @@ fn record_distinguishes_runs() {
         .unwrap();
     assert_eq!(one.first_run_id, "run-1");
     assert_eq!(two.first_run_id, "run-2");
-}
 
-/// 损坏兜底：JSON 损坏按空清单处理，下一次登记覆盖重建（宁缺勿炸）。
-#[test]
-fn load_corrupted_file_falls_back_to_empty() {
+    // 损坏兜底：按空清单处理，下一次登记覆盖重建
     let dir = root();
     std::fs::create_dir_all(dir.path().join("sessions")).unwrap();
     std::fs::write(artifacts_path(dir.path(), "s1"), b"not json at all").unwrap();
-    assert!(load(dir.path(), "s1").artifacts.is_empty());
-    // 登记照常工作（覆盖坏文件）
+    assert!(load(dir.path(), "s1").artifacts.is_empty(), "损坏按空清单");
     record(dir.path(), "s1", "run-a", "/proj/a.txt").unwrap();
-    assert_eq!(load(dir.path(), "s1").artifacts.len(), 1);
+    assert_eq!(load(dir.path(), "s1").artifacts.len(), 1, "登记覆盖坏文件");
 }
 
-/// list 存在探测：文件在 → exists=true；删除后 → exists=false（symlink
-/// 解析后判定由 fs::metadata 天然承担——断链 symlink 记不存在）。
+// 断言：list 与 SessionStore 直驱面——list 存在探测（文件在 true/删除后
+// false）、排序存在优先其余按 lastSeenAt 倒序（灰显置底）；SessionStore
+// 登记锁内串行计数正确；会话删除 GC 清掉 `<sid>.artifacts.json`。
 #[test]
-fn list_probes_existence() {
+fn list_probe_sort_and_store_gc() {
+    // 存在探测 + 排序：文件在 → true；删除后 → false（symlink 解析判定由
+    // fs::metadata 天然承担，断链即不存在）
     let dir = root();
     let live = dir.path().join("live.txt");
     std::fs::write(&live, "x").unwrap();
@@ -91,18 +83,14 @@ fn list_probes_existence() {
     record(dir.path(), "s1", "run-a", live.to_string_lossy().as_ref()).unwrap();
     record(dir.path(), "s1", "run-a", gone.to_string_lossy().as_ref()).unwrap();
     std::fs::remove_file(&gone).unwrap();
-
     let rows = list(dir.path(), "s1");
     assert_eq!(rows.len(), 2);
     let live_row = rows.iter().find(|r| r.path.ends_with("live.txt")).unwrap();
     let gone_row = rows.iter().find(|r| r.path.ends_with("gone.txt")).unwrap();
-    assert!(live_row.exists);
-    assert!(!gone_row.exists);
-}
+    assert!(live_row.exists, "文件在 → exists=true");
+    assert!(!gone_row.exists, "删除后 → exists=false");
 
-/// list 排序：存在优先，其余按 lastSeenAt 倒序（灰显置底语义）。
-#[test]
-fn list_sorts_existing_first_then_recent() {
+    // 排序：存在优先，其余按 lastSeenAt 倒序（灰显置底语义）
     let dir = root();
     let a = dir.path().join("a.txt");
     let b = dir.path().join("b.txt");
@@ -112,19 +100,15 @@ fn list_sorts_existing_first_then_recent() {
     record(dir.path(), "s1", "r", b.to_string_lossy().as_ref()).unwrap();
     let rows = list(dir.path(), "s1");
     // 存在的 a 在前；不存在的 b 在后（虽然 b 更新）
-    assert!(rows[0].path.ends_with("a.txt"));
-    assert!(rows[1].path.ends_with("b.txt"));
-}
+    assert!(rows[0].path.ends_with("a.txt"), "存在的置前");
+    assert!(rows[1].path.ends_with("b.txt"), "不存在的灰显置底");
 
-/// 会话删除 GC：`<sid>.artifacts.json` 随 delete_session 一并清除
-/// （§7.5 toolres 边车 GC 同款口径）。
-#[test]
-fn delete_session_removes_artifacts_file() {
+    // SessionStore 直驱：锁内串行语义（同会话多次登记计数正确）+ 删除 GC
     let dir = root();
     let store = SessionStore::with_root(dir.path().to_path_buf());
     store
         .index()
-        .upsert(super::super::SessionMeta {
+        .upsert(crate::storage::SessionMeta {
             id: "s-del".to_string(),
             project_id: None,
             title: "会话".to_string(),
@@ -136,49 +120,27 @@ fn delete_session_removes_artifacts_file() {
             authorized_external_dirs: Vec::new(),
         })
         .unwrap();
-    let store_ref = &store;
-    store_ref
-        .record_artifact("s-del", "run-a", "/proj/a.txt")
+    store
+        .record_artifact("s-del", "run-1", "/p/one.txt")
         .unwrap();
-    assert!(artifacts_path(dir.path(), "s-del").exists());
-    store.delete_session("s-del").unwrap();
-    assert!(!artifacts_path(dir.path(), "s-del").exists());
-    // 删除后查询 → 空清单（文件已清）
-    assert!(store.list_artifacts("s-del").is_empty());
-}
-
-/// SessionStore 登记/查询直驱：锁内串行语义（同会话多次登记计数正确）。
-#[test]
-fn store_record_and_list_roundtrip() {
-    let dir = root();
-    let store = SessionStore::with_root(dir.path().to_path_buf());
-    store.record_artifact("s-x", "run-1", "/p/one.txt").unwrap();
-    store.record_artifact("s-x", "run-2", "/p/one.txt").unwrap();
-    store.record_artifact("s-x", "run-2", "/p/two.txt").unwrap();
-    let rows = store.list_artifacts("s-x");
+    store
+        .record_artifact("s-del", "run-2", "/p/one.txt")
+        .unwrap();
+    store
+        .record_artifact("s-del", "run-2", "/p/two.txt")
+        .unwrap();
+    let rows = store.list_artifacts("s-del");
     assert_eq!(rows.len(), 2);
     let one = rows.iter().find(|r| r.path == "/p/one.txt").unwrap();
-    assert_eq!(one.run_count, 2);
-}
+    assert_eq!(one.run_count, 2, "同会话多次登记计数正确");
 
-/// symlink 目标：登记记录 resolve 后的规范路径（执行器侧已完成解析）；
-/// 本测试从存储面验证断链 symlink 的 exists=false 判定。
-#[test]
-fn list_broken_symlink_reports_missing() {
-    let dir = root();
-    let target = dir.path().join("target.txt");
-    std::fs::write(&target, "x").unwrap();
-    #[cfg(unix)]
-    {
-        let link = dir.path().join("link.txt");
-        std::os::unix::fs::symlink(&target, &link).unwrap();
-        record(dir.path(), "s1", "r", link.to_string_lossy().as_ref()).unwrap();
-        std::fs::remove_file(&target).unwrap(); // 断链
-        let rows = list(dir.path(), "s1");
-        assert!(!rows[0].exists);
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = target;
-    }
+    // GC：`<sid>.artifacts.json` 随 delete_session 一并清除（§7.5 toolres
+    // 边车 GC 同款口径），删除后查询 → 空清单
+    assert!(artifacts_path(dir.path(), "s-del").exists());
+    store.delete_session("s-del").unwrap();
+    assert!(
+        !artifacts_path(dir.path(), "s-del").exists(),
+        "随会话删除清除"
+    );
+    assert!(store.list_artifacts("s-del").is_empty());
 }

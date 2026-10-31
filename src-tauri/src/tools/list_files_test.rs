@@ -25,10 +25,12 @@ fn mk(ws: &TestWorkspace, rel: &str) {
     }
 }
 
-// 断言：默认尊重 .gitignore 与隐藏文件排除；目录带 "/" 后缀、
-// 深层条目按层级两空格缩进。
+// 断言：list_files 清单矩阵——默认尊重 .gitignore 与隐藏文件、目录带 "/"
+// 后缀且深层条目两空格缩进、respectGitignore=false 列出被忽略文件、depth
+// 限制层级、子目录起点正常、文件起点拒绝、500 上限截断。
 #[test]
-fn lists_tree_with_gitignore_respected_by_default() {
+fn tree_listing_depth_cap_and_rejections_matrix() {
+    // —— 树形清单 + gitignore 默认尊重 + 隐藏文件 ——
     let ws = TestWorkspace::new();
     mk(&ws, "src/main.rs");
     mk(&ws, "src/deep/util.rs");
@@ -46,7 +48,6 @@ fn lists_tree_with_gitignore_respected_by_default() {
     assert!(!joined.contains("generated.rs"), "gitignore 应被尊重");
     assert!(!joined.contains(".hidden"), "隐藏文件不列出");
     assert_eq!(data["truncated"], json!(false));
-    // 目录带 "/" 后缀、缩进树。
     assert!(entries.iter().any(|e| e.as_str().expect("str") == "src/"));
     let util = entries
         .iter()
@@ -56,59 +57,29 @@ fn lists_tree_with_gitignore_respected_by_default() {
         util.as_str().expect("str").starts_with("    "),
         "深层缩进两空格/层"
     );
-}
 
-// 断言：respectGitignore=false 时被忽略的文件也列出。
-#[test]
-fn respect_gitignore_false_includes_ignored() {
-    let ws = TestWorkspace::new();
-    mk(&ws, "target/generated.rs");
-    std::fs::write(ws.project_file(".gitignore"), "/target\n").expect("gitignore");
+    // —— respectGitignore=false 列出被忽略文件 ——
     let mut a = args(None);
     a.respect_gitignore = Some(false);
     let outcome = run(&ws.ctx(), &a);
-    let data = outcome.data.expect("data");
     assert!(
-        serde_json::to_string(&data["entries"])
+        serde_json::to_string(&outcome.data.expect("data")["entries"])
             .expect("json")
             .contains("generated.rs")
     );
-}
 
-// 断言：条目数达 500 上限时截断并标记 truncated=true。
-#[test]
-fn entry_cap_at_500_with_truncated_flag() {
-    let ws = TestWorkspace::new();
-    for i in 0..(MAX_ENTRIES + 50) {
-        mk(&ws, &format!("f{i:04}.txt"));
-    }
-    let outcome = run(&ws.ctx(), &args(None));
-    let data = outcome.data.expect("data");
-    assert_eq!(data["count"], json!(MAX_ENTRIES));
-    assert_eq!(data["truncated"], json!(true));
-    assert!(outcome.ui_summary.contains("截断"));
-}
-
-// 断言：depth 限制遍历层级（root 不计），超出层级的条目不出现。
-#[test]
-fn depth_limits_levels() {
-    let ws = TestWorkspace::new();
+    // —— depth 限制层级（root 不计）——
     mk(&ws, "a/b/c/deep.txt");
     mk(&ws, "a/top.txt");
     let mut a = args(None);
     a.depth = Some(2); // root 不计：a/ 与 a/top.txt 在深度 2 内，b/ 及以下不计
     let outcome = run(&ws.ctx(), &a);
-    let data = outcome.data.expect("data");
-    let joined = serde_json::to_string(&data["entries"]).expect("json");
+    let joined = serde_json::to_string(&outcome.data.expect("data")["entries"]).expect("json");
     assert!(joined.contains("a/"));
     assert!(joined.contains("top.txt"));
     assert!(!joined.contains("deep.txt"));
-}
 
-// 断言：子目录作为起点正常列出；起点是文件（非目录）则拒绝。
-#[test]
-fn subdirectory_and_non_directory() {
-    let ws = TestWorkspace::new();
+    // —— 子目录起点 + 文件起点拒绝 ——
     mk(&ws, "sub/inner.txt");
     let outcome = run(&ws.ctx(), &args(Some("sub")));
     let data = outcome.data.expect("data");
@@ -118,8 +89,17 @@ fn subdirectory_and_non_directory() {
             .expect("json")
             .contains("inner.txt")
     );
-
     let outcome = run(&ws.ctx(), &args(Some("sub/inner.txt")));
     assert!(!outcome.ok);
     assert_eq!(outcome.error.expect("e").code, "E_INVALID_ARG");
+
+    // —— 500 上限截断 ——
+    for i in 0..(MAX_ENTRIES + 50) {
+        mk(&ws, &format!("f{i:04}.txt"));
+    }
+    let outcome = run(&ws.ctx(), &args(None));
+    let data = outcome.data.expect("data");
+    assert_eq!(data["count"], json!(MAX_ENTRIES));
+    assert_eq!(data["truncated"], json!(true));
+    assert!(outcome.ui_summary.contains("截断"));
 }
