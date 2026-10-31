@@ -14,6 +14,7 @@ import { create } from "zustand";
 import { type ScrollAnchor, sanitizeScrollAnchors } from "@/chat/scroll-anchor";
 import * as client from "@/ipc/client";
 import type { ProjectMeta, SessionMeta } from "@/ipc/types";
+import { type OnboardingState, sanitizeOnboarding } from "@/onboarding/onboarding-state";
 
 /** ui-state 落盘载荷：整份序列化成一个 JSON 存给后端（get/set_ui_state 命令）。 */
 export interface UiStatePayload {
@@ -31,6 +32,10 @@ export interface UiStatePayload {
   /** 会话滚动锚点（FR-01-11 收口，29 号票：sessionId → { leafId, offset }，
    *  随既有 300ms 防抖落盘；锚点失效回底部，见 chat/scroll-anchor.ts）。 */
   scrollAnchors?: Record<string, ScrollAnchor>;
+  /** 首启引导状态（FR-13-18，30 号票：{ completed, step, skippedAt? }，
+   *  前端自管域 schema 见 onboarding/onboarding-state.ts；无记录 = 全新
+   *  数据目录，触发自动弹向导）。 */
+  onboarding?: OnboardingState;
 }
 
 /** 一条待发消息的 UI 侧形状（后端 FollowUpEntry 的展示投影；06 号票）。 */
@@ -64,6 +69,9 @@ export interface SessionsStore {
   queuePaused: Record<string, boolean>;
   /** 会话滚动锚点（FR-01-11 收口，29 号票，ui-state 持久化）。 */
   scrollAnchors: Record<string, ScrollAnchor>;
+  /** 首启引导状态（FR-13-18，30 号票，ui-state 持久化；null = 无记录
+   *  = 全新数据目录，首启自动弹向导的唯一判定输入）。 */
+  onboarding: OnboardingState | null;
 
   /** 启动恢复：并行拉项目/会话/ui-state，重建 Tab 布局（空则兜底最新会话或新建）。 */
   bootstrap: () => Promise<void>;
@@ -96,6 +104,9 @@ export interface SessionsStore {
   setScrollAnchor: (sessionId: string, anchor: ScrollAnchor) => void;
   /** 会话滚动锚点清理（删除会话随清）。 */
   forgetScrollAnchor: (sessionId: string) => void;
+  /** 首启引导状态写入（30 号票：完成/单步跳过/整包关闭均即时落盘——
+   *  经既有 persistUiState 防抖写通道，与滚动锚点同一条路径）。 */
+  setOnboarding: (next: OnboardingState) => void;
   /** 清空队列并把返还文本合并回草稿（06 号票取消/失败返还面；returned
    *  为后端 run:queue.returned 交还的权威文本，追加在原草稿之后）。 */
   returnQueueToDraft: (sessionId: string, returned: string[]) => void;
@@ -148,6 +159,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
   queues: {},
   queuePaused: {},
   scrollAnchors: {},
+  onboarding: null,
 
   bootstrap: async () => {
     const emptyUiState: UiStatePayload = { tabIds: [], activeId: null };
@@ -176,6 +188,8 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
       queuePaused: uiState.queuePaused ?? {},
       // 锚点桶形状不可信（前端自管 JSON），清洗后再入 store
       scrollAnchors: sanitizeScrollAnchors(uiState.scrollAnchors),
+      // 引导记录同域同口径：形状不可信，清洗（损坏回 null = 视作首启）
+      onboarding: sanitizeOnboarding(uiState.onboarding),
     });
     if (tabs.length > 0) {
       const active = tabs.find((m) => m.id === uiState.activeId) ?? tabs[0];
@@ -301,6 +315,11 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
     get().persistUiState();
   },
 
+  setOnboarding: (next) => {
+    set({ onboarding: next });
+    get().persistUiState();
+  },
+
   returnQueueToDraft: (sessionId, returned) => {
     set((s) => {
       const queues = { ...s.queues };
@@ -324,7 +343,16 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
     if (persistTimer !== null) clearTimeout(persistTimer);
     persistTimer = setTimeout(() => {
       persistTimer = null;
-      const { tabs, activeId, inspectorOpen, drafts, queues, queuePaused, scrollAnchors } = get();
+      const {
+        tabs,
+        activeId,
+        inspectorOpen,
+        drafts,
+        queues,
+        queuePaused,
+        scrollAnchors,
+        onboarding,
+      } = get();
       void client
         .setUiState({
           tabIds: tabs.map((t) => t.id),
@@ -334,6 +362,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
           queues,
           queuePaused,
           scrollAnchors,
+          onboarding: onboarding ?? undefined,
         } satisfies UiStatePayload)
         .catch((err) => console.warn("[ui-state] 布局落盘失败（忽略）", err));
     }, 300);

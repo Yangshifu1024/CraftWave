@@ -67,6 +67,12 @@ import {
   selectDir,
 } from "@/ipc/client";
 import type { ProjectMeta, SessionMeta } from "@/ipc/types";
+import {
+  OnboardingResumeBanner,
+  OnboardingWizard,
+  resumeStep,
+} from "@/onboarding/OnboardingWizard";
+import { shouldAutoOpen } from "@/onboarding/onboarding-state";
 import type { PageKey } from "@/settings/registry";
 import { SettingsPage } from "@/settings/SettingsPage";
 import { useAskStore } from "@/stores/ask";
@@ -99,8 +105,13 @@ export function SessionWorkspace() {
   const activeId = useSessionsStore((s) => s.activeId);
   const inspectorOpen = useSessionsStore((s) => s.inspectorOpen);
   const setInspectorOpen = useSessionsStore((s) => s.setInspectorOpen);
+  // 首启引导状态（30 号票，ui-state.onboarding）：null = 无记录（全新数据目录）
+  const onboarding = useSessionsStore((s) => s.onboarding);
   // 设置页浮层（17 号后从 App 顶层挪入工作区；入口在左栏底部）
   const [settingsPage, setSettingsPage] = useState<PageKey | null>(null);
+  // 首启引导向导浮层（30 号票）：null = 关闭；数字 = 打开时的起始步序
+  // （覆盖层可随时关闭，主界面在底层已可用——不阻塞临时会话直接开聊）
+  const [wizardStep, setWizardStep] = useState<number | null>(null);
   // 侧栏宽度为局部态不落盘（重启回初始宽；持久化的是开合状态）
   const [leftWidth, setLeftWidth] = useState(SIDEBAR_MIN_WIDTH);
   const [rightWidth, setRightWidth] = useState(INSPECTOR_MIN_WIDTH);
@@ -113,6 +124,19 @@ export function SessionWorkspace() {
       .bootstrap()
       .catch((err) => console.error("[sessions] 启动恢复失败", err));
   }, []);
+
+  // 首启自动弹（30 号票）：恢复会话列表（含 get_ui_state 的 onboarding 记录）
+  // 之后判定一次——无记录（全新数据目录）→ 自动弹向导；completed=false 不自动
+  // 弹（走「继续配置」横幅）；completed=true 什么都不做。只判一次（关闭后
+  // 不因状态变化重弹；再次进入经横幅手动打开）。
+  const onboardingChecked = useRef(false);
+  useEffect(() => {
+    if (!ready || onboardingChecked.current) return;
+    onboardingChecked.current = true;
+    if (shouldAutoOpen(useSessionsStore.getState().onboarding)) {
+      setWizardStep(0);
+    }
+  }, [ready]);
 
   if (!ready) {
     return (
@@ -145,6 +169,12 @@ export function SessionWorkspace() {
       />
       {/* 会话区大圆角卡：上下与窗口边缘留缝（py-2），左右紧贴拖宽手柄 */}
       <div className="flex min-w-0 flex-1 flex-col py-2">
+        {/* 「继续初始配置」横幅（30 号票）：初始配置未完成时常驻卡头上方，
+            点击从记录步续走向导；完成后随 completed=true 消失 */}
+        <OnboardingResumeBanner
+          state={onboarding}
+          onOpen={() => setWizardStep(resumeStep(useSessionsStore.getState().onboarding))}
+        />
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--cw-bg-main)]">
           {/* 卡头：项目/标题（FR 拖拽区），右侧为右栏折叠钮 */}
           <div
@@ -208,6 +238,11 @@ export function SessionWorkspace() {
       {exitDialog}
       {settingsPage && (
         <SettingsPage initialPage={settingsPage} onClose={() => setSettingsPage(null)} />
+      )}
+      {/* 首启引导向导（30 号票）：条件渲染挂载，每次打开全新起算；
+          覆盖层在最上层但可随时关闭，不阻塞底层主界面的临时会话 */}
+      {wizardStep !== null && (
+        <OnboardingWizard initialStep={wizardStep} onClose={() => setWizardStep(null)} />
       )}
     </div>
   );
