@@ -20,6 +20,7 @@
 //! 引擎（craftwave-engine）的帧流在阶段 2.C 接入，本 crate 目前只用到
 //! 它的 util::atomic（原子写盘）。
 
+mod chat;
 mod i18n;
 mod prefs;
 // token 表全量照抄 theme.md（其 §11「照抄单」），消费方从阶段 2.C 起逐批
@@ -70,9 +71,11 @@ struct MainWindow(WindowHandle<Root>);
 impl Global for MainWindow {}
 
 /// 主窗根视图：自绘标题带 + 三栏骨架。
-/// `zoom_seen` 是 ui_zoom 换档检测的上次档位（render 每帧比对，见其注释）。
+/// `zoom_seen` 是 ui_zoom 换档检测的上次档位（render 每帧比对，见其注释）；
+/// `chat` 是中栏对话流（阶段 2.C-1 接入：消息列表 + Composer）。
 struct MainWindowView {
     zoom_seen: f32,
+    chat: Entity<chat::ConversationState>,
 }
 
 impl gpui_kit::Render for MainWindowView {
@@ -81,7 +84,8 @@ impl gpui_kit::Render for MainWindowView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        // 换档随动：traffic light 挪位（remeasure 钩子阶段 2.4 挂 ui_zoom::sync_zoom）
+        // 换档随动：traffic light 挪位（消息列表的重测钩子在 chat 模块自己的
+        // render 里，见其 zoom_seen 注释）
         ui_zoom::sync_zoom(&mut self.zoom_seen, window, cx);
         // 颜色全部走主题（gpui-component ActiveTheme 槽位 + 自建槽位），
         // 亮暗切换与缩放换档经窗口刷新重绘取新值，无硬编码色值
@@ -110,7 +114,7 @@ impl gpui_kit::Render for MainWindowView {
                     .text_size(px(theme::font_size(theme::FONT_UI_SM, zoom)))
                     .child(t("CraftWave")),
             )
-            // 三栏骨架：左栏 260px 定宽 / 中栏对话流占位 / 右栏折叠占位条
+            // 三栏骨架：左栏 260px 定宽 / 中栏对话流 / 右栏折叠占位条
             .child(
                 div()
                     .flex_1()
@@ -134,19 +138,16 @@ impl gpui_kit::Render for MainWindowView {
                             .text_color(subtlest)
                             .child(t("Sidebar placeholder")),
                     )
-                    // 中栏：对话流占位（阶段 2.C 消息流底座接入处）
+                    // 中栏：对话流（阶段 2.C-1 消息流底座 + Composer；
+                    // 历史由 chat::install 装假数据，真会话装载随 3.1）
                     .child(
                         div()
                             .flex_1()
                             .min_w_0()
                             .h_full()
                             .bg(main_surface)
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .text_size(px(theme::font_size(theme::FONT_UI_SM, zoom)))
-                            .text_color(subtlest)
-                            .child(t("Conversation placeholder")),
+                            .overflow_hidden()
+                            .child(self.chat.clone()),
                     )
                     // 右栏：折叠为占位条（阶段 3.5 面板族接入前只立骨架）
                     .child(
@@ -197,6 +198,9 @@ fn open_main_window(cx: &mut App) -> WindowHandle<Root> {
                     cx.quit();
                     true
                 });
+                // 中栏对话流装配（假数据历史 + composer + 输入事件订阅，
+                // 都需要 window —— 必须在窗口构造闭包里做）
+                let chat = chat::install(window, cx);
                 // 根视图；几何记忆（观察 bounds + 防抖落盘）挂在它的构造
                 // Context 上，再包 base Root（浮层挂载点 + rem 同步插件）
                 let view = cx.new(|cx| {
@@ -204,6 +208,7 @@ fn open_main_window(cx: &mut App) -> WindowHandle<Root> {
                     MainWindowView {
                         // 从 0 起步：首帧 changed 必真，灯位按当前档对齐一次
                         zoom_seen: 0.0,
+                        chat,
                     }
                 });
                 cx.new(|cx| Root::new(view, window, cx))

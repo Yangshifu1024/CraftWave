@@ -95,10 +95,15 @@ fn zoom_levels_rescale_base_font(cx: &mut TestAppContext) {
 
 /// 三栏根布局可渲染一帧不 panic（亮色装配 + TitleBar + 三栏子树全量走
 /// render；GPUI 测试窗口无头绘制，布局/样式错误会直接 panic）。
+/// 中栏走真的 chat::install（消息流 + Composer 装置）——阶段 2.C-1 起
+/// 占位被对话流替换，冒烟跟着升级。
 #[gpui_kit::test]
 fn three_pane_layout_renders_a_frame(cx: &mut TestAppContext) {
     boot(cx);
-    let (_view, visual) = cx.add_window_view(|_, _| MainWindowView { zoom_seen: 0.0 });
+    let (_view, visual) = cx.add_window_view(|window, cx| MainWindowView {
+        zoom_seen: 0.0,
+        chat: crate::chat::install(window, cx),
+    });
     // run_until_parked 把首帧 layout/prepaint/paint 跑完——到这就是不 panic
     visual.run_until_parked();
 }

@@ -54,8 +54,14 @@ const ZH_CN: &[(&str, &str)] = &[
     ("CraftWave Help", "CraftWave 帮助"),
     // 界面骨架占位文案
     ("Sidebar placeholder", "会话列表（阶段 3.1）"),
-    ("Conversation placeholder", "对话流将在阶段 2.C 接入：消息列表、Markdown 正文、工具卡与 Composer"),
     ("Panel placeholder", "面板（阶段 3.5）"),
+    // 对话流（阶段 2.C-1）
+    ("Thinking", "思考过程"),
+    ("tool calls", "次工具调用"),
+    ("failed", "失败"),
+    ("Running…", "运行中…"),
+    ("Reply or type @ for files…", "输入消息，@ 可引用文件…"),
+    ("Attach image", "添加图片附件"),
 ];
 
 /// 查表结构：`OnceLock` 首次访问构建，之后零开销哈希查词。
