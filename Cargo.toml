@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["src-tauri", "crates/engine"]
+members = ["src-tauri", "crates/engine", "crates/ui"]
 
 # 统一最低部署目标（rustc 编译与链接阶段均识别）；
 # 各成员与 CI、直接 cargo 命令都需在环境里设置。

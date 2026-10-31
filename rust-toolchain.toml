@@ -1,4 +1,10 @@
 [toolchain]
-# rig 0.45.0 的 MSRV 是 1.97.1（0.44→0.45 提到 1.97.1），锁版随之抬到 1.97.1。
-channel = "1.97.1"
+# 1.99.1（2026-10-13 stable）。历史：曾按 rig 0.45.0 的 MSRV 锁 1.97.1；
+# 阶段 2.B 引入 gpui-kit 0.8.1（gpui-pre-macos 0.3.10）后必须 ≥1.98——
+# 该家族用了 1.98/1.99 才稳定化的 `Option::map_or_default`（rust#138099），
+# 1.97.1 编译不过（craftwave-spike 目录无 toolchain 文件，实际跑在当时的
+# default stable 1.99.1 上，与旧锁版无关；这是首次在仓内编译 gpui 家族
+# 暴露的冲突）。rig 的 MSRV 1.97.1 是下限约束，1.99.1 满足；
+# 版本变更显式提交（spec 纪律）。
+channel = "1.99.1"
 components = ["clippy", "rustfmt"]

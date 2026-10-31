@@ -1,0 +1,10 @@
+# clippy 配置（workspace 根，clippy 1.99 起读取位置约定不变）。
+#
+# large-error-threshold：`clippy::result_large_err` 的 Err 体积阈值（默认 128 字节）。
+# 抬到 320 的原因：engine 的 run/turn 层返回 `Result<_, rig::run::PromptError>`，
+# 该类型由上游 rig 0.45 定义（实测 ≥304 字节），壳无法缩小它；rustc 从 1.97.1
+# 抬到 1.99.1（gpui-kit 0.8.1 的硬要求，见 rust-toolchain.toml）后这条 lint
+# 开始命中。错误构造只发生在每轮 turn 的失败路径上，非热路径，装箱改造
+# （Box<PromptError>）要动 rig 生态接口面，收益配不上改动量——把阈值放到
+# 覆盖上游错误类型体量，是显式权衡而非绕过。
+large-error-threshold = 320
