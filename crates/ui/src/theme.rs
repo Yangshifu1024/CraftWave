@@ -88,6 +88,10 @@ pub const SUBTLE_ALPHA: f32 = 0.60;
 pub const SUBTLEST_ALPHA_LIGHT: f32 = 0.40;
 /// 最淡前景暗色：foreground @ 30%（ZCode 同款差异，theme.md §3.1）。
 pub const SUBTLEST_ALPHA_DARK: f32 = 0.30;
+/// zoom 覆盖层遮罩（图片放大查看的背景压暗）：亮色 black @ 45%。
+pub const SCRIM_ALPHA_LIGHT: f32 = 0.45;
+/// zoom 覆盖层遮罩：暗色 black @ 60%。
+pub const SCRIM_ALPHA_DARK: f32 = 0.60;
 
 /// 边框色生成函数（§4 单点实现）：`border = foreground @ 10%`。
 pub fn border_color(foreground: Hsla) -> Hsla {
@@ -146,6 +150,8 @@ fn apply_light(c: &mut ThemeColor) -> CraftwaveColors {
         foreground_subtlest: alpha(fg, SUBTLEST_ALPHA_LIGHT),
         dim: hex(0x8a939e),
         danger_text: hex(0xd03066),
+        // zoom 覆盖层的遮罩（图片放大查看的背景压暗）
+        scrim: alpha(hex(0x000000), SCRIM_ALPHA_LIGHT),
     }
 }
 
@@ -190,6 +196,8 @@ fn apply_dark(c: &mut ThemeColor) -> CraftwaveColors {
         foreground_subtlest: alpha(fg, SUBTLEST_ALPHA_DARK),
         dim: hex(0x7c7c7e),
         danger_text: hex(0xf87171),
+        // zoom 覆盖层的遮罩（暗色压得更深一档，与面板叠出层次）
+        scrim: alpha(hex(0x000000), SCRIM_ALPHA_DARK),
     }
 }
 
@@ -233,6 +241,9 @@ pub struct CraftwaveColors {
     pub dim: Hsla,
     /// 表单错误红 / diff 统计红（cw-err，亮色偏品红的定稿值）。
     pub danger_text: Hsla,
+    /// zoom 覆盖层遮罩（图片放大查看的背景压暗；自建槽位——编码指南 §3
+    /// 「缺语义槽位就补进 theme.rs」，禁止 call site 造色）。
+    pub scrim: Hsla,
 }
 
 /// 自建主题 Global：自建颜色槽位（当前激活模式）+ 缩放档状态（§11.1）。
@@ -279,6 +290,7 @@ impl CraftwaveTheme {
                 foreground_subtlest: Hsla::default(),
                 dim: Hsla::default(),
                 danger_text: Hsla::default(),
+                scrim: Hsla::default(),
             },
             zoom: 1.00,
         });

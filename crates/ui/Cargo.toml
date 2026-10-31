@@ -53,6 +53,16 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 percent-encoding = "2.3"
 url = "2.5"
 
+# 图片宽高比探测（chat/images.rs probe_image）：从 blob 头读尺寸（rendering.md
+# 「图片」：竖图定宽、横图定高需要宽高比）。锁内已有 image 0.25（gpui-fast 的
+# 解码底座），零新增下载；webp 特性是本行新增激活（image-webp 已在锁内）。
+image = { version = "0.25", default-features = false, features = [
+    "png",
+    "jpeg",
+    "gif",
+    "webp",
+] }
+
 # UI 行为测试装置：#[gpui_kit::test]（GPUI 测试调度器 + 无头窗口渲染）。
 # feature unification 会把本次构建的 gpui-kit 统一到 test-support——那只是
 # 给 gpui 加测试钩子，不影响运行时行为（Wake 同款做法）。

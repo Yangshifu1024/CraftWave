@@ -18,11 +18,15 @@ use craftwave_engine::followup::QueuedImageAttachment;
 use craftwave_engine::storage::{MessageEntry, MessageRole, WirePart};
 // 流式态工厂只进测试（生产演示装配没有活跃 run）；类型随用随引
 #[cfg(test)]
-use craftwave_engine::backend::frames::{EndReason, UsageTotal};
+use craftwave_engine::backend::frames::{EndReason, FrameError, UsageTotal};
 #[cfg(test)]
 use craftwave_engine::snapshot::{
     RunInfo, StreamPart, StreamingMessage, ThinkingSpan, ToolCallState, ToolResultState,
 };
+
+// 图片装载假源只进测试（生产装载器是 images::EngineImageLoader）
+#[cfg(test)]
+use super::images::{ImageLoad, ImageLoader};
 
 /// 统一的假时间戳基线（Unix 纪元毫秒；只影响排序展示，值本身无语义）。
 pub const FAKE_NOW_MS: i64 = 1_736_000_000_000;
@@ -62,21 +66,26 @@ pub fn user_msg(text: &str) -> Rc<MessageEntry> {
     )
 }
 
-/// User 带图消息（气泡内容段 = 文本 + 图片段；图片本批渲染占位块）。
+/// User 带图消息（气泡内容段 = 文本 + 图片段；hash 走 FakeImageLoader 的
+/// 约定键——cwtest-portrait / cwtest-landscape / cwtest-corrupt / cwtest-omitted）。
 #[cfg(test)]
 pub fn user_msg_with_image(text: &str) -> Rc<MessageEntry> {
-    entry(
-        MessageRole::User,
-        vec![
-            WirePart::Text {
-                text: text.to_owned(),
-            },
-            WirePart::Image {
-                blob_hash: "fakehash0123456789abcdef0123456789".to_owned(),
-                mime_type: "image/png".to_owned(),
-            },
-        ],
-    )
+    user_msg_with_images(text, &["cwtest-portrait"])
+}
+
+/// User 多图消息：图片段按传入 hash 顺序展开（三态与纵横比覆盖的装载面）。
+#[cfg(test)]
+pub fn user_msg_with_images(text: &str, hashes: &[&str]) -> Rc<MessageEntry> {
+    let mut parts = vec![WirePart::Text {
+        text: text.to_owned(),
+    }];
+    for hash in hashes {
+        parts.push(WirePart::Image {
+            blob_hash: (*hash).to_owned(),
+            mime_type: "image/png".to_owned(),
+        });
+    }
+    entry(MessageRole::User, parts)
 }
 
 /// Assistant 纯正文消息（形态二：全宽列，只有正文槽位）。
@@ -357,6 +366,207 @@ pub fn echo_entry(text: &str, attachments: Vec<QueuedImageAttachment>) -> Rc<Mes
         run_id: None,
         status: None,
     })
+}
+
+// ======================================================================
+// 2.C-4 部件工厂：多工具簇 / 长输出（600 字符契约）/ 多段思考 / 流式
+// 失败与思考计时（B3 / B4 数据面）
+// ======================================================================
+
+/// 工具输出超过 600 字符预览上限的正文（`"长输出"` 重复足够多次）。
+#[cfg(test)]
+pub fn long_tool_output() -> String {
+    "输出行：工具结果的完整原文，超过 600 字符预览上限。".repeat(30)
+}
+
+/// 多工具簇（三个调用：两好一坏 + 一个失败长输出）——簇卡折叠头的
+/// "N tool calls" 与失败 badge、展开区多分节的数据面。
+#[cfg(test)]
+pub fn assistant_multi_tools() -> Rc<MessageEntry> {
+    entry(
+        MessageRole::Assistant,
+        vec![
+            WirePart::ToolCall {
+                call_id: "m1".to_owned(),
+                name: "read_file".to_owned(),
+                args_json: r#"{"path":"crates/ui/src/chat/row.rs"}"#.to_owned(),
+            },
+            WirePart::ToolResult {
+                call_id: "m1".to_owned(),
+                ok: true,
+                summary: "已读取 512 行".to_owned(),
+            },
+            WirePart::ToolCall {
+                call_id: "m2".to_owned(),
+                name: "run_command".to_owned(),
+                args_json: r#"{"cmd":"cargo test --workspace"}"#.to_owned(),
+            },
+            WirePart::ToolResult {
+                call_id: "m2".to_owned(),
+                ok: false,
+                summary: long_tool_output(),
+            },
+            WirePart::ToolCall {
+                call_id: "m3".to_owned(),
+                name: "search_files".to_owned(),
+                args_json: r#"{"query":"render_row"}"#.to_owned(),
+            },
+            WirePart::ToolResult {
+                call_id: "m3".to_owned(),
+                ok: true,
+                summary: "7 处命中".to_owned(),
+            },
+        ],
+    )
+}
+
+/// 多段思考 + 正文：多段 Reasoning 合并为一个 thinking 槽位（纪律一的
+/// 合批口径）+ 换行正文（B4 最后一行摘要的取材）。
+#[cfg(test)]
+pub fn assistant_thinking_multi_segment() -> Rc<MessageEntry> {
+    entry(
+        MessageRole::Assistant,
+        vec![
+            WirePart::Reasoning {
+                text: "第一段思考：先确认输入形态。".to_owned(),
+            },
+            WirePart::Reasoning {
+                text: "第二段思考：再决定渲染路径。".to_owned(),
+            },
+            WirePart::Text {
+                text: "结论正文第一行。\n结论正文第二行（最后一行）。".to_owned(),
+            },
+        ],
+    )
+}
+
+/// 单工具 + 超 600 字符成功输出（600 契约的成功面：截断明示 + 完整复制）。
+#[cfg(test)]
+pub fn assistant_long_output() -> Rc<MessageEntry> {
+    entry(
+        MessageRole::Assistant,
+        vec![
+            WirePart::ToolCall {
+                call_id: "long-1".to_owned(),
+                name: "read_file".to_owned(),
+                args_json: r#"{"path":"README.md"}"#.to_owned(),
+            },
+            WirePart::ToolResult {
+                call_id: "long-1".to_owned(),
+                ok: true,
+                summary: long_tool_output(),
+            },
+        ],
+    )
+}
+
+/// 流式行带失败工具（B3 自动展开的触发帧）。
+#[cfg(test)]
+pub fn streaming_with_failure() -> StreamingMessage {
+    let mut msg = streaming_message(6);
+    msg.parts.push(StreamPart::ToolCall {
+        call_id: "call-fail".to_owned(),
+        name: "run_command".to_owned(),
+        args_json: r#"{"cmd":"make"}"#.to_owned(),
+        result: Some(ToolResultState {
+            ok: false,
+            ui_summary: "构建失败".to_owned(),
+            error: Some(FrameError::new("E_PROCESS", "make: *** No targets specified")),
+        }),
+        audit: None,
+        audit_reason: None,
+    });
+    msg
+}
+
+/// 流式行带思考段（起点在 3 秒前、未收口）——B4 计时递增与秒针任务的
+/// 触发形态。
+#[cfg(test)]
+pub fn streaming_thinking_open() -> StreamingMessage {
+    let mut msg = streaming_message(4);
+    msg.thinking = Some(ThinkingSpan {
+        started_at: std::time::Instant::now() - std::time::Duration::from_secs(3),
+        ended_at: None,
+    });
+    msg
+}
+
+// ======================================================================
+// 图片装载假源（2.9 测试装置；生产 = EngineImageLoader）
+// ======================================================================
+
+/// 测试用 PNG 字节（内存生成，无文件 IO）。
+#[cfg(test)]
+pub fn png_bytes(width: u32, height: u32) -> Vec<u8> {
+    let mut buf = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::new_rgba8(width, height)
+        .write_to(&mut buf, image::ImageFormat::Png)
+        .expect("PNG 生成失败");
+    buf.into_inner()
+}
+
+/// 按 blobHash 约定键产出三态的假装载源：
+///
+/// - `cwtest-portrait` → Ready（40×80 竖图，定宽约束分支）；
+/// - `cwtest-landscape` → Ready（160×40 横图，定高约束分支）；
+/// - `cwtest-corrupt` → Unsupported（坏字节，保留原始字节 → 可下载原图）；
+/// - `cwtest-omitted` → Omitted（转录已达上限）；
+/// - 其余 → Unsupported（无原始字节——blob 缺失形态）。
+#[cfg(test)]
+pub struct FakeImageLoader;
+
+#[cfg(test)]
+impl ImageLoader for FakeImageLoader {
+    fn load(&self, blob_hash: &str, mime_type: &str, _cx: &gpui_kit::App) -> gpui_kit::Task<ImageLoad> {
+        let outcome = match blob_hash {
+            "cwtest-portrait" => ImageLoad::Ready {
+                image: std::sync::Arc::new(gpui_kit::Image::from_bytes(
+                    gpui_kit::ImageFormat::Png,
+                    png_bytes(40, 80),
+                )),
+                dims: (40, 80),
+            },
+            "cwtest-landscape" => ImageLoad::Ready {
+                image: std::sync::Arc::new(gpui_kit::Image::from_bytes(
+                    gpui_kit::ImageFormat::Png,
+                    png_bytes(160, 40),
+                )),
+                dims: (160, 40),
+            },
+            "cwtest-corrupt" => ImageLoad::Unsupported {
+                mime: mime_type.to_owned(),
+                original: Some(std::sync::Arc::new(vec![0xde, 0xad, 0xbe, 0xef])),
+            },
+            "cwtest-omitted" => ImageLoad::Omitted,
+            _ => ImageLoad::Unsupported {
+                mime: mime_type.to_owned(),
+                original: None,
+            },
+        };
+        gpui_kit::Task::ready(outcome)
+    }
+}
+
+// ======================================================================
+// 长列表冒烟（2.12）：混合形态长历史
+// ======================================================================
+
+/// n 条混合形态历史（User / 纯正文 / 三槽位 / 工具-only / 带图 / System
+/// 交替）：长列表冒烟的输入——折叠部件随行出现，渲染若干帧不 panic。
+#[cfg(test)]
+pub fn mixed_history(n: usize) -> Rc<Vec<Rc<MessageEntry>>> {
+    Rc::new(
+        (0..n)
+            .map(|i| match i % 6 {
+                0 => user_msg(&format!("问题 {i}：这块再展开讲讲？")),
+                1 => assistant_msg(&format!("回答 {i}：{}", "占位正文一段。".repeat(6))),
+                2 => assistant_multi_tools(),
+                3 => assistant_tool_only(),
+                4 => user_msg_with_images(&format!("带图 {i}"), &["cwtest-landscape"]),
+                _ => system_msg("系统提示胶囊。"),
+            })
+            .collect(),
+    )
 }
 
 // ======================================================================

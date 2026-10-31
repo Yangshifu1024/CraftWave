@@ -38,12 +38,13 @@
 //! 运行中（`busy`，由会话侧推送）显示停止钮，点击经取消目标
 //! （服务弱引用）调 `cancel_run`——引擎补发终态帧，节流循环自然收口。
 
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
 use gpui_kit::prelude::*;
-use gpui_kit::{App, Entity, Task, WeakEntity, Window, div, px};
+use gpui_kit::{App, Entity, SharedString, Task, WeakEntity, Window, div, px};
 
 use craftwave_engine::api::workspace::WorkspacePathHit;
 use craftwave_engine::followup::QueuedImageAttachment;
@@ -51,6 +52,7 @@ use craftwave_engine::followup::QueuedImageAttachment;
 use crate::i18n::t;
 use crate::theme::{self, ActiveCraftwave as _};
 
+use super::images::{self, ImageLoad, ImageLoader};
 use super::service::SessionService;
 
 /// @ 补全弹层宽度（基准像素，随缩放档缩放）：路径列 + 类型徽标的定稿宽度。
@@ -97,6 +99,13 @@ pub struct ComposerState {
     busy: bool,
     /// 取消目标（服务弱引用；停止钮点击时升级调用 `cancel_run`）。
     cancel_target: Option<WeakEntity<SessionService>>,
+    /// 附件图片装载面（2.9：预览条同款缩略图；None = 回声装置——stub
+    /// 附件按不可预览卡渲染）。
+    image_loader: Option<Rc<dyn ImageLoader>>,
+    /// 附件图片三态缓存（键 = blobHash）。
+    attachment_images: HashMap<String, ImageLoad>,
+    /// 在途装载任务句柄（存 owner）。
+    image_tasks: Vec<Task<()>>,
 }
 
 impl ComposerState {
@@ -122,6 +131,9 @@ impl ComposerState {
             completion_query: None,
             busy: false,
             cancel_target: None,
+            image_loader: None,
+            attachment_images: HashMap::new(),
+            image_tasks: Vec::new(),
         }
     }
 
@@ -203,13 +215,49 @@ impl ComposerState {
     }
 
     // ==================================================================
-    // 附件队列
+    // 附件队列（2.9：预览条三态缩略图）
     // ==================================================================
 
+    /// 注入图片装载面（install 装配；与消息流同一装载器——同款缩略图）。
+    pub(crate) fn set_image_loader(
+        &mut self,
+        loader: Rc<dyn ImageLoader>,
+        cx: &mut Context<Self>,
+    ) {
+        self.image_loader = Some(loader);
+        // 已在队列的附件（理论时序不会发生，防御性补装载）
+        self.load_attachments(cx);
+    }
+
     /// 入队一张图片附件（真按钮的落盘通道 2.C-2 接；本批按钮入队演示占位）。
+    /// 入队即发起装载（生命周期钩子，不在 render 里起任务——编码指南 §5），
+    /// 三态到位后预览条按同款缩略图渲染。
     pub fn add_attachment(&mut self, attachment: QueuedImageAttachment, cx: &mut Context<Self>) {
         self.attachments.push(attachment);
+        self.load_attachments(cx);
         cx.notify();
+    }
+
+    /// 扫队列发起装载：无装载面（回声装置）或已有结果/在途的跳过。
+    fn load_attachments(&mut self, cx: &mut Context<Self>) {
+        let Some(loader) = self.image_loader.clone() else {
+            return;
+        };
+        for attachment in self.attachments.clone() {
+            if self.attachment_images.contains_key(&attachment.blob_hash) {
+                continue;
+            }
+            let hash = attachment.blob_hash.clone();
+            let mime = attachment.mime_type.clone();
+            let task = loader.load(&hash, &mime, cx);
+            self.image_tasks.push(cx.spawn(async move |this, cx| {
+                let state = task.await;
+                let _ = this.update(cx, |this, cx| {
+                    this.attachment_images.insert(hash, state);
+                    cx.notify();
+                });
+            }));
+        }
     }
 
     /// 附件按钮动作（本批假装置）：入队一张演示占位附件，让预览条与
@@ -355,30 +403,75 @@ impl ComposerState {
     // 渲染
     // ==================================================================
 
-    /// 附件预览条：每个附件一枚 chip（mime 标签 + 移除 ×）。
+    /// 附件预览条：每个附件一枚同款缩略图（2.9 三态形制——Ready 渲染图、
+    /// 其余不可预览卡），右上角叠移除 ×。
     fn render_attachments(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
         let zoom = cx.craftwave().zoom;
         let mut bar = div().w_full().flex().flex_row().flex_wrap().gap(px(theme::SPACE_2));
         for (ix, attachment) in self.attachments.iter().enumerate() {
+            let id = SharedString::from(format!("attachment-preview-{ix}"));
+            let debug = id.clone();
+            let thumb: gpui_kit::AnyElement = match self.attachment_images.get(&attachment.blob_hash)
+            {
+                Some(ImageLoad::Ready { image, dims }) => images::render_ready_thumb(
+                    id, image, *dims, cx,
+                )
+                .debug_selector(move || debug.to_string())
+                .into_any_element(),
+                Some(ImageLoad::Unsupported { mime, original }) => images::render_unsupported_thumb(
+                    id,
+                    mime,
+                    original.as_ref(),
+                    cx,
+                )
+                .debug_selector(move || debug.to_string())
+                .into_any_element(),
+                Some(ImageLoad::Omitted) => images::render_omitted_thumb(id, cx)
+                    .debug_selector(move || debug.to_string())
+                    .into_any_element(),
+                // 无装载面或装载中：mime 占位卡（不假装有图）
+                None => {
+                    let colors = cx.theme().colors;
+                    div()
+                        .id(id)
+                        .size(px(images::IMAGE_THUMB))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(theme::rounded_md(zoom)))
+                        .border_1()
+                        .border_color(colors.border)
+                        .bg(colors.muted)
+                        .text_size(px(theme::font_size(theme::FONT_UI_2XS, zoom)))
+                        .text_color(colors.muted_foreground)
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .truncate()
+                        .debug_selector(move || debug.to_string())
+                        .child(attachment.mime_type.clone())
+                        .into_any_element()
+                }
+            };
             bar = bar.child(
                 div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(theme::SPACE_1))
-                    .px(px(theme::SPACE_3))
-                    .py(px(theme::SPACE_1))
-                    .rounded(px(theme::rounded_md(zoom)))
-                    .bg(theme.muted)
-                    .text_size(px(theme::font_size(theme::FONT_UI_CAPTION, zoom)))
-                    .text_color(theme.muted_foreground)
-                    .child(attachment.mime_type.clone())
+                    .relative()
+                    .child(thumb)
                     .child(
                         div()
                             .id(("attachment-remove", ix))
+                            .absolute()
+                            .top(px(theme::SPACE_1))
+                            .right(px(theme::SPACE_1))
+                            .size(px(theme::ICON_LG))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px(theme::ROUNDED_FULL))
+                            .bg(cx.theme().colors.popover)
                             .cursor_pointer()
-                            .text_color(theme.muted_foreground)
+                            .text_size(px(theme::font_size(theme::FONT_UI_2XS, zoom)))
+                            .text_color(cx.theme().colors.muted_foreground)
+                            .hover(|style| style.bg(cx.theme().colors.list_hover))
                             .child("×")
                             .on_click(cx.listener(move |this: &mut Self, _, _, cx| {
                                 this.remove_attachment(ix, cx);

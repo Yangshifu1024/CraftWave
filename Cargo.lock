@@ -2207,6 +2207,7 @@ dependencies = [
  "craftwave-engine",
  "gpui-fps",
  "gpui-kit",
+ "image",
  "percent-encoding",
  "rig",
  "serde",

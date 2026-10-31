@@ -21,6 +21,7 @@
 
 mod composer;
 mod fixture;
+mod images;
 mod markdown_links;
 mod row;
 mod service;
@@ -42,12 +43,18 @@ mod composer_test;
 #[path = "service_test.rs"]
 mod service_test;
 
+#[cfg(test)]
+#[path = "parts_test.rs"]
+mod parts_test;
+
 use std::rc::Rc;
 
+use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::input::{InputEvent, TextareaState};
 use gpui_kit::prelude::*;
 use gpui_kit::{App, Entity, Global, Window, div, px};
 
+use crate::theme::ActiveCraftwave as _;
 use crate::ui_zoom;
 
 pub use composer::ComposerState;
@@ -103,6 +110,13 @@ pub fn install(
         } else {
             fixture::demo_history()
         };
+        // 图片装载面（2.9）：真通道接引擎存储装载器（会话 imgblob 读盘走
+        // 后台线程池）；回声装置无装载面（图片按不可预览卡渲染，不假装有图）
+        if let (Some(bridge), Some(service)) = (engine, service.as_ref()) {
+            conversation.set_image_loader(std::rc::Rc::new(
+                images::EngineImageLoader::new(bridge.state.clone(), service.downgrade()),
+            ));
+        }
         conversation.apply_snapshot(history, None, cx);
         conversation.service = service.clone();
     });
@@ -120,6 +134,14 @@ pub fn install(
         composer.update(cx, |composer, cx| {
             composer.set_cancel_target(service.downgrade(), cx);
         });
+    }
+    // 附件预览的图片装载面（2.9）：与消息流同一装载器（同款缩略图三态）；
+    // 回声装置不装（stub 附件无 blob 可读，按不可预览卡渲染）
+    if let (Some(bridge), Some(service)) = (engine, service.as_ref()) {
+        let loader: std::rc::Rc<dyn images::ImageLoader> = std::rc::Rc::new(
+            images::EngineImageLoader::new(bridge.state.clone(), service.downgrade()),
+        );
+        composer.update(cx, |composer, cx| composer.set_image_loader(loader, cx));
     }
     let input = composer.read(cx).input().clone();
     conversation.update(cx, |conversation, cx| {
@@ -187,18 +209,32 @@ pub fn install(
 }
 
 /// 中栏视图（Render on ConversationState）：消息列表（flex_1，list 容器
-/// 必须 size_full——高度 0 坑）+ Composer（flex_shrink_0）。
+/// 必须 size_full——高度 0 坑）+ Composer（flex_shrink_0）+ zoom 覆盖层。
 impl Render for ConversationState {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // 缩放换档随动（spec 2.3 钩子）：字号档变了，行高缓存整体失效重测
         if ui_zoom::changed(&mut self.zoom_seen, cx) {
             self.remeasure_all(cx);
         }
+        // 阅读区实际宽度（工具簇参数摘要「宽度自适应格数」的反算基准，
+        // Wake 7102-7104 手法）：视口减三栏骨架占用，封顶阅读轴。本帧内
+        // 被 list 行回调读取（行渲染发生在本方法的元素布局阶段）；纯字段
+        // 写入不 notify（宽度变化由窗口重排自然触发重渲，不构成反馈环）
+        let rails = crate::SIDEBAR_PLACEHOLDER_WIDTH + crate::PANEL_PLACEHOLDER_WIDTH + 2.0;
+        self.reader_width_seen = (window.viewport_size().width.as_f32() - rails)
+            .clamp(220.0, crate::chat::state::READER_MAX_WIDTH);
+        // zoom 自适应的可用视口（同帧 zoom 覆盖层消费；render_image_zoom
+        // 拿不到 &mut Window，render 在此记录）
+        self.viewport_seen = (
+            window.viewport_size().width.as_f32(),
+            window.viewport_size().height.as_f32(),
+        );
         let list_state = self.list.clone();
         let entity = cx.entity();
         // 消息流：不等高惰性测量（Bottom 对齐 + 512 overscan），Tail 跟随在
         // ListState 内建（新消息贴底 / 上滚暂停 / 回底续跟）
         let mut column = div()
+            .relative()
             .size_full()
             .flex()
             .flex_col()
@@ -219,6 +255,83 @@ impl Render for ConversationState {
                     .child(composer.clone()),
             );
         }
+        // zoom 覆盖层（2.9）：开着时叠在中栏上（inset_0 + occlude 挡住下层
+        // 点击），背景点击 / 关闭钮收场
+        if let Some(overlay) = self.render_image_zoom(cx) {
+            column = column.child(overlay);
+        }
         column
+    }
+}
+
+impl ConversationState {
+    /// zoom 覆盖层（Wake render_image_zoom 形态收窄）：Ready 态图按视口
+    /// 自适应展示（不放大超过原尺寸），scrim 遮罩 + 关闭钮。zoom 目标不可
+    /// 渲染（缓存被清等）时不画——防御路径，正常流不会走到。
+    fn render_image_zoom(&self, cx: &Context<Self>) -> Option<gpui_kit::AnyElement> {
+        let (ix, image_ix) = self.zoom_open()?;
+        match self.image_state(ix, image_ix)? {
+            images::ImageLoad::Ready { image, dims } => {
+                let theme = cx.theme().colors;
+                let scrim = cx.craftwave().colors.scrim;
+                let zoom = cx.craftwave().zoom;
+                let (width, height) = images::zoom_fit(*dims, images::zoom_avail(self.viewport_seen));
+                let image = image.clone();
+                Some(
+                    div()
+                        .id("image-zoom")
+                        .debug_selector(|| "image-zoom".to_owned())
+                        .absolute()
+                        .inset_0()
+                        .occlude()
+                        .bg(scrim)
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .on_click(cx.listener(|this: &mut Self, _, _, cx| {
+                            this.close_zoom(cx);
+                        }))
+                        .child(
+                            div()
+                                .id("image-zoom-content")
+                                .flex()
+                                .flex_col()
+                                .items_center()
+                                .gap(px(crate::theme::SPACE_3))
+                                .on_click(|_, _, cx| cx.stop_propagation())
+                                .child(
+                                    gpui_kit::img(image)
+                                        .id("image-zoom-figure")
+                                        .w(width)
+                                        .h(height)
+                                        .rounded(px(crate::theme::rounded_lg(zoom))),
+                                )
+                                .child(
+                                    div()
+                                        .id("image-zoom-close")
+                                        .px(px(crate::theme::SPACE_3))
+                                        .py(px(crate::theme::SPACE_1))
+                                        .rounded(px(crate::theme::rounded_md(zoom)))
+                                        .cursor_pointer()
+                                        .text_size(px(crate::theme::font_size(
+                                            crate::theme::FONT_UI_SM,
+                                            zoom,
+                                        )))
+                                        .text_color(theme.muted_foreground)
+                                        .hover(|style| style.bg(theme.list_hover))
+                                        .debug_selector(|| "image-zoom-close".to_owned())
+                                        .on_click(
+                                            cx.listener(|this: &mut Self, _, _, cx| {
+                                                this.close_zoom(cx);
+                                            }),
+                                        )
+                                        .child(crate::i18n::t("Close")),
+                                ),
+                        )
+                        .into_any_element(),
+                )
+            }
+            _ => None,
+        }
     }
 }

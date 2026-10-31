@@ -31,14 +31,15 @@
 //! 普通文本占位（下一批换 `TextView::markdown` 才挂 `.selectable(true)`），
 //! 事件通路已由测试钉住（见 conversation_test.rs 的合成 ScrollEvent 用例）。
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-use gpui_kit::{Context, Entity, FollowMode, IntoElement, ListAlignment, ListState, px};
+use gpui_kit::{Context, Entity, FollowMode, IntoElement, ListAlignment, ListState, Task, px};
 
-use craftwave_engine::snapshot::{StreamPart, StreamingMessage};
+use craftwave_engine::snapshot::{StreamPart, StreamingMessage, ThinkingSpan};
 use craftwave_engine::storage::{MessageEntry, MessageRole, WirePart};
 
+use super::images::{ImageLoad, ImageLoader};
 use super::row;
 
 /// 阅读轴最大宽度（px）：全消息 `justify_center + max_w` 共用同一竖直轴
@@ -66,6 +67,27 @@ pub struct ConversationState {
     expanded_thinking: HashSet<usize>,
     /// 工具簇展开表（键 = 行号；与 thinking 相互独立，折叠不嵌套）。
     expanded_tools: HashSet<usize>,
+    /// 失败自动展开锁存表（B3：自动展开只发生一次，之后用户关了就保持关；
+    /// 手动折叠同样写入本表——尊重手动开合）。
+    auto_expanded_tools: HashSet<usize>,
+    /// 图片三态缓存（键 = (行号, 行内图片序)；装载完成或降级后定格；序号
+    /// 与渲染口径一致——行内第几张图，非 part 下标）。
+    images: HashMap<(usize, usize), ImageLoad>,
+    /// 在途装载的图片键（防重复发起）。
+    loading_images: HashSet<(usize, usize)>,
+    /// 图片装载任务句柄（存 owner：实体释放即取消；完成回写后自然结束）。
+    image_tasks: Vec<Task<()>>,
+    /// zoom 查看态（消息行 + 行内图片序；None = 关闭）。
+    zoom: Option<(usize, usize)>,
+    /// 思考计时的秒针任务（流式且思考段开着时每秒 notify 刷新时长展示；
+    /// None = 无计时在跑）。存 owner——实体释放即取消。
+    think_tick: Option<Task<()>>,
+    /// 阅读区实际宽度（Render 每帧测量中栏可用宽；工具簇参数摘要的
+    /// 「宽度自适应格数」反算基准，Wake 7102-7104 同款手法）。
+    pub(crate) reader_width_seen: f32,
+    /// 本帧视口尺寸（Render 记录；zoom 覆盖层的自适应判据——overlay 构建
+    /// 时拿不到 &mut Window）。
+    pub(crate) viewport_seen: (f32, f32),
     /// 虚拟列表状态（Bottom 对齐 + 512px overscan + Tail 跟随）。
     /// mod.rs 的 Render 实现要读它建 list 元素，故 crate 内可见。
     pub(crate) list: ListState,
@@ -82,6 +104,9 @@ pub struct ConversationState {
     pub(crate) splice_retest_count: usize,
     /// remeasure_items 执行次数（流式行内容增长的重测对账计数）。
     pub(crate) remeasure_count: usize,
+    /// 图片装载源（install 装配生产实现；None = 回声模式的测试装置——
+    /// 图片按不可预览卡渲染）。
+    image_loader: Option<Rc<dyn ImageLoader>>,
     /// view 寿命订阅的保活句柄（composer 输入事件 → 发送/补全分流，
     /// install 时挂上）。Subscription 一旦 drop 会取消订阅——必须存进
     /// owner 而不是 detach（detach 后回调挂在 emitter 上，owner 重建时
@@ -100,6 +125,16 @@ impl ConversationState {
             streaming: None,
             expanded_thinking: HashSet::new(),
             expanded_tools: HashSet::new(),
+            auto_expanded_tools: HashSet::new(),
+            images: HashMap::new(),
+            loading_images: HashSet::new(),
+            image_tasks: Vec::new(),
+            zoom: None,
+            think_tick: None,
+            // 未测量前按阅读轴上限估（窗口极窄时首帧由 render 校正）
+            reader_width_seen: READER_MAX_WIDTH,
+            viewport_seen: (1024.0, 768.0),
+            image_loader: None,
             list,
             composer: None,
             service: None,
@@ -144,17 +179,99 @@ impl ConversationState {
     }
 
     // ==================================================================
+    // 图片三态（2.9）：缓存读取 + 装载发起 + zoom
+    // ==================================================================
+
+    /// 注入图片装载源（install 装配生产装载器；测试注入 fixture 假源）。
+    /// None = 无装载面（图片按「预览不可用」卡渲染——不假装有图）。
+    pub(crate) fn set_image_loader(&mut self, loader: Rc<dyn ImageLoader>) {
+        self.image_loader = Some(loader);
+    }
+
+    /// 某行某图的三态（未装载完 = None → 渲染占位卡）。
+    pub(crate) fn image_state(&self, ix: usize, image_ix: usize) -> Option<&ImageLoad> {
+        self.images.get(&(ix, image_ix))
+    }
+
+    /// 历史里扫出全部图片 part 并发起装载（set_history / append_message 的
+    /// 生命周期钩子；render 不发起任务——编码指南 §5）。已有结果或在途的
+    /// 跳过；无装载面（回声装置）整个扫描零成本跳过。
+    /// 缓存键 = (行号, 行内图片序)——与渲染序号同一口径（行内第几张图），
+    /// 不用 part 下标（Text/Image 混排时两者错位）。
+    pub(crate) fn ensure_images_loaded(&mut self, cx: &mut Context<Self>) {
+        let Some(loader) = self.image_loader.clone() else {
+            return;
+        };
+        for (ix, entry) in self.messages.iter().enumerate() {
+            let mut image_ix = 0usize;
+            for part in entry.parts.iter() {
+                let craftwave_engine::storage::WirePart::Image {
+                    blob_hash,
+                    mime_type,
+                } = part
+                else {
+                    continue;
+                };
+                let key = (ix, image_ix);
+                image_ix += 1;
+                if self.images.contains_key(&key) || !self.loading_images.insert(key) {
+                    continue;
+                }
+                let task = loader.load(blob_hash, mime_type, cx);
+                self.image_tasks.push(cx.spawn(async move |this, cx| {
+                    let state = task.await;
+                    let _ = this.update(cx, |this, cx| {
+                        this.loading_images.remove(&key);
+                        this.images.insert(key, state);
+                        cx.notify();
+                    });
+                }));
+            }
+        }
+    }
+
+    /// zoom 查看态（消息行 + 行内图片序）。
+    pub fn zoom_open(&self) -> Option<(usize, usize)> {
+        self.zoom
+    }
+
+    /// 打开 zoom（缩略图点击；记消息行 + 图索引）。
+    pub fn open_zoom(&mut self, ix: usize, image_ix: usize, cx: &mut Context<Self>) {
+        self.zoom = Some((ix, image_ix));
+        cx.notify();
+    }
+
+    /// 关闭 zoom（背景点击 / 关闭钮）。
+    pub fn close_zoom(&mut self, cx: &mut Context<Self>) {
+        if self.zoom.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    /// 思考计时秒针是否在跑（测试观察面；生产由 set_streaming 驱动）。
+    #[cfg(test)]
+    pub fn thinking_tick_live(&self) -> bool {
+        self.think_tick.is_some()
+    }
+
+    // ==================================================================
     // 快照驱动路径（2.C-1 假数据与 2.C-2 真帧流共用的唯一写入口）
     // ==================================================================
 
     /// 整体替换历史消息（会话加载 / run 落盘重载后的新历史）。走 `reset`：
     /// 行数与行高缓存全部推倒，滚动由 Tail 跟随接管回底部。
-    /// 展开表按行号记忆，换历史即换内容——一并清空。
+    /// 展开表按行号记忆，换历史即换内容——一并清空（图片缓存与 zoom、
+    /// 失败自动展开锁存同理：行号映射换了，记忆随旧行作废）。
     pub fn set_history(&mut self, history: Rc<Vec<Rc<MessageEntry>>>, cx: &mut Context<Self>) {
         let count = history.len();
         self.messages = history;
         self.expanded_thinking.clear();
         self.expanded_tools.clear();
+        self.auto_expanded_tools.clear();
+        self.images.clear();
+        self.loading_images.clear();
+        self.zoom = None;
+        self.ensure_images_loaded(cx);
         self.list.reset(count);
         cx.notify();
     }
@@ -169,6 +286,7 @@ impl ConversationState {
         self.messages = Rc::new(vec);
         let n = self.messages.len();
         self.list.splice(n - 1..n - 1, 1);
+        self.ensure_images_loaded(cx);
         cx.notify();
     }
 
@@ -188,9 +306,11 @@ impl ConversationState {
             (None, Some(_)) => self.list.splice(ix..ix, 1),
             (Some(_), None) => {
                 self.list.splice(ix..ix + 1, 0);
-                // 该行的展开记忆随行内容一起消失
+                // 该行的展开记忆随行内容一起消失（自动展开锁存同理）
                 self.expanded_thinking.remove(&ix);
                 self.expanded_tools.remove(&ix);
+                self.auto_expanded_tools.remove(&ix);
+                self.think_tick = None;
             }
             (Some(old), Some(new)) => {
                 if old != new {
@@ -200,8 +320,78 @@ impl ConversationState {
             }
             (None, None) => {}
         }
+        // B3 唯一例外：流式行首次观察到失败 → 自动展开一次，随后用户关了
+        // 就保持关（锁存；toggle_tools 的手动折叠同样写锁存——尊重手动
+        // 开合）。出现与更新两条路都判定（attach 重放首帧就可能带失败）
+        if let Some(new) = &next {
+            let failed = streaming_has_failure(new);
+            if failed
+                && !self.expanded_tools.contains(&ix)
+                && !self.auto_expanded_tools.contains(&ix)
+            {
+                self.expanded_tools.insert(ix);
+                if self.streaming.is_some() {
+                    // 已在场的行自动展开：行高变了，走 splice 重测；首帧
+                    // 出现的新行尚未测高，无需重测
+                    self.list.splice(ix..ix + 1, 1);
+                    self.splice_retest_count += 1;
+                }
+            }
+            if failed {
+                self.auto_expanded_tools.insert(ix);
+            }
+        }
         self.streaming = next;
+        self.ensure_thinking_tick(cx);
         cx.notify();
+    }
+
+    /// 思考计时秒针（B4：流式期间显示已思考时长，数字要走就得每秒重渲）。
+    /// 思考段开着（started 且未 seal）且 run 未收口时保证有任务；否则清。
+    /// 任务句柄存 owner（drop 即取消）。
+    fn ensure_thinking_tick(&mut self, cx: &mut Context<Self>) {
+        let live = self
+            .streaming
+            .as_ref()
+            .is_some_and(|streaming| streaming.ended.is_none())
+            && self
+                .streaming
+                .as_ref()
+                .and_then(|streaming| streaming.thinking.as_ref())
+                .is_some_and(|span| span.ended_at.is_none());
+        if !live {
+            self.think_tick = None;
+            return;
+        }
+        if self.think_tick.is_some() {
+            return;
+        }
+        self.think_tick = Some(cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_secs(1))
+                    .await;
+                let live = this.update(cx, |this, cx| {
+                    let live = this
+                        .streaming
+                        .as_ref()
+                        .is_some_and(|streaming| streaming.ended.is_none())
+                        && this
+                            .streaming
+                            .as_ref()
+                            .and_then(|streaming| streaming.thinking.as_ref())
+                            .is_some_and(|span| span.ended_at.is_none());
+                    if live {
+                        cx.notify();
+                    }
+                    live
+                })
+                .unwrap_or(false);
+                if !live {
+                    return;
+                }
+            }
+        }));
     }
 
     /// 完整快照入口（2.C-2 帧流的产出口）：历史指针不同才整体替换（同指针
@@ -235,10 +425,17 @@ impl ConversationState {
         self.retest_row(ix, cx);
     }
 
-    /// 切换工具簇卡展开：同上。
+    /// 切换工具簇卡展开：同上。手动折叠写入失败自动展开锁存表——此后
+    /// 该行再出现失败也不自动开（B3：自动展开只一次，尊重手动开合）。
     pub fn toggle_tools(&mut self, ix: usize, cx: &mut Context<Self>) {
-        if !self.expanded_tools.remove(&ix) {
+        let now_expanded = if self.expanded_tools.remove(&ix) {
+            false
+        } else {
             self.expanded_tools.insert(ix);
+            true
+        };
+        if !now_expanded {
+            self.auto_expanded_tools.insert(ix);
         }
         self.retest_row(ix, cx);
     }
@@ -321,12 +518,56 @@ pub(crate) enum Slot {
 }
 
 /// 单个工具调用的展示面（WirePart 与 StreamPart 归一后的形态）。
+/// **全文纪律**：args_json 与 summary 保留完整原文（600 字符契约的
+/// 「复制完整原文」数据源），截断只发生在展示面。
 pub(crate) struct CallLite {
     pub name: String,
     pub args_json: String,
     /// None = 仍在执行 / 等待结果。
     pub ok: Option<bool>,
+    /// 输出完整原文（wire 摘要 / 流式 ui_summary；边车 detail 的拉取在
+    /// 3.6 详情面接入）。
     pub summary: String,
+    /// 错误载荷文本（错误码 + 消息；None = 无）。失败时的 Output 分节
+    /// 把它并入展示与复制面（B3「失败原因可复制」）。
+    pub error_text: Option<String>,
+    /// 该调用派生了子代理（折叠头出跳转占位钮；真实跳转 3.6 接线）。
+    pub subagent: bool,
+}
+
+/// 流式行的渲染上下文（thinking 面板 B4 与工具簇跳转钮的数据源；历史行
+/// 用 [`StreamView::IDLE`]——wire 不携带思考起止与子代理关联）。
+pub(crate) struct StreamView {
+    /// 思考流起止（None = 本行没有思考计时面）。
+    pub thinking_span: Option<ThinkingSpan>,
+    /// run 仍在流式（流动摘要 / 计时递增的开关）。
+    pub live: bool,
+    /// 派生了子代理的调用 id 集（CallLite::subagent 的判定源）。
+    pub subagent_call_ids: Vec<String>,
+}
+
+impl StreamView {
+    /// 历史行的静态视图（无计时、无跳转关联）。
+    pub fn idle() -> Self {
+        Self {
+            thinking_span: None,
+            live: false,
+            subagent_call_ids: Vec::new(),
+        }
+    }
+}
+
+/// 流式行工具簇是否已见失败结果（B3 自动展开的触发判定）。
+fn streaming_has_failure(streaming: &StreamingMessage) -> bool {
+    streaming.parts.iter().any(|p| {
+        matches!(
+            p,
+            StreamPart::ToolCall {
+                result: Some(result),
+                ..
+            } if !result.ok
+        )
+    })
 }
 
 /// WirePart 序列 → 槽位序列（历史消息）。工具结果与调用按 call_id 配对
@@ -367,6 +608,10 @@ pub(crate) fn slots_from_wire(parts: &[WirePart]) -> Vec<Slot> {
                     summary: result
                         .map(|(_, summary)| summary)
                         .unwrap_or_default(),
+                    // wire 不携带错误载荷与子代理关联（边车 detail 与跳转
+                    // 随 3.6 详情面接入）
+                    error_text: None,
+                    subagent: false,
                 });
             }
             // 工具结果已并入调用、图片不进 Assistant 正文面（气泡面归 User）
@@ -379,8 +624,11 @@ pub(crate) fn slots_from_wire(parts: &[WirePart]) -> Vec<Slot> {
 }
 
 /// StreamPart 序列 → 槽位序列（流式行）。结果内嵌在 ToolCall part，
-/// 无需配对。
-pub(crate) fn slots_from_stream(parts: &[StreamPart]) -> Vec<Slot> {
+/// 无需配对；`subagent_call_ids` 是派生过子代理的调用 id 集。
+pub(crate) fn slots_from_stream(
+    parts: &[StreamPart],
+    subagent_call_ids: &[String],
+) -> Vec<Slot> {
     let mut thinking = String::new();
     let mut body = String::new();
     let mut calls: Vec<CallLite> = Vec::new();
@@ -394,6 +642,7 @@ pub(crate) fn slots_from_stream(parts: &[StreamPart]) -> Vec<Slot> {
             }
             StreamPart::Text { text } => body.push_str(text),
             StreamPart::ToolCall {
+                call_id,
                 name,
                 args_json,
                 result,
@@ -406,6 +655,14 @@ pub(crate) fn slots_from_stream(parts: &[StreamPart]) -> Vec<Slot> {
                     .as_ref()
                     .map(|r| r.ui_summary.clone())
                     .unwrap_or_default(),
+                // 错误载荷并入失败原因展示面（B3「失败原因可复制」的
+                // 完整原文：摘要 + 错误码 + 消息）
+                error_text: result.as_ref().and_then(|r| {
+                    r.error
+                        .as_ref()
+                        .map(|e| format!("{}: {}", e.code, e.message))
+                }),
+                subagent: subagent_call_ids.iter().any(|id| id == call_id),
             }),
         }
     }

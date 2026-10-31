@@ -68,6 +68,23 @@ const ZH_CN: &[(&str, &str)] = &[
     ("Just now", "刚刚"),
     ("min ago", "分钟前"),
     ("Yesterday", "昨天"),
+    // thinking 面板与工具簇卡（阶段 2.C-4：2.7 / 2.8）
+    ("Thinking…", "思考中…"),
+    ("sec", "秒"),
+    ("min", "分"),
+    ("Input", "输入"),
+    ("Output", "输出"),
+    ("First 600 characters", "前 600 字符"),
+    ("Copy full input", "复制完整输入"),
+    ("Copy full output", "复制完整输出"),
+    ("Open subagent", "打开子代理"),
+    // 图片三态与 zoom（阶段 2.C-4：2.9）
+    ("Preview unavailable", "预览不可用"),
+    ("Download original image", "下载原图"),
+    ("Image omitted", "图片已省略"),
+    ("Transcript limit reached", "转录已达上限"),
+    ("Zoom image", "放大查看"),
+    ("Close", "关闭"),
 ];
 
 /// 查表结构：`OnceLock` 首次访问构建，之后零开销哈希查词。

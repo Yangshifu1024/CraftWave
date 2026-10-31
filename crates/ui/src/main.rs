@@ -56,10 +56,41 @@ use theme::ActiveCraftwave as _;
 
 // 三栏骨架的两个占位宽度（阶段 3.1 侧栏 / 3.5 面板族接入前只立骨架，
 // 接入时连同真布局一起重订；token 派生口径见编码指南 §3）。
+// pub(crate)：中栏会话区按「视口 - 两栏占位」反算阅读区实际宽度（工具簇
+// 参数摘要的格数反算，chat/mod.rs Render 每帧执行）。
 /// 左栏（会话侧栏）占位宽度。
-const SIDEBAR_PLACEHOLDER_WIDTH: f32 = 260.0;
+pub(crate) const SIDEBAR_PLACEHOLDER_WIDTH: f32 = 260.0;
 /// 右栏（面板区折叠态）占位宽度。
-const PANEL_PLACEHOLDER_WIDTH: f32 = 4.0;
+pub(crate) const PANEL_PLACEHOLDER_WIDTH: f32 = 4.0;
+
+// ---- 图标资产面（2.C-4：chevron 旋转 / 复制 / 下载 / 图片降级卡 / 子代理
+// 跳转占位）——2.C-1 起图标面未接，占位字符本批退役 ----
+
+// 组件默认子集（gpui-kit-assets Assets：chevron/copy 等组件自绘用图标）
+// 之外的三个自选图标，随本批部件入包（RustEmbed 静态内嵌，运行时零 IO）。
+gpui_kit::assets::icon_assets!(CraftwaveIcons, [Download, ImageOff, CornerDownRight]);
+
+/// 组合资产源：组件默认子集优先，自选图标补充；双缺返回 Ok(None)（gpui
+/// 对 None 静默跳过绘制——测试无头环境即此路径，不 panic）。
+struct AppAssets;
+
+impl gpui_kit::AssetSource for AppAssets {
+    fn load(
+        &self,
+        path: &str,
+    ) -> gpui_kit::Result<Option<std::borrow::Cow<'static, [u8]>>> {
+        if let Some(bytes) = CraftwaveIcons.load(path)? {
+            return Ok(Some(bytes));
+        }
+        Ok(gpui_kit::assets::Assets.load(path).ok().flatten())
+    }
+
+    fn list(&self, path: &str) -> gpui_kit::Result<Vec<gpui_kit::SharedString>> {
+        let mut out = CraftwaveIcons.list(path)?;
+        out.extend(gpui_kit::assets::Assets.list(path)?);
+        Ok(out)
+    }
+}
 
 actions!(
     craftwave,
@@ -393,7 +424,8 @@ fn app_menus() -> Vec<Menu> {
 }
 
 fn main() {
-    let app = gpui_kit::application();
+    // 图标资产源（Icon/svg 的 path 解析走它；见 AppAssets 注释）
+    let app = gpui_kit::application().with_assets(AppAssets);
     // macOS：用户关掉最后一个窗后进程仍留 Dock，点 Dock 图标走
     // applicationShouldHandleReopen → on_reopen（系统认为没有可见窗口时触发）。
     // 与 Window → Main Window 同一条路

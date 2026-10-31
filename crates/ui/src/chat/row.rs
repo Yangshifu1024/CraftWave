@@ -1,39 +1,49 @@
-//! 行分发四形态的元素构建（gpui-rewrite 2.4 / 2.C-3，rendering.md「行分发」
-//! 「Markdown 正文」逐条）。
+//! 行分发四形态的元素构建（gpui-rewrite 2.4 / 2.C-3 / 2.C-4，rendering.md
+//! 「行分发」「Markdown 正文」「thinking 面板」「工具簇卡」「图片」逐条）。
 //!
 //! 判定与路由在 state.rs（`render_row` 入口），本模块只产元素：
 //!
 //! - **User**：右对齐气泡，`max_w(540px)`、muted 底、行高 1.85、内容段
 //!   （`TextView::markdown`，段间距 0.5rem）直挂气泡不加包装层（max-content
-//!   探测问题的 Wake 结论）；B5 右上折角 + 1px 边框（折角本批为占位形制——
-//!   方形翻角 chip，gpui 无 div 级 rotate，三角折角待有 svg/路径面后精修）；
-//! - **Assistant**：全宽列 = thinking 面板槽位 → 正文槽位（`TextView::markdown`
-//!   四定制点，段间距 0.6rem）→ 工具簇槽位，平铺；
+//!   探测问题的 Wake 结论）；图片 part 走三态缩略图（images.rs，点击 Ready
+//!   态开 zoom）；B5 右上折角 + 1px 边框（折角本批为占位形制——方形翻角
+//!   chip，gpui 无 div 级 rotate，三角折角待有 svg/路径面后精修）；
+//! - **Assistant**：全宽列 = thinking 面板槽位（2.7 转正：真 chevron 图标
+//!   旋转 + B4 流式态）→ 正文槽位（`TextView::markdown` 四定制点，段间距
+//!   0.6rem）→ 工具簇槽位（2.8 转正：簇卡 + 600 字符契约），平铺；
 //! - **System / CompactSummary**：居中小胶囊（one_line 压行 + `.truncate()`
 //!   宽度兜底）；
 //! - **过滤器**：运行日志型 → state.rs 已拦截为零高空行，不会进到本模块。
 //!
 //! 纪律对照：折叠不嵌套（只有 thinking / 工具簇两个槽位可折）；截断只发生在
-//! 元数据（胶囊文本、thinking 摘要、工具参数摘要），正文槽位永不截断。
+//! 元数据（胶囊文本、thinking 摘要、工具参数摘要与 600 字符预览），正文槽位
+//! 永不截断；错误 Output 全文可选可复制，长报错展开后自然增高（不嵌套滚动
+//! 容器抢主区滚轮——Wake 10037 注释的教训）。
 
+use gpui_kit::assets::IconName;
+use gpui_kit::component::Sizable as _;
 use gpui_kit::component::highlighter::HighlightTheme;
+use gpui_kit::component::shimmer::ShimmerText;
 use gpui_kit::component::text::{TextView, TextViewStyle};
-use gpui_kit::component::{ActiveTheme as _, h_flex};
+use gpui_kit::component::{ActiveTheme as _, Icon, h_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, App, ClipboardItem, Context, SharedString, StyleRefinement, div, px, relative,
-    rems,
+    AnyElement, App, ClipboardItem, Context, FontWeight, Radians, SharedString,
+    StyleRefinement, div, px, relative, rems,
 };
 
 use crate::i18n::t;
 use crate::text_util::{clip_display, one_line};
 use crate::theme::{self, ActiveCraftwave as _};
 
+use super::images::{self, ImageLoad};
 use super::markdown_links;
-use super::state::{CallLite, ConversationState, READER_MAX_WIDTH, Slot, USER_BUBBLE_MAX_WIDTH};
+use super::state::{
+    CallLite, ConversationState, READER_MAX_WIDTH, Slot, StreamView, USER_BUBBLE_MAX_WIDTH,
+};
 
-// 本批占位形制的两个长度（折角 chip、缩进导线），均有注释说明去向。
-/// thinking 展开区的左缩进（rendering.md「thinking 面板」钉值 30px）。
+/// thinking 展开区的左缩进（rendering.md「thinking 面板」钉值 30px，
+/// 白名单②）。
 const THINKING_INDENT: f32 = 30.0;
 /// B5 折角 chip 的角距与边长（占位形制钉值：方形翻角贴右上角；gpui 无
 /// div 级 rotate，三角折角随 svg/路径能力接入后连同这两个值一起重订）。
@@ -46,8 +56,17 @@ const THINKING_SUMMARY_WIDTH: usize = 88;
 /// 胶囊文本的字符预算（纪律二 one_line 单行截断；只压行数不精确控宽——
 /// 宽度由 `.truncate()` 按容器兜底，预算大到几乎不影响实际展示）。
 const PILL_MAX_CHARS: usize = 200;
-/// 图片缩略占位边长（rendering.md「图片」钉值 104px；按宽高比分流下一批）。
-const IMAGE_THUMB: f32 = 104.0;
+/// 工具 Input/Output 的展示预览上限（rendering.md 纪律三钉值 600 字符；
+/// 复制按钮永远复制完整原文——见 [`tool_section`]）。
+const TOOL_TEXT_PREVIEW_LIMIT: usize = 600;
+/// 工具簇折叠头的横向预留（chevron + 标题 + 跳转钮 + 失败 badge + 内边距
+/// 的保守合计）：参数摘要的可用宽 = 阅读区宽 - 本值（Wake 7103 的 156px
+/// 同语义；取整到 ours 的间距档）。
+const TOOL_HEAD_RESERVE: f32 = 180.0;
+/// 等宽字符格宽系数（em 倍数）：Menlo 等宽 ASCII 格宽 ≈ 0.6em。格宽是
+/// 「可显示格数」反算的估算量，误差由 min clamp 与 clip_display 的省略号
+/// 兜底（Wake TOOL_MONO_CELL_WIDTH 6.9px / 11.6px 字号 ≈ 同系数）。
+const MONO_CELL_EM: f32 = 0.6;
 
 /// 行渲染总入口：角色分发 + 阅读轴包装（`justify_center + max_w` 共用竖直轴，
 /// 首条 pt / 末条 pb 呼吸边距）。
@@ -57,21 +76,36 @@ pub(crate) fn render_row(
     cx: &mut Context<ConversationState>,
 ) -> AnyElement {
     let zoom = cx.craftwave().zoom;
-    // 角色分发（流式行按 Assistant 形态走三槽位列）
+    // 角色分发（流式行按 Assistant 形态走三槽位列，附 B4/跳转钮的流式上下文）
     let content: AnyElement = if ix >= state.messages().len() {
         match state.streaming() {
             Some(streaming) => {
-                render_assistant(state, ix, super::state::slots_from_stream(&streaming.parts), cx)
+                let view = StreamView {
+                    thinking_span: streaming.thinking.clone(),
+                    live: streaming.ended.is_none(),
+                    subagent_call_ids: streaming
+                        .subagents
+                        .iter()
+                        .map(|sub| sub.call_id.clone())
+                        .collect(),
+                };
+                let slots =
+                    super::state::slots_from_stream(&streaming.parts, &view.subagent_call_ids);
+                render_assistant(state, ix, slots, &view, cx)
             }
             None => div().into_any_element(),
         }
     } else {
         let entry = &state.messages()[ix];
         match entry.role {
-            craftwave_engine::storage::MessageRole::User => render_user(entry, ix, cx),
-            craftwave_engine::storage::MessageRole::Assistant => {
-                render_assistant(state, ix, super::state::slots_from_wire(&entry.parts), cx)
-            }
+            craftwave_engine::storage::MessageRole::User => render_user(state, entry, ix, cx),
+            craftwave_engine::storage::MessageRole::Assistant => render_assistant(
+                state,
+                ix,
+                super::state::slots_from_wire(&entry.parts),
+                &StreamView::idle(),
+                cx,
+            ),
             craftwave_engine::storage::MessageRole::System => render_system(entry, cx),
         }
     };
@@ -95,13 +129,14 @@ pub(crate) fn render_row(
 }
 
 // ======================================================================
-// User：右对齐气泡（B5 右上折角 + 1px 边框）
+// User：右对齐气泡（B5 右上折角 + 1px 边框）+ 图片三态缩略图
 // ======================================================================
 
 fn render_user(
+    state: &ConversationState,
     entry: &craftwave_engine::storage::MessageEntry,
     ix: usize,
-    cx: &mut App,
+    cx: &mut Context<ConversationState>,
 ) -> AnyElement {
     // owned 拷贝（ThemeColor/CraftwaveColors 都是 Copy）：不留对 cx 的借用
     let theme = cx.theme().colors;
@@ -123,12 +158,11 @@ fn render_user(
         .text_size(px(theme::font_size(theme::FONT_UI_BASE, zoom)))
         .line_height(relative(theme::LEADING_USER))
         .text_color(theme.foreground)
-
         .relative()
         .overflow_hidden();
     // 内容段直挂气泡（无包装层——Wake 教训见模块注释）：Text part 是
-    // markdown 段（段间距 0.5rem），Image part 是块级占位（缩略图三态是
-    // 2.9 的事，本批只占位）
+    // markdown 段（段间距 0.5rem），Image part 是三态缩略图（2.9 转正）
+    let mut image_ix = 0usize;
     for (part_ix, part) in entry.parts.iter().enumerate() {
         match part {
             craftwave_engine::storage::WirePart::Text { text } => {
@@ -143,21 +177,10 @@ fn render_user(
                 );
             }
             craftwave_engine::storage::WirePart::Image { mime_type, .. } => {
-                bubble = bubble.child(
-                    div()
-                        .mt(px(theme::SPACE_2))
-                        .size(px(IMAGE_THUMB))
-                        .rounded(px(theme::rounded_md(zoom)))
-                        .bg(background)
-                        .border_1()
-                        .border_color(border)
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .text_size(px(theme::font_size(theme::FONT_UI_2XS, zoom)))
-                        .text_color(theme.muted_foreground)
-                        .child(mime_type.clone()),
-                );
+                let this_image_ix = image_ix;
+                image_ix += 1;
+                let thumb = render_user_image(state, ix, this_image_ix, mime_type, cx);
+                bubble = bubble.child(div().mt(px(theme::SPACE_2)).child(thumb));
             }
             // User 消息不产生其他 part（防御：忽略即不渲染）
             _ => {}
@@ -181,6 +204,61 @@ fn render_user(
     div().w_full().flex().justify_end().child(bubble).into_any_element()
 }
 
+/// User 消息里的单张图片：三态缩略图（images.rs 形制）——Ready 渲染图
+/// （点击开 zoom）、Unsupported 明示预览不可用（有原始字节给下载原图）、
+/// Omitted 明示转录上限；装载中给 mime 占位卡（不假装有图）。
+fn render_user_image(
+    state: &ConversationState,
+    ix: usize,
+    image_ix: usize,
+    mime_type: &str,
+    cx: &mut Context<ConversationState>,
+) -> AnyElement {
+    let id = SharedString::from(format!("message-image-{ix}-{image_ix}"));
+    match state.image_state(ix, image_ix) {
+        Some(ImageLoad::Ready { image, dims }) => images::render_ready_thumb(id.clone(), image, *dims, cx)
+            .debug_selector(move || format!("image-{ix}-{image_ix}"))
+            .tooltip(|window, cx| {
+                gpui_kit::component::tooltip::Tooltip::new(t("Zoom image")).build(window, cx)
+            })
+            .on_click(cx.listener(move |this: &mut ConversationState, _, _, cx| {
+                this.open_zoom(ix, image_ix, cx);
+            }))
+            .into_any_element(),
+        Some(ImageLoad::Unsupported { mime, original }) => {
+            images::render_unsupported_thumb(id.clone(), mime, original.as_ref(), cx)
+                .debug_selector(move || format!("image-{ix}-{image_ix}"))
+                .into_any_element()
+        }
+        Some(ImageLoad::Omitted) => images::render_omitted_thumb(id.clone(), cx)
+            .debug_selector(move || format!("image-{ix}-{image_ix}"))
+            .into_any_element(),
+        // 装载中：mime 占位卡（同 104 形制；不假装有图）
+        None => {
+            let theme = cx.theme().colors;
+            let zoom = cx.craftwave().zoom;
+            div()
+                .id(id)
+                .size(px(images::IMAGE_THUMB))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(theme::rounded_md(zoom)))
+                .border_1()
+                .border_color(theme.border)
+                .bg(theme.muted)
+                .text_size(px(theme::font_size(theme::FONT_UI_2XS, zoom)))
+                .text_color(theme.muted_foreground)
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .truncate()
+                .debug_selector(move || format!("image-{ix}-{image_ix}"))
+                .child(mime_type.to_owned())
+                .into_any_element()
+        }
+    }
+}
+
 // ======================================================================
 // Assistant：全宽列 = thinking 面板 → 正文 → 工具簇（平铺）
 // ======================================================================
@@ -189,6 +267,7 @@ fn render_assistant(
     state: &ConversationState,
     ix: usize,
     slots: Vec<Slot>,
+    view: &StreamView,
     cx: &mut Context<ConversationState>,
 ) -> AnyElement {
     let mut col = div()
@@ -201,12 +280,10 @@ fn render_assistant(
     for slot in slots {
         match slot {
             Slot::Thinking { text } => {
-                col = col.child(render_thinking_panel(state, ix, &text, cx))
+                col = col.child(render_thinking_panel(state, ix, &text, view, cx))
             }
             Slot::Body { text } => col = col.child(render_body(ix, &text, cx)),
-            Slot::Tools { calls } => {
-                col = col.child(render_tool_cluster(state, ix, &calls, cx))
-            }
+            Slot::Tools { calls } => col = col.child(render_tool_cluster(state, ix, &calls, cx)),
         }
     }
     col.into_any_element()
@@ -321,26 +398,49 @@ fn markdown_body(id: SharedString, text: &str, paragraph_gap: gpui_kit::Rems, cx
 }
 
 // ---------------------------------------------------------------------
-// thinking 面板（折叠行：chevron + "Thinking" + 单行斜体摘要；展开为
-// 左导线纯文本——纪律一，默认折叠，展开状态跨重渲染记忆）
+// thinking 面板（2.7 转正）：折叠行 = chevron 图标（展开 rotate 90°）+
+// "Thinking" + 单行斜体摘要；展开为左缩进 + 左导线纯文本（纪律一，默认
+// 折叠，展开状态跨重渲染记忆）。流式期间走 B4：流动摘要（最后一行吸尾）
+// + 思考计时（秒针任务驱动，reduce_motion 只降级动效不降级计时）。
 // ---------------------------------------------------------------------
 
+/// thinking 面板（Wake thinking_panel + ZCode B4 形态合流）。
 fn render_thinking_panel(
     state: &ConversationState,
     ix: usize,
     text: &str,
+    view: &StreamView,
     cx: &mut Context<ConversationState>,
 ) -> AnyElement {
     // owned 拷贝：后面的 cx.listener 需要独占 cx
     let theme = cx.theme().colors;
     let zoom = cx.craftwave().zoom;
-    let expanded = state.thinking_expanded(ix);
-    // 摘要两级截断（rendering.md 钉值）：one_line(400) 压成一行再按显示
-    // 单元宽度截到 88 格（CJK 记 2，字素簇不劈半）
-    let summary = clip_display(&one_line(text, 400), THINKING_SUMMARY_WIDTH);
     let muted_foreground = theme.muted_foreground;
-    // 折叠行：chevron（▸/▾ 表达旋转 90° 语义；图标面接入后换 Icon+rotate）
-    let head = div()
+    let expanded = state.thinking_expanded(ix);
+    // B4 流式态：run 未收口且本行带思考段（折叠头给流动摘要与计时）
+    let streaming = view.live && view.thinking_span.is_some();
+    // 折叠头的摘要：
+    // - 流式折叠 → 最后一行非空文本、吸尾贴右（新行到达时尾部始终可见，
+    //   ZCode「摘要行滚动显示最后一行」的 gpui 等效实现）；
+    // - 其余 → one_line(400) 压行 + 88 格显示宽截断（rendering.md 钉值）
+    let tail_summary = streaming && !expanded;
+    let summary = if tail_summary {
+        last_nonempty_line(text).to_owned()
+    } else {
+        clip_display(&one_line(text, 400), THINKING_SUMMARY_WIDTH)
+    };
+    // 思考计时（B4）：流式开着算到当下（秒针任务每秒重渲）；已收口取
+    // seal 时长。无思考段的行（历史）不显示计时。
+    let timer = view.thinking_span.as_ref().map(|span| {
+        let seconds = match span.ended_at {
+            Some(ended) => ended.duration_since(span.started_at).as_secs(),
+            None if view.live => span.started_at.elapsed().as_secs(),
+            None => 0,
+        };
+        thinking_duration_text(seconds)
+    });
+    let subtlest = cx.craftwave().colors.foreground_subtlest;
+    let mut head = div()
         .id(("thinking-head", ix))
         .flex()
         .flex_row()
@@ -354,21 +454,70 @@ fn render_thinking_panel(
         .on_click(cx.listener(move |this: &mut ConversationState, _, _, cx| {
             this.toggle_thinking(ix, cx);
         }))
-        .child(if expanded { "▾" } else { "▸" })
-        .child(t("Thinking"))
+        // chevron：展开 rotate 90°（真图标 + Icon::rotate 变换，2.C-1 的
+        // ▸/▾ 字符占位就此退役）
         .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .italic()
-                .overflow_hidden()
-                .child(summary),
+            Icon::new(IconName::ChevronRight)
+                .with_size(px(theme::ICON_SM))
+                .text_color(muted_foreground)
+                .flex_shrink_0()
+                .when(expanded, |icon| {
+                    icon.rotate(Radians(std::f32::consts::FRAC_PI_2))
+                }),
         );
+    // 标签：流式折叠给流动摘要标签（扫光由 ShimmerText 承担，reduce_motion
+    // 时组件内建降级为静态文本）；其余给静态标签
+    head = if tail_summary {
+        head.child(
+            ShimmerText::new(t("Thinking…"))
+                .text_size(px(theme::font_size(theme::FONT_UI_SM, zoom)))
+                .text_color(muted_foreground)
+                .flex_shrink_0(),
+        )
+    } else {
+        head.child(
+            div()
+                .flex_shrink_0()
+                .text_color(muted_foreground)
+                .child(t("Thinking")),
+        )
+    };
+    if let Some(timer) = timer {
+        head = head.child(
+            div()
+                .flex_shrink_0()
+                .text_color(subtlest)
+                .child(timer),
+        );
+    }
+    head = head.child(if tail_summary {
+        // 流动摘要：justify_end 让溢出内容向左溢出——可见部分永远是最后一
+        // 行的尾部（吸尾），等效旧栈 scrollLeft = scrollWidth 的吸底滚动
+        div()
+            .flex_1()
+            .min_w_0()
+            .overflow_hidden()
+            .flex()
+            .justify_end()
+            .child(
+                div()
+                    .whitespace_nowrap()
+                    .italic()
+                    .child(summary),
+            )
+    } else {
+        div()
+            .flex_1()
+            .min_w_0()
+            .italic()
+            .overflow_hidden()
+            .child(summary)
+    });
     if !expanded {
         return head.into_any_element();
     }
-    // 展开体：左缩进 30px、11.5px 小字号、muted、行高 1.7、纯文本（不用
-    // Markdown——性能自觉）；视觉降级完整，正文是主角
+    // 展开体：左缩进 30px（钉值）+ 左导线（B4）+ 11.5px 小字号、muted、
+    // 行高 1.7、纯文本（不用 Markdown——性能自觉）；视觉降级完整，正文是主角
     div()
         .w_full()
         .flex()
@@ -378,18 +527,118 @@ fn render_thinking_panel(
             div()
                 .ml(px(THINKING_INDENT))
                 .mt(px(theme::SPACE_1))
+                .pl(px(theme::SPACE_3))
+                .border_l_1()
+                .border_color(theme.border)
                 .text_size(px(theme::font_size(theme::FONT_UI_THINKING, zoom)))
                 .text_color(muted_foreground)
                 .line_height(relative(theme::LEADING_THINKING))
-                
                 .child(text.to_owned()),
         )
         .into_any_element()
 }
 
+/// 思考时长文案：最少 1 秒（旧栈 Math.ceil 口径），跨分钟带分（"1分5秒"）。
+pub(crate) fn thinking_duration_text(seconds: u64) -> String {
+    let seconds = seconds.max(1);
+    if seconds < 60 {
+        format!("{}{}", seconds, t("sec"))
+    } else {
+        format!("{}{}{}{}", seconds / 60, t("min"), seconds % 60, t("sec"))
+    }
+}
+
+/// 最后一行非空文本（B4 流动摘要的取材；全空回落空串）。
+pub(crate) fn last_nonempty_line(text: &str) -> &str {
+    text.trim_end()
+        .split('\n')
+        .rev()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("")
+}
+
 // ---------------------------------------------------------------------
-// 工具簇卡（每条消息一张簇卡；折叠头 + Input/Output 分节展开——纪律一）
+// 工具簇卡（2.8 转正）：每条消息一张簇卡（纪律一）。折叠头 = chevron +
+// 工具名（单）/ "N tool calls"（多）+ 等宽参数摘要（宽度自适应格数）+
+// 跳转占位钮 + 失败数红 badge；展开区 = border-t 分隔，每调用
+// Input/Output 分节（600 字符契约 + 完整复制 + 失败 danger 面）。
 // ---------------------------------------------------------------------
+
+/// 参数摘要的「宽度自适应格数」：`(阅读区宽 - 预留px) / 等宽字符宽`
+/// （Wake 7103-7104 手法；阅读区宽是 Render 每帧实测的中栏宽——
+/// `ConversationState::reader_width_seen`）。
+fn tool_arg_cells(reader_width: f32, zoom: f32) -> usize {
+    let cell = MONO_CELL_EM * theme::font_size(theme::FONT_UI_SM, zoom);
+    let budget = (reader_width - TOOL_HEAD_RESERVE).max(80.0);
+    ((budget / cell) as usize).max(8)
+}
+
+/// 折叠头的参数摘要：单工具给参数单行（one_line 压行 + 按格数截断）；
+/// 多工具给工具名串（Wake tool_cluster_heading 同款）。空参数不出摘要。
+fn tool_head_arg(calls: &[CallLite], arg_cells: usize) -> Option<String> {
+    match calls {
+        [] => None,
+        [only] => {
+            let arg = one_line(&only.args_json, 400);
+            (!arg.is_empty()).then(|| clip_display(&arg, arg_cells))
+        }
+        many => {
+            let names = many
+                .iter()
+                .map(|call| call.name.as_str())
+                .collect::<Vec<_>>()
+                .join(" · ");
+            Some(clip_display(&names, arg_cells))
+        }
+    }
+}
+
+/// Input/Output 的完整展示原文：摘要与错误载荷都非空时换行拼接
+/// （B3「失败原因可复制」的完整原文 = 渲染面持有的全部文本）。
+fn tool_output_text(call: &CallLite) -> String {
+    match (call.summary.as_str(), &call.error_text) {
+        (summary, None) => summary.to_owned(),
+        ("", Some(error)) => error.clone(),
+        (summary, Some(error)) => format!("{summary}\n{error}"),
+    }
+}
+
+/// 等宽面（工具簇的等宽元素共用）：等宽族 + 字号档（ui-sm）。
+/// `tool_section` 的参数束——8 参收 7（clippy too_many_arguments）。
+struct MonoFace {
+    family: SharedString,
+    zoom: f32,
+}
+
+impl MonoFace {
+    fn new(family: &SharedString, zoom: f32) -> Self {
+        Self {
+            family: family.clone(),
+            zoom,
+        }
+    }
+
+    fn text_size(&self) -> gpui_kit::Pixels {
+        px(theme::font_size(theme::FONT_UI_SM, self.zoom))
+    }
+}
+
+/// 等宽数据面（工具参数/输出体共用）：ui-sm 档字号 + 等宽族。
+fn mono_text(
+    text: impl Into<SharedString>,
+    face: &MonoFace,
+    color: gpui_kit::Hsla,
+) -> gpui_kit::Div {
+    div()
+        .w_full()
+        .min_w_0()
+        .whitespace_normal()
+        .text_size(face.text_size())
+        .font_family(face.family.clone())
+        .text_color(color)
+        .child(text.into())
+}
 
 fn render_tool_cluster(
     state: &ConversationState,
@@ -400,13 +649,26 @@ fn render_tool_cluster(
     // owned 拷贝：后面的 cx.listener 需要独占 cx
     let theme = cx.theme().colors;
     let zoom = cx.craftwave().zoom;
+    let face = MonoFace::new(&cx.theme().mono_font_family, zoom);
     let expanded = state.tools_expanded(ix);
     let failed = calls.iter().filter(|c| c.ok == Some(false)).count();
+    let arg_cells = tool_arg_cells(state.reader_width_seen, zoom);
     // 折叠头文案：单工具直接给名字，多工具 "N tool calls"
     let title = if calls.len() == 1 {
         calls[0].name.clone()
     } else {
         format!("{} {}", calls.len(), t("tool calls"))
+    };
+    // 派生了子代理：折叠头给跳转占位钮（真实跳转 3.6 接线——多派时展开区
+    // 逐调用给，头上的钮只在其恰好一派时显示，Wake open_child_button 语义）
+    let subagent_calls: Vec<usize> = calls
+        .iter()
+        .enumerate()
+        .filter_map(|(call_ix, call)| call.subagent.then_some(call_ix))
+        .collect();
+    let head_jump = match (&expanded, subagent_calls.as_slice()) {
+        (false, [only]) => Some(*only),
+        _ => None,
     };
     let mut head = div()
         .id(("tools-head", ix))
@@ -414,6 +676,8 @@ fn render_tool_cluster(
         .flex_row()
         .items_center()
         .gap(px(theme::SPACE_2))
+        .px(px(theme::SPACE_3))
+        .py(px(theme::SPACE_2))
         .text_size(px(theme::font_size(theme::FONT_UI_SM, zoom)))
         .text_color(theme.muted_foreground)
         .cursor_pointer()
@@ -421,78 +685,306 @@ fn render_tool_cluster(
         .on_click(cx.listener(move |this: &mut ConversationState, _, _, cx| {
             this.toggle_tools(ix, cx);
         }))
-        .child(if expanded { "▾" } else { "▸" })
-        .child(title);
-    if failed > 0 {
-        // 失败数红 badge（"2 failed"）——B3 数据面先立，样式精修随 2.8
+        .child(
+            Icon::new(IconName::ChevronRight)
+                .with_size(px(theme::ICON_SM))
+                .text_color(theme.muted_foreground)
+                .flex_shrink_0()
+                .when(expanded, |icon| {
+                    icon.rotate(Radians(std::f32::consts::FRAC_PI_2))
+                }),
+        )
+        .child(
+            div()
+                .flex_shrink_0()
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(theme.foreground)
+                .child(title),
+        );
+    // 等宽参数摘要（宽度自适应格数；有摘要才占位，无则给弹性格）
+    match tool_head_arg(calls, arg_cells) {
+        Some(arg) => head = head.child(mono_text(arg, &face, theme.muted_foreground).flex_1()),
+        None => head = head.child(div().flex_1()),
+    }
+    if head_jump.is_some() {
         head = head.child(
             div()
-                .px(px(theme::SPACE_2))
-                .rounded(px(theme::ROUNDED_FULL))
-                .bg(theme.danger)
-                .text_size(px(theme::font_size(theme::FONT_UI_2XS, zoom)))
-                .text_color(theme.danger_foreground)
-                .child(format!("{} {}", failed, t("failed"))),
-        );
-    }
-    if !expanded {
-        return head.into_any_element();
-    }
-    // 展开区：border-t 分隔，每调用 Input/Output 分节。600 字符契约与
-    // 完整复制按钮是 2.8 的活；本批参数摘要单行截断（元数据可截断）
-    let mut body = div()
-        .w_full()
-        .flex()
-        .flex_col()
-        .mt(px(theme::SPACE_2))
-        .pt(px(theme::SPACE_2))
-        .border_t_1()
-        .border_color(theme.border)
-        .gap(px(theme::SPACE_3));
-    for call in calls {
-        body = body.child(
-            div()
-                .w_full()
+                .id(("tool-open-subagent", ix))
+                .flex_shrink_0()
                 .flex()
-                .flex_col()
-                .gap(px(theme::SPACE_1))
+                .items_center()
+                .px(px(theme::SPACE_1))
+                .py(px(theme::SPACE_1) / 2.0)
+                .rounded(px(theme::rounded_sm(zoom)))
+                .cursor_pointer()
+                .text_color(theme.muted_foreground)
+                .hover(|style| style.bg(theme.list_hover))
+                .tooltip(|window, cx| {
+                    gpui_kit::component::tooltip::Tooltip::new(t("Open subagent")).build(window, cx)
+                })
+                // 跳转占位钮：目标面板是 3.5 面板族 / 3.6 子代理回看，本批
+                // 只占位——点击吞掉（stop_propagation），不透传给折叠头误触
+                // 开合；真实跳转随 3.6 接线
+                .on_click(|_, _, cx| cx.stop_propagation())
                 .child(
-                    div()
-                        .text_size(px(theme::font_size(theme::FONT_UI_SM, zoom)))
-                        .text_color(theme.foreground)
-                        .child(call.name.clone()),
-                )
-                .child(
-                    div()
-                        .text_size(px(theme::font_size(theme::FONT_UI_SM, zoom)))
-                        .text_color(theme.muted_foreground)
-                        .overflow_hidden()
-                        .child(one_line(&call.args_json, 120)),
-                )
-                .child(
-                    div()
-                        .text_size(px(theme::font_size(theme::FONT_UI_SM, zoom)))
-                        .text_color(if call.ok == Some(false) {
-                            theme.danger
-                        } else {
-                            theme.muted_foreground
-                        })
-                        .overflow_hidden()
-                        .child(if call.summary.is_empty() {
-                            t("Running…").to_owned()
-                        } else {
-                            one_line(&call.summary, 120)
-                        }),
+                    Icon::new(IconName::CornerDownRight).with_size(px(theme::ICON_SM)),
                 ),
         );
     }
-    div()
+    if failed > 0 {
+        // 失败数红 badge（"2 failed"）：danger 淡底 + danger 字（Wake 9885 同款）
+        head = head.child(
+            div()
+                .flex_shrink_0()
+                .px(px(theme::SPACE_2))
+                .rounded(px(theme::ROUNDED_FULL))
+                .text_size(px(theme::font_size(theme::FONT_UI_2XS, zoom)))
+                .text_color(theme.danger)
+                .bg(theme.danger.opacity(0.12))
+                .child(format!("{} {}", failed, t("failed"))),
+        );
+    }
+    // 卡壳：rounded-lg 行卡 + muted 淡底；展开区 border-t 分隔
+    let mut card = div()
         .w_full()
+        .min_w_0()
         .flex()
         .flex_col()
-        .child(head)
-        .child(body)
-        .into_any_element()
+        .rounded(px(theme::rounded_lg(zoom)))
+        .border_1()
+        .border_color(theme.border)
+        .bg(theme.muted.opacity(0.35))
+        .child(head);
+    if expanded {
+        card = card.child(render_tool_cluster_body(state, ix, calls, &face, cx));
+    }
+    card.into_any_element()
+}
+
+/// 展开区：每调用 Input/Output 分节。600 字符契约（纪律三）：展示前 600
+/// 字符 + 明示 "First 600 characters" + 复制按钮永远复制完整原文；错误
+/// Output 用 danger 淡底 + danger 字色；长报错展开后自然增高（不嵌套滚动
+/// 容器）。运行中的调用给扫光态（B3：不用 spinner）。
+fn render_tool_cluster_body(
+    state: &ConversationState,
+    ix: usize,
+    calls: &[CallLite],
+    face: &MonoFace,
+    cx: &mut Context<ConversationState>,
+) -> gpui_kit::Div {
+    let theme = cx.theme().colors;
+    let zoom = face.zoom;
+    let arg_cells = tool_arg_cells(state.reader_width_seen, zoom);
+    let mut body = div()
+        .w_full()
+        .min_w_0()
+        .flex()
+        .flex_col()
+        .border_t_1()
+        .border_color(theme.border);
+    for (call_ix, call) in calls.iter().enumerate() {
+        // 多调用：给调用名行（名 + mono 参数摘要）；单调用的名已在折叠头
+        let mut item = div()
+            .w_full()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .px(px(theme::SPACE_3))
+            .py(px(theme::SPACE_2))
+            .gap(px(theme::SPACE_1))
+            .when(call_ix > 0, |item| {
+                item.border_t_1().border_color(theme.border)
+            });
+        if calls.len() > 1 {
+            let arg = one_line(&call.args_json, 400);
+            item = item.child(
+                h_flex()
+                    .w_full()
+                    .min_w_0()
+                    .gap(px(theme::SPACE_2))
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_size(px(theme::font_size(theme::FONT_UI_SM, zoom)))
+                            .text_color(if call.ok == Some(false) {
+                                theme.danger
+                            } else {
+                                theme.foreground
+                            })
+                            .child(call.name.clone()),
+                    )
+                    .child(
+                        mono_text(clip_display(&arg, arg_cells), face, theme.muted_foreground)
+                            .flex_1()
+                            .overflow_hidden()
+                            .whitespace_nowrap(),
+                    ),
+            );
+        }
+        if call.subagent {
+            item = item.child(
+                div()
+                    .id(("tool-open-subagent-item", ix))
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .gap(px(theme::SPACE_1))
+                    .px(px(theme::SPACE_1))
+                    .py(px(theme::SPACE_1) / 2.0)
+                    .rounded(px(theme::rounded_sm(zoom)))
+                    .cursor_pointer()
+                    .text_size(px(theme::font_size(theme::FONT_UI_SM, zoom)))
+                    .text_color(theme.muted_foreground)
+                    .hover(|style| style.bg(theme.list_hover))
+                    .tooltip(|window, cx| {
+                        gpui_kit::component::tooltip::Tooltip::new(t("Open subagent"))
+                            .build(window, cx)
+                    })
+                    // 同折叠头的占位钮：点击吞掉，真实跳转 3.6 接线
+                    .on_click(|_, _, cx| cx.stop_propagation())
+                    .child(Icon::new(IconName::CornerDownRight).with_size(px(theme::ICON_SM)))
+                    .child(t("Open subagent")),
+            );
+        }
+        // Input 分节（参数 JSON 非空白才给——空白只参与「有无」判断，
+        // 展示与复制保留原始字节）
+        if !call.args_json.trim().is_empty() {
+            item = item.child(tool_section(
+                SharedString::from(format!("tool-copy-{ix}-{call_ix}-input")),
+                t("Input"),
+                t("Copy full input"),
+                &call.args_json,
+                false,
+                face,
+                cx,
+            ));
+        }
+        // Output 分节：结果在场才给；失败 = danger 面（B3 失败原因可复制：
+        // 复制钮复制完整原文 = 摘要 + 错误载荷）
+        let output = tool_output_text(call);
+        match call.ok {
+            Some(ok) if !output.trim().is_empty() => {
+                item = item.child(tool_section(
+                    SharedString::from(format!("tool-copy-{ix}-{call_ix}-output")),
+                    t("Output"),
+                    t("Copy full output"),
+                    &output,
+                    !ok,
+                    face,
+                    cx,
+                ));
+            }
+            // 仍在执行：扫光态文案（B3：不用 spinner；reduce_motion 时
+            // ShimmerText 组件内建降级为静态文本）
+            None => {
+                item = item.child(
+                    div()
+                        .text_size(px(theme::font_size(theme::FONT_UI_SM, zoom)))
+                        .text_color(theme.muted_foreground)
+                        .child(ShimmerText::new(t("Running…")).text_size(px(
+                            theme::font_size(theme::FONT_UI_SM, zoom),
+                        ))),
+                );
+            }
+            Some(_) => {}
+        }
+        body = body.child(item);
+    }
+    body
+}
+
+/// 600 字符契约的分节（纪律三，Wake tool_section 行为照搬）：
+/// 展示 = 前 600 字符 + 截断时明示 "First 600 characters"；复制按钮永远
+/// 写完整原文进剪贴板；错误面 danger 淡底 + danger 字色；正文 whitespace
+/// normal 自然增高（不嵌套滚动容器抢主阅读区滚轮）。
+fn tool_section(
+    copy_id: SharedString,
+    label: &'static str,
+    copy_tooltip: &'static str,
+    body: &str,
+    is_error: bool,
+    face: &MonoFace,
+    cx: &App,
+) -> gpui_kit::Div {
+    let theme = cx.theme().colors;
+    let (shown, truncated) = clip_tool_text(body, TOOL_TEXT_PREVIEW_LIMIT);
+    let full = body.to_string();
+    let copy_id_debug = copy_id.clone();
+    let accent = if is_error {
+        theme.danger
+    } else {
+        theme.muted_foreground
+    };
+    div().w_full().min_w_0().flex().flex_col().gap(px(theme::SPACE_1))
+        .child(
+            h_flex()
+                .w_full()
+                .min_w_0()
+                .items_center()
+                .gap(px(theme::SPACE_2))
+                .text_size(px(theme::font_size(theme::FONT_UI_2XS, face.zoom)))
+                .text_color(accent)
+                .child(label)
+                .when(truncated, |header| {
+                    header.child(
+                        div()
+                            .text_color(theme.muted_foreground)
+                            .child(t("First 600 characters")),
+                    )
+                })
+                .child(div().flex_1())
+                .child(
+                    div()
+                        .id(copy_id.clone())
+                        .debug_selector(move || copy_id_debug.to_string())
+                        .flex_shrink_0()
+                        .px(px(theme::SPACE_1))
+                        .rounded(px(theme::rounded_sm(face.zoom)))
+                        .cursor_pointer()
+                        .text_color(theme.muted_foreground)
+                        .hover(|style| {
+                            style.bg(theme.list_hover).text_color(theme.foreground)
+                        })
+                        .tooltip(move |window, cx| {
+                            gpui_kit::component::tooltip::Tooltip::new(copy_tooltip)
+                                .build(window, cx)
+                        })
+                        // 契约核心：永远复制完整原文（shown 只是预览）
+                        .on_click(move |_, _, cx| {
+                            cx.write_to_clipboard(ClipboardItem::new_string(full.clone()));
+                        })
+                        .child(Icon::new(IconName::Copy).with_size(px(theme::ICON_SM))),
+                ),
+        )
+        .child(
+            mono_text(shown, face, accent)
+                .px(px(theme::SPACE_3))
+                .py(px(theme::SPACE_2))
+                .rounded(px(theme::rounded_sm(face.zoom)))
+                .bg(if is_error {
+                    theme.danger.opacity(0.08)
+                } else {
+                    theme.muted
+                }),
+        )
+}
+
+/// 前 N 个**字符**的预览截断（Wake clip_tool_text 照搬：纪律三的 600 字符
+/// 按 Unicode 字符计，不是显示单元宽——显示单元宽截断归元数据摘要
+/// clip_display 的职责）。
+fn clip_tool_text(text: &str, limit: usize) -> (String, bool) {
+    let mut chars = text.chars();
+    let shown: String = chars.by_ref().take(limit).collect();
+    let truncated = chars.next().is_some();
+    (
+        if truncated {
+            format!("{shown}…")
+        } else {
+            shown
+        },
+        truncated,
+    )
 }
 
 // ======================================================================
