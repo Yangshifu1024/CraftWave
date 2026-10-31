@@ -117,6 +117,7 @@ fn tree_window(
         zoom_seen: 0.0,
         chat: cx.new(|_| ConversationState::new()),
         sidebar: None,
+        palette: None,
     });
     visual.run_until_parked();
     let chat = visual.update(|_window, cx| view.read(cx).chat.clone());

@@ -21,6 +21,7 @@
 
 mod ask;
 mod composer;
+mod find;
 mod fixture;
 mod images;
 mod markdown_links;
@@ -32,6 +33,10 @@ mod subagent;
 #[cfg(test)]
 #[path = "conversation_test.rs"]
 mod conversation_test;
+
+#[cfg(test)]
+#[path = "find_test.rs"]
+mod find_test;
 
 #[cfg(test)]
 #[path = "markdown_links_test.rs"]
@@ -88,10 +93,24 @@ pub struct EngineService(pub Entity<SessionService>);
 
 impl Global for EngineService {}
 
+/// ⌘F 会话内查找的公开入口（3.8；find 分片住 find.rs）：主壳在焦点不在
+/// 对话流内时经 MainWindowView 的根 on_action 转发到这里。
+pub fn open_find(
+    conversation: &mut ConversationState,
+    window: &mut Window,
+    cx: &mut gpui_kit::Context<ConversationState>,
+) {
+    find::open_find(conversation, window, cx);
+}
+
 // 会话权限档快切 action（3.4）：Shift+Tab 循环（键位在 main.rs 绑定，
 // 派发沿 focus path 冒泡到 ConversationState 处理——与 composer 徽标
 // 点击同一条 cycle_tier 路，一个逻辑命令只建模一次）
 gpui_kit::actions!(craftwave, [CyclePermissionTier]);
+
+// 会话内查找 action（3.8）：⌘F / 菜单同一逻辑命令（键位在 main.rs 绑定，
+// 派发沿 focus path 冒泡到 ConversationState 处理）
+gpui_kit::actions!(craftwave, [FindInSession]);
 
 /// 中栏装配：建会话实体 →（真通道）建 / 复用会话服务并登记新视图 →
 /// 建 Composer（窗口闭包内）→ 订阅输入事件（Enter 发送 / @ 补全刷新）。
@@ -306,15 +325,25 @@ impl Render for ConversationState {
                     composer.update(cx, |composer, cx| composer.cycle_tier(cx));
                 }
             }))
+            // ⌘F 会话内查找（3.8）：同一焦点路径冒泡（全实体可用，不限于
+            // 输入框——菜单项与键位是同一个逻辑命令）
+            .on_action(cx.listener(
+                |this: &mut ConversationState, _: &FindInSession, window, cx| {
+                    find::open_find(this, window, cx);
+                },
+            ))
             .child(stream_area);
-        // B6 run 级错误卡 + Ask 条带（3.4/3.6：消息流尾部、composer 之前的
-        // 内联条带区——「出现在消息流当前 run 的位置」的形态取舍见 ask.rs
-        // 模块注释）
+        // B6 run 级错误卡 + Ask 条带 + 查找条（3.4/3.6/3.8：消息流尾部、
+        // composer 之前的内联条带区——「出现在消息流当前 run 的位置」的
+        // 形态取舍见 ask.rs 模块注释）
         if let Some(error_card) = subagent::render_run_error(self, cx) {
             column = column.child(error_card);
         }
         if let Some(ask_bar) = ask::render_ask_bar(self, cx) {
             column = column.child(ask_bar);
+        }
+        if let Some(find_bar) = find::render_find_bar(self, cx) {
+            column = column.child(find_bar);
         }
         if let Some(composer) = &self.composer {
             // 编辑重发提示条（3.3）：待发态可见（发送将产生新分支），点 ×

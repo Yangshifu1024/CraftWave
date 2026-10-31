@@ -144,6 +144,15 @@ pub struct ConversationState {
     /// 消失，错误卡独立存活到下次发送/会话切换/用户关闭，保证长报错始终
     /// 可读可复制。
     pub(crate) run_error: Option<RunErrorCard>,
+    /// 会话内查找态（3.8；None = 关闭。状态与读写方法住 `find.rs` 分片）。
+    pub(crate) find: Option<super::find::FindBar>,
+    /// 当前命中行的闪示（3.8；Some(行号) = 该行挂淡 primary 底闪示条）。
+    pub(crate) find_flash: Option<usize>,
+    /// 闪示的代次（动画 id 盐——同一行再次跳转也重放动画）。
+    pub(crate) find_flash_gen: usize,
+    /// 闪示淡出后的清理任务句柄（存 owner：实体释放即取消；reduce_motion
+    /// 不派任务——静态高亮停留到下一次导航/关闭）。
+    pub(crate) find_flash_task: Option<Task<()>>,
 }
 
 /// B6 run 级错误卡的数据面：错误码 + 完整错误文本（纪律三：永不截断，
@@ -220,6 +229,10 @@ impl ConversationState {
             sub_events: Vec::new(),
             sub_view: None,
             run_error: None,
+            find: None,
+            find_flash: None,
+            find_flash_gen: 0,
+            find_flash_task: None,
         }
     }
 
@@ -394,6 +407,13 @@ impl ConversationState {
         self.zoom = None;
         // 行号映射换了，未发出去的编辑重发目标随旧行作废（3.3）
         self.resend_parent = None;
+        // 查找命中与闪示按行号记，行号映射换了整表作废（3.8）；查找条
+        // 本身随换历史一并关闭（换会话/落盘重载都是新内容，旧查询的
+        // 命中面已失效，留着只会误导导航）
+        if self.find.take().is_some() || self.find_flash.is_some() {
+            self.find_flash = None;
+            self.find_flash_task = None;
+        }
         self.ensure_images_loaded(cx);
         self.list.reset(count);
         cx.notify();

@@ -104,6 +104,7 @@ fn three_pane_layout_renders_a_frame(cx: &mut TestAppContext) {
         zoom_seen: 0.0,
         chat: crate::chat::install(window, cx, None),
         sidebar: None,
+        palette: None,
     });
     // run_until_parked 把首帧 layout/prepaint/paint 跑完——到这就是不 panic
     visual.run_until_parked();

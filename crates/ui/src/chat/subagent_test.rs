@@ -55,6 +55,7 @@ fn chat_window(cx: &mut TestAppContext) -> (Entity<ConversationState>, &mut Visu
         zoom_seen: 0.0,
         chat: cx.new(|_| ConversationState::new()),
         sidebar: None,
+        palette: None,
     });
     let chat = visual.update(|_window, cx| view.read(cx).chat.clone());
     (chat, visual)
@@ -98,6 +99,7 @@ fn service_window(cx: &mut TestAppContext) -> ServiceWindow<'_> {
             zoom_seen: 0.0,
             chat: conversation,
             sidebar: None,
+            palette: None,
         }
     });
     let chat = visual.update(|_window, cx| view.read(cx).chat.clone());

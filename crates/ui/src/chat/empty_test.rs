@@ -32,6 +32,7 @@ fn echo_window(cx: &mut TestAppContext) -> (gpui_kit::Entity<ConversationState>,
             zoom_seen: 0.0,
             chat,
             sidebar: None,
+            palette: None,
         });
         gpui_kit::base::Root::new(inner, window, cx)
     });

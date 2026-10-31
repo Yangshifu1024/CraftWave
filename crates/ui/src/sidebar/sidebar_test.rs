@@ -139,6 +139,7 @@ fn sidebar_window(
             zoom_seen: 0.0,
             chat: conversation,
             sidebar: Some(sidebar),
+            palette: None,
         }
     });
     visual.run_until_parked();

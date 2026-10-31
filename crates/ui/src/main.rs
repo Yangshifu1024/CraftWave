@@ -23,6 +23,7 @@
 mod chat;
 mod engine;
 mod i18n;
+mod palette;
 mod prefs;
 mod sidebar;
 // token 表全量照抄 theme.md（其 §11「照抄单」），消费方从阶段 2.C 起逐批
@@ -46,6 +47,7 @@ mod text_util_test;
 mod ui_test;
 
 use gpui_kit::base::Root;
+use gpui_kit::base::actions::{SelectFirst, SelectLast};
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::TitleBar;
 use gpui_kit::component::input::{Copy, Cut, Paste, Redo, SelectAll, Undo};
@@ -122,12 +124,13 @@ impl Global for MainWindow {}
 /// 主窗根视图：自绘标题带 + 三栏骨架。
 /// `zoom_seen` 是 ui_zoom 换档检测的上次档位（render 每帧比对，见其注释）；
 /// `chat` 是中栏对话流（阶段 2.C-1 接入：消息列表 + Composer）；`sidebar`
-/// 是左栏会话侧栏（阶段 3.1；None = 无引擎桥的回声测试装置——侧栏依赖
-/// 引擎清单与服务，回声装配以占位文案运行）。
+/// 是左栏会话侧栏（阶段 3.1）；`palette` 是 ⌘K 命令面板浮层（阶段 3.2；
+/// None = 无引擎桥的回声测试装置，⌘K 无面板可开）。
 struct MainWindowView {
     zoom_seen: f32,
     chat: Entity<chat::ConversationState>,
     sidebar: Option<Entity<sidebar::SidebarState>>,
+    palette: Option<Entity<palette::PaletteState>>,
 }
 
 impl gpui_kit::Render for MainWindowView {
@@ -159,6 +162,25 @@ impl gpui_kit::Render for MainWindowView {
             .flex_col()
             .text_color(foreground)
             .bg(background)
+            // ⌘K 命令面板（3.2）/ ⌘F 会话内查找（3.8）：焦点在任何地方
+            // （含无处可焦点时）都能沿根容器接住——对话流内部的同款
+            // on_action 在焦点路径更深处，先接先停
+            .on_action(cx.listener(
+                |this: &mut Self, _: &palette::OpenCommandPalette, window, cx| {
+                    if let Some(palette) = &this.palette {
+                        palette.update(cx, |palette, cx| palette.toggle(window, cx));
+                    }
+                },
+            ))
+            .on_action(cx.listener(
+                |this: &mut Self, _: &chat::FindInSession, window, cx| {
+                    // 面板开着时 ⌘F 先收面板（查找条与面板不同时在场）
+                    if let Some(palette) = &this.palette {
+                        palette.update(cx, |palette, cx| palette.close(window, cx));
+                    }
+                    this.chat.update(cx, |chat, cx| chat::open_find(chat, window, cx));
+                },
+            ))
             // 自绘标题带：拖拽区（TitleBar 组件自带）+ 应用名。traffic light
             // 悬浮其上，位置随缩放档（开窗时与换档后都经 ui_zoom 计算）
             .child(
@@ -167,9 +189,11 @@ impl gpui_kit::Render for MainWindowView {
                     .child(t("CraftWave")),
             )
             // 三栏骨架：左栏 260px 定宽（会话侧栏，3.1）/ 中栏对话流 /
-            // 右栏折叠占位条
+            // 右栏折叠占位条；relative 承载 ⌘K 面板浮层（palette 的
+            // absolute inset-0 覆盖三栏区，标题带保持可点）
             .child(
                 div()
+                    .relative()
                     .flex_1()
                     .min_h_0()
                     .flex()
@@ -219,7 +243,12 @@ impl gpui_kit::Render for MainWindowView {
                             .bg(sidebar)
                             .border_l_1()
                             .border_color(border),
-                    ),
+                    )
+                    // ⌘K 命令面板浮层（3.2）：关着渲染为空 div，开着覆盖
+                    // 三栏区（occlude 挡住下层交互）
+                    .children(self.palette.clone().map(|palette| {
+                        palette.clone().into_any_element()
+                    })),
             )
     }
 }
@@ -274,6 +303,9 @@ fn open_main_window(cx: &mut App) -> WindowHandle<Root> {
                 let sidebar_entity = engine.as_ref().map(|bridge| {
                     sidebar::install(window, cx, bridge)
                 });
+                // ⌘K 命令面板浮层（3.2；同侧栏：依赖引擎桥，回声装置不装）
+                let palette_entity =
+                    engine.as_ref().map(|bridge| palette::install(window, cx, bridge));
                 // 根视图；几何记忆（观察 bounds + 防抖落盘）挂在它的构造
                 // Context 上，再包 base Root（浮层挂载点 + rem 同步插件）
                 let view = cx.new(|cx| {
@@ -283,6 +315,7 @@ fn open_main_window(cx: &mut App) -> WindowHandle<Root> {
                         zoom_seen: 0.0,
                         chat: chat_entity,
                         sidebar: sidebar_entity,
+                        palette: palette_entity,
                     }
                 });
                 cx.new(|cx| Root::new(view, window, cx))
@@ -337,6 +370,13 @@ fn key_bindings() -> Vec<KeyBinding> {
         // 设置 / 新会话（本阶段占位 action，阶段 3 接面板）
         KeyBinding::new("cmd-,", OpenSettings, None),
         KeyBinding::new("cmd-n", NewSession, None),
+        // ⌘K 命令面板与全局搜索（3.2）/ ⌘F 会话内查找（3.8）
+        KeyBinding::new("cmd-k", palette::OpenCommandPalette, None),
+        KeyBinding::new("cmd-f", chat::FindInSession, None),
+        // 命令面板 Home/End（组件只绑了上下键，宿主容器接首末跳转；
+        // 绑在组件自己的 key context 上——面板关着不抢输入框的 Home/End）
+        KeyBinding::new("home", SelectFirst, Some("Command")),
+        KeyBinding::new("end", SelectLast, Some("Command")),
         // 权限档快切（3.4：Shift+Tab 循环，旧栈 permission-tier 同键位；
         // 派发沿 focus path 冒泡，ConversationState 的 on_action 处理）
         KeyBinding::new("shift-tab", chat::CyclePermissionTier, None),
@@ -365,6 +405,10 @@ fn app_menus() -> Vec<Menu> {
         Some(MenuItem::action(t("About CraftWave"), OpenAbout)),
         Some(MenuItem::separator()),
         Some(MenuItem::action(t("Settings…"), OpenSettings)),
+        Some(MenuItem::action(
+            t("Command Palette…"),
+            palette::OpenCommandPalette,
+        )),
         Some(MenuItem::separator()),
         mac.then(|| MenuItem::action(t("Hide CraftWave"), Hide)),
         mac.then(|| MenuItem::action(t("Hide Others"), HideOthers)),
@@ -383,7 +427,8 @@ fn app_menus() -> Vec<Menu> {
     ];
     // os_action：菜单项挂原生 cut:/copy:/paste:/selectAll: 选择器。gpui 窗口
     // 在前时由 gpui 接住、派发成右侧的 action（输入框消费）；系统面板在前时
-    // 走原生响应链——没有这组菜单项，面板里的 ⌘C/⌘V 无人应答
+    // 走原生响应链——没有这组菜单项，面板里的 ⌘C/⌘V 无人应答。
+    // 尾部附 ⌘F 会话内查找（3.8；Find 在 Edit 菜单是 macOS 惯例位置）
     let edit = mac.then(|| Menu {
         name: t("Edit").into(),
         items: vec![
@@ -394,6 +439,8 @@ fn app_menus() -> Vec<Menu> {
             MenuItem::os_action(t("Copy"), Copy, OsAction::Copy),
             MenuItem::os_action(t("Paste"), Paste, OsAction::Paste),
             MenuItem::os_action(t("Select All"), SelectAll, OsAction::SelectAll),
+            MenuItem::separator(),
+            MenuItem::action(t("Find in Session…"), chat::FindInSession),
         ],
         disabled: false,
     });

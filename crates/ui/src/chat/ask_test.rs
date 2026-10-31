@@ -216,6 +216,7 @@ fn service_window(cx: &mut TestAppContext) -> ServiceWindow<'_> {
             zoom_seen: 0.0,
             chat: conversation,
             sidebar: None,
+            palette: None,
         }
     });
     let chat = visual.update(|_window, cx| view.read(cx).chat.clone());
@@ -832,6 +833,7 @@ fn tier_cycles_via_badge_click_and_shift_tab(cx: &mut TestAppContext) {
         zoom_seen: 0.0,
         chat: crate::chat::install(window, cx, Some(&bridge)),
         sidebar: None,
+        palette: None,
     });
     visual.run_until_parked();
     let chat = visual.update(|_window, cx| view.read(cx).chat.clone());

@@ -170,6 +170,19 @@ const ZH_CN: &[(&str, &str)] = &[
     ("Copy error", "复制错误"),
     ("Open model settings", "打开模型设置"),
     ("Retry", "重试"),
+    // ⌘K 命令面板与全局搜索（阶段 3-C：3.2）
+    ("Command Palette…", "命令面板…"),
+    ("Search sessions or run a command…", "搜索会话或执行命令…"),
+    ("Commands", "命令"),
+    ("Sessions", "会话"),
+    ("Recent Sessions", "最近会话"),
+    ("No matching sessions", "没有匹配的会话"),
+    // 会话内查找（阶段 3-C：3.8）
+    ("Find in Session…", "在会话中查找…"),
+    ("Find in conversation", "在对话中查找"),
+    ("Previous match", "上一个匹配"),
+    ("Next match", "下一个匹配"),
+    ("No matches", "无结果"),
 ];
 
 /// 查表结构：`OnceLock` 首次访问构建，之后零开销哈希查词。

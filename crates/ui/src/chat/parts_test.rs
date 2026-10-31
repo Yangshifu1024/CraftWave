@@ -65,6 +65,7 @@ fn chat_window(
             zoom_seen: 0.0,
             chat,
             sidebar: None,
+            palette: None,
         });
         gpui_kit::base::Root::new(inner, window, cx)
     });

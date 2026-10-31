@@ -92,6 +92,15 @@ pub const SUBTLEST_ALPHA_DARK: f32 = 0.30;
 pub const SCRIM_ALPHA_LIGHT: f32 = 0.45;
 /// zoom 覆盖层遮罩：暗色 black @ 60%。
 pub const SCRIM_ALPHA_DARK: f32 = 0.60;
+/// 查找命中底（⌘F 命中词/命中行的淡 primary 底，Wake jump_bg 0.09 同源）：
+/// 亮色 primary @ 10%。
+pub const FIND_HIT_ALPHA_LIGHT: f32 = 0.10;
+/// 查找命中底：暗色 primary @ 16%（暗色下 fg 淡底需要更实一点才可辨）。
+pub const FIND_HIT_ALPHA_DARK: f32 = 0.16;
+/// 当前命中行的闪示底（n/m 导航落点，强一档）：亮色 primary @ 22%。
+pub const FIND_HIT_ACTIVE_ALPHA_LIGHT: f32 = 0.22;
+/// 当前命中行闪示底：暗色 primary @ 30%。
+pub const FIND_HIT_ACTIVE_ALPHA_DARK: f32 = 0.30;
 
 /// 边框色生成函数（§4 单点实现）：`border = foreground @ 10%`。
 pub fn border_color(foreground: Hsla) -> Hsla {
@@ -152,6 +161,9 @@ fn apply_light(c: &mut ThemeColor) -> CraftwaveColors {
         danger_text: hex(0xd03066),
         // zoom 覆盖层的遮罩（图片放大查看的背景压暗）
         scrim: alpha(hex(0x000000), SCRIM_ALPHA_LIGHT),
+        // 查找命中底（⌘F；淡 primary 底 + 当前命中行强一档）
+        find_hit: alpha(fg, FIND_HIT_ALPHA_LIGHT),
+        find_hit_active: alpha(fg, FIND_HIT_ACTIVE_ALPHA_LIGHT),
     }
 }
 
@@ -198,6 +210,9 @@ fn apply_dark(c: &mut ThemeColor) -> CraftwaveColors {
         danger_text: hex(0xf87171),
         // zoom 覆盖层的遮罩（暗色压得更深一档，与面板叠出层次）
         scrim: alpha(hex(0x000000), SCRIM_ALPHA_DARK),
+        // 查找命中底（⌘F；暗色下淡底加实一档）
+        find_hit: alpha(fg, FIND_HIT_ALPHA_DARK),
+        find_hit_active: alpha(fg, FIND_HIT_ACTIVE_ALPHA_DARK),
     }
 }
 
@@ -244,6 +259,10 @@ pub struct CraftwaveColors {
     /// zoom 覆盖层遮罩（图片放大查看的背景压暗；自建槽位——编码指南 §3
     /// 「缺语义槽位就补进 theme.rs」，禁止 call site 造色）。
     pub scrim: Hsla,
+    /// 查找命中底（⌘F 命中词与命中行的淡 primary 底，淡档）。
+    pub find_hit: Hsla,
+    /// 当前命中行闪示底（n/m 导航落点，强一档；跳转后淡出）。
+    pub find_hit_active: Hsla,
 }
 
 /// 自建主题 Global：自建颜色槽位（当前激活模式）+ 缩放档状态（§11.1）。
@@ -291,6 +310,8 @@ impl CraftwaveTheme {
                 dim: Hsla::default(),
                 danger_text: Hsla::default(),
                 scrim: Hsla::default(),
+                find_hit: Hsla::default(),
+                find_hit_active: Hsla::default(),
             },
             zoom: 1.00,
         });

@@ -108,28 +108,55 @@ pub(crate) fn render_row(
     // 3.3 分支栏（消息有多个兄弟分支时）挂在消息下方同一轴内
     let last = ix + 1 == state.row_count();
     let branch_bar = render_branch_bar(state, ix, cx);
+    // 3.8 查找命中高亮：非当前的命中行，若命中词落在 TextView 正文
+    // （Text part），给行整体淡 primary 底（TextView 内部词级高亮不可达
+    // 的降级形态，find.rs 模块注释有核实结论）；当前命中行走 wrap_flash
+    // 的闪示条（强一档底 + 淡出，负 margin/等量 padding 外扩不推挤）。
+    let hit_tint = super::find::row_is_hit(state, ix) && row_has_visible_text(state, ix);
+    let hit_tint_bg = cx.craftwave().colors.find_hit;
+    let axis = div()
+        .w_full()
+        .max_w(px(READER_MAX_WIDTH))
+        .text_size(px(theme::font_size(theme::FONT_UI_BASE, zoom)))
+        .text_color(cx.theme().foreground)
+        .when(hit_tint, |axis| {
+            axis.rounded(px(theme::rounded_md(zoom))).bg(hit_tint_bg)
+        })
+        .child(
+            div()
+                .w_full()
+                .flex()
+                .flex_col()
+                .child(content)
+                .children(branch_bar),
+        );
     div()
         .w_full()
         .flex()
         .justify_center()
         .when(ix == 0, |row| row.pt(px(theme::SPACE_5)))
         .when(last, |row| row.pb(px(theme::SPACE_6)))
-        .child(
-            div()
-                .w_full()
-                .max_w(px(READER_MAX_WIDTH))
-                .text_size(px(theme::font_size(theme::FONT_UI_BASE, zoom)))
-                .text_color(cx.theme().foreground)
-                .child(
-                    div()
-                        .w_full()
-                        .flex()
-                        .flex_col()
-                        .child(content)
-                        .children(branch_bar),
-                ),
-        )
+        .child(super::find::wrap_flash(
+            state,
+            ix,
+            axis.into_any_element(),
+            cx,
+        ))
         .into_any_element()
+}
+
+/// 该行是否有 TextView 正文可挂行级淡底（Text part 在场——命中词落在
+/// thinking/工具参数等普通段时走词级高亮，不给行底）。
+fn row_has_visible_text(state: &ConversationState, ix: usize) -> bool {
+    state
+        .messages()
+        .get(ix)
+        .is_some_and(|entry| {
+            entry
+                .parts
+                .iter()
+                .any(|p| matches!(p, craftwave_engine::storage::WirePart::Text { .. }))
+        })
 }
 
 // ======================================================================
@@ -625,7 +652,10 @@ fn render_thinking_panel(
         return head.into_any_element();
     }
     // 展开体：左缩进 30px（钉值）+ 左导线（B4）+ 11.5px 小字号、muted、
-    // 行高 1.7、纯文本（不用 Markdown——性能自觉）；视觉降级完整，正文是主角
+    // 行高 1.7、纯文本（不用 Markdown——性能自觉）；视觉降级完整，正文是主角。
+    // 3.8 查找开着时命中词给词级淡 primary 底（普通文本段的高亮路径）
+    let hit_bg = cx.craftwave().colors.find_hit;
+    let query = super::find::active_query(state).map(str::to_owned);
     div()
         .w_full()
         .flex()
@@ -641,7 +671,11 @@ fn render_thinking_panel(
                 .text_size(px(theme::font_size(theme::FONT_UI_THINKING, zoom)))
                 .text_color(muted_foreground)
                 .line_height(relative(theme::LEADING_THINKING))
-                .child(text.to_owned()),
+                .child(super::find::highlighted_text(
+                    text.to_owned(),
+                    query.as_deref(),
+                    hit_bg,
+                )),
         )
         .into_any_element()
 }
@@ -733,8 +767,10 @@ impl MonoFace {
 }
 
 /// 等宽数据面（工具参数/输出体共用）：ui-sm 档字号 + 等宽族。
+/// 内容收 `IntoElement`——普通串与带词级高亮的 [`super::find::highlighted_text`]
+/// 元素都能进。
 fn mono_text(
-    text: impl Into<SharedString>,
+    text: impl IntoElement,
     face: &MonoFace,
     color: gpui_kit::Hsla,
 ) -> gpui_kit::Div {
@@ -745,7 +781,7 @@ fn mono_text(
         .text_size(face.text_size())
         .font_family(face.family.clone())
         .text_color(color)
-        .child(text.into())
+        .child(text)
 }
 
 fn render_tool_cluster(
@@ -890,6 +926,9 @@ fn render_tool_cluster_body(
     let theme = cx.theme().colors;
     let zoom = face.zoom;
     let arg_cells = tool_arg_cells(state.reader_width_seen, zoom);
+    // 3.8 词级命中高亮的参数（查询词 + 命中底色）；查找关着时 None
+    let find_tint = super::find::active_query(state)
+        .map(|query| (query.to_owned(), cx.craftwave().colors.find_hit));
     let mut body = div()
         .w_full()
         .min_w_0()
@@ -954,6 +993,7 @@ fn render_tool_cluster_body(
                 &call.args_json,
                 false,
                 face,
+                find_tint.clone(),
                 cx,
             ));
         }
@@ -969,6 +1009,7 @@ fn render_tool_cluster_body(
                     &output,
                     !ok,
                     face,
+                    find_tint.clone(),
                     cx,
                 ));
             }
@@ -1132,7 +1173,9 @@ fn render_subagent_summary_line(
 
 /// 展示 = 前 600 字符 + 截断时明示 "First 600 characters"；复制按钮永远
 /// 写完整原文进剪贴板；错误面 danger 淡底 + danger 字色；正文 whitespace
-/// normal 自然增高（不嵌套滚动容器抢主阅读区滚轮）。
+/// normal 自然增高（不嵌套滚动容器抢主阅读区滚轮）。3.8 查找开着时正文
+/// 命中词给词级淡 primary 底（`find` 携带查询词与命中底色）。
+#[allow(clippy::too_many_arguments)] // 分节契约本就有七参，3.8 只加 find 一参
 fn tool_section(
     copy_id: SharedString,
     label: &'static str,
@@ -1140,6 +1183,7 @@ fn tool_section(
     body: &str,
     is_error: bool,
     face: &MonoFace,
+    find: Option<(String, gpui_kit::Hsla)>,
     cx: &App,
 ) -> gpui_kit::Div {
     let theme = cx.theme().colors;
@@ -1192,8 +1236,21 @@ fn tool_section(
                         .child(Icon::new(IconName::Copy).with_size(px(theme::ICON_SM))),
                 ),
         )
-        .child(
-            mono_text(shown, face, accent)
+        .child(match &find {
+            Some((query, hit_bg)) => mono_text(
+                super::find::highlighted_text(shown, Some(query), *hit_bg),
+                face,
+                accent,
+            )
+            .px(px(theme::SPACE_3))
+            .py(px(theme::SPACE_2))
+            .rounded(px(theme::rounded_sm(face.zoom)))
+            .bg(if is_error {
+                theme.danger.opacity(0.08)
+            } else {
+                theme.muted
+            }),
+            None => mono_text(shown, face, accent)
                 .px(px(theme::SPACE_3))
                 .py(px(theme::SPACE_2))
                 .rounded(px(theme::rounded_sm(face.zoom)))
@@ -1202,7 +1259,7 @@ fn tool_section(
                 } else {
                     theme.muted
                 }),
-        )
+        })
 }
 
 /// 前 N 个**字符**的预览截断（Wake clip_tool_text 照搬：纪律三的 600 字符
