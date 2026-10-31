@@ -26,16 +26,16 @@ use common::mock_openai::{
     MockOpenAI, TURN1_REASONING, TURN1_TEXT, TURN1_TOOL_ARG_PARTS, TURN2_TEXT, content_delta,
     done_marker, finish_chunk, tool_args_delta, tool_open, usage_event,
 };
-use craftwave_lib::agent::RunManager;
-use craftwave_lib::backend::frames::{
+use craftwave_engine::agent::RunManager;
+use craftwave_engine::backend::frames::{
     ChatFrame, EndReason, FrameSink, RunSnapshotStatus, SequencedFrame, SequencedSink,
 };
-use craftwave_lib::backend::run_loop::{
+use craftwave_engine::backend::run_loop::{
     AllowAllGate, CancellableExecutor, GateVerdict, RunExit, ToolExecution, ToolGate, drive_run,
     resume_run,
 };
-use craftwave_lib::backend::turn::TurnDriver;
-use craftwave_lib::host::AppState;
+use craftwave_engine::backend::turn::TurnDriver;
+use craftwave_engine::app_state::AppState;
 use rig::completion::Message;
 use rig::run::AgentRun;
 use rig::run::spec::RunSpec;
@@ -412,16 +412,16 @@ impl CancellableExecutor for ReadThenCommandExecutor {
                 match outcome {
                     None => {
                         #[cfg(unix)]
-                        let status = craftwave_lib::tools::process::reap_process_group(
+                        let status = craftwave_engine::tools::process::reap_process_group(
                             &mut tree.child,
-                            craftwave_lib::tools::process::REAP_GRACE,
+                            craftwave_engine::tools::process::REAP_GRACE,
                         )
                         .await
                         .expect("进程组收割");
                         #[cfg(windows)]
                         let status = tree
                             .job
-                            .reap(&mut tree.child, craftwave_lib::tools::process::REAP_GRACE)
+                            .reap(&mut tree.child, craftwave_engine::tools::process::REAP_GRACE)
                             .await
                             .expect("Job Object 收割");
                         ToolExecution::Cancelled {
@@ -461,7 +461,7 @@ async fn spawn_command_tree() -> CommandTree {
         .arg("sleep 900 & echo CHILD_PID=$!; wait")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped());
-    craftwave_lib::tools::process::enable_process_group(&mut cmd);
+    craftwave_engine::tools::process::enable_process_group(&mut cmd);
     let mut child = cmd.spawn().expect("spawn 进程树");
     let stdout = child.stdout.take().expect("piped");
     let mut lines = tokio::io::BufReader::new(stdout);
@@ -487,7 +487,7 @@ async fn spawn_command_tree() -> CommandTree {
 #[cfg(windows)]
 struct CommandTree {
     child: tokio::process::Child,
-    job: craftwave_lib::tools::process::JobGuard,
+    job: craftwave_engine::tools::process::JobGuard,
     grandchild_pid: u32,
 }
 
@@ -502,7 +502,7 @@ async fn spawn_command_tree() -> CommandTree {
     .stdin(std::process::Stdio::null())
     .stdout(std::process::Stdio::piped());
     let mut child = cmd.spawn().expect("spawn 进程树");
-    let job = craftwave_lib::tools::process::JobGuard::new().expect("创建 Job Object");
+    let job = craftwave_engine::tools::process::JobGuard::new().expect("创建 Job Object");
     job.assign(&child).expect("指派进 Job");
     let stdout = child.stdout.take().expect("piped");
     let mut lines = tokio::io::BufReader::new(stdout);
@@ -626,9 +626,9 @@ async fn e2e_tool_batch_cancel_keep_completed_mark_rest() {
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {
         #[cfg(unix)]
-        let alive = craftwave_lib::tools::process::pid_alive(grandchild as i32);
+        let alive = craftwave_engine::tools::process::pid_alive(grandchild as i32);
         #[cfg(windows)]
-        let alive = craftwave_lib::tools::process::pid_alive(grandchild as u32);
+        let alive = craftwave_engine::tools::process::pid_alive(grandchild as u32);
         if !alive {
             break;
         }
@@ -689,7 +689,7 @@ async fn e2e_approval_suspend_serialize_resume_done() {
     let RunExit::Suspended(info) = exit else {
         panic!("应为 Suspended，实际 {exit:?}");
     };
-    let craftwave_lib::backend::run_loop::SuspendedInfo {
+    let craftwave_engine::backend::run_loop::SuspendedInfo {
         run_json,
         pending,
         state,
@@ -802,7 +802,7 @@ fn tool_result_faces(frames: &[TimedFrame]) -> Vec<(String, bool, Option<String>
 mod command_face {
     use super::*;
 
-    use craftwave_lib::providers::types::{ApiFormat, ProviderConfig, ProviderModel};
+    use craftwave_engine::providers::types::{ApiFormat, ProviderConfig, ProviderModel};
 
     pub(super) fn provider_fixture(base_url: &str) -> ProviderConfig {
         ProviderConfig {
@@ -834,10 +834,10 @@ mod command_face {
         let dir = tempfile::tempdir().expect("tempdir");
         let events = Arc::new(RecordingEventSink::new());
         let app = AppState::new_in(dir.path().to_path_buf(), events.clone());
-        let config = craftwave_lib::providers::types::AppConfig {
+        let config = craftwave_engine::providers::types::AppConfig {
             providers: vec![provider_fixture(&mock.base_url)],
             active_model_id: Some("model-1".to_owned()),
-            ..craftwave_lib::providers::types::AppConfig::default()
+            ..craftwave_engine::providers::types::AppConfig::default()
         };
         app.config.save(config).expect("save config");
         // tempdir drop 会删目录——用 leak 保住（测试进程生命周期内可接受）
@@ -845,12 +845,12 @@ mod command_face {
         (app, events)
     }
 
-    pub(super) fn user_entry(text: &str) -> craftwave_lib::storage::MessageEntry {
-        craftwave_lib::storage::MessageEntry {
+    pub(super) fn user_entry(text: &str) -> craftwave_engine::storage::MessageEntry {
+        craftwave_engine::storage::MessageEntry {
             id: format!("u-{}", text.len()),
             parent_id: None,
-            role: craftwave_lib::storage::MessageRole::User,
-            parts: vec![craftwave_lib::storage::WirePart::Text {
+            role: craftwave_engine::storage::MessageRole::User,
+            parts: vec![craftwave_engine::storage::WirePart::Text {
                 text: text.to_owned(),
             }],
             created_at: 1,
@@ -860,11 +860,11 @@ mod command_face {
     }
 
     pub(super) fn run_config() -> craftwave_lib::host::commands::chat::RunConfig {
-        run_config_tier(craftwave_lib::safety::tier::PermissionTier::FullAccess)
+        run_config_tier(craftwave_engine::safety::tier::PermissionTier::FullAccess)
     }
 
     fn run_config_tier(
-        tier: craftwave_lib::safety::tier::PermissionTier,
+        tier: craftwave_engine::safety::tier::PermissionTier,
     ) -> craftwave_lib::host::commands::chat::RunConfig {
         craftwave_lib::host::commands::chat::RunConfig {
             model_id: None,
@@ -1004,8 +1004,8 @@ mod command_face {
 
     // —— 6/7. 审批门接线 + plan/ask/suggest ——
 
-    use craftwave_lib::backend::ask::AskAnswer;
-    use craftwave_lib::util::events::RecordingEventSink;
+    use craftwave_engine::backend::ask::AskAnswer;
+    use craftwave_engine::util::events::RecordingEventSink;
 
     /// 等待某事件键的首个载荷。
     pub(super) async fn wait_event(
@@ -1056,7 +1056,7 @@ mod command_face {
             &runs,
             "sess-appr".to_owned(),
             vec![user_entry("跑个命令")],
-            run_config_tier(craftwave_lib::safety::tier::PermissionTier::ConfirmEach),
+            run_config_tier(craftwave_engine::safety::tier::PermissionTier::ConfirmEach),
             Box::new(sink.clone()),
             false,
         )
@@ -1149,7 +1149,7 @@ mod command_face {
             &runs,
             "sess-deny".to_owned(),
             vec![user_entry("再跑")],
-            run_config_tier(craftwave_lib::safety::tier::PermissionTier::ConfirmEach),
+            run_config_tier(craftwave_engine::safety::tier::PermissionTier::ConfirmEach),
             Box::new(sink.clone()),
             false,
         )
@@ -1213,7 +1213,7 @@ mod command_face {
             "sess-fence".to_owned(),
             vec![user_entry("清理")],
             // full_access 也拦（灾难级任何档位不豁免）
-            run_config_tier(craftwave_lib::safety::tier::PermissionTier::FullAccess),
+            run_config_tier(craftwave_engine::safety::tier::PermissionTier::FullAccess),
             Box::new(sink.clone()),
             false,
         )
@@ -1272,7 +1272,7 @@ mod command_face {
 
         // run 活跃期间批准 → 快照冻结（approve_plan 命令面，同键
         // 补发 plan:update 全量计划态）
-        let events_dyn: std::sync::Arc<dyn craftwave_lib::util::events::EventSink> = events.clone();
+        let events_dyn: std::sync::Arc<dyn craftwave_engine::util::events::EventSink> = events.clone();
         craftwave_lib::host::commands::chat::approve_plan_core(&runs, "sess-plan", &events_dyn)
             .expect("活跃 run 上批准成功");
         // 批准后的 plan:update 全量态（第二条——首条是 plan 工具
@@ -1325,10 +1325,10 @@ mod command_face {
         std::mem::forget(dir); // 测试进程生命周期内保住数据目录
         let events = Arc::new(RecordingEventSink::new());
         let app = AppState::new_in(root.clone(), events.clone());
-        let config = craftwave_lib::providers::types::AppConfig {
+        let config = craftwave_engine::providers::types::AppConfig {
             providers: vec![provider_fixture(&mock.base_url)],
             active_model_id: Some("model-1".to_owned()),
-            ..craftwave_lib::providers::types::AppConfig::default()
+            ..craftwave_engine::providers::types::AppConfig::default()
         };
         app.config.save(config).expect("save config");
         let runs = RunManager::new();
@@ -1358,7 +1358,7 @@ mod command_face {
 
         // ② 日/模型聚合：两拍 run（240/96）+ suggest（120/48）
         //    = 360/144；runs 只计主 run 一次（子 run/辅助不计，suggest 属 aux）
-        let today = craftwave_lib::host::usage::local_today();
+        let today = craftwave_engine::usage::local_today();
         let day = app.ledger.stats.read_day(&today);
         let m1 = day.models.get("model-1").expect("model-1 聚合条目");
         assert_eq!(m1.input, 360, "run 两拍 + suggest 全部计入当日");
@@ -1605,7 +1605,7 @@ mod command_face {
             &runs,
             session.to_owned(),
             vec![user_entry("跑个命令")],
-            run_config_tier(craftwave_lib::safety::tier::PermissionTier::ConfirmEach),
+            run_config_tier(craftwave_engine::safety::tier::PermissionTier::ConfirmEach),
             Box::new(sink.clone()),
             false,
         )
@@ -1665,7 +1665,7 @@ mod command_face {
         craftwave_lib::host::commands::chat::resolve_ask_core(
             &runs,
             &ask_id,
-            craftwave_lib::backend::ask::AskAnswer::Approval {
+            craftwave_engine::backend::ask::AskAnswer::Approval {
                 option_id: "allow_once".to_owned(),
                 edited_command: None,
             },
@@ -1688,7 +1688,7 @@ mod command_face {
         let err = craftwave_lib::host::commands::chat::resolve_ask_core(
             &runs,
             &ask_id,
-            craftwave_lib::backend::ask::AskAnswer::Approval {
+            craftwave_engine::backend::ask::AskAnswer::Approval {
                 option_id: "deny".to_owned(),
                 edited_command: None,
             },
@@ -1707,17 +1707,17 @@ mod command_face {
     /// 硬预算线（×0.9=36000）已被 web_search 挤破（固定面 36058），40000
     /// 失去「第一次发送达阈值但硬预算内可容纳」的设计前提；44000 的硬预算
     /// 39600 恢复该区间，且 32768 预留 > 0.6×44000 的跨阈值前提不变。
-    fn small_window_config(base_url: &str) -> craftwave_lib::providers::types::AppConfig {
-        craftwave_lib::providers::types::AppConfig {
-            providers: vec![craftwave_lib::providers::types::ProviderConfig {
-                models: vec![craftwave_lib::providers::types::ProviderModel {
+    fn small_window_config(base_url: &str) -> craftwave_engine::providers::types::AppConfig {
+        craftwave_engine::providers::types::AppConfig {
+            providers: vec![craftwave_engine::providers::types::ProviderConfig {
+                models: vec![craftwave_engine::providers::types::ProviderModel {
                     context_window: 44000,
                     ..provider_fixture(base_url).models.remove(0)
                 }],
                 ..provider_fixture(base_url)
             }],
             active_model_id: Some("model-1".to_owned()),
-            ..craftwave_lib::providers::types::AppConfig::default()
+            ..craftwave_engine::providers::types::AppConfig::default()
         }
     }
 
@@ -1879,16 +1879,16 @@ mod command_face {
         let (app, _events) = app_fixture_with_events(&mock);
         // 窗口 30000：阈值线 18000（触发压缩）、硬预算 27000（预留 32768
         // 必然超出——压缩成功也放不下）
-        let config = craftwave_lib::providers::types::AppConfig {
-            providers: vec![craftwave_lib::providers::types::ProviderConfig {
-                models: vec![craftwave_lib::providers::types::ProviderModel {
+        let config = craftwave_engine::providers::types::AppConfig {
+            providers: vec![craftwave_engine::providers::types::ProviderConfig {
+                models: vec![craftwave_engine::providers::types::ProviderModel {
                     context_window: 30000,
                     ..provider_fixture(&mock.base_url).models.remove(0)
                 }],
                 ..provider_fixture(&mock.base_url)
             }],
             active_model_id: Some("model-1".to_owned()),
-            ..craftwave_lib::providers::types::AppConfig::default()
+            ..craftwave_engine::providers::types::AppConfig::default()
         };
         app.config.save(config).expect("save config");
         let runs = RunManager::new();
@@ -1919,7 +1919,7 @@ mod command_face {
     // —— 8. steer / followUp 队列 ——
 
     use craftwave_lib::host::commands::chat::{InjectMode, inject_run_message_core};
-    use craftwave_lib::storage::MessageRole;
+    use craftwave_engine::storage::MessageRole;
 
     /// run 正常完成后的两连发场景：
     /// 空闲时 followUp 入队 → run1 正常完成 → 队列头自动投递开 run2（走同一
@@ -2185,7 +2185,7 @@ mod command_face {
             &runs,
             "sess-askmix".to_owned(),
             vec![user_entry("问用户的同时跑个命令")],
-            run_config_tier(craftwave_lib::safety::tier::PermissionTier::ConfirmEach),
+            run_config_tier(craftwave_engine::safety::tier::PermissionTier::ConfirmEach),
             Box::new(sink.clone()),
             false,
         )
@@ -2261,7 +2261,7 @@ mod command_face {
     fn seed_default_title(app: &AppState, session_id: &str) {
         app.store
             .index()
-            .upsert(craftwave_lib::storage::SessionMeta {
+            .upsert(craftwave_engine::storage::SessionMeta {
                 id: session_id.to_owned(),
                 project_id: None,
                 title: "新会话".to_owned(),
@@ -2411,8 +2411,8 @@ mod command_audit {
     }
 
     /// AuditState → 线上键（snake_case）。
-    fn audit_state_key(state: &craftwave_lib::backend::frames::AuditState) -> &'static str {
-        use craftwave_lib::backend::frames::AuditState as S;
+    fn audit_state_key(state: &craftwave_engine::backend::frames::AuditState) -> &'static str {
+        use craftwave_engine::backend::frames::AuditState as S;
         match state {
             S::Running => "running",
             S::Allow => "allow",
@@ -2592,10 +2592,10 @@ mod image_face {
     use base64::Engine;
 
     use craftwave_lib::host::commands::chat::{RunConfig, start_chat_core};
-    use craftwave_lib::providers::types::{ApiFormat, ProviderConfig, ProviderModel};
-    use craftwave_lib::safety::tier::PermissionTier;
-    use craftwave_lib::storage::{MessageEntry, MessageRole, WirePart, get_blob, put_blob};
-    use craftwave_lib::util::events::RecordingEventSink;
+    use craftwave_engine::providers::types::{ApiFormat, ProviderConfig, ProviderModel};
+    use craftwave_engine::safety::tier::PermissionTier;
+    use craftwave_engine::storage::{MessageEntry, MessageRole, WirePart, get_blob, put_blob};
+    use craftwave_engine::util::events::RecordingEventSink;
 
     /// 1x1 透明 PNG（base64 内嵌，程序解码——测试样本不依赖外部文件）。
     const PNG_1X1: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
@@ -2631,10 +2631,10 @@ mod image_face {
         let dir = tempfile::tempdir().expect("tempdir");
         let events = Arc::new(RecordingEventSink::new());
         let app = AppState::new_in(dir.path().to_path_buf(), events);
-        let config = craftwave_lib::providers::types::AppConfig {
+        let config = craftwave_engine::providers::types::AppConfig {
             providers: vec![provider_fixture_vision(&mock.base_url, vision)],
             active_model_id: Some("model-1".to_owned()),
-            ..craftwave_lib::providers::types::AppConfig::default()
+            ..craftwave_engine::providers::types::AppConfig::default()
         };
         app.config.save(config).expect("save config");
         std::mem::forget(dir);
@@ -2827,7 +2827,7 @@ mod image_face {
         };
         assert_eq!(*reason, EndReason::Done, "error 面：{error:?}");
         // 占位文本面（逐字格式）出现在请求 history
-        let placeholder = craftwave_lib::backend::wire::image_placeholder(&blob_hash);
+        let placeholder = craftwave_engine::backend::wire::image_placeholder(&blob_hash);
         let contents = user_contents(&mock).await;
         assert!(
             contents
@@ -2858,8 +2858,8 @@ mod image_face {
 /// + 恢复循环同款）→ 重放放行跑到 Done。
 #[tokio::test]
 async fn e2e_plan_scope_suspend_resume_allow_once() {
-    use craftwave_lib::backend::gate::{ApprovalGate, GateWorkspace};
-    use craftwave_lib::tools::plan::PlanState;
+    use craftwave_engine::backend::gate::{ApprovalGate, GateWorkspace};
+    use craftwave_engine::tools::plan::PlanState;
     use std::sync::{Arc, Mutex};
 
     // mock：轮 1 = write 调用（范围外）；轮 2（带 tool_result）默认文本。
@@ -2875,10 +2875,10 @@ async fn e2e_plan_scope_suspend_resume_allow_once() {
 
     // 已批准计划：基线 src/a.rs（条目 in_progress，不过期门）
     let mut plan_state = PlanState {
-        items: vec![craftwave_lib::storage::entries::PlanItem {
+        items: vec![craftwave_engine::storage::entries::PlanItem {
             id: "p1".to_owned(),
             text: "写 a".to_owned(),
-            status: craftwave_lib::storage::entries::PlanItemStatus::InProgress,
+            status: craftwave_engine::storage::entries::PlanItemStatus::InProgress,
         }],
         paths: vec!["src/a.rs".to_owned()],
         ..PlanState::default()
@@ -2892,7 +2892,7 @@ async fn e2e_plan_scope_suspend_resume_allow_once() {
     std::fs::create_dir_all(&project_root).expect("建项目根");
     let project = std::fs::canonicalize(&project_root).expect("canonicalize");
     let gate = ApprovalGate::new(
-        craftwave_lib::safety::tier::PermissionTier::FullAccess,
+        craftwave_engine::safety::tier::PermissionTier::FullAccess,
         plan,
     )
     .with_workspace(GateWorkspace {
@@ -2924,7 +2924,7 @@ async fn e2e_plan_scope_suspend_resume_allow_once() {
     let RunExit::Suspended(info) = exit else {
         panic!("范围外写应挂起：{exit:?}");
     };
-    let craftwave_lib::backend::run_loop::SuspendedInfo {
+    let craftwave_engine::backend::run_loop::SuspendedInfo {
         run_json,
         pending,
         state,

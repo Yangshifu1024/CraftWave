@@ -8,7 +8,7 @@
 //!
 //! 内部诊断/日志串（非用户可见）不进本表——与前端 console 诊断串同边界。
 
-use crate::providers::types::Language;
+use craftwave_engine::providers::types::Language;
 
 /// 文案键（托盘菜单 + 通知正文）。两语言表必须同键集——单测
 /// [`tests::key_sets_match`] 钉死。

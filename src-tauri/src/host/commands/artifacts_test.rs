@@ -8,9 +8,9 @@ use std::sync::Arc;
 
 use super::artifacts::{open_in_editor_core, probe_editors};
 use super::workspace::search_workspace_paths_core;
-use crate::host::AppState;
-use crate::util::errors::{E_INVALID_ARG, E_NOT_FOUND, E_PATH_OUTSIDE_ROOTS};
-use crate::util::events::RecordingEventSink;
+use craftwave_engine::app_state::AppState;
+use craftwave_engine::util::errors::{E_INVALID_ARG, E_NOT_FOUND, E_PATH_OUTSIDE_ROOTS};
+use craftwave_engine::util::events::RecordingEventSink;
 
 /// 测试脚手架：临时数据目录上的 AppState（事件汇用录制桩）。
 fn app(data: &std::path::Path) -> AppState {
@@ -32,7 +32,7 @@ fn list_artifacts_and_open_in_editor_semantics() {
         .store
         .record_artifact("s1", "run-a", file.to_string_lossy().as_ref())
         .unwrap();
-    let result = crate::storage::ListArtifactsResult {
+    let result = craftwave_engine::storage::ListArtifactsResult {
         artifacts: state.store.list_artifacts("s1"),
     };
     assert_eq!(result.artifacts.len(), 1);

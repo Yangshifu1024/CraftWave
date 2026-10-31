@@ -6,9 +6,9 @@
 
 use tauri::State;
 
-use crate::host::AppState;
-use crate::providers::quota::{self, QuotaSnapshot};
-use crate::util::errors::IpcError;
+use craftwave_engine::app_state::AppState;
+use craftwave_engine::providers::quota::{self, QuotaSnapshot};
+use craftwave_engine::util::errors::IpcError;
 
 /// 全部供应商的额度快照（六态行，排序 = 配置序、可查询类在前
 /// unsupported 殿后）。调用时并发实时拉取（每家独立 10s 超时，一家失败不

@@ -10,9 +10,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use super::system::{expand_home_prefix, resolve_open_dir};
-use crate::host::AppState;
-use crate::util::errors::{E_INVALID_ARG, E_NOT_FOUND, E_PATH_OUTSIDE_ROOTS};
-use crate::util::events::RecordingEventSink;
+use craftwave_engine::app_state::AppState;
+use craftwave_engine::util::errors::{E_INVALID_ARG, E_NOT_FOUND, E_PATH_OUTSIDE_ROOTS};
+use craftwave_engine::util::events::RecordingEventSink;
 
 /// 测试脚手架：在临时数据目录上建一份 AppState（事件汇用录制桩，无真实副作用）。
 fn app(data: &std::path::Path) -> AppState {

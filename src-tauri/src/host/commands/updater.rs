@@ -22,8 +22,8 @@
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
-use crate::host::AppState;
-use crate::host::IpcError;
+use craftwave_engine::app_state::AppState;
+use craftwave_engine::util::errors::IpcError;
 
 /// `update_status` 返回契约。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -104,7 +104,7 @@ pub struct UpdatePrecheckResult {
 pub(crate) fn update_precheck_core(
     running_count: usize,
     pending_ask_count: usize,
-    queues: &[(String, crate::host::followup::QueueSnapshot)],
+    queues: &[(String, craftwave_engine::followup::QueueSnapshot)],
 ) -> UpdatePrecheckResult {
     let running_queue_count = queues
         .iter()

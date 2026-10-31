@@ -2,9 +2,9 @@
 //! 增补自动起名纯函数（触发三态表 / 标题归一 / prompt 截断）与
 //! 标题后台任务直驱（剧本假模型 + 录音事件汇 + 临时数据根）。
 
-use crate::backend::ask::{AskMode, AskPayload, DiffLineKind};
-use crate::backend::run_loop::PendingCall;
-use crate::storage::entries::{MessageEntry, MessageRole, WirePart};
+use craftwave_engine::backend::ask::{AskMode, AskPayload, DiffLineKind};
+use craftwave_engine::backend::run_loop::PendingCall;
+use craftwave_engine::storage::entries::{MessageEntry, MessageRole, WirePart};
 
 use super::chat::{
     TITLE_MAX_CHARS, build_approval_payload, context_tail, first_user_text, normalize_title,
@@ -304,10 +304,10 @@ use rig::completion::Usage;
 use rig::run::spec::RunSpec;
 use rig::test_utils::{MockCompletionModel, MockTurn};
 
-use crate::backend::turn::TurnDriver;
-use crate::host::AppState;
-use crate::storage::SessionMeta;
-use crate::util::events::{EventSink, RecordingEventSink};
+use craftwave_engine::backend::turn::TurnDriver;
+use craftwave_engine::app_state::AppState;
+use craftwave_engine::storage::SessionMeta;
+use craftwave_engine::util::events::{EventSink, RecordingEventSink};
 
 use super::chat::{TITLE_TIMEOUT, spawn_title_task};
 use crate::host::commands::session::DEFAULT_SESSION_TITLE;
@@ -473,7 +473,7 @@ async fn title_task_success_fallback_and_concurrency_guards() {
     assert_eq!(title_run.kind, "aux", "辅助调用 kind=aux");
     assert_eq!(title_run.by_model["model-1"].input, 120);
     // 辅助调用不增主 run 次数
-    let day = crate::host::usage::local_today();
+    let day = craftwave_engine::usage::local_today();
     let daily = app.ledger.stats.read_day(&day);
     assert_eq!(
         daily.models.get("model-1").map(|m| m.runs),

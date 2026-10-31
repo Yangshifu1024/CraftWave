@@ -1,8 +1,8 @@
 //! 工具注册表契约测试：名称清单与顺序钉死（防漂移）、
 //! spec 完整性（名称合法字符、描述长度、schema 形态）、三处同源过滤。
 
-use craftwave_lib::safety::tier::{Capability, GateDecision, PermissionTier};
-use craftwave_lib::tools::{STATIC_TOOL_NAMES, build_registry, filter_for_tier};
+use craftwave_engine::safety::tier::{Capability, GateDecision, PermissionTier};
+use craftwave_engine::tools::{STATIC_TOOL_NAMES, build_registry, filter_for_tier};
 
 #[test]
 fn registry_names_and_order_are_pinned() {

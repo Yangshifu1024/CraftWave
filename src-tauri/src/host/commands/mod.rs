@@ -7,10 +7,13 @@
 pub mod artifacts;
 pub mod chat;
 pub mod config;
+pub mod git_cmds;
+pub mod knowledge_cmds;
 // 图片附件承载命令
 pub mod image;
 // 日志命令（读取/清单/打开目录）
 pub mod logs;
+pub mod mcp_cmds;
 pub mod project;
 // 配额快照命令
 pub mod quota;

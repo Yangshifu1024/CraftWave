@@ -26,7 +26,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tauri::{LogicalPosition, LogicalSize, Manager, WebviewWindow};
 
-use crate::util::atomic;
+use craftwave_engine::util::atomic;
 
 /// 落盘格式版本（结构变化时递增；不匹配按损坏处理整体丢弃）。
 pub const STATE_VERSION: u32 = 1;
@@ -119,6 +119,27 @@ fn snapshot(window: &WebviewWindow) -> Option<WindowState> {
 /// 缓存承载"最后一次已知几何"——`Destroyed` 时窗口方法不可用，靠它冲盘；
 /// 最大化期间只置位 maximized、几何字段保留还原前值（合并逻辑在
 /// [`Self::observe`]）。
+/// 壳自持的窗口几何存储单例（gpui-rewrite 阶段 1：window_geometry
+/// 字段随 AppState 剥离——窗口几何属壳专属，GPUI 壳另有实现）。
+use std::sync::Arc;
+
+static WINDOW_GEOMETRY: std::sync::OnceLock<Arc<WindowStateStore>> = std::sync::OnceLock::new();
+
+/// 初始化单例（lib.rs setup 装配期调用一次，data_root 与 AppState 同源）。
+pub fn geometry_store_init(data_root: &std::path::Path) -> Arc<WindowStateStore> {
+    WINDOW_GEOMETRY
+        .get_or_init(|| Arc::new(WindowStateStore::new(data_root.join("window-state.json"))))
+        .clone()
+}
+
+/// 进程内单例句柄（init 之后的只取口）。
+pub fn geometry_store() -> Arc<WindowStateStore> {
+    WINDOW_GEOMETRY
+        .get()
+        .expect("window geometry store must be initialized in lib.rs setup")
+        .clone()
+}
+
 pub struct WindowStateStore {
     path: PathBuf,
     cache: Mutex<Option<WindowState>>,
@@ -186,10 +207,10 @@ impl WindowStateStore {
         let app = window.app_handle().clone();
         tauri::async_runtime::spawn(async move {
             tokio::time::sleep(SAVE_DEBOUNCE).await;
-            let Some(state) = app.try_state::<crate::host::AppState>() else {
+            let Some(_state) = app.try_state::<craftwave_engine::app_state::AppState>() else {
                 return;
             };
-            let store = &state.window_geometry;
+            let store = &geometry_store();
             if store.debounce_seq.load(Ordering::Relaxed) != seq {
                 return; // 期间又有新事件：新任务会落盘，本任务放弃
             }

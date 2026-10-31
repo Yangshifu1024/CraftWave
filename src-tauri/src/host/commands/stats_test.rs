@@ -8,7 +8,7 @@ fn app_fixture() -> (tempfile::TempDir, AppState) {
     let dir = tempfile::tempdir().expect("tempdir");
     let app = AppState::new_in(
         dir.path().to_path_buf(),
-        std::sync::Arc::new(crate::util::events::RecordingEventSink::new()),
+        std::sync::Arc::new(craftwave_engine::util::events::RecordingEventSink::new()),
     );
     (dir, app)
 }
@@ -23,9 +23,9 @@ fn range(from: &str, to: &str) -> Option<StatsRange> {
 /// 落一笔用量的简写（kind/模型/用量/是否主 run 计次）。
 fn record(app: &AppState, day: &str, run: &str, kind: &str, model: &str, input: u64) {
     let kind = match kind {
-        "sub" => crate::host::usage::run_kind::SUB,
-        "aux" => crate::host::usage::run_kind::AUX,
-        _ => crate::host::usage::run_kind::MAIN,
+        "sub" => craftwave_engine::usage::run_kind::SUB,
+        "aux" => craftwave_engine::usage::run_kind::AUX,
+        _ => craftwave_engine::usage::run_kind::MAIN,
     };
     app.ledger.record_on_day(
         day,
@@ -40,7 +40,7 @@ fn record(app: &AppState, day: &str, run: &str, kind: &str, model: &str, input: 
             cache_read: 0,
             cache_write: 0,
         },
-        kind == crate::host::usage::run_kind::MAIN,
+        kind == craftwave_engine::usage::run_kind::MAIN,
     );
 }
 
@@ -124,7 +124,7 @@ fn stats_token_range_aggregation_and_usage_fallback_delete() {
     // ② 旧数据仅标量（index.json totalTokens > 0，无明细文件）→ 标量回落
     app.store
         .index()
-        .upsert(crate::storage::SessionMeta {
+        .upsert(craftwave_engine::storage::SessionMeta {
             id: "s-legacy".to_owned(),
             project_id: None,
             title: "旧会话".to_owned(),
@@ -146,7 +146,7 @@ fn stats_token_range_aggregation_and_usage_fallback_delete() {
     // ③ 明细文件权威：恢复 sessionTotal
     app.ledger
         .detail
-        .record(&crate::storage::stats::RunUsageRecord {
+        .record(&craftwave_engine::storage::stats::RunUsageRecord {
             session_id: "s-legacy",
             run_id: "r1",
             kind: "main",

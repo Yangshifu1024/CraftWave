@@ -21,10 +21,10 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
-use crate::host::AppState;
-use crate::host::IpcError;
-use crate::safety::safe_join::PathGuard;
-use crate::util::errors::{E_INTERNAL, E_INVALID_ARG, E_IO, E_NOT_FOUND};
+use craftwave_engine::app_state::AppState;
+use craftwave_engine::util::errors::IpcError;
+use craftwave_engine::safety::safe_join::PathGuard;
+use craftwave_engine::util::errors::{E_INTERNAL, E_INVALID_ARG, E_IO, E_NOT_FOUND};
 
 /// `resolve_exit_request` 参数契约（`{ accepted: boolean }`）。
 #[derive(Debug, Clone, Deserialize)]
@@ -163,13 +163,10 @@ pub struct OpenDirArgs {
 /// `<项目主目录>/.craftwave/`（save_project 注册即建，必存在）。
 /// 日志目录应用启动不预建，此处幂等补建——白名单校验（PathGuard）要求
 /// 根真实存在，且"打开日志目录"按钮的语义就是目录没建也能点开。
-/// 备份目录 `~/.craftwave/backups/`（删除确认的目录入口）同款
-/// 幂等补建——从未升级过格式的安装没有该目录，入口按钮不该报不存在。
 fn open_dir_roots(app: &AppState) -> Result<Vec<PathBuf>, IpcError> {
     let data_root = app.store.root().to_path_buf();
     let logs = data_root.join("logs");
     let _ = std::fs::create_dir_all(&logs);
-    let _ = std::fs::create_dir_all(crate::storage::backup::backups_dir(&data_root));
     let mut roots = vec![data_root, logs];
     let projects = app
         .projects
@@ -184,7 +181,7 @@ fn open_dir_roots(app: &AppState) -> Result<Vec<PathBuf>, IpcError> {
 }
 
 /// ToolError → IpcError（code 原样透传：E_PATH_OUTSIDE_ROOTS / E_INVALID_ARG）。
-fn tool_error_to_ipc(err: crate::util::errors::ToolError) -> IpcError {
+fn tool_error_to_ipc(err: craftwave_engine::util::errors::ToolError) -> IpcError {
     IpcError::new(err.code, err.message)
 }
 

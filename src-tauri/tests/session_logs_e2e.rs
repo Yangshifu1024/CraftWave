@@ -13,12 +13,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use common::mock_openai::{self, MockOpenAI};
-use craftwave_lib::agent::RunManager;
-use craftwave_lib::backend::ask::AskAnswer;
-use craftwave_lib::backend::frames::{ChatFrame, EndReason, SequencedFrame, SequencedSink};
-use craftwave_lib::host::AppState;
+use craftwave_engine::agent::RunManager;
+use craftwave_engine::backend::ask::AskAnswer;
+use craftwave_engine::backend::frames::{ChatFrame, EndReason, SequencedFrame, SequencedSink};
+use craftwave_engine::app_state::AppState;
 use craftwave_lib::host::commands::chat::{resolve_ask_core, start_chat_core};
-use craftwave_lib::providers::types::{ApiFormat, AppConfig, ProviderConfig, ProviderModel};
+use craftwave_engine::providers::types::{ApiFormat, AppConfig, ProviderConfig, ProviderModel};
 
 mod common;
 
@@ -83,7 +83,7 @@ fn provider_fixture(base_url: &str) -> ProviderConfig {
 /// 应用夹具：日志级别可调（verbose = debug）。
 fn app_fixture(base_url: &str, log_level: &str) -> (AppState, std::path::PathBuf) {
     let dir = tempfile::tempdir().expect("tempdir");
-    let events = Arc::new(craftwave_lib::util::events::RecordingEventSink::new());
+    let events = Arc::new(craftwave_engine::util::events::RecordingEventSink::new());
     let app = AppState::new_in(dir.path().to_path_buf(), events);
     let mut config = AppConfig {
         providers: vec![provider_fixture(base_url)],
@@ -99,12 +99,12 @@ fn app_fixture(base_url: &str, log_level: &str) -> (AppState, std::path::PathBuf
     (app, root)
 }
 
-fn user_entry(text: &str) -> craftwave_lib::storage::MessageEntry {
-    craftwave_lib::storage::MessageEntry {
+fn user_entry(text: &str) -> craftwave_engine::storage::MessageEntry {
+    craftwave_engine::storage::MessageEntry {
         id: format!("u-{}", text.len()),
         parent_id: None,
-        role: craftwave_lib::storage::MessageRole::User,
-        parts: vec![craftwave_lib::storage::WirePart::Text {
+        role: craftwave_engine::storage::MessageRole::User,
+        parts: vec![craftwave_engine::storage::WirePart::Text {
             text: text.to_owned(),
         }],
         created_at: 1,
@@ -117,7 +117,7 @@ fn run_config() -> craftwave_lib::host::commands::chat::RunConfig {
     craftwave_lib::host::commands::chat::RunConfig {
         model_id: None,
         thinking: None,
-        tier: craftwave_lib::safety::tier::PermissionTier::FullAccess,
+        tier: craftwave_engine::safety::tier::PermissionTier::FullAccess,
         max_turns: 4,
         steer: false,
     }

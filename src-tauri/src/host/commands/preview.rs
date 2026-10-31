@@ -10,8 +10,8 @@
 
 use serde::Deserialize;
 
-use crate::tools::render_html::preview_registry;
-use crate::util::errors::IpcError;
+use craftwave_engine::tools::render_html::preview_registry;
+use craftwave_engine::util::errors::IpcError;
 
 /// `preview_register` 参数：待预览的 HTML 全文（≤50,000 字符，与 render_html
 /// 工具同款上限口径）。
@@ -39,12 +39,12 @@ pub struct PreviewRegisterResult {
 /// 返回 token + URL。幂等：同内容重复注册返回同 token。
 #[tauri::command]
 pub fn preview_register(args: PreviewRegisterArgs) -> Result<PreviewRegisterResult, IpcError> {
-    crate::tools::render_html::validate_html_length(&args.html)
+    craftwave_engine::tools::render_html::validate_html_length(&args.html)
         .map_err(|e| IpcError::new(e.code, e.message))?;
     let registry = preview_registry();
     let token = registry.register(&args.html);
     Ok(PreviewRegisterResult {
-        url: crate::tools::render_html::preview_url(&token),
+        url: craftwave_engine::tools::render_html::preview_url(&token),
         token,
     })
 }

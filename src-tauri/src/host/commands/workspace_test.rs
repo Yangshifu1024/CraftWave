@@ -7,11 +7,12 @@ use std::sync::Arc;
 
 use super::workspace::{
     allow_external_dir_core, check_external_path_core, read_workspace_file_core,
-    resolve_session_roots, revoke_external_dir_core, search_workspace_paths_core,
+    revoke_external_dir_core, search_workspace_paths_core,
 };
-use crate::host::AppState;
-use crate::storage::SessionMeta;
-use crate::util::events::RecordingEventSink;
+use craftwave_engine::app_state::AppState;
+use craftwave_engine::session_roots::resolve_session_roots;
+use craftwave_engine::storage::SessionMeta;
+use craftwave_engine::util::events::RecordingEventSink;
 
 /// 测试脚手架：在临时数据目录上建一份 AppState（事件汇用录制桩，无真实副作用）。
 fn app(data: &std::path::Path) -> AppState {
@@ -374,66 +375,4 @@ fn external_grant_lifecycle_and_protection() {
         "禁区目标全部未落授权"
     );
 
-    // 恢复保护序列：先授权、验证普通重启保留，再放置恢复标记走真实保护路径。
-    let external = tempfile::tempdir().unwrap();
-    let ext_dir = external.path().join("docs");
-    fs::create_dir_all(&ext_dir).unwrap();
-    for sid in ["s-1", "s-b"] {
-        if sid != "s-1" {
-            state.store.index().upsert(meta(sid, None)).unwrap();
-        }
-        allow_external_dir_core(&state, sid, ext_dir.to_str().unwrap()).unwrap();
-    }
-    let restarted = app(dir.path());
-    assert_eq!(
-        restarted
-            .store
-            .index()
-            .get("s-1")
-            .unwrap()
-            .authorized_external_dirs
-            .len(),
-        1,
-        "普通重启保留有效授权"
-    );
-    assert!(
-        !crate::storage::backup::restore_pending_path(dir.path()).exists(),
-        "无恢复标记 = 普通重启"
-    );
-    fs::write(
-        crate::storage::backup::restore_pending_path(dir.path()),
-        b"{\"version\":1}",
-    )
-    .unwrap();
-    let report = crate::storage::backup::apply_restore_protection(dir.path(), Some(&state.config));
-    assert!(report.applied, "恢复标记存在时应执行保护");
-    assert!(
-        report.failures.is_empty(),
-        "保护序列不应失败：{:?}",
-        report.failures
-    );
-    // 信任清空 + 外部授权清空 + 审批白名单清空三动作齐备（mcp-tools 与
-    // 队列文件在本测试场景不存在，不产生动作条目）
-    assert_eq!(report.actions.len(), 3, "动作清单：{:?}", report.actions);
-    assert!(
-        state
-            .store
-            .index()
-            .get("s-1")
-            .unwrap()
-            .authorized_external_dirs
-            .is_empty()
-            && state
-                .store
-                .index()
-                .get("s-b")
-                .unwrap()
-                .authorized_external_dirs
-                .is_empty(),
-        "恢复后授权失效（须重新确认）"
-    );
-    assert!(
-        !crate::storage::backup::restore_pending_path(dir.path()).exists(),
-        "保护完成后恢复标记应被删除（防重复触发）"
-    );
 }

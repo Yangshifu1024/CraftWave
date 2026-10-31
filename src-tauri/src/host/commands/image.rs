@@ -14,9 +14,9 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
-use crate::host::AppState;
-use crate::host::IpcError;
-use crate::util::errors::{E_NOT_FOUND, E_STORAGE_IO};
+use craftwave_engine::app_state::AppState;
+use craftwave_engine::util::errors::IpcError;
+use craftwave_engine::util::errors::{E_NOT_FOUND, E_STORAGE_IO};
 
 /// `attach_image` 参数契约：`dataBase64` 与 `filePath` 二选一
 /// （附件按钮/粘贴传字节；拖拽入口只有绝对路径，传 filePath 由后端读取）。
@@ -88,15 +88,15 @@ pub fn attach_image_core(
             // roots 校验），mime 按魔数嗅探（mimeType 声明忽略）
             std::fs::read(path).map_err(|e| {
                 IpcError::new(
-                    crate::util::errors::E_NOT_FOUND,
+                    craftwave_engine::util::errors::E_NOT_FOUND,
                     format!("读取拖入图片失败：{path}（{e}）"),
                 )
             })?
         }
     };
-    let blob_hash = crate::storage::imgblob::put_blob(app.store.root(), session_id, &bytes)
+    let blob_hash = craftwave_engine::storage::imgblob::put_blob(app.store.root(), session_id, &bytes)
         .map_err(|e| match e {
-            crate::storage::StorageError::InvalidArg(m) => IpcError::invalid_arg(m),
+            craftwave_engine::storage::StorageError::InvalidArg(m) => IpcError::invalid_arg(m),
             other => IpcError::new(E_STORAGE_IO, other.to_string()),
         })?;
     Ok(AttachImageResult { blob_hash })
@@ -157,9 +157,9 @@ pub fn read_image_blob_core(
         return Err(IpcError::invalid_arg("sessionId 不能为空"));
     }
     let (bytes, mime) =
-        crate::storage::get_blob(app.store.root(), session_id, blob_hash).map_err(|e| match e {
-            crate::storage::StorageError::NotFound(m) => IpcError::new(E_NOT_FOUND, m),
-            crate::storage::StorageError::InvalidArg(m) => IpcError::invalid_arg(m),
+        craftwave_engine::storage::get_blob(app.store.root(), session_id, blob_hash).map_err(|e| match e {
+            craftwave_engine::storage::StorageError::NotFound(m) => IpcError::new(E_NOT_FOUND, m),
+            craftwave_engine::storage::StorageError::InvalidArg(m) => IpcError::invalid_arg(m),
             other => IpcError::new(E_STORAGE_IO, other.to_string()),
         })?;
     use base64::Engine;

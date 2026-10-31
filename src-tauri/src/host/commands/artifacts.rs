@@ -18,9 +18,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
-use crate::host::AppState;
-use crate::host::IpcError;
-use crate::safety::safe_join::PathGuard;
+use craftwave_engine::app_state::AppState;
+use craftwave_engine::util::errors::IpcError;
+use craftwave_engine::safety::safe_join::PathGuard;
 
 /// `list_artifacts` 参数契约。
 #[derive(Debug, Clone, Deserialize)]
@@ -37,10 +37,10 @@ pub struct ListArtifactsArgs {
 pub(crate) async fn list_artifacts(
     app: State<'_, AppState>,
     session_id: String,
-) -> Result<crate::storage::ListArtifactsResult, IpcError> {
+) -> Result<craftwave_engine::storage::ListArtifactsResult, IpcError> {
     // 契约命名单一事实源：平铺形参回组为文档契约结构
     let args = ListArtifactsArgs { session_id };
-    Ok(crate::storage::ListArtifactsResult {
+    Ok(craftwave_engine::storage::ListArtifactsResult {
         artifacts: app.store.list_artifacts(&args.session_id),
     })
 }
@@ -216,7 +216,7 @@ fn editor_roots(app: &AppState) -> Vec<PathBuf> {
 }
 
 /// ToolError → IPC 错误码（safe_join 语义原样透传，workspace.rs 同款）。
-fn to_ipc_error(err: crate::util::errors::ToolError) -> IpcError {
+fn to_ipc_error(err: craftwave_engine::util::errors::ToolError) -> IpcError {
     IpcError::new(err.code, err.message)
 }
 

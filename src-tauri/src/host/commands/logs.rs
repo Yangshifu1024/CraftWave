@@ -8,9 +8,9 @@
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
-use crate::host::AppState;
-use crate::host::IpcError;
-use crate::util::errors::E_IO;
+use craftwave_engine::app_state::AppState;
+use craftwave_engine::util::errors::IpcError;
+use craftwave_engine::util::errors::E_IO;
 
 /// `read_session_log` 参数契约。
 #[derive(Debug, Clone, Deserialize)]

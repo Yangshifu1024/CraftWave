@@ -13,13 +13,13 @@ fn preview_register_semantics() {
         html: html.to_string(),
     })
     .expect("注册成功");
-    assert!(crate::tools::render_html::is_valid_token(&result.token));
+    assert!(craftwave_engine::tools::render_html::is_valid_token(&result.token));
     assert_eq!(
         result.url,
-        crate::tools::render_html::preview_url(&result.token)
+        craftwave_engine::tools::render_html::preview_url(&result.token)
     );
     assert_eq!(
-        crate::tools::render_html::preview_registry()
+        craftwave_engine::tools::render_html::preview_registry()
             .lookup(&result.token)
             .as_deref(),
         Some(html)
@@ -43,7 +43,7 @@ fn preview_register_semantics() {
 
     // 超限拒绝。
     let err = preview_register(PreviewRegisterArgs {
-        html: "x".repeat(crate::tools::render_html::MAX_HTML_CHARS + 1),
+        html: "x".repeat(craftwave_engine::tools::render_html::MAX_HTML_CHARS + 1),
     })
     .expect_err("应拒绝");
     assert_eq!(err.code, "E_INVALID_ARG");

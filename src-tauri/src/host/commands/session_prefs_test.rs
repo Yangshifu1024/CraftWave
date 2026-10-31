@@ -6,11 +6,11 @@ use std::sync::Arc;
 use super::{
     GetSessionPrefsResult, SetSessionPrefsPayload, get_session_prefs_core, set_session_prefs_core,
 };
-use crate::host::AppState;
-use crate::providers::reasoning::ThinkingLevel;
-use crate::storage::prefs::{SessionPrefs, load_prefs, save_prefs};
-use crate::util::errors::E_NOT_FOUND;
-use crate::util::events::RecordingEventSink;
+use craftwave_engine::app_state::AppState;
+use craftwave_engine::providers::reasoning::ThinkingLevel;
+use craftwave_engine::storage::prefs::{SessionPrefs, load_prefs, save_prefs};
+use craftwave_engine::util::errors::E_NOT_FOUND;
+use craftwave_engine::util::events::RecordingEventSink;
 
 /// 临时数据根 + 已注册一个会话的 AppState（index 条目，无历史文件——
 /// 偏好独立于正文存在）。
@@ -27,7 +27,7 @@ fn app_with_session(tag: &str) -> (tempfile::TempDir, AppState, String) {
     let ts = 1_760_000_000_000;
     app.store
         .index()
-        .upsert(crate::storage::SessionMeta {
+        .upsert(craftwave_engine::storage::SessionMeta {
             id: sid.clone(),
             project_id: None,
             title: "测试会话".to_owned(),

@@ -5,10 +5,10 @@
 use serde::Deserialize;
 use tauri::State;
 
-use crate::host::AppState;
-use crate::providers::service;
-use crate::providers::types::AppConfig;
-use crate::util::errors::IpcError;
+use craftwave_engine::app_state::AppState;
+use craftwave_engine::providers::service;
+use craftwave_engine::providers::types::AppConfig;
+use craftwave_engine::util::errors::IpcError;
 
 /// `save_config` 参数契约（文档命名锚点，命令形参按字段平铺展开）。
 #[derive(Debug, Clone, Deserialize)]

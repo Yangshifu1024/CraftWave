@@ -13,11 +13,11 @@
 use std::fs;
 use std::path::PathBuf;
 
-use crate::storage::entries::{
+use craftwave_engine::storage::entries::{
     CompleteReason, MessageEntry, MessageRole, MessageStatus, MetaEntry, SessionEntry, StoredEntry,
     WirePart,
 };
-use crate::storage::segment::entry_line;
+use craftwave_engine::storage::segment::entry_line;
 
 /// 测试产物输出目录：crate 的 target/（与前端的比对脚本约定一致）。
 fn target_dir() -> PathBuf {
@@ -74,25 +74,25 @@ fn export_contract_types_and_match_manifest() {
     // 前端树持久化层的直接消费面。WorkspacePathHit 只出现在非名义清单类型
     // Vec<WorkspacePathHit> 内，而 export_all 对非名义根类型不递归访问依赖，
     // 须显式补根。
-    <crate::backend::frames::ChatFrame as ts_rs::TS>::export_all(&cfg).unwrap();
-    <crate::backend::frames::SequencedFrame as ts_rs::TS>::export_all(&cfg).unwrap();
+    <craftwave_engine::backend::frames::ChatFrame as ts_rs::TS>::export_all(&cfg).unwrap();
+    <craftwave_engine::backend::frames::SequencedFrame as ts_rs::TS>::export_all(&cfg).unwrap();
     // 运行快照：session_run_snapshot 返回 Option<RunSnapshot>
     // 与 runSnapshot 摘要帧负载都是非名义根（Option<_>/帧内 flatten），显式补根
-    <crate::backend::frames::RunSnapshot as ts_rs::TS>::export_all(&cfg).unwrap();
-    <crate::backend::ask::AskPayload as ts_rs::TS>::export_all(&cfg).unwrap();
+    <craftwave_engine::backend::frames::RunSnapshot as ts_rs::TS>::export_all(&cfg).unwrap();
+    <craftwave_engine::backend::ask::AskPayload as ts_rs::TS>::export_all(&cfg).unwrap();
     // 待审批/询问恢复查询：返回 Option<SessionPendingAsk>
     // 非名义，显式补根导出类型声明
     <crate::host::commands::chat::SessionPendingAsk as ts_rs::TS>::export_all(&cfg).unwrap();
-    <crate::storage::StoredEntry as ts_rs::TS>::export_all(&cfg).unwrap();
+    <craftwave_engine::storage::StoredEntry as ts_rs::TS>::export_all(&cfg).unwrap();
     <crate::host::commands::workspace::WorkspacePathHit as ts_rs::TS>::export_all(&cfg).unwrap();
-    <crate::util::errors::IpcError as ts_rs::TS>::export_all(&cfg).unwrap();
-    <crate::tools::ToolOutcome as ts_rs::TS>::export_all(&cfg).unwrap();
+    <craftwave_engine::util::errors::IpcError as ts_rs::TS>::export_all(&cfg).unwrap();
+    <craftwave_engine::tools::ToolOutcome as ts_rs::TS>::export_all(&cfg).unwrap();
     // 内置预设类型：预设不在任何命令负载闭包内，显式补根导出
     // 类型声明（ProviderPreset.ts + 依赖 PresetModel.ts）。
-    <crate::providers::presets::ProviderPreset as ts_rs::TS>::export_all(&cfg).unwrap();
+    <craftwave_engine::providers::presets::ProviderPreset as ts_rs::TS>::export_all(&cfg).unwrap();
     // 技能清单行：skill_list 返回 Vec<SkillListEntry>
     // 非名义根，显式补根导出（连带 SkillSource 枚举）。
-    <crate::knowledge::commands::SkillListEntry as ts_rs::TS>::export_all(&cfg).unwrap();
+    <crate::host::commands::knowledge_cmds::SkillListEntry as ts_rs::TS>::export_all(&cfg).unwrap();
     // 子代理契约：SubSpawnArgs 是 subagent 工具参数（非命令负载），
     // SubMeta 是子代理历史 meta（回看面），显式补根导出（连带 SubOutcome/
     // SubHistoryLine 等依赖）。
@@ -101,7 +101,7 @@ fn export_contract_types_and_match_manifest() {
     // 配额快照行：quota_snapshots 返回 Vec<QuotaSnapshot>
     // 非名义根，显式补根导出（连带 QuotaStatus/QuotaData/QuotaEntry 依赖）。
     // 类型本体在 providers::quota（命令壳只是转调，契约类型不重复归属）。
-    <crate::providers::quota::QuotaSnapshot as ts_rs::TS>::export_all(&cfg).unwrap();
+    <craftwave_engine::providers::quota::QuotaSnapshot as ts_rs::TS>::export_all(&cfg).unwrap();
     // 产物面板契约：list_editors 返回
     // Vec<EditorEntry> 非名义根，显式补根导出。
     <crate::host::commands::artifacts::EditorEntry as ts_rs::TS>::export_all(&cfg).unwrap();
@@ -109,7 +109,7 @@ fn export_contract_types_and_match_manifest() {
     // ①b 内置预设清单常量（单源定稿）：serde 序列化权威清单写入
     //    BuiltinPresets.ts（前端 settings/presets.ts re-export 消费）——
     //    改 Rust 预设 → cargo test 重新生成 → 前端类型与内容即时感知。
-    let presets_json = serde_json::to_string_pretty(crate::providers::presets::builtin_presets())
+    let presets_json = serde_json::to_string_pretty(craftwave_engine::providers::presets::builtin_presets())
         .expect("内置预设序列化失败");
     let presets_ts = format!(
         "// 本文件由 cargo test 生成（src-tauri/src/ipc_manifest_test.rs），勿手改。\n\
@@ -324,9 +324,9 @@ fn export_ipc_manifest_and_cross_lang_fixture() {
         // 事件键：实装 5 键
         "events": crate::host::commands::EVENTS,
         // 镜像工具清单：工具注册表单一事实源
-        "tools": crate::tools::STATIC_TOOL_NAMES,
+        "tools": craftwave_engine::tools::STATIC_TOOL_NAMES,
         // 工具规格（name + paramsSchema）：前端 toolkit 声明同源校验
-        "toolSpecs": crate::tools::build_registry()
+        "toolSpecs": craftwave_engine::tools::build_registry()
             .into_iter()
             .map(|s| serde_json::json!({
                 "name": s.name,
@@ -349,7 +349,7 @@ fn export_ipc_manifest_and_cross_lang_fixture() {
     assert_eq!(manifest["tools"].as_array().unwrap().len(), 17);
     assert_eq!(manifest["toolSpecs"].as_array().unwrap().len(), 17);
     assert_eq!(
-        crate::tools::STATIC_TOOL_NAMES.len(),
+        craftwave_engine::tools::STATIC_TOOL_NAMES.len(),
         17,
         "静态段工具数漂移"
     );
@@ -497,7 +497,7 @@ fn fixture_entries() -> Vec<StoredEntry> {
         }),
         // compaction 条目：前端树持久化层须跳过（不投影为
         // 树节点），跨语言行格式在此钉住
-        StoredEntry::Compaction(crate::storage::StoredCompactionEntry {
+        StoredEntry::Compaction(craftwave_engine::storage::StoredCompactionEntry {
             id: "manual:compact:1".to_string(),
             cut_entry_id: "a3".to_string(),
             summary: "早期对话摘要".to_string(),

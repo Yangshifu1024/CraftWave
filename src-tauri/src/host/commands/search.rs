@@ -12,12 +12,12 @@ use serde::Serialize;
 use tauri::State;
 use tokio_util::sync::CancellationToken;
 
-use crate::host::AppState;
-use crate::providers::types::SearxngConfig;
-use crate::tools::web_search::SearchProvider;
-use crate::tools::web_search::SearxngProvider;
-use crate::tools::web_search::TavilyProvider;
-use crate::util::errors::IpcError;
+use craftwave_engine::app_state::AppState;
+use craftwave_engine::providers::types::SearxngConfig;
+use craftwave_engine::tools::web_search::SearchProvider;
+use craftwave_engine::tools::web_search::SearxngProvider;
+use craftwave_engine::tools::web_search::TavilyProvider;
+use craftwave_engine::util::errors::IpcError;
 
 /// 连通测试总预算（秒）：SearXNG 通道自身 15s 超时、Tavily 走公网兜底
 /// 60s，命令面统一 30s 收口（超时按失败返回，不挂设置页）。
@@ -74,7 +74,7 @@ pub async fn search_test(
     }
     // 代理/SSRF 策略按当前配置装配（与工具执行同源；测试通道 = 真实通道）
     let config = state.config.load()?.as_ref().clone();
-    let env = crate::tools::web_search::SearchEnv::from_config(&config);
+    let env = craftwave_engine::tools::web_search::SearchEnv::from_config(&config);
     let token = CancellationToken::new();
     // 探测 future：两通道统一为 Result<(), String>（通道错误取 message），
     // 总预算 30s 收口（tokio::time::timeout——超时按失败返回）
@@ -109,7 +109,7 @@ pub async fn search_test(
                     policy: env.policy,
                     proxy: env.proxy.clone(),
                     throttle: env.throttle.clone(),
-                    endpoint: crate::tools::web_search::TAVILY_ENDPOINT.to_string(),
+                    endpoint: craftwave_engine::tools::web_search::TAVILY_ENDPOINT.to_string(),
                 };
                 provider
                     .search("craftwave connectivity test", 1, &token)

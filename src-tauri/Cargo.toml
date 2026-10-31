@@ -13,6 +13,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+# 引擎（gpui-rewrite 阶段 1）：代理运行/工具/存储/知识/MCP/git 纯库
+craftwave-engine = { path = "../crates/engine" }
 serde = { version = "1", features = ["derive"] }
 # MCP：preserve_order = serde_json::Map 换 IndexMap 底座——mcp.json
 # 的未知字段经 serde(flatten) round-trip 时保持出现顺序
@@ -213,6 +215,8 @@ objc2-user-notifications = { version = "0.3", features = [
 ] }
 
 [dev-dependencies]
+# 契约导出（ipc_manifest_test）需要引擎类型带 TS derive——dev 构建激活
+craftwave-engine = { path = "../crates/engine", features = ["ts"] }
 # 本地 OpenAI 兼容 mock SSE 服务（流保真 / 工具循环测试用，不进产物）
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }

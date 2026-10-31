@@ -15,14 +15,14 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use craftwave_lib::agent::RunManager;
-use craftwave_lib::backend::frames::{
+use craftwave_engine::agent::RunManager;
+use craftwave_engine::backend::frames::{
     ChatFrame, EndReason, FrameSink, SequencedFrame, SequencedSink,
 };
-use craftwave_lib::backend::run_loop::{AllowAllGate, RunExit, drive_run};
-use craftwave_lib::backend::turn::TurnDriver;
-use craftwave_lib::host::AppState;
-use craftwave_lib::providers::types::{ApiFormat, AppConfig, ProviderConfig, ProviderModel};
+use craftwave_engine::backend::run_loop::{AllowAllGate, RunExit, drive_run};
+use craftwave_engine::backend::turn::TurnDriver;
+use craftwave_engine::app_state::AppState;
+use craftwave_engine::providers::types::{ApiFormat, AppConfig, ProviderConfig, ProviderModel};
 use rig::completion::request::ToolDefinition;
 use rig::message::ToolName;
 use rig::run::AgentRun;
@@ -97,7 +97,7 @@ impl SharedSink {
 /// 假工具执行器：返回固定文本（工具往返的第二拍驱动面）。
 struct FakeExecutor;
 
-impl craftwave_lib::backend::run_loop::CancellableExecutor for FakeExecutor {
+impl craftwave_engine::backend::run_loop::CancellableExecutor for FakeExecutor {
     fn execute<'a>(
         &'a self,
         _call_id: &'a str,
@@ -105,10 +105,10 @@ impl craftwave_lib::backend::run_loop::CancellableExecutor for FakeExecutor {
         _args_json: &'a str,
         _token: &'a CancellationToken,
     ) -> std::pin::Pin<
-        Box<dyn Future<Output = craftwave_lib::backend::run_loop::ToolExecution> + Send + 'a>,
+        Box<dyn Future<Output = craftwave_engine::backend::run_loop::ToolExecution> + Send + 'a>,
     > {
         Box::pin(async {
-            craftwave_lib::backend::run_loop::ToolExecution::Completed {
+            craftwave_engine::backend::run_loop::ToolExecution::Completed {
                 ok: true,
                 ui_summary: "读取了配置文件".to_owned(),
                 error: None,
@@ -146,7 +146,7 @@ fn provider_fixture(api_format: ApiFormat, base_url: &str, vision: Option<bool>)
 
 fn app_fixture(api_format: ApiFormat, base_url: &str) -> AppState {
     let dir = tempfile::tempdir().expect("tempdir");
-    let events = Arc::new(craftwave_lib::util::events::RecordingEventSink::new());
+    let events = Arc::new(craftwave_engine::util::events::RecordingEventSink::new());
     let app = AppState::new_in(dir.path().to_path_buf(), events);
     let config = AppConfig {
         providers: vec![provider_fixture(api_format, base_url, None)],
@@ -159,12 +159,12 @@ fn app_fixture(api_format: ApiFormat, base_url: &str) -> AppState {
     app
 }
 
-fn user_entry(text: &str) -> craftwave_lib::storage::MessageEntry {
-    craftwave_lib::storage::MessageEntry {
+fn user_entry(text: &str) -> craftwave_engine::storage::MessageEntry {
+    craftwave_engine::storage::MessageEntry {
         id: format!("u-{}", text.len()),
         parent_id: None,
-        role: craftwave_lib::storage::MessageRole::User,
-        parts: vec![craftwave_lib::storage::WirePart::Text {
+        role: craftwave_engine::storage::MessageRole::User,
+        parts: vec![craftwave_engine::storage::WirePart::Text {
             text: text.to_owned(),
         }],
         created_at: 1,
@@ -174,12 +174,12 @@ fn user_entry(text: &str) -> craftwave_lib::storage::MessageEntry {
 }
 
 fn run_config(
-    thinking: Option<craftwave_lib::providers::reasoning::ThinkingLevel>,
+    thinking: Option<craftwave_engine::providers::reasoning::ThinkingLevel>,
 ) -> craftwave_lib::host::commands::chat::RunConfig {
     craftwave_lib::host::commands::chat::RunConfig {
         model_id: None,
         thinking,
-        tier: craftwave_lib::safety::tier::PermissionTier::FullAccess,
+        tier: craftwave_engine::safety::tier::PermissionTier::FullAccess,
         max_turns: 4,
         steer: false,
     }
@@ -201,7 +201,7 @@ async fn wait_ended(sink: &SharedSink, timeout: Duration) -> ChatFrame {
 }
 
 /// 四口径 usage 帧载荷断言助手。
-fn usage_faces(sink: &SharedSink) -> Vec<craftwave_lib::backend::frames::UsageTotal> {
+fn usage_faces(sink: &SharedSink) -> Vec<craftwave_engine::backend::frames::UsageTotal> {
     sink.frames()
         .into_iter()
         .filter_map(|f| match f {
@@ -229,7 +229,7 @@ async fn anthropic_full_chain_text_reasoning_tool_usage() {
         "sess-anthropic".to_owned(),
         vec![user_entry("帮我读配置文件")],
         run_config(Some(
-            craftwave_lib::providers::reasoning::ThinkingLevel::Medium,
+            craftwave_engine::providers::reasoning::ThinkingLevel::Medium,
         )),
         Box::new(sink.clone()),
         false,
@@ -431,7 +431,7 @@ async fn openai_responses_full_chain_text_reasoning_tool_usage() {
         "sess-responses".to_owned(),
         vec![user_entry("帮我读配置文件")],
         run_config(Some(
-            craftwave_lib::providers::reasoning::ThinkingLevel::High,
+            craftwave_engine::providers::reasoning::ThinkingLevel::High,
         )),
         Box::new(sink.clone()),
         false,
@@ -507,9 +507,9 @@ fn dialect_driver(
     base_url: &str,
     model: &str,
     tools: Vec<Arc<ToolDefinition>>,
-) -> Arc<TurnDriver<craftwave_lib::providers::wire::DialectWire, rig::http_client::DynHttpClient>> {
+) -> Arc<TurnDriver<craftwave_engine::providers::wire::DialectWire, rig::http_client::DynHttpClient>> {
     let wire =
-        craftwave_lib::providers::wire::dialect_wire(api_format, base_url, "mock-key", model);
+        craftwave_engine::providers::wire::dialect_wire(api_format, base_url, "mock-key", model);
     let http = rig::http_client::DynHttpClient::new(rig_reqwest::ReqwestClient::from(
         reqwest::Client::new(),
     ));
@@ -606,7 +606,7 @@ async fn cross_dialect_mid_run_switch_applies_on_next_request() {
     );
     // 预构造 anthropic 侧的模型客户端（refresher 持有，第二拍前 swap）
     let anthropic_model = {
-        let wire = craftwave_lib::providers::wire::dialect_wire(
+        let wire = craftwave_engine::providers::wire::dialect_wire(
             ApiFormat::AnthropicMessages,
             &mock_anthropic.base_url,
             "mock-key",
@@ -623,18 +623,18 @@ async fn cross_dialect_mid_run_switch_applies_on_next_request() {
     struct SwapToAnthropic {
         driver: Arc<
             TurnDriver<
-                craftwave_lib::providers::wire::DialectWire,
+                craftwave_engine::providers::wire::DialectWire,
                 rig::http_client::DynHttpClient,
             >,
         >,
-        anthropic_model: rig::driver::Model<craftwave_lib::providers::wire::DialectWire>,
+        anthropic_model: rig::driver::Model<craftwave_engine::providers::wire::DialectWire>,
         calls: std::sync::atomic::AtomicUsize,
     }
-    impl craftwave_lib::backend::run_loop::RequestRefresher for SwapToAnthropic {
+    impl craftwave_engine::backend::run_loop::RequestRefresher for SwapToAnthropic {
         fn before_request(
             &self,
-            _state: &craftwave_lib::backend::run_loop::DriveState,
-        ) -> Result<(), craftwave_lib::backend::run_loop::RefreshFailure> {
+            _state: &craftwave_engine::backend::run_loop::DriveState,
+        ) -> Result<(), craftwave_engine::backend::run_loop::RefreshFailure> {
             let n = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             if n == 1 {
                 // 第二拍前生效：换 anthropic 客户端 + medium 预算参数

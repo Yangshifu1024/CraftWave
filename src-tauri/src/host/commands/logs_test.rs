@@ -2,8 +2,8 @@
 //! 上限 5000/文件不存在空清单）与 open_logs_dir 的目录创建面。
 
 use super::*;
-use crate::host::AppState;
-use crate::util::events::RecordingEventSink;
+use craftwave_engine::app_state::AppState;
+use craftwave_engine::util::events::RecordingEventSink;
 
 fn app_in(dir: &std::path::Path) -> AppState {
     AppState::new_in(
@@ -24,8 +24,8 @@ fn tail_semantics_default_clamp_missing_and_open_dir() {
     for i in 0..12 {
         app.session_log.session_line(
             "s1",
-            crate::providers::types::LogLevel::Info,
-            crate::host::session_log::LogKind::Run,
+            craftwave_engine::providers::types::LogLevel::Info,
+            craftwave_engine::session_log::LogKind::Run,
             format!("行 {i}"),
             None,
             None,

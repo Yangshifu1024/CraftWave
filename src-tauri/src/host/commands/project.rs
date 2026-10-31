@@ -7,9 +7,9 @@
 use serde::Deserialize;
 use tauri::State;
 
-use crate::host::AppState;
-use crate::host::IpcError;
-use crate::storage::{ProjectError, ProjectMeta};
+use craftwave_engine::app_state::AppState;
+use craftwave_engine::util::errors::IpcError;
+use craftwave_engine::storage::{ProjectError, ProjectMeta};
 
 /// `save_project` 参数契约（`{ project: { id?, name, homeDir } }`）。
 #[derive(Debug, Clone, Deserialize)]

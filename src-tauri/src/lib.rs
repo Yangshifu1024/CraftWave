@@ -20,27 +20,17 @@ use tauri::{Manager, WebviewWindow};
 use tauri_plugin_decoration::WebviewWindowExt;
 
 // 业务模块声明（划分依据见本文件头部说明）
-pub mod agent;
-pub mod backend;
 // git 集成域（域清单新增）：只读状态/差异/历史查询（面板
 // 数据面）；git 写策略在 safety（分类表）与 backend（审批门开关），不在此域
-pub mod git;
 pub mod host;
 // knowledge 知识域（域清单）：技能系统与技能命令
-pub mod knowledge;
 // MCP 客户端（域；与 host 同层的独立域模块）
-pub mod mcp;
-pub mod providers;
-pub mod safety;
-pub mod storage;
-pub mod tools;
-pub mod util;
 
 // 契约类型在 `ipc_commands!` 清单中被两处引用：非测试构建经 stringify!（仅取
 // 类型名字符串），测试构建由 export_contract_ts 真实解析（ts-rs 导出）——
 // 后者仅在 cfg(test) 存在，故非测试构建下编译器仍视为未用。
 #[allow(unused_imports)]
-use backend::frames::RunSnapshot;
+use craftwave_engine::backend::frames::RunSnapshot;
 #[allow(unused_imports)]
 use host::commands::chat::{
     ApprovePlanArgs, AttachRunArgs, AttachRunResult, CancelRunArgs, CompactSessionArgs,
@@ -85,7 +75,7 @@ use host::commands::workspace::{
 };
 // MCP 八命令（–47）：契约类型与命令实现同源进宏清单
 #[allow(unused_imports)]
-use mcp::commands::{
+use host::commands::mcp_cmds::{
     McpListConfigArgs, McpListConfigResult, McpSaveConfigArgs, McpServerRefArgs,
     McpSetLaunchTrustArgs, McpSnapshotArgs, McpSnapshotResult, McpTestArgs, McpTestResult,
     mcp_connect, mcp_disconnect, mcp_list_config, mcp_reconnect, mcp_save_config,
@@ -93,7 +83,7 @@ use mcp::commands::{
 };
 // 技能四命令（–51）+ 信任撤销（补充面）
 #[allow(unused_imports)]
-use knowledge::commands::{
+use host::commands::knowledge_cmds::{
     SkillInspectArgs, SkillInspectResult, SkillListEntry, SkillRevokeTrustArgs, SkillToggleArgs,
     skill_inspect, skill_list, skill_reload, skill_revoke_trust, skill_toggle,
 };
@@ -144,42 +134,37 @@ use host::commands::artifacts::{
     EditorEntry, ListArtifactsArgs, OpenInEditorArgs, list_artifacts, list_editors, open_in_editor,
 };
 #[allow(unused_imports)]
-use storage::ListArtifactsResult;
+use craftwave_engine::storage::ListArtifactsResult;
 // git 三命令（–）
 #[allow(unused_imports)]
-use git::{
-    GitDiffArgs, GitDiffResult, GitLogArgs, GitLogResult, GitStatusArgs, GitStatusResult, git_diff,
-    git_recent_log, git_status,
-};
+use craftwave_engine::git::{GitDiffArgs, GitDiffResult, GitLogArgs, GitLogResult, GitStatusArgs, GitStatusResult};
 #[allow(unused_imports)]
-use providers::quota::QuotaSnapshot;
+use craftwave_engine::providers::quota::QuotaSnapshot;
 #[allow(unused_imports)]
-use providers::types::{AppConfig, ProviderConfig};
+use craftwave_engine::providers::types::{AppConfig, ProviderConfig};
 #[allow(unused_imports)]
 use serde_json::Value;
 #[allow(unused_imports)]
 use std::collections::HashMap;
 #[allow(unused_imports)]
-use storage::ProjectMeta;
+use craftwave_engine::storage::ProjectMeta;
 #[allow(unused_imports)]
-use storage::SessionMeta;
+use craftwave_engine::storage::SessionMeta;
 #[allow(unused_imports)]
-use storage::SessionTreeData;
+use craftwave_engine::storage::SessionTreeData;
 // 子代理历史命令返回面（Vec<MessageEntry> 经 cfg(test) 的
 // export_contract_ts 解析，需要真实类型路径在作用域内）
 #[allow(unused_imports)]
-use storage::MessageEntry;
+use craftwave_engine::storage::MessageEntry;
 #[allow(unused_imports)]
-use storage::config_store::ConfigStore;
+use craftwave_engine::storage::config_store::ConfigStore;
 
 #[cfg(test)]
 #[path = "ipc_manifest_test.rs"]
 mod ipc_manifest_test;
+// dev-only mirror 原型的 mock 帧源（S6 遗留，仅 debug 构建注册）
 #[cfg(debug_assertions)]
 mod mock_chat;
-#[cfg(test)]
-#[path = "mock_chat_test.rs"]
-mod mock_chat_test;
 
 /// IPC 命令规格（manifest 的 commands 元素；字段名沿用文档口径）。
 #[derive(Debug, Clone, serde::Serialize)]
@@ -287,20 +272,20 @@ ipc_commands! {
     host::commands::system::open_notification_settings => args: (), ret: ();
     host::commands::system::open_dir => args: OpenDirArgs, ret: ();
     // MCP 八命令
-    mcp::commands::mcp_list_config => args: McpListConfigArgs, ret: McpListConfigResult;
-    mcp::commands::mcp_save_config => args: McpSaveConfigArgs, ret: ();
-    mcp::commands::mcp_connect => args: McpServerRefArgs, ret: ();
-    mcp::commands::mcp_disconnect => args: McpServerRefArgs, ret: ();
-    mcp::commands::mcp_reconnect => args: McpServerRefArgs, ret: ();
-    mcp::commands::mcp_test => args: McpTestArgs, ret: McpTestResult;
-    mcp::commands::mcp_set_launch_trust => args: McpSetLaunchTrustArgs, ret: ();
-    mcp::commands::mcp_snapshot => args: McpSnapshotArgs, ret: McpSnapshotResult;
+    host::commands::mcp_cmds::mcp_list_config => args: McpListConfigArgs, ret: McpListConfigResult;
+    host::commands::mcp_cmds::mcp_save_config => args: McpSaveConfigArgs, ret: ();
+    host::commands::mcp_cmds::mcp_connect => args: McpServerRefArgs, ret: ();
+    host::commands::mcp_cmds::mcp_disconnect => args: McpServerRefArgs, ret: ();
+    host::commands::mcp_cmds::mcp_reconnect => args: McpServerRefArgs, ret: ();
+    host::commands::mcp_cmds::mcp_test => args: McpTestArgs, ret: McpTestResult;
+    host::commands::mcp_cmds::mcp_set_launch_trust => args: McpSetLaunchTrustArgs, ret: ();
+    host::commands::mcp_cmds::mcp_snapshot => args: McpSnapshotArgs, ret: McpSnapshotResult;
     // 技能四命令 + 信任撤销（补充面）
-    knowledge::commands::skill_list => args: (), ret: Vec<SkillListEntry>;
-    knowledge::commands::skill_toggle => args: SkillToggleArgs, ret: ();
-    knowledge::commands::skill_reload => args: (), ret: ();
-    knowledge::commands::skill_inspect => args: SkillInspectArgs, ret: SkillInspectResult;
-    knowledge::commands::skill_revoke_trust => args: SkillRevokeTrustArgs, ret: ();
+    host::commands::knowledge_cmds::skill_list => args: (), ret: Vec<SkillListEntry>;
+    host::commands::knowledge_cmds::skill_toggle => args: SkillToggleArgs, ret: ();
+    host::commands::knowledge_cmds::skill_reload => args: (), ret: ();
+    host::commands::knowledge_cmds::skill_inspect => args: SkillInspectArgs, ret: SkillInspectResult;
+    host::commands::knowledge_cmds::skill_revoke_trust => args: SkillRevokeTrustArgs, ret: ();
     // 子代理两命令
     host::commands::subagent::stop_subagent => args: StopSubagentArgs, ret: ();
     host::commands::subagent::load_subagent_history => args: LoadSubagentHistoryArgs, ret: Vec<MessageEntry>;
@@ -332,9 +317,9 @@ ipc_commands! {
     host::commands::updater::update_precheck => args: (), ret: UpdatePrecheckResult;
     host::commands::updater::pause_followup_queue => args: PauseFollowupQueueArgs, ret: PauseFollowupQueueResult;
     // git 只读三命令（–）
-    git::git_status => args: GitStatusArgs, ret: GitStatusResult;
-    git::git_diff => args: GitDiffArgs, ret: GitDiffResult;
-    git::git_recent_log => args: GitLogArgs, ret: GitLogResult;
+    host::commands::git_cmds::git_status => args: GitStatusArgs, ret: GitStatusResult;
+    host::commands::git_cmds::git_diff => args: GitDiffArgs, ret: GitDiffResult;
+    host::commands::git_cmds::git_recent_log => args: GitLogArgs, ret: GitLogResult;
     #[cfg(debug_assertions)]
     mock_chat::mock_chat_run => args: (), ret: ();
     select_dir => args: (), ret: Option<String>;
@@ -423,15 +408,15 @@ pub fn run() {
                     api.prevent_close();
                     // 关闭面几何强写先行：走退出分支时进程随即将终，防抖
                     // 窗口里的最后一帧几何此刻必须落盘
-                    if let Some(state) = window.app_handle().try_state::<host::AppState>() {
-                        state.window_geometry.save_now(&window);
+                    if let Some(_state) = window.app_handle().try_state::<craftwave_engine::app_state::AppState>() {
+                        crate::host::window_state::geometry_store().save_now(&window);
                     }
                     // closeToTray：true（缺省）= hide 收进托盘
                     // 继续运行；false = 走退出拦截协议（活跃 run 先经
                     // app:exit_requested 前端确认）。配置读不到按现状 hide。
                     let close_to_tray = window
                         .app_handle()
-                        .try_state::<host::AppState>()
+                        .try_state::<craftwave_engine::app_state::AppState>()
                         .and_then(|state| state.config.load().ok())
                         .map(|config| config.ui.close_to_tray)
                         .unwrap_or(true);
@@ -444,13 +429,13 @@ pub fn run() {
                 // 几何记忆：移动/缩放防抖 500ms 落盘；销毁时窗口
                 // 方法已不可用，直接把缓存冲盘（终值语义）。
                 tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) => {
-                    if let Some(state) = window.app_handle().try_state::<host::AppState>() {
-                        state.window_geometry.on_geometry_event(&window);
+                    if let Some(_state) = window.app_handle().try_state::<craftwave_engine::app_state::AppState>() {
+                        crate::host::window_state::geometry_store().on_geometry_event(&window);
                     }
                 }
                 tauri::WindowEvent::Destroyed => {
-                    if let Some(state) = window.app_handle().try_state::<host::AppState>() {
-                        state.window_geometry.flush();
+                    if let Some(_state) = window.app_handle().try_state::<craftwave_engine::app_state::AppState>() {
+                        crate::host::window_state::geometry_store().flush();
                     }
                 }
                 _ => {}
@@ -480,15 +465,15 @@ pub fn run() {
                     .header("Content-Type", "text/html; charset=utf-8")
                     .header(
                         "Content-Security-Policy",
-                        crate::tools::render_html::PREVIEW_CSP,
+                        craftwave_engine::tools::render_html::PREVIEW_CSP,
                     )
                     .header("X-Content-Type-Options", "nosniff")
                     .header("Cache-Control", "no-store")
                     .body(html.into_bytes())
                     .expect("预览响应构造不失败（静态头 + 内存体）")
             };
-            let registry = crate::tools::render_html::preview_registry();
-            if crate::tools::render_html::is_valid_token(&token)
+            let registry = craftwave_engine::tools::render_html::preview_registry();
+            if craftwave_engine::tools::render_html::is_valid_token(&token)
                 && let Some(html) = registry.lookup(&token)
             {
                 return respond(tauri::http::StatusCode::OK, html);
@@ -505,19 +490,13 @@ pub fn run() {
             let home = app.path().home_dir()?;
             let data_dir = home.join(".craftwave");
             std::fs::create_dir_all(&data_dir)?;
+            host::window_state::geometry_store_init(&data_dir);
             let handle = app.handle().clone();
             // 通知门三件套先独立构造（AppHandle/配置缓存/活跃会话标识），
             // 再与 AppState 共享同一份 Arc（配置改写后通知偏好即读即生效）
             let config = std::sync::Arc::new(ConfigStore::new(data_dir.join("config.json")));
-            // 恢复保护序列：数据目录根存在恢复标记
-            // （用户手动恢复旧升级备份后按说明复制回 .restore-pending.json）
-            // 时，先执行保护——信任/MCP 工具许可/外部目录授权/审批白名单
-            // 清空、全部待发队列强制暂停——再进入正常装配，保证保护在
-            // 首次启动前生效。普通重启（无标记）零动作。config 用同一份
-            // Arc：白名单清空经 ConfigStore.update 走唯一写入口，缓存热
-            // 替换后与后续全部读取一致。执行报告在启动序记账处落 app.log。
-            let restore_report =
-                storage::backup::apply_restore_protection(&data_dir, Some(config.as_ref()));
+            // 注：Tauri 版的「恢复保护序列」（旧升级备份恢复后的许可清空）
+            // 随数据不迁移决策剥离（gpui-rewrite 阶段 1，backup.rs 已删）。
             let active_session = std::sync::Arc::new(std::sync::Mutex::new(None));
             let notify = std::sync::Arc::new(host::notify::NotifyGate::new(
                 handle.clone(),
@@ -525,7 +504,7 @@ pub fn run() {
                 config.clone(),
             ));
             host::notify::install_click_routing(&notify);
-            let mut state = host::AppState::new_in(
+            let mut state = craftwave_engine::app_state::AppState::new_in(
                 data_dir.clone(),
                 std::sync::Arc::new(host::TauriEventSink {
                     app: handle.clone(),
@@ -539,7 +518,7 @@ pub fn run() {
             state.active_session = active_session;
             // 内置技能根（目录清单）：打包态经 Resource 目录
             // 解析（bundle.resources 声明的 resources/skills/**）；解析失败
-            // （dev/headless）留 None——knowledge::commands::resolve_builtin_root
+            // （dev/headless）留 None——host::commands::knowledge_cmds::resolve_builtin_root
             // 回退源码树路径。
             state.resource_skills_dir = app
                 .path()
@@ -550,7 +529,7 @@ pub fn run() {
             state.apply_subagent_limit();
             // 技能注册表装配：三来源根一次配齐 + 首扫（进程级
             // 单例；后续 run 装配与命令面按活跃会话上下文重扫）。
-            knowledge::commands::configure_registry(&state);
+            host::commands::knowledge_cmds::configure_registry(&state);
             // RunManager 以共享句柄单独 manage：start_chat/cancel_run/
             // resolve_ask/approve_plan 以 State<RunManager> 注入（Clone =
             // 同一注册表）；漏 manage 会报 "state not managed for
@@ -561,27 +540,9 @@ pub fn run() {
             app.manage(state);
             host::shell::install_tray(&handle)?;
             // 启动序记账（app.log：运行元数据——不涉会话正文）
-            if let Some(state) = app.try_state::<host::AppState>() {
-                // 恢复保护序列记账：有恢复才落账；失败面
-                // 逐条 Warn（不静默——用户据此知道哪些面可能残留旧许可）
-                if restore_report.applied {
-                    for action in &restore_report.actions {
-                        state.session_log.app_line(
-                            crate::providers::types::LogLevel::Info,
-                            action.clone(),
-                            None,
-                        );
-                    }
-                    for failure in &restore_report.failures {
-                        state.session_log.app_line(
-                            crate::providers::types::LogLevel::Warn,
-                            failure.clone(),
-                            None,
-                        );
-                    }
-                }
+            if let Some(state) = app.try_state::<craftwave_engine::app_state::AppState>() {
                 state.session_log.app_line(
-                    crate::providers::types::LogLevel::Info,
+                    craftwave_engine::providers::types::LogLevel::Info,
                     "应用启动完成".to_owned(),
                     Some(serde_json::json!({
                         "dataDir": data_dir.display().to_string(),
@@ -592,10 +553,10 @@ pub fn run() {
             // 窗口几何恢复：此刻窗口仍隐藏（visible:false、
             // 激活协议未亮窗），先读 window-state.json 应用几何——恢复天然
             // 先于亮窗；越界/损坏回 tauri.conf.json 默认。
-            if let Some(state) = app.try_state::<host::AppState>()
+            if let Some(_state) = app.try_state::<craftwave_engine::app_state::AppState>()
                 && let Some(window) = handle.get_webview_window(host::shell::MAIN_WINDOW)
             {
-                state.window_geometry.restore(&window);
+                crate::host::window_state::geometry_store().restore(&window);
             }
             Ok(())
         })

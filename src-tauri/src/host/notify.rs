@@ -4,7 +4,7 @@
 //! 失焦/隐藏时）与人工介入等待（ask 询问/审批）。触发点不在本模块：
 //! [`crate::host::TauriEventSink::emit`] 对 `run:done` / `run:error` /
 //! `run:cancelled` / `ask:opened` 四个事件键旁路调用本门（单一旁路点，
-//! 测试用的 [`crate::util::events::RecordingEventSink`] 天然无通知副作用）。
+//! 测试用的 [`craftwave_engine::util::events::RecordingEventSink`] 天然无通知副作用）。
 //!
 //! 防打扰：通知总开关关闭时不发；「仅人工介入」开启时 run
 //! 终态不发；窗口聚焦且正停留在触发会话时不发（隐藏窗口视为失焦）。
@@ -20,9 +20,9 @@ use tauri::Manager;
 use tauri_plugin_notification::{ActionPerformed, NotificationExt};
 
 use crate::host::shell::MAIN_WINDOW;
-use crate::providers::types::AppConfig;
-use crate::storage::config_store::ConfigStore;
-use crate::util::events::{EventSink, keys};
+use craftwave_engine::providers::types::AppConfig;
+use craftwave_engine::storage::config_store::ConfigStore;
+use craftwave_engine::util::events::{EventSink, keys};
 
 #[cfg(test)]
 #[path = "notify_test.rs"]
@@ -107,7 +107,7 @@ impl NotifyGate {
 
     /// 界面语言：读最新配置缓存；读不出（配置损坏等）按缺省
     /// 中文——宁可退回基准语言也不阻塞通知。
-    fn ui_language(&self) -> crate::providers::types::Language {
+    fn ui_language(&self) -> craftwave_engine::providers::types::Language {
         self.config
             .load()
             .map(|c| c.ui.language)

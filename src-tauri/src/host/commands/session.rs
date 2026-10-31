@@ -7,11 +7,11 @@
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
-use crate::agent::RunManager;
-use crate::host::AppState;
-use crate::host::IpcError;
-use crate::storage::SessionMeta;
-use crate::util::ids::new_uuid;
+use craftwave_engine::agent::RunManager;
+use craftwave_engine::app_state::AppState;
+use craftwave_engine::util::errors::IpcError;
+use craftwave_engine::storage::SessionMeta;
+use craftwave_engine::util::ids::new_uuid;
 
 /// 新会话默认标题（改名走 rename_session；自动起名由后台标题任务负责）。
 pub(crate) const DEFAULT_SESSION_TITLE: &str = "新会话";
@@ -86,7 +86,7 @@ pub fn delete_session_core(
 ) -> Result<(), IpcError> {
     if runs.get(session_id).is_some() {
         return Err(IpcError::new(
-            crate::util::errors::E_SESSION_RUNNING,
+            craftwave_engine::util::errors::E_SESSION_RUNNING,
             format!("session is running; cancel it before deleting: {session_id}"),
         ));
     }
@@ -126,7 +126,7 @@ pub fn delete_session_core(
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => {
             return Err(IpcError::new(
-                crate::util::errors::E_IO,
+                craftwave_engine::util::errors::E_IO,
                 format!("删除会话残留失败：{}：{e}", queue_file.display()),
             ));
         }
@@ -140,7 +140,7 @@ pub fn delete_session_core(
     // 删除失败必须报告（红线：不能声称全部删除成功）
     if !all_failures.is_empty() {
         return Err(IpcError::new(
-            crate::util::errors::E_IO,
+            craftwave_engine::util::errors::E_IO,
             format!(
                 "会话已删除，但部分专属副本清理失败（残留清单）：{}",
                 all_failures.join("；")
@@ -261,7 +261,7 @@ pub struct GetSessionPrefsResult {
     /// 会话 thinking 档（五档）。
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
-    pub thinking: Option<crate::providers::reasoning::ThinkingLevel>,
+    pub thinking: Option<craftwave_engine::providers::reasoning::ThinkingLevel>,
 }
 
 /// `set_session_prefs` 参数契约：merge 语义——**只传的字段被改**
@@ -291,7 +291,7 @@ pub struct SetSessionPrefsPayload {
     pub model_id: Option<Option<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
-    pub thinking: Option<Option<crate::providers::reasoning::ThinkingLevel>>,
+    pub thinking: Option<Option<craftwave_engine::providers::reasoning::ThinkingLevel>>,
 }
 
 /// `get_session_prefs` 主体（公开给集成测试注入临时数据目录——不经 tauri
@@ -301,7 +301,7 @@ pub(crate) fn get_session_prefs_core(
     session_id: &str,
 ) -> Result<GetSessionPrefsResult, IpcError> {
     ensure_session_exists(app, session_id)?;
-    let prefs = crate::storage::prefs::load_prefs(app.store.root(), session_id);
+    let prefs = craftwave_engine::storage::prefs::load_prefs(app.store.root(), session_id);
     Ok(GetSessionPrefsResult {
         model_id: prefs.model_id,
         thinking: prefs.thinking,
@@ -316,7 +316,7 @@ pub(crate) fn set_session_prefs_core(
     payload: SetSessionPrefsPayload,
 ) -> Result<(), IpcError> {
     ensure_session_exists(app, session_id)?;
-    let mut current = crate::storage::prefs::load_prefs(app.store.root(), session_id);
+    let mut current = craftwave_engine::storage::prefs::load_prefs(app.store.root(), session_id);
     if let Some(model_id) = payload.model_id {
         // 空白归一为清除（与"null 清除"等价，宽容前端空串）
         current.model_id = model_id.filter(|id| !id.trim().is_empty());
@@ -324,7 +324,7 @@ pub(crate) fn set_session_prefs_core(
     if let Some(thinking) = payload.thinking {
         current.thinking = thinking;
     }
-    crate::storage::prefs::save_prefs(app.store.root(), session_id, &current)
+    craftwave_engine::storage::prefs::save_prefs(app.store.root(), session_id, &current)
         .map_err(|e| IpcError::internal(format!("session prefs write failed: {e}")))
 }
 

@@ -4,8 +4,8 @@
 use base64::Engine;
 
 use super::image::{attach_image_core, read_image_blob_core};
-use crate::host::AppState;
-use crate::util::events::RecordingEventSink;
+use craftwave_engine::app_state::AppState;
+use craftwave_engine::util::events::RecordingEventSink;
 
 /// 1x1 透明 PNG（base64 内嵌，程序解码——测试样本不依赖外部文件）。
 const PNG_1X1: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";

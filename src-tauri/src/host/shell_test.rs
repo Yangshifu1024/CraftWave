@@ -3,7 +3,7 @@
 
 use std::time::{Duration, Instant};
 
-use super::{EXIT_CONFIRM_TIMEOUT, ExitConfirm};
+use craftwave_engine::exit_confirm::{EXIT_CONFIRM_TIMEOUT, ExitConfirm};
 
 /// 固定推进的时钟：从 t0 起按秒数取时点（测试可读性 > 绝对时刻）。
 fn at(t0: Instant, secs: u64) -> Instant {

@@ -1,7 +1,7 @@
 //! 子代理委派的宿主装配与命令。
 //!
 //! 本文件承担三件事：
-//! - **委派执行**（[`SubagentSpawnerImpl`]，注入 [`crate::backend::exec`]
+//! - **委派执行**（[`SubagentSpawnerImpl`]，注入 [`craftwave_engine::backend::exec`]
 //!   的 `SubagentSpawner` 接口）：查角色表 → 并发闸拿名额（满额排队）→
 //!   写入角色在 Git 项目创建独立 worktree → 发 subStarted 帧
 //!   与 sub:spawn 事件 → 驱动子 run（复用 [`drive_run`]，含审批挂起恢复
@@ -30,24 +30,24 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 use tokio_util::sync::CancellationToken;
 
-use crate::agent::sub_registry::SubHandle;
-use crate::agent::worktree::{self as wt, RecoveryReport, WorktreeLease};
-use crate::agent::{SubagentRole, WorkspaceKind, clamp_budget_steps, find_role, roles};
-use crate::backend::exec::{ExecutorEnv, SubagentSpawner, ToolsetExecutor};
-use crate::backend::frames::{ChatFrame, EndReason, FrameError, FrameSink, SubOutcome, UsageTotal};
-use crate::backend::gate::ApprovalGate;
-use crate::backend::run_loop::{CancellableExecutor, DriveState, RunExit, drive_run};
-use crate::backend::turn::TurnDriver;
-use crate::host::AppState;
+use craftwave_engine::agent::sub_registry::SubHandle;
+use craftwave_engine::agent::worktree::{self as wt, RecoveryReport, WorktreeLease};
+use craftwave_engine::agent::{SubagentRole, WorkspaceKind, clamp_budget_steps, find_role, roles};
+use craftwave_engine::backend::exec::{ExecutorEnv, SubagentSpawner, ToolsetExecutor};
+use craftwave_engine::backend::frames::{ChatFrame, EndReason, FrameError, FrameSink, SubOutcome, UsageTotal};
+use craftwave_engine::backend::gate::ApprovalGate;
+use craftwave_engine::backend::run_loop::{CancellableExecutor, DriveState, RunExit, drive_run};
+use craftwave_engine::backend::turn::TurnDriver;
+use craftwave_engine::app_state::AppState;
 use crate::host::commands::chat::{
     ApprovalResolution, denied_finish, resolve_model, wait_approval_with,
 };
-use crate::host::commands::workspace::resolve_session_roots;
-use crate::safety::tier::PermissionTier;
-use crate::storage::{MessageEntry, MessageRole, WirePart};
-use crate::tools::plan::PlanState;
-use crate::util::errors::{E_INVALID_ARG, E_IO, E_SUB_BUDGET, IpcError};
-use crate::util::events::keys;
+use craftwave_engine::session_roots::resolve_session_roots;
+use craftwave_engine::safety::tier::PermissionTier;
+use craftwave_engine::storage::{MessageEntry, MessageRole, WirePart};
+use craftwave_engine::tools::plan::PlanState;
+use craftwave_engine::util::errors::{E_INVALID_ARG, E_IO, E_SUB_BUDGET, IpcError};
+use craftwave_engine::util::events::keys;
 
 /// 当前时间毫秒（Unix 纪元；取不到兜底 0，仅元数据展示用）。
 pub(crate) fn now_ms() -> i64 {
@@ -99,7 +99,7 @@ pub struct SubMeta {
 pub(crate) struct SubagentContext {
     pub session_id: String,
     pub parent_run_id: String,
-    pub parent_hub: Arc<crate::agent::FrameHub>,
+    pub parent_hub: Arc<craftwave_engine::agent::FrameHub>,
     pub tier: PermissionTier,
     pub model_id: Option<String>,
     pub auto_confirm: bool,
@@ -120,7 +120,7 @@ impl SubagentSpawner for SubagentSpawnerImpl {
         &self,
         args_json: &str,
         parent_token: &CancellationToken,
-    ) -> std::pin::Pin<Box<dyn Future<Output = crate::backend::run_loop::ToolExecution> + Send + '_>>
+    ) -> std::pin::Pin<Box<dyn Future<Output = craftwave_engine::backend::run_loop::ToolExecution> + Send + '_>>
     {
         // AppState 非整体 Clone（内部全 Arc 句柄）：share_handles 产出同源
         // 轻量副本（同款），spawn 闭包持有
@@ -153,15 +153,15 @@ enum SubExit {
 /// 为子 run 装配时解析的实际模型，子 run 不挂每拍刷新源，恒定不变）。
 struct SubRunSink {
     /// 父 run 的帧枢纽（subFrame 入环可随 attach 重放恢复）。
-    hub: Arc<crate::agent::FrameHub>,
+    hub: Arc<craftwave_engine::agent::FrameHub>,
     sub_id: String,
     recorder: SubHistoryRecorder,
-    events: Arc<dyn crate::util::events::EventSink>,
+    events: Arc<dyn craftwave_engine::util::events::EventSink>,
     session_usage: Arc<Mutex<std::collections::HashMap<String, UsageTotal>>>,
     session_id: String,
     sub_run_id: String,
     /// 用量账本（AppState.ledger 克隆件；主/子/辅助共一入口，只计一次）。
-    ledger: crate::host::usage::UsageLedger,
+    ledger: craftwave_engine::usage::UsageLedger,
     /// 子 run 实际执行模型 `(配置 id, 显示名)`（装配时解析）。
     model_identity: (String, String),
     /// 子 run 自身累计（sub:usage 载荷 = 该子代理的自身消耗，子面板展示；
@@ -183,7 +183,7 @@ impl FrameSink for SubRunSink {
                     self.ledger.record(
                         &self.session_id,
                         &self.sub_run_id,
-                        crate::host::usage::run_kind::SUB,
+                        craftwave_engine::usage::run_kind::SUB,
                         &self.model_identity.0,
                         &self.model_identity.1,
                         delta,
@@ -427,7 +427,7 @@ fn sub_history_dir(data_root: &Path, parent_run_id: &str, sub_id: &str) -> PathB
 /// 写 meta.json（原子写）。
 fn write_sub_meta(meta: &SubMeta, dir: &Path) {
     if let Ok(bytes) = serde_json::to_vec_pretty(meta) {
-        let _ = crate::util::atomic::write_atomic(&dir.join("meta.json"), &bytes);
+        let _ = craftwave_engine::util::atomic::write_atomic(&dir.join("meta.json"), &bytes);
     }
 }
 
@@ -702,7 +702,7 @@ async fn run_subagent(
     ctx: &SubagentContext,
     args_json: &str,
     parent_token: &CancellationToken,
-) -> crate::backend::run_loop::ToolExecution {
+) -> craftwave_engine::backend::run_loop::ToolExecution {
     // ① 参数与角色解析（失败 = 工具级错误回喂，不中断父 run）
     let args: SubSpawnArgs = match serde_json::from_str(args_json) {
         Ok(a) => a,
@@ -730,7 +730,7 @@ async fn run_subagent(
 
     // ② 并发名额（全局共享上限；满额排队不拒绝；父取消 → 未启动即收）
     if !app.subs.gate().acquire(parent_token).await {
-        return crate::backend::run_loop::ToolExecution::Cancelled {
+        return craftwave_engine::backend::run_loop::ToolExecution::Cancelled {
             executed: false,
             message: "委派在排队等待并发名额时被取消".to_owned(),
         };
@@ -807,8 +807,8 @@ async fn run_subagent(
     // 不进日志——正文不入诊断面，详情走抽屉回看通道）
     app.session_log.session_line(
         &ctx.session_id,
-        crate::providers::types::LogLevel::Info,
-        crate::host::session_log::LogKind::Subagent,
+        craftwave_engine::providers::types::LogLevel::Info,
+        craftwave_engine::session_log::LogKind::Subagent,
         format!("子代理启动：{}", role.name),
         Some(serde_json::json!({ "role": role.name, "budgetSteps": budget })),
         Some(&ctx.parent_run_id),
@@ -907,7 +907,7 @@ async fn run_subagent(
     };
     let executor: Arc<dyn CancellableExecutor> = Arc::new(
         ToolsetExecutor::new(
-            crate::tools::ToolsContext::new(roots_project, roots_data)
+            craftwave_engine::tools::ToolsContext::new(roots_project, roots_data)
                 .with_extra_roots(sub_extra_roots.clone()),
             ctx.tier,
         )
@@ -935,8 +935,8 @@ async fn run_subagent(
             // 但环境照常装配（执行入口白名单先拦；策略与主代理同源）。
             // 配置读取失败按缺省配置装配（fail-closed：缺省拒绝私网）。
             network: Some(std::sync::Arc::new(match app.config.load() {
-                Ok(config) => crate::tools::NetworkEnv::from_config(&config),
-                Err(_) => crate::tools::NetworkEnv::from_config(&Default::default()),
+                Ok(config) => craftwave_engine::tools::NetworkEnv::from_config(&config),
+                Err(_) => craftwave_engine::tools::NetworkEnv::from_config(&Default::default()),
             })),
         }),
     );
@@ -950,7 +950,7 @@ async fn run_subagent(
     let gate = {
         let canonical = |p: &std::path::Path| std::fs::canonicalize(p).ok();
         let gate_ws = match (canonical(&gate_project), canonical(&gate_data)) {
-            (Some(project), Some(data)) => Some(crate::backend::gate::GateWorkspace {
+            (Some(project), Some(data)) => Some(craftwave_engine::backend::gate::GateWorkspace {
                 roots: {
                     let mut all = vec![project.clone(), data];
                     for extra in &sub_extra_roots {
@@ -970,7 +970,7 @@ async fn run_subagent(
             .map(|c| c.approval.clone())
             .unwrap_or_default();
         let mut gate = ApprovalGate::new(ctx.tier, sub_plan)
-            .with_internal_guard(crate::safety::internal_state::InternalStateGuard::new(
+            .with_internal_guard(craftwave_engine::safety::internal_state::InternalStateGuard::new(
                 &data_root,
                 &project_root,
             ))
@@ -980,7 +980,7 @@ async fn run_subagent(
             //——主 run 范围门「本会话始终允许」的授权目录对子代理同样生效
             //（子代理自身计划独立，无已批准计划时范围门不触发）。
             .with_plan_scope_memory(app.plan_scopes.bucket(&ctx.session_id))
-            .with_policy(crate::backend::gate::ApprovalPolicy {
+            .with_policy(craftwave_engine::backend::gate::ApprovalPolicy {
                 enabled: approval.enabled,
                 allowlist_enabled: approval.allowlist_enabled,
                 command_allowlist: approval.command_allowlist.clone(),
@@ -1042,7 +1042,7 @@ async fn run_subagent(
             // 兜底——语义与 Stalled 同形：runEnded(error) 已发出，按失败收）
             Ok(RunExit::Failed { message, .. }) => break SubExit::Failed(message),
             Ok(RunExit::Suspended(info)) => {
-                let crate::backend::run_loop::SuspendedInfo {
+                let craftwave_engine::backend::run_loop::SuspendedInfo {
                     run_json,
                     pending,
                     state,
@@ -1075,13 +1075,13 @@ async fn run_subagent(
                         if let Some(dir) = &pending.external_dir
                             && option_id == "allow"
                         {
-                            let _ = crate::host::commands::workspace::allow_external_dir_core(
+                            let _ = super::workspace::allow_external_dir_core(
                                 app,
                                 &ctx.session_id,
                                 dir,
                             );
                             if let Ok(canonical) =
-                                crate::safety::safe_join::canonicalize_best_effort(
+                                craftwave_engine::safety::safe_join::canonicalize_best_effort(
                                     std::path::Path::new(dir),
                                 )
                             {
@@ -1098,7 +1098,7 @@ async fn run_subagent(
                                 &pending.args_json,
                             );
                         }
-                        match crate::backend::run_loop::resume_run(&run_json) {
+                        match craftwave_engine::backend::run_loop::resume_run(&run_json) {
                             Ok(resumed) => {
                                 run = resumed;
                                 resume_state = Some(state);
@@ -1206,7 +1206,7 @@ pub(crate) fn build_subagent_history(
     if !clean_context {
         let tail_start = parent_tail.len().saturating_sub(6);
         if let Ok(mut rebuilt) =
-            crate::backend::wire::rebuild_message_stream(&parent_tail[tail_start..])
+            craftwave_engine::backend::wire::rebuild_message_stream(&parent_tail[tail_start..])
         {
             history.append(&mut rebuilt);
         }
@@ -1219,8 +1219,8 @@ pub(crate) fn build_subagent_history(
 
 /// 委派未启动/早夭的工具级失败面（gate 未取得名额或快照失败等；不发
 /// subStarted——前端工具卡只见失败结果）。
-fn spawn_failure(code: &str, message: &str) -> crate::backend::run_loop::ToolExecution {
-    crate::backend::run_loop::ToolExecution::Completed {
+fn spawn_failure(code: &str, message: &str) -> craftwave_engine::backend::run_loop::ToolExecution {
+    craftwave_engine::backend::run_loop::ToolExecution::Completed {
         ok: false,
         ui_summary: format!("子代理委派失败：{message}"),
         error: Some(FrameError::new(code, message.to_owned())),
@@ -1237,7 +1237,7 @@ fn send_sub_error_ended(sink: &mut SubRunSink, message: String) {
         duration_ms: 0,
         tool_count: 0,
         turn: sink.recorder.turn.max(1),
-        error: Some(FrameError::new(crate::util::errors::E_INTERNAL, message)),
+        error: Some(FrameError::new(craftwave_engine::util::errors::E_INTERNAL, message)),
     });
 }
 
@@ -1267,7 +1267,7 @@ fn finalize_spawn(
     budget: u32,
     exit: SubExit,
     report_candidate: Option<String>,
-) -> crate::backend::run_loop::ToolExecution {
+) -> craftwave_engine::backend::run_loop::ToolExecution {
     // 子 run 明细收口（补写 endedAt；终态只收口不搬移已记日期）
     let _ = app
         .ledger
@@ -1306,7 +1306,7 @@ fn finalize_spawn(
         meta.outcome = Some(outcome_key(&outcome).to_owned());
         meta.worktree_root = lease.as_ref().map(|l| l.worktree_root.clone());
         if let Ok(new_bytes) = serde_json::to_vec_pretty(&meta) {
-            let _ = crate::util::atomic::write_atomic(&history_dir.join("meta.json"), &new_bytes);
+            let _ = craftwave_engine::util::atomic::write_atomic(&history_dir.join("meta.json"), &new_bytes);
         }
         meta_updated = Some(meta);
     }
@@ -1372,11 +1372,11 @@ fn finalize_spawn(
     app.session_log.session_line(
         &ctx.session_id,
         if matches!(outcome, SubOutcome::Cancelled) {
-            crate::providers::types::LogLevel::Info
+            craftwave_engine::providers::types::LogLevel::Info
         } else {
-            crate::providers::types::LogLevel::Warn
+            craftwave_engine::providers::types::LogLevel::Warn
         },
-        crate::host::session_log::LogKind::Subagent,
+        craftwave_engine::session_log::LogKind::Subagent,
         format!("子代理收口：{}", outcome_key(&outcome)),
         Some(serde_json::json!({
             "role": role.name,
@@ -1394,7 +1394,7 @@ fn finalize_spawn(
 
     // 父工具结果（模型通道）
     match outcome {
-        SubOutcome::Cancelled => crate::backend::run_loop::ToolExecution::Cancelled {
+        SubOutcome::Cancelled => craftwave_engine::backend::run_loop::ToolExecution::Cancelled {
             executed: true,
             message: "子代理已被取消（stop_subagent 或父任务取消级联）".to_owned(),
         },
@@ -1404,7 +1404,7 @@ fn finalize_spawn(
                 text.push_str("\n\n工作区回收结果：\n");
                 text.push_str(&worktree_outcome.summary);
             }
-            crate::backend::run_loop::ToolExecution::Completed {
+            craftwave_engine::backend::run_loop::ToolExecution::Completed {
                 ok: true,
                 ui_summary: format!(
                     "子代理 {} 完成 · {}",
@@ -1431,7 +1431,7 @@ fn finalize_spawn(
                 text.push_str("\n工作区回收结果：\n");
                 text.push_str(&worktree_outcome.summary);
             }
-            crate::backend::run_loop::ToolExecution::Completed {
+            craftwave_engine::backend::run_loop::ToolExecution::Completed {
                 ok: false,
                 ui_summary: format!("子代理 {} 预算耗尽（partial）", role.name),
                 error: Some(FrameError::new(
@@ -1451,7 +1451,7 @@ fn finalize_spawn(
                 text.push('\n');
                 text.push_str(&worktree_outcome.summary);
             }
-            crate::backend::run_loop::ToolExecution::Completed {
+            craftwave_engine::backend::run_loop::ToolExecution::Completed {
                 ok: false,
                 ui_summary: format!("子代理 {} 异常结束", role.name),
                 error: Some(FrameError::new(

@@ -5,11 +5,11 @@
 use std::sync::Arc;
 
 use super::updater::{pause_followup_queue_core, update_precheck_core, update_status_core};
-use crate::host::AppState;
-use crate::host::followup::FollowUpEntry;
-use crate::safety::tier::PermissionTier;
-use crate::util::atomic::write_atomic;
-use crate::util::events::RecordingEventSink;
+use craftwave_engine::app_state::AppState;
+use craftwave_engine::followup::FollowUpEntry;
+use craftwave_engine::safety::tier::PermissionTier;
+use craftwave_engine::util::atomic::write_atomic;
+use craftwave_engine::util::events::RecordingEventSink;
 
 /// 测试脚手架：临时数据目录上的 AppState（事件汇用录制桩）。
 fn app(data: &std::path::Path) -> AppState {
@@ -22,7 +22,7 @@ fn entry(id: &str) -> FollowUpEntry {
         id: id.to_owned(),
         text: "待发消息".to_owned(),
         created_at: 1,
-        run_config: crate::host::followup::QueuedRunConfig {
+        run_config: craftwave_engine::followup::QueuedRunConfig {
             model_id: None,
             thinking: None,
             tier: PermissionTier::ConfirmEach,
@@ -88,14 +88,14 @@ fn update_gates_queue_scan_and_pause_persistence() {
     let queues = vec![
         (
             "s-a".to_owned(),
-            crate::host::followup::QueueSnapshot {
+            craftwave_engine::followup::QueueSnapshot {
                 size: 2,
                 paused: false,
             },
         ),
         (
             "s-b".to_owned(),
-            crate::host::followup::QueueSnapshot {
+            craftwave_engine::followup::QueueSnapshot {
                 size: 1,
                 paused: true,
             },
@@ -122,7 +122,7 @@ fn update_gates_queue_scan_and_pause_persistence() {
         0,
         &[(
             "s-c".to_owned(),
-            crate::host::followup::QueueSnapshot {
+            craftwave_engine::followup::QueueSnapshot {
                 size: 0,
                 paused: false,
             },

@@ -12,6 +12,7 @@
 //! （模型 read 工具的解析基准即项目主目录，可直接消费）；workspace 子目录
 //! 专属条目返回绝对路径（数据目录本体退出可见面）。
 
+use craftwave_engine::session_roots::{resolve_session_roots, SessionRoots};
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -19,76 +20,11 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
-use crate::host::AppState;
-use crate::host::IpcError;
-use crate::safety::safe_join::PathGuard;
-use crate::util::encoding::{MAX_RESPONSE_BYTES, decode_text, is_probably_binary};
-use crate::util::errors::{E_PATH_OUTSIDE_ROOTS, ToolError};
-
-/// 会话 roots 解析（含外部授权目录扩展）：
-///
-/// - 项目会话：两根 = 项目主目录 + `<data_root>/workspace/`；
-/// - 临时会话（含未知会话兜底）：两根同目录 = `<data_root>/workspace/`；
-/// - 第三集合 = SessionMeta 授权的外部目录（会话 roots 快照：
-///   「始终允许」并入后随 index.json 持久化，会话内跨 run 生效、跨会话
-///   不延续；备份恢复由恢复流程清空）。
-///
-/// 数据目录本体（config.json/sessions/ 等存储内部文件）退出模型文件工具
-/// 与 @ 补全的可见面。目录不在这里落盘创建，由使用方 create_dir_all
-/// （chat.rs 既有习惯）或按不存在口径报错。
-#[derive(Debug, Clone)]
-pub(crate) struct SessionRoots {
-    /// 项目主目录（相对路径解析基准与首个 root；临时会话 = workspace 根）。
-    pub project_root: PathBuf,
-    /// 数据目录下的 workspace 子目录（第二根）。
-    pub workspace_root: PathBuf,
-    /// 已授权外部目录（canonical 绝对路径；授权记录按字符串保留，此处
-    /// canonicalize 失败的条目跳过——PathGuard 对不存在的根会报错）。
-    pub extra_dirs: Vec<PathBuf>,
-}
-
-// SessionRoots 的根集合方法。
-impl SessionRoots {
-    /// 全部根（PathGuard 构造序：项目主目录在前——相对路径解析基准）。
-    pub fn all(&self) -> Vec<PathBuf> {
-        let mut roots = vec![self.project_root.clone(), self.workspace_root.clone()];
-        roots.extend(self.extra_dirs.iter().cloned());
-        roots
-    }
-
-    /// 初始两根（不含授权目录；insideRoots 判定口径）。
-    pub fn core(&self) -> Vec<PathBuf> {
-        vec![self.project_root.clone(), self.workspace_root.clone()]
-    }
-}
-
-/// 会话 roots 解析（含授权目录；命令面与 run 装配共用）。
-pub(crate) fn resolve_session_roots(app: &AppState, session_id: &str) -> SessionRoots {
-    let workspace_root = app.store.root().join("workspace");
-    let project_root = app
-        .store
-        .index()
-        .get(session_id)
-        .and_then(|meta| meta.project_id)
-        .and_then(|pid| app.projects.home_of(&pid))
-        .unwrap_or_else(|| workspace_root.clone());
-    let extra_dirs = app
-        .store
-        .index()
-        .get(session_id)
-        .map(|meta| {
-            meta.authorized_external_dirs
-                .iter()
-                .filter_map(|d| fs::canonicalize(d).ok())
-                .collect()
-        })
-        .unwrap_or_default();
-    SessionRoots {
-        project_root,
-        workspace_root,
-        extra_dirs,
-    }
-}
+use craftwave_engine::app_state::AppState;
+use craftwave_engine::util::errors::IpcError;
+use craftwave_engine::safety::safe_join::PathGuard;
+use craftwave_engine::util::encoding::{MAX_RESPONSE_BYTES, decode_text, is_probably_binary};
+use craftwave_engine::util::errors::{E_PATH_OUTSIDE_ROOTS, ToolError};
 
 /// ToolError → IPC 错误码（safe_join 语义原样透传）。
 fn to_ipc_error(err: ToolError) -> IpcError {

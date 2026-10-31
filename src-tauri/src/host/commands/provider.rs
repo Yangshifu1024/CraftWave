@@ -8,11 +8,11 @@ use serde::Deserialize;
 use serde::Serialize;
 use tauri::State;
 
-use crate::host::AppState;
-use crate::providers::probe;
-use crate::providers::service;
-use crate::providers::types::ProviderConfig;
-use crate::util::errors::{E_NOT_FOUND, IpcError};
+use craftwave_engine::app_state::AppState;
+use craftwave_engine::providers::probe;
+use craftwave_engine::providers::service;
+use craftwave_engine::providers::types::ProviderConfig;
+use craftwave_engine::util::errors::{E_NOT_FOUND, IpcError};
 
 /// `save_provider` 参数契约（文档命名锚点，命令形参按字段平铺展开）。
 #[derive(Debug, Clone, Deserialize)]

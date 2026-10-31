@@ -3,10 +3,10 @@
 //! 队列文件随删、用户工作成果不误伤。
 
 use super::*;
-use crate::agent::RunManager;
-use crate::host::AppState;
-use crate::providers::types::LogLevel;
-use crate::util::events::RecordingEventSink;
+use craftwave_engine::agent::RunManager;
+use craftwave_engine::app_state::AppState;
+use craftwave_engine::providers::types::LogLevel;
+use craftwave_engine::util::events::RecordingEventSink;
 
 fn app_in(dir: &std::path::Path) -> AppState {
     AppState::new_in(
@@ -20,7 +20,7 @@ fn seed_session(app: &AppState, session_id: &str) {
     let ts = 0i64;
     app.store
         .index()
-        .upsert(crate::storage::SessionMeta {
+        .upsert(craftwave_engine::storage::SessionMeta {
             id: session_id.to_owned(),
             project_id: None,
             title: "测试会话".to_owned(),
@@ -39,7 +39,7 @@ fn line(app: &AppState, session: &str, msg: &str) {
     app.session_log.session_line(
         session,
         LogLevel::Info,
-        crate::host::session_log::LogKind::Run,
+        craftwave_engine::session_log::LogKind::Run,
         msg.to_owned(),
         None,
         None,

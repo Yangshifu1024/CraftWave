@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::State;
 
-use crate::host::IpcError;
-use crate::storage::{MessageEntry, SessionMeta, SessionStore, SessionTreeData, load_outcomes};
+use craftwave_engine::util::errors::IpcError;
+use craftwave_engine::storage::{MessageEntry, SessionMeta, SessionStore, SessionTreeData, load_outcomes};
 
 /// `save_session_tree` 参数契约（文档命名锚点，命令形参按字段平铺展开）。
 #[derive(Debug, Clone, Deserialize)]

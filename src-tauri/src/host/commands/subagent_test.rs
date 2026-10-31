@@ -117,10 +117,10 @@ async fn spawn_mock(mode: Arc<MockMode>) -> String {
 
 /// 帧收集器（可共享读取）。
 #[derive(Default, Clone)]
-struct SharedFrames(Arc<Mutex<Vec<crate::backend::frames::SequencedFrame>>>);
+struct SharedFrames(Arc<Mutex<Vec<craftwave_engine::backend::frames::SequencedFrame>>>);
 
-impl crate::backend::frames::SequencedSink for SharedFrames {
-    fn send_seq(&mut self, frame: crate::backend::frames::SequencedFrame) {
+impl craftwave_engine::backend::frames::SequencedSink for SharedFrames {
+    fn send_seq(&mut self, frame: craftwave_engine::backend::frames::SequencedFrame) {
         self.0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -129,7 +129,7 @@ impl crate::backend::frames::SequencedSink for SharedFrames {
 }
 
 impl SharedFrames {
-    fn snapshot(&self) -> Vec<crate::backend::frames::SequencedFrame> {
+    fn snapshot(&self) -> Vec<craftwave_engine::backend::frames::SequencedFrame> {
         self.0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -158,21 +158,21 @@ fn app_with_mock(
 ) -> (
     Arc<AppState>,
     tempfile::TempDir,
-    Arc<crate::util::events::RecordingEventSink>,
+    Arc<craftwave_engine::util::events::RecordingEventSink>,
 ) {
     let dir = tempfile::tempdir().expect("临时数据目录");
-    let events = Arc::new(crate::util::events::RecordingEventSink::new());
+    let events = Arc::new(craftwave_engine::util::events::RecordingEventSink::new());
     let mut state = AppState::new_in(dir.path().to_path_buf(), events.clone());
     state.resource_skills_dir = None;
     let app = Arc::new(state);
-    let config = crate::providers::types::AppConfig {
-        providers: vec![crate::providers::types::ProviderConfig {
+    let config = craftwave_engine::providers::types::AppConfig {
+        providers: vec![craftwave_engine::providers::types::ProviderConfig {
             id: "prov-1".to_owned(),
             name: "Mock".to_owned(),
-            api_format: crate::providers::types::ApiFormat::OpenaiChat,
+            api_format: craftwave_engine::providers::types::ApiFormat::OpenaiChat,
             base_url: Some(base_url.to_owned()),
             api_key: Some("mock-key".to_owned()),
-            models: vec![crate::providers::types::ProviderModel {
+            models: vec![craftwave_engine::providers::types::ProviderModel {
                 id: "model-1".to_owned(),
                 model: "gpt-4o-mock".to_owned(),
                 max_tokens: 32768,
@@ -184,22 +184,22 @@ fn app_with_mock(
             local: false,
         }],
         active_model_id: Some("model-1".to_owned()),
-        ..crate::providers::types::AppConfig::default()
+        ..craftwave_engine::providers::types::AppConfig::default()
     };
-    crate::providers::service::save_config(&app.config, config).expect("保存配置");
+    craftwave_engine::providers::service::save_config(&app.config, config).expect("保存配置");
     (app, dir, events)
 }
 
 /// 委派上下文（父枢纽接共享帧收集器）。
 fn ctx_with_frames(session_id: &str, parent_run_id: &str) -> (SubagentContext, SharedFrames) {
     let frames = SharedFrames::default();
-    let hub = Arc::new(crate::agent::FrameHub::new(Box::new(frames.clone())));
+    let hub = Arc::new(craftwave_engine::agent::FrameHub::new(Box::new(frames.clone())));
     (
         SubagentContext {
             session_id: session_id.to_owned(),
             parent_run_id: parent_run_id.to_owned(),
             parent_hub: hub,
-            tier: crate::safety::tier::PermissionTier::AutoEdit,
+            tier: craftwave_engine::safety::tier::PermissionTier::AutoEdit,
             model_id: Some("model-1".to_owned()),
             auto_confirm: false,
             session_memory_enabled: false,
@@ -210,7 +210,7 @@ fn ctx_with_frames(session_id: &str, parent_run_id: &str) -> (SubagentContext, S
 
 /// 等待某事件键出现（异步产事件的轮询面；async 轮询让出执行权——
 /// current_thread runtime 下委派任务靠同一线程推进）。
-async fn wait_event(events: &crate::util::events::RecordingEventSink, key: &str, timeout_ms: u64) {
+async fn wait_event(events: &craftwave_engine::util::events::RecordingEventSink, key: &str, timeout_ms: u64) {
     let deadline = tokio::time::Instant::now() + Duration::from_millis(timeout_ms);
     while tokio::time::Instant::now() < deadline {
         if !events.payloads_of(key).is_empty() {
@@ -247,7 +247,7 @@ async fn subagent_report_partial_and_cancel_outcomes() {
         .await;
 
     // 工具结果：<report> 结构化汇报回父
-    let crate::backend::run_loop::ToolExecution::Completed {
+    let craftwave_engine::backend::run_loop::ToolExecution::Completed {
         ok,
         ui_summary,
         model_text,
@@ -343,14 +343,14 @@ async fn subagent_report_partial_and_cancel_outcomes() {
         .parts
         .iter()
         .filter_map(|p| match p {
-            crate::storage::WirePart::Text { text } => Some(text.as_str()),
+            craftwave_engine::storage::WirePart::Text { text } => Some(text.as_str()),
             _ => None,
         })
         .collect::<String>();
     assert!(report_text.contains("调研完成"));
     // 未知 subId → E_NOT_FOUND
     let err = load_subagent_history_core(&app, "sess-r", "nope").unwrap_err();
-    assert_eq!(err.code, crate::util::errors::E_NOT_FOUND);
+    assert_eq!(err.code, craftwave_engine::util::errors::E_NOT_FOUND);
     drop(dir);
 
     // 2) 预算耗尽（partial 象限）。
@@ -371,7 +371,7 @@ async fn subagent_report_partial_and_cancel_outcomes() {
         )
         .await;
 
-    let crate::backend::run_loop::ToolExecution::Completed {
+    let craftwave_engine::backend::run_loop::ToolExecution::Completed {
         ok,
         error,
         model_text,
@@ -382,9 +382,9 @@ async fn subagent_report_partial_and_cancel_outcomes() {
     };
     assert!(!ok);
     let error = error.expect("partial 带 E_SUB_BUDGET 错误面");
-    assert_eq!(error.code, crate::util::errors::E_SUB_BUDGET);
+    assert_eq!(error.code, craftwave_engine::util::errors::E_SUB_BUDGET);
     assert!(
-        model_text.contains(crate::util::errors::E_SUB_BUDGET) && model_text.contains("再次委派"),
+        model_text.contains(craftwave_engine::util::errors::E_SUB_BUDGET) && model_text.contains("再次委派"),
         "模型通道说明预算耗尽与续派指引：{model_text}"
     );
     let types = frames.frame_types();
@@ -443,7 +443,7 @@ async fn subagent_report_partial_and_cancel_outcomes() {
         .expect("子 run 收尾不悬空")
         .expect("任务不 panic");
     // 工具结果 = 取消（已启动过）
-    let crate::backend::run_loop::ToolExecution::Cancelled { executed, .. } = result else {
+    let craftwave_engine::backend::run_loop::ToolExecution::Cancelled { executed, .. } = result else {
         panic!("取消场景应返回 Cancelled：{result:?}")
     };
     assert!(executed, "子 run 已启动后被收割");
@@ -464,7 +464,7 @@ async fn subagent_report_partial_and_cancel_outcomes() {
     let ChatFrame::RunEnded { reason, .. } = &**frame else {
         panic!("子代理最后透传帧应为 runEnded：{frame:?}")
     };
-    assert_eq!(*reason, crate::backend::frames::EndReason::Cancelled);
+    assert_eq!(*reason, craftwave_engine::backend::frames::EndReason::Cancelled);
     assert_eq!(
         events.payloads_of(keys::SUB_DONE)[0]["outcome"],
         "cancelled"
@@ -472,7 +472,7 @@ async fn subagent_report_partial_and_cancel_outcomes() {
     assert_eq!(app.subs.active_count(), 0, "注册表摘除干净");
     // 未知 subId 取消 → E_NOT_FOUND
     let err = stop_subagent_core(&app, "ghost").unwrap_err();
-    assert_eq!(err.code, crate::util::errors::E_NOT_FOUND);
+    assert_eq!(err.code, craftwave_engine::util::errors::E_NOT_FOUND);
     drop(dir);
 }
 
@@ -499,7 +499,7 @@ async fn subagent_rejection_paths() {
         (r#"{"role":"explore"}"#, "参数解析失败"),
     ] {
         let result = spawner.spawn(args, &token).await;
-        let crate::backend::run_loop::ToolExecution::Completed { ok, model_text, .. } = result
+        let craftwave_engine::backend::run_loop::ToolExecution::Completed { ok, model_text, .. } = result
         else {
             panic!("{args} 应为工具级失败")
         };
@@ -514,11 +514,11 @@ async fn subagent_rejection_paths() {
     // 临时会话的 project_root = <data>/workspace（非 git）
     let workspace = app.store.root().join("workspace");
     std::fs::create_dir_all(&workspace).unwrap();
-    assert!(!crate::agent::project_is_git(&workspace));
+    assert!(!craftwave_engine::agent::project_is_git(&workspace));
     let result = spawner
         .spawn(r#"{"role":"implementer","task":"改点东西"}"#, &token)
         .await;
-    let crate::backend::run_loop::ToolExecution::Completed { model_text, .. } = result else {
+    let craftwave_engine::backend::run_loop::ToolExecution::Completed { model_text, .. } = result else {
         panic!("应为工具级失败")
     };
     assert!(model_text.contains("非 Git 项目子代理只读"), "{model_text}");
@@ -529,13 +529,13 @@ async fn subagent_rejection_paths() {
     // 3) 子环境公共操作边界与白名单拦截。
     let _ = std::fs::create_dir_all(std::env::temp_dir().join("cw-subagent-test"));
     let base_env = |allowed: Option<Vec<String>>| {
-        let ctx = crate::tools::ToolsContext::new(
+        let ctx = craftwave_engine::tools::ToolsContext::new(
             std::env::temp_dir().join("cw-subagent-test"),
             std::env::temp_dir().join("cw-subagent-test"),
         );
-        ToolsetExecutor::new(ctx, crate::safety::tier::PermissionTier::AutoEdit).with_env(
+        ToolsetExecutor::new(ctx, craftwave_engine::safety::tier::PermissionTier::AutoEdit).with_env(
             ExecutorEnv {
-                events: Arc::new(crate::util::events::RecordingEventSink::new()),
+                events: Arc::new(craftwave_engine::util::events::RecordingEventSink::new()),
                 ask: Arc::new(Mutex::new(None)),
                 plan: Arc::new(Mutex::new(None)),
                 session_id: "s".to_owned(),
@@ -562,7 +562,7 @@ async fn subagent_rejection_paths() {
             &token,
         )
         .await;
-    let crate::backend::run_loop::ToolExecution::Completed {
+    let craftwave_engine::backend::run_loop::ToolExecution::Completed {
         ok,
         error,
         ui_summary,
@@ -572,7 +572,7 @@ async fn subagent_rejection_paths() {
         panic!("应为工具级失败")
     };
     assert!(!ok);
-    assert_eq!(error.unwrap().code, crate::util::errors::E_TOOL_BLOCKED);
+    assert_eq!(error.unwrap().code, craftwave_engine::util::errors::E_TOOL_BLOCKED);
     assert!(ui_summary.contains("子代理不能再委派"));
     // ② 白名单外工具（模型点名绕过可见面）→ 拦截；subagent 同样被白名单拦
     let executor = base_env(Some(vec!["read".to_owned(), "grep".to_owned()]));
@@ -584,10 +584,10 @@ async fn subagent_rejection_paths() {
             &token,
         )
         .await;
-    let crate::backend::run_loop::ToolExecution::Completed { error, .. } = result else {
+    let craftwave_engine::backend::run_loop::ToolExecution::Completed { error, .. } = result else {
         panic!("应为工具级失败")
     };
-    assert_eq!(error.unwrap().code, crate::util::errors::E_TOOL_BLOCKED);
+    assert_eq!(error.unwrap().code, craftwave_engine::util::errors::E_TOOL_BLOCKED);
     let result = executor
         .execute(
             "call-2b",
@@ -596,15 +596,15 @@ async fn subagent_rejection_paths() {
             &token,
         )
         .await;
-    let crate::backend::run_loop::ToolExecution::Completed { error, .. } = result else {
+    let craftwave_engine::backend::run_loop::ToolExecution::Completed { error, .. } = result else {
         panic!("应为工具级失败")
     };
-    assert_eq!(error.unwrap().code, crate::util::errors::E_TOOL_BLOCKED);
+    assert_eq!(error.unwrap().code, craftwave_engine::util::errors::E_TOOL_BLOCKED);
     // ③ 白名单内工具正常放行（read 只读）
     let result = executor
         .execute("call-3", "read", r#"{"path":"README.md"}"#, &token)
         .await;
-    let crate::backend::run_loop::ToolExecution::Completed { ok, .. } = result else {
+    let craftwave_engine::backend::run_loop::ToolExecution::Completed { ok, .. } = result else {
         panic!("白名单内工具应被执行")
     };
     assert!(
@@ -653,7 +653,7 @@ async fn subagent_worktree_cleanup_and_request_shape_semantics() {
             &token,
         )
         .await;
-    let crate::backend::run_loop::ToolExecution::Completed { ok, model_text, .. } = result else {
+    let craftwave_engine::backend::run_loop::ToolExecution::Completed { ok, model_text, .. } = result else {
         panic!("委派应完成")
     };
     assert!(ok);
@@ -685,18 +685,18 @@ async fn subagent_worktree_cleanup_and_request_shape_semantics() {
     ));
     assert!(matches!(&*clean[1], rig::completion::Message::User { .. }));
 
-    let parent_entry = |i: usize| crate::storage::MessageEntry {
+    let parent_entry = |i: usize| craftwave_engine::storage::MessageEntry {
         id: format!("m{i}"),
         parent_id: None,
-        role: crate::storage::MessageRole::User,
-        parts: vec![crate::storage::WirePart::Text {
+        role: craftwave_engine::storage::MessageRole::User,
+        parts: vec![craftwave_engine::storage::WirePart::Text {
             text: format!("msg{i}"),
         }],
         created_at: 0,
         run_id: None,
         status: None,
     };
-    let tail: Vec<crate::storage::MessageEntry> = (0..8).map(parent_entry).collect();
+    let tail: Vec<craftwave_engine::storage::MessageEntry> = (0..8).map(parent_entry).collect();
     let injected = build_subagent_history(task, role, &tail, false);
     // 系统提示 + 6 条父历史 + task
     assert_eq!(injected.len(), 2 + 6);
@@ -747,9 +747,9 @@ async fn subagent_worktree_cleanup_and_request_shape_semantics() {
     let has_call = messages[0]
         .parts
         .iter()
-        .any(|p| matches!(p, crate::storage::WirePart::ToolCall { name, .. } if name == "grep"));
+        .any(|p| matches!(p, craftwave_engine::storage::WirePart::ToolCall { name, .. } if name == "grep"));
     let has_result = messages[0].parts.iter().any(
-        |p| matches!(p, crate::storage::WirePart::ToolResult { ok, summary, .. } if *ok && summary == "2 hits"),
+        |p| matches!(p, craftwave_engine::storage::WirePart::ToolResult { ok, summary, .. } if *ok && summary == "2 hits"),
     );
     assert!(has_call && has_result, "toolCall 与 toolResult 同条目配对");
     assert_eq!(messages[1].id, "sub-1:a2");
@@ -762,6 +762,6 @@ async fn subagent_worktree_cleanup_and_request_shape_semantics() {
     assert_eq!(messages[2].parent_id.as_deref(), Some("sub-1:a2"));
     assert!(matches!(
         &messages[2].parts[0],
-        crate::storage::WirePart::Text { text } if text == "最终汇报全文"
+        craftwave_engine::storage::WirePart::Text { text } if text == "最终汇报全文"
     ));
 }

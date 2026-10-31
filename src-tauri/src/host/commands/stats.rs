@@ -8,10 +8,10 @@
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
-use crate::backend::frames::UsageTotal;
-use crate::host::AppState;
-use crate::host::IpcError;
-use crate::util::errors::E_INVALID_ARG;
+use craftwave_engine::backend::frames::UsageTotal;
+use craftwave_engine::app_state::AppState;
+use craftwave_engine::util::errors::IpcError;
+use craftwave_engine::util::errors::E_INVALID_ARG;
 
 /// `stats_token` 的范围参数（闭区间本地日期，缺省 = 全部保留期）。
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -86,7 +86,7 @@ pub struct StatsTokenResult {
 
 /// 日期参数校验（`YYYY-MM-DD` 语义合法；否则 E_INVALID_ARG）。
 fn validate_day(day: &str) -> Result<(), IpcError> {
-    if crate::storage::stats::is_valid_day(day)
+    if craftwave_engine::storage::stats::is_valid_day(day)
         && chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d").is_ok()
     {
         Ok(())
@@ -99,7 +99,7 @@ fn validate_day(day: &str) -> Result<(), IpcError> {
 }
 
 /// `stats_token` 主体（公开给集成测试；`now` 由调用方传本地今日——测试可
-/// 注入固定日期，生产传 [`crate::host::usage::local_today`]）。
+/// 注入固定日期，生产传 [`craftwave_engine::usage::local_today`]）。
 pub fn stats_token_core(
     app: &AppState,
     args: &StatsTokenArgs,
@@ -122,9 +122,9 @@ pub fn stats_token_core(
         }
         // 缺省 = 全部保留期（最早统计日 ~ 今天；空统计返回空集）
         None => (
-            crate::storage::stats::shift_day(
+            craftwave_engine::storage::stats::shift_day(
                 today,
-                -(i64::from(crate::storage::stats::STATS_RETENTION_DAYS)),
+                -(i64::from(craftwave_engine::storage::stats::STATS_RETENTION_DAYS)),
             )
             .unwrap_or_else(|| "1970-01-01".to_owned()),
             today.to_owned(),
@@ -188,7 +188,7 @@ pub(crate) async fn stats_token(
 ) -> Result<StatsTokenResult, IpcError> {
     // 契约命名单一事实源：平铺形参回组为文档契约结构
     let args = StatsTokenArgs { range };
-    stats_token_core(&app, &args, &crate::host::usage::local_today())
+    stats_token_core(&app, &args, &craftwave_engine::usage::local_today())
 }
 
 /// `session_usage` 返回契约：usage = 会话累计四口径（主/子/

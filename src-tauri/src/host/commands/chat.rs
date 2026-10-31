@@ -29,7 +29,7 @@
 //!   anthropic_messages 按 `ProviderConfig.apiFormat` 装配，差异收敛在
 //!   `providers::wire` 防腐层），Key 经 config 读取；
 //! - 错误终态兜底：RunLoop 内部失败（PromptError）由 run 任务发
-//!   runEnded(error)，code = E_INTERNAL（看门狗终止除外，见 RunFailure）。
+//!   runEnded(error)，code = E_INTERNAL（看门狗终止除外，见 craftwave_engine::followup::RunFailure）。
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -44,38 +44,38 @@ use tauri::State;
 use tauri::ipc::Channel;
 use tokio_util::sync::CancellationToken;
 
-use crate::agent::{FrameHub, HubSink, RunHandle, RunManager};
-use crate::backend::ask::{
+use craftwave_engine::agent::{FrameHub, HubSink, RunHandle, RunManager};
+use craftwave_engine::backend::ask::{
     ApprovalDiff, AskAnswer, AskMode, AskOption, AskPayload, AskSlot, DiffHunk, DiffLine,
     DiffLineKind,
 };
-use crate::backend::exec::{AskSlotCell, ExecutorEnv, ToolsetExecutor};
-use crate::backend::frames::{
+use craftwave_engine::backend::exec::{AskSlotCell, ExecutorEnv, ToolsetExecutor};
+use craftwave_engine::backend::frames::{
     ChatFrame, EndReason, FrameError, FrameSink, RunSnapshot, SequencedFrame, SequencedSink,
     UsageTotal,
 };
-use crate::backend::gate::ApprovalGate;
-use crate::backend::run_loop::{
+use craftwave_engine::backend::gate::ApprovalGate;
+use craftwave_engine::backend::run_loop::{
     DriveState, PendingCall, RefreshFailure, RequestRefresher, RunExit, SteerSource, drive_run,
     resume_run,
 };
 // 外部目录授权核心：恢复循环在用户允许后并入会话 roots。
-use crate::backend::turn::TurnDriver;
-use crate::host::AppState;
-use crate::host::commands::workspace::allow_external_dir_core;
-use crate::host::followup::{
+use craftwave_engine::backend::turn::TurnDriver;
+use craftwave_engine::app_state::AppState;
+use super::workspace::allow_external_dir_core;
+use craftwave_engine::followup::{
     FollowUpEntry, FollowUpManager, QueuedImageAttachment, QueuedRunConfig,
 };
-use crate::host::run_persistence::{PersistingSink, RunRecorder};
-use crate::providers::types::{ApiFormat, ProviderConfig, ProviderModel};
-use crate::providers::wire::DialectWire;
-use crate::safety::tier::PermissionTier;
-use crate::storage::{MessageEntry, MessageRole, StoredEntry};
-use crate::util::errors::{E_INTERNAL, E_RUN_STALLED, IpcError};
-use crate::util::events::EventSink;
-use crate::util::events::keys;
+use craftwave_engine::run_persistence::{PersistingSink, RunRecorder};
+use craftwave_engine::providers::types::{ApiFormat, ProviderConfig, ProviderModel};
+use craftwave_engine::providers::wire::DialectWire;
+use craftwave_engine::safety::tier::PermissionTier;
+use craftwave_engine::storage::{MessageEntry, MessageRole, StoredEntry};
+use craftwave_engine::util::errors::{E_INTERNAL, E_RUN_STALLED, IpcError};
+use craftwave_engine::util::events::EventSink;
+use craftwave_engine::util::events::keys;
 
-use crate::backend::run_loop::E_CANCELLED;
+use craftwave_engine::backend::run_loop::E_CANCELLED;
 
 /// autoConfirm 自动放行等待（300s 超时自动选 recommended 项）。
 pub const AUTO_CONFIRM_TIMEOUT: Duration = Duration::from_secs(300);
@@ -88,25 +88,25 @@ pub(crate) fn load_image_blobs(
     root: &std::path::Path,
     session_id: &str,
     messages: &[MessageEntry],
-) -> crate::backend::wire::ImageBlobMap {
+) -> craftwave_engine::backend::wire::ImageBlobMap {
     let mut hashes: Vec<&str> = Vec::new();
     for entry in messages {
         for part in &entry.parts {
-            if let crate::storage::WirePart::Image { blob_hash, .. } = part
+            if let craftwave_engine::storage::WirePart::Image { blob_hash, .. } = part
                 && !hashes.contains(&blob_hash.as_str())
             {
                 hashes.push(blob_hash);
             }
         }
     }
-    let mut map = crate::backend::wire::ImageBlobMap::new();
+    let mut map = craftwave_engine::backend::wire::ImageBlobMap::new();
     for hash in hashes {
-        match crate::storage::get_blob(root, session_id, hash) {
+        match craftwave_engine::storage::get_blob(root, session_id, hash) {
             Ok((bytes, mime)) => {
                 use base64::Engine;
                 map.insert(
                     hash.to_owned(),
-                    crate::backend::wire::ImageBlobData {
+                    craftwave_engine::backend::wire::ImageBlobData {
                         mime: mime.to_owned(),
                         base64: base64::engine::general_purpose::STANDARD.encode(&bytes),
                     },
@@ -119,41 +119,6 @@ pub(crate) fn load_image_blobs(
         }
     }
     map
-}
-
-/// run 失败终态信息（带 code）：`code` 随 `run:error` 事件带出——
-/// 看门狗终止 = E_RUN_STALLED，其余失败 E_INTERNAL 兜底。
-#[derive(Debug, Clone)]
-pub(crate) struct RunFailure {
-    /// 错误码。
-    pub code: String,
-    /// 人类可读的失败原因（错误消息说明停滞或重复失败原因）。
-    pub message: String,
-}
-
-/// run 终态 → followUp 队列收尾动作（抽纯函数
-/// 钉住看门狗终止的归属）：正常完成自动投递；失败（含看门狗终止
-/// E_RUN_STALLED）暂停并持久保留全部待发；取消（含审批拒绝）清空并返还草稿。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum QueueDisposition {
-    /// 正常完成：steer 残余转入队列尾，队列非空且未暂停即自动投递队头。
-    AutoDeliver,
-    /// 失败：队列暂停 + 持久保留全部待发（steer 残余交还草稿）。
-    PauseKeep,
-    /// 取消：清空队列（暂停态随清空复位）+ 全部文本交还草稿。
-    ClearReturn,
-}
-
-/// 队列收尾动作的判定（纯函数，单测钉住 E_RUN_STALLED 走失败暂停）。
-pub(crate) fn followup_disposition(
-    final_exit: &RunExit,
-    errored: &Option<RunFailure>,
-) -> QueueDisposition {
-    match (final_exit, errored) {
-        (RunExit::Done(_), _) => QueueDisposition::AutoDeliver,
-        (_, Some(_)) => QueueDisposition::PauseKeep,
-        _ => QueueDisposition::ClearReturn,
-    }
 }
 
 /// `start_chat` 参数契约（文档命名锚点，命令形参按字段平铺展开）。
@@ -181,7 +146,7 @@ pub struct RunConfig {
     /// per-model reasoningEffort 回落（优先级链）。
     #[serde(default)]
     #[cfg_attr(test, ts(optional))]
-    pub thinking: Option<crate::providers::reasoning::ThinkingLevel>,
+    pub thinking: Option<craftwave_engine::providers::reasoning::ThinkingLevel>,
     pub tier: PermissionTier,
     #[serde(default = "default_max_turns")]
     pub max_turns: u32,
@@ -343,7 +308,7 @@ pub(crate) struct ResolvedModel {
     pub api_format: ApiFormat,
     /// per-model reasoning 档配置（ProviderModel.reasoningEffort；
     /// 会话未显式设置 thinking 时的回落源，优先级链第二级）。
-    pub reasoning_effort: Option<crate::providers::types::ReasoningEffort>,
+    pub reasoning_effort: Option<craftwave_engine::providers::types::ReasoningEffort>,
     /// API 端点基地址（供应商 baseUrl 或官方缺省，resolve 时快照）——
     /// 会话日志 llm 行的 host 元数据面（诊断用；不涉敏感值）。
     pub base_url: String,
@@ -402,7 +367,7 @@ pub(crate) fn resolve_model(
     let http = rig::http_client::DynHttpClient::new(rig_reqwest::ReqwestClient::from(
         app.http.client().as_ref().clone(),
     ));
-    let driver = crate::providers::wire::dialect_model(
+    let driver = craftwave_engine::providers::wire::dialect_model(
         provider.api_format,
         &base_url,
         &key,
@@ -428,33 +393,33 @@ pub(crate) fn resolve_model(
 /// per-model reasoningEffort 配置 > 不传。输出 映射指令供请求参数
 /// 装配（纯函数在 `providers::reasoning`，本函数只做取值与回落）。
 pub(crate) fn effective_thinking_directive(
-    session_thinking: Option<crate::providers::reasoning::ThinkingLevel>,
+    session_thinking: Option<craftwave_engine::providers::reasoning::ThinkingLevel>,
     model: &ResolvedModel,
-) -> crate::providers::reasoning::ReasoningDirective {
+) -> craftwave_engine::providers::reasoning::ReasoningDirective {
     let window = model.context_window;
     let max_tokens = model.max_tokens;
     match session_thinking {
-        Some(level) => crate::providers::reasoning::thinking_to_request(
+        Some(level) => craftwave_engine::providers::reasoning::thinking_to_request(
             level,
             model.api_format,
             window,
             max_tokens,
         ),
         None => match model.reasoning_effort {
-            Some(effort) => crate::providers::reasoning::model_effort_to_request(
+            Some(effort) => craftwave_engine::providers::reasoning::model_effort_to_request(
                 effort,
                 model.api_format,
                 window,
                 max_tokens,
             ),
-            None => crate::providers::reasoning::ReasoningDirective::none(),
+            None => craftwave_engine::providers::reasoning::ReasoningDirective::none(),
         },
     }
 }
 
 /// ToolSpec → rig ToolDefinition（广播给模型的工具表）。
 fn to_rig_tool_definitions(
-    specs: Vec<crate::tools::ToolSpec>,
+    specs: Vec<craftwave_engine::tools::ToolSpec>,
 ) -> Result<Vec<Arc<ToolDefinition>>, IpcError> {
     specs
         .into_iter()
@@ -505,7 +470,7 @@ struct EventfulSink {
     /// 所属 run 的句柄（运行时状态同步目标；测试直驱路径可为 None）。
     handle: Option<Arc<RunHandle>>,
     /// 用量账本（AppState.ledger 的克隆件——spawn 闭包内无整体）。
-    ledger: crate::host::usage::UsageLedger,
+    ledger: craftwave_engine::usage::UsageLedger,
     /// 当前生效模型槽 `(配置 id, 显示名)`：run 装配时置初值，
     /// HostRequestRefresher 每拍刷新（模型切换时更新）——Usage 帧落账时
     /// 读到的即「本拍实际执行模型」（真实归属）。
@@ -514,7 +479,7 @@ struct EventfulSink {
     /// 无计量不伪造）。
     run_counted: bool,
     /// 会话日志器（工具起止行的落点；测试直驱路径 None）。
-    session_log: Option<Arc<crate::host::session_log::SessionLogger>>,
+    session_log: Option<Arc<craftwave_engine::session_log::SessionLogger>>,
     /// 在飞工具起点表（ToolStarted 记名与时刻，ToolResult 收口
     /// 算耗时落 tool 行——帧面无耗时字段，宿主侧配对补齐）。
     tool_starts: HashMap<String, (String, std::time::Instant)>,
@@ -556,7 +521,7 @@ impl EventfulSink {
         self.ledger.record(
             &self.session_id,
             &self.run_id,
-            crate::host::usage::run_kind::MAIN,
+            craftwave_engine::usage::run_kind::MAIN,
             &model_id,
             &model_name,
             *delta,
@@ -644,11 +609,11 @@ impl FrameSink for EventfulSink {
                     logger.session_line(
                         &self.session_id,
                         if *ok {
-                            crate::providers::types::LogLevel::Info
+                            craftwave_engine::providers::types::LogLevel::Info
                         } else {
-                            crate::providers::types::LogLevel::Warn
+                            craftwave_engine::providers::types::LogLevel::Warn
                         },
-                        crate::host::session_log::LogKind::Tool,
+                        craftwave_engine::session_log::LogKind::Tool,
                         msg,
                         Some(serde_json::json!({
                             "name": name,
@@ -678,20 +643,20 @@ fn sub_usage(a: &UsageTotal, b: &UsageTotal) -> UsageTotal {
     }
 }
 
-/// 问卷类 ask 开关的宿主日志实现（`crate::backend::exec::
+/// 问卷类 ask 开关的宿主日志实现（`craftwave_engine::backend::exec::
 /// AskLogSink`）：把 backend 的回调面落到会话日志 kind=approval 行
 /// （问卷与审批卡共用同一 kind；askId 作 callId 锚）。pub(crate)：子代理
 /// 环境的 ExecutorEnv 装配（subagent.rs）复用同一实现。
 pub(crate) struct HostAskLogger {
-    pub(crate) session_log: Arc<crate::host::session_log::SessionLogger>,
+    pub(crate) session_log: Arc<craftwave_engine::session_log::SessionLogger>,
 }
 
-impl crate::backend::exec::AskLogSink for HostAskLogger {
+impl craftwave_engine::backend::exec::AskLogSink for HostAskLogger {
     fn ask_opened(&self, session_id: &str, ask_id: &str, run_id: &str) {
         self.session_log.session_line(
             session_id,
-            crate::providers::types::LogLevel::Info,
-            crate::host::session_log::LogKind::Approval,
+            craftwave_engine::providers::types::LogLevel::Info,
+            craftwave_engine::session_log::LogKind::Approval,
             "等待用户回答问卷".to_owned(),
             None,
             Some(run_id),
@@ -703,8 +668,8 @@ impl crate::backend::exec::AskLogSink for HostAskLogger {
     fn ask_closed(&self, session_id: &str, ask_id: &str, run_id: &str, answered: bool) {
         self.session_log.session_line(
             session_id,
-            crate::providers::types::LogLevel::Info,
-            crate::host::session_log::LogKind::Approval,
+            craftwave_engine::providers::types::LogLevel::Info,
+            craftwave_engine::session_log::LogKind::Approval,
             if answered {
                 "问卷已回答".to_owned()
             } else {
@@ -732,7 +697,7 @@ impl crate::backend::exec::AskLogSink for HostAskLogger {
 /// 内（base64 段外的普通文本，不被替换、原样保留）。无来源的图片
 /// 不虚构路径。
 struct HostLlmLogger {
-    session_log: Arc<crate::host::session_log::SessionLogger>,
+    session_log: Arc<craftwave_engine::session_log::SessionLogger>,
     session_id: String,
     run_id: String,
     /// API 端点 host（resolve 时快照的 baseUrl 取 host 部分，诊断面）。
@@ -780,7 +745,7 @@ impl HostLlmLogger {
     }
 }
 
-impl crate::backend::turn::LlmLogSink for HostLlmLogger {
+impl craftwave_engine::backend::turn::LlmLogSink for HostLlmLogger {
     fn on_request(&self, turn: u32, request: &rig::completion::request::CompletionRequest) {
         // verbose 才序列化（级别检查在 verbose()，防大载荷进常规路径）
         if !self.session_log.verbose() {
@@ -791,12 +756,12 @@ impl crate::backend::turn::LlmLogSink for HostLlmLogger {
         };
         // 脱敏闸（红线）：先图片本体摘要化（补真实 blob 路径），
         // 再密钥名单与 Bearer/sk- 兜底
-        crate::util::redact::summarize_images(&mut raw, Some(&self.blob_dir));
-        crate::util::redact::redact_json(&mut raw);
+        craftwave_engine::util::redact::summarize_images(&mut raw, Some(&self.blob_dir));
+        craftwave_engine::util::redact::redact_json(&mut raw);
         self.session_log.session_line(
             &self.session_id,
-            crate::providers::types::LogLevel::Debug,
-            crate::host::session_log::LogKind::Llm,
+            craftwave_engine::providers::types::LogLevel::Debug,
+            craftwave_engine::session_log::LogKind::Llm,
             if turn == 0 {
                 "模型请求原文（辅助调用，已脱敏，图片仅路径/哈希/格式/大小）".to_owned()
             } else {
@@ -830,8 +795,8 @@ impl crate::backend::turn::LlmLogSink for HostLlmLogger {
             Some("cancelled") => {
                 self.session_log.session_line(
                     &self.session_id,
-                    crate::providers::types::LogLevel::Info,
-                    crate::host::session_log::LogKind::Llm,
+                    craftwave_engine::providers::types::LogLevel::Info,
+                    craftwave_engine::session_log::LogKind::Llm,
                     "模型请求被取消".to_owned(),
                     Some(meta()),
                     Some(&self.run_id),
@@ -842,11 +807,11 @@ impl crate::backend::turn::LlmLogSink for HostLlmLogger {
             // 失败：Warn 行，失败说明过字符串兜底防密钥经错误消息漏出；
             // 失败无响应体，Debug 级不追加
             Some(e) => {
-                let safe = crate::util::redact::redact_string(e).unwrap_or_else(|| (*e).to_owned());
+                let safe = craftwave_engine::util::redact::redact_string(e).unwrap_or_else(|| (*e).to_owned());
                 self.session_log.session_line(
                     &self.session_id,
-                    crate::providers::types::LogLevel::Warn,
-                    crate::host::session_log::LogKind::Llm,
+                    craftwave_engine::providers::types::LogLevel::Warn,
+                    craftwave_engine::session_log::LogKind::Llm,
                     format!("模型请求失败：{safe}"),
                     Some(meta()),
                     Some(&self.run_id),
@@ -863,8 +828,8 @@ impl crate::backend::turn::LlmLogSink for HostLlmLogger {
                 };
                 self.session_log.session_line(
                     &self.session_id,
-                    crate::providers::types::LogLevel::Info,
-                    crate::host::session_log::LogKind::Llm,
+                    craftwave_engine::providers::types::LogLevel::Info,
+                    craftwave_engine::session_log::LogKind::Llm,
                     msg,
                     Some(meta()),
                     Some(&self.run_id),
@@ -878,12 +843,12 @@ impl crate::backend::turn::LlmLogSink for HostLlmLogger {
             let Ok(mut raw) = serde_json::to_value(response) else {
                 return;
             };
-            crate::util::redact::summarize_images(&mut raw, Some(&self.blob_dir));
-            crate::util::redact::redact_json(&mut raw);
+            craftwave_engine::util::redact::summarize_images(&mut raw, Some(&self.blob_dir));
+            craftwave_engine::util::redact::redact_json(&mut raw);
             self.session_log.session_line(
                 &self.session_id,
-                crate::providers::types::LogLevel::Debug,
-                crate::host::session_log::LogKind::Llm,
+                craftwave_engine::providers::types::LogLevel::Debug,
+                craftwave_engine::session_log::LogKind::Llm,
                 "模型响应原文（已脱敏）".to_owned(),
                 Some(raw),
                 Some(&self.run_id),
@@ -923,7 +888,7 @@ fn send_error_ended(sink: &mut dyn FrameSink, message: String) {
 struct HostSteerSource {
     /// 该 run 的插话队列（RunHandle.steer 的共享句柄）。
     queue: Arc<Mutex<std::collections::VecDeque<String>>>,
-    store: Arc<crate::storage::SessionStore>,
+    store: Arc<craftwave_engine::storage::SessionStore>,
     events: Arc<dyn EventSink>,
     session_id: String,
     run_id: String,
@@ -951,7 +916,7 @@ impl SteerSource for HostSteerSource {
             id: entry_id.clone(),
             parent_id,
             role: MessageRole::User,
-            parts: vec![crate::storage::WirePart::Text { text: text.clone() }],
+            parts: vec![craftwave_engine::storage::WirePart::Text { text: text.clone() }],
             created_at: now_ms(),
             run_id: Some(self.run_id.clone()),
             status: None,
@@ -999,7 +964,7 @@ struct EffectiveRuntime {
     /// 生效的模型配置 id（ProviderModel.id）。
     model_id: Option<String>,
     /// 生效的会话 thinking 档（None = 未显式设置，按 per-model 回落）。
-    thinking: Option<crate::providers::reasoning::ThinkingLevel>,
+    thinking: Option<craftwave_engine::providers::reasoning::ThinkingLevel>,
 }
 
 /// 每拍模型请求前的偏好刷新源：
@@ -1029,7 +994,7 @@ struct HostRequestRefresher {
 
 impl RequestRefresher for HostRequestRefresher {
     fn before_request(&self, state: &DriveState) -> Result<(), RefreshFailure> {
-        let prefs = crate::storage::prefs::load_prefs(self.app.store.root(), &self.session_id);
+        let prefs = craftwave_engine::storage::prefs::load_prefs(self.app.store.root(), &self.session_id);
         let wanted = EffectiveRuntime {
             model_id: prefs.model_id.or_else(|| self.initial.model_id.clone()),
             thinking: prefs.thinking.or(self.initial.thinking),
@@ -1050,7 +1015,7 @@ impl RequestRefresher for HostRequestRefresher {
             // 也不跳过——按 0 + 预留做下限检查（run 开始前已有完整编排，
             // 该场景仅剩能力面切换）。
             let estimated = state.last_input.saturating_add(resolved.max_tokens);
-            if crate::backend::estimator::is_over_wire_budget(estimated, resolved.context_window) {
+            if craftwave_engine::backend::estimator::is_over_wire_budget(estimated, resolved.context_window) {
                 return Err(RefreshFailure::ContextOverflow {
                     estimated,
                     window: resolved.context_window,
@@ -1079,8 +1044,8 @@ impl RequestRefresher for HostRequestRefresher {
                     .map_err(|e| RefreshFailure::Failed(e.message))?;
                 let directive = effective_thinking_directive(wanted.thinking, &resolved);
                 (
-                    crate::backend::turn::reasoning_directive_to_options(&directive),
-                    crate::backend::turn::directive_max_tokens(
+                    craftwave_engine::backend::turn::reasoning_directive_to_options(&directive),
+                    craftwave_engine::backend::turn::directive_max_tokens(
                         &directive,
                         resolved.max_tokens,
                         resolved.api_format,
@@ -1089,9 +1054,9 @@ impl RequestRefresher for HostRequestRefresher {
             }
             // 无模型可解析（防御面）：不传参数
             None => {
-                let directive = crate::providers::reasoning::ReasoningDirective::none();
+                let directive = craftwave_engine::providers::reasoning::ReasoningDirective::none();
                 (
-                    crate::backend::turn::reasoning_directive_to_options(&directive),
+                    craftwave_engine::backend::turn::reasoning_directive_to_options(&directive),
                     None,
                 )
             }
@@ -1149,7 +1114,7 @@ pub(crate) fn build_approval_payload(
     pending: &PendingCall,
     session_memory_enabled: bool,
     plan_scope_note: Option<&str>,
-    audit_note: Option<&crate::backend::ask::AuditNote>,
+    audit_note: Option<&craftwave_engine::backend::ask::AuditNote>,
 ) -> AskPayload {
     // 计划范围卡：计划外写路径 + 批准基线对照 +
     // 三选项（允许一次 / 本会话始终允许（父目录入基线）/ 拒绝）。无推荐项
@@ -1229,7 +1194,7 @@ pub(crate) fn build_approval_payload(
     // 侧写 trust/mcp-tools.json）。MCP 审批无 recommended——不参与
     // autoConfirm 自动批准。归一名反查失败（极窄窗口：断开已摘除动态段）
     // 落到下方通用审批标题兜底。
-    if let Some(identity) = crate::mcp::tools::McpToolRegistry::global().identity(&pending.name) {
+    if let Some(identity) = craftwave_engine::mcp::tools::McpToolRegistry::global().identity(&pending.name) {
         return AskPayload::Approval {
             title: format!(
                 "MCP 调用审批：服务器 {server} 的工具 {tool}",
@@ -1301,7 +1266,7 @@ pub(crate) fn build_approval_payload(
             let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
             let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
             if html_target(path)
-                && content.chars().count() <= crate::tools::render_html::MAX_HTML_CHARS
+                && content.chars().count() <= craftwave_engine::tools::render_html::MAX_HTML_CHARS
             {
                 preview_html = Some(content.to_owned());
             }
@@ -1323,7 +1288,7 @@ pub(crate) fn build_approval_payload(
             let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
             let old = args.get("oldText").and_then(|v| v.as_str()).unwrap_or("");
             let new = args.get("newText").and_then(|v| v.as_str()).unwrap_or("");
-            if html_target(path) && new.chars().count() <= crate::tools::render_html::MAX_HTML_CHARS
+            if html_target(path) && new.chars().count() <= craftwave_engine::tools::render_html::MAX_HTML_CHARS
             {
                 // 预览语义 = 编辑后的效果：附替换后全文（newText）。
                 preview_html = Some(new.to_owned());
@@ -1444,8 +1409,8 @@ pub(crate) async fn wait_approval_with(
     auto_confirm: bool,
     session_memory_enabled: bool,
     plan_scope_note: Option<&str>,
-    audit_note: Option<&crate::backend::ask::AuditNote>,
-    session_log: Option<&Arc<crate::host::session_log::SessionLogger>>,
+    audit_note: Option<&craftwave_engine::backend::ask::AuditNote>,
+    session_log: Option<&Arc<craftwave_engine::session_log::SessionLogger>>,
 ) -> ApprovalResolution {
     let (tx, rx) = tokio::sync::oneshot::channel::<AskAnswer>();
     let ask_id = uuid::Uuid::new_v4().to_string();
@@ -1484,8 +1449,8 @@ pub(crate) async fn wait_approval_with(
         let msg = format!("等待审批：{}", pending.name);
         logger.session_line(
             session_id,
-            crate::providers::types::LogLevel::Info,
-            crate::host::session_log::LogKind::Approval,
+            craftwave_engine::providers::types::LogLevel::Info,
+            craftwave_engine::session_log::LogKind::Approval,
             msg,
             Some(serde_json::json!({ "tool": pending.name })),
             Some(run_id),
@@ -1564,8 +1529,8 @@ pub(crate) async fn wait_approval_with(
         let msg = format!("审批收口：{outcome}");
         logger.session_line(
             session_id,
-            crate::providers::types::LogLevel::Info,
-            crate::host::session_log::LogKind::Approval,
+            craftwave_engine::providers::types::LogLevel::Info,
+            craftwave_engine::session_log::LogKind::Approval,
             msg,
             Some(serde_json::json!({ "answered": answered, "outcome": outcome })),
             Some(run_id),
@@ -1620,7 +1585,7 @@ struct AuditAttempt {
 /// 审计流程的退出形态。
 enum AuditFlow {
     /// 模型给出合法三态结论。
-    Verdict(crate::backend::audit::AuditVerdict, AuditAttempt),
+    Verdict(craftwave_engine::backend::audit::AuditVerdict, AuditAttempt),
     /// 审计失败/超时/输出无效——转人工（reason = 失败原因，审批卡展示）。
     Failed(String, AuditAttempt),
     /// 用户取消（run 令牌触发），审计终止。
@@ -1689,7 +1654,7 @@ async fn run_command_audit(
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_owned();
-    let roots = crate::host::commands::workspace::resolve_session_roots(app, session_id);
+    let roots = craftwave_engine::session_roots::resolve_session_roots(app, session_id);
     // cwd 基准先解析（项目主目录为缺省基准，与审批门 judge_base 同款），
     // 再把根集合收进归一列表（roots 字段被移动前的克隆面）。
     let project_root = roots.project_root.clone();
@@ -1712,9 +1677,9 @@ async fn run_command_audit(
     // 判定同域归一（审批门装配同款）：canonicalize 失败的根跳过。
     let canonical_roots: Vec<std::path::PathBuf> = root_paths
         .iter()
-        .filter_map(|p| crate::safety::safe_join::canonicalize_best_effort(p).ok())
+        .filter_map(|p| craftwave_engine::safety::safe_join::canonicalize_best_effort(p).ok())
         .collect();
-    let collector = crate::backend::audit::EvidenceCollector {
+    let collector = craftwave_engine::backend::audit::EvidenceCollector {
         roots: &canonical_roots,
         base: &base,
     };
@@ -1733,7 +1698,7 @@ async fn run_command_audit(
         )
     };
     let prompt =
-        crate::backend::audit::build_audit_prompt(&crate::backend::audit::AuditPromptInput {
+        craftwave_engine::backend::audit::build_audit_prompt(&craftwave_engine::backend::audit::AuditPromptInput {
             command: &command,
             cwd: &base.display().to_string(),
             evidence: &evidence,
@@ -1758,13 +1723,13 @@ async fn run_command_audit(
         result = work => match result {
             Ok((text, usage)) => {
                 let attempt = AuditAttempt {
-                    usage: Some(crate::backend::turn::usage_total(&usage)),
+                    usage: Some(craftwave_engine::backend::turn::usage_total(&usage)),
                     model: attempt_model,
                 };
-                match crate::backend::audit::parse_verdict(&text) {
+                match craftwave_engine::backend::audit::parse_verdict(&text) {
                     Some(verdict) => AuditFlow::Verdict(verdict, attempt),
                     None => AuditFlow::Failed(
-                        crate::backend::audit::bad_output_reason(&text),
+                        craftwave_engine::backend::audit::bad_output_reason(&text),
                         attempt,
                     ),
                 }
@@ -1783,7 +1748,7 @@ async fn run_command_audit(
 fn record_aux_usage(
     events: &Arc<dyn EventSink>,
     session_usage: &Arc<Mutex<HashMap<String, UsageTotal>>>,
-    ledger: &crate::host::usage::UsageLedger,
+    ledger: &craftwave_engine::usage::UsageLedger,
     session_id: &str,
     aux_run_id: &str,
     model: &(String, String),
@@ -1795,7 +1760,7 @@ fn record_aux_usage(
     ledger.record(
         session_id,
         aux_run_id,
-        crate::host::usage::run_kind::AUX,
+        craftwave_engine::usage::run_kind::AUX,
         &model.0,
         &model.1,
         *delta,
@@ -1830,7 +1795,7 @@ fn audit_block_finish(
         ok: false,
         ui_summary: format!("审计拒绝：{reason}"),
         error: Some(FrameError::new(
-            crate::util::errors::E_AUDIT_BLOCKED,
+            craftwave_engine::util::errors::E_AUDIT_BLOCKED,
             format!("命令审计模型判断高风险，已拒绝执行：{reason}"),
         )),
     });
@@ -1843,7 +1808,7 @@ fn audit_block_finish(
         tool_count: state.tool_count,
         turn: state.last_turn,
         error: Some(FrameError::new(
-            crate::util::errors::E_AUDIT_BLOCKED,
+            craftwave_engine::util::errors::E_AUDIT_BLOCKED,
             format!("命令审计模型判断高风险，已拒绝执行：{reason}"),
         )),
     });
@@ -1882,7 +1847,7 @@ fn spawn_suggest<W, T>(
     driver: Arc<TurnDriver<W, T>>,
     events: Arc<dyn EventSink>,
     session_usage: Arc<Mutex<HashMap<String, UsageTotal>>>,
-    ledger: crate::host::usage::UsageLedger,
+    ledger: craftwave_engine::usage::UsageLedger,
     session_id: String,
     run_id: String,
     context_tail: String,
@@ -1908,7 +1873,7 @@ fn spawn_suggest<W, T>(
         }
         // 用量计入会话累计（帧通道已收，走事件通道补计；辅助调用落账
         // 已返回 usage 必记账，runs 计数不增——记账面与审计共用 record_aux_usage）
-        let delta = crate::backend::turn::usage_total(&usage);
+        let delta = craftwave_engine::backend::turn::usage_total(&usage);
         record_aux_usage(
             &events,
             &session_usage,
@@ -1988,7 +1953,7 @@ pub(crate) fn first_user_text(messages: &[MessageEntry]) -> String {
             m.parts
                 .iter()
                 .filter_map(|p| match p {
-                    crate::storage::WirePart::Text { text } => Some(text.as_str()),
+                    craftwave_engine::storage::WirePart::Text { text } => Some(text.as_str()),
                     _ => None,
                 })
                 .collect::<String>()
@@ -2018,10 +1983,10 @@ pub(crate) fn first_user_text(messages: &[MessageEntry]) -> String {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_title_task<W, T>(
     driver: Arc<TurnDriver<W, T>>,
-    store: Arc<crate::storage::SessionStore>,
+    store: Arc<craftwave_engine::storage::SessionStore>,
     events: Arc<dyn EventSink>,
     session_usage: Arc<Mutex<HashMap<String, UsageTotal>>>,
-    ledger: crate::host::usage::UsageLedger,
+    ledger: craftwave_engine::usage::UsageLedger,
     session_id: String,
     run_id: String,
     first_user_text: String,
@@ -2054,12 +2019,12 @@ pub(crate) fn spawn_title_task<W, T>(
         .await
         {
             Ok(Ok((text, usage))) => {
-                let delta = crate::backend::turn::usage_total(&usage);
+                let delta = craftwave_engine::backend::turn::usage_total(&usage);
                 if delta != UsageTotal::default() {
                     ledger.record(
                         &session_id,
                         &format!("{run_id}:title"),
-                        crate::host::usage::run_kind::AUX,
+                        craftwave_engine::usage::run_kind::AUX,
                         &model.0,
                         &model.1,
                         delta,
@@ -2127,7 +2092,7 @@ pub(crate) fn context_tail(messages: &[MessageEntry]) -> String {
             .parts
             .iter()
             .filter_map(|p| match p {
-                crate::storage::WirePart::Text { text } => Some(text.as_str()),
+                craftwave_engine::storage::WirePart::Text { text } => Some(text.as_str()),
                 _ => None,
             })
             .collect::<String>()
@@ -2135,7 +2100,7 @@ pub(crate) fn context_tail(messages: &[MessageEntry]) -> String {
     messages
         .iter()
         .rev()
-        .find(|m| m.role == crate::storage::MessageRole::Assistant)
+        .find(|m| m.role == craftwave_engine::storage::MessageRole::Assistant)
         .map(text_of)
         .filter(|t| !t.trim().is_empty())
         .or_else(|| messages.last().map(text_of))
@@ -2161,7 +2126,7 @@ pub(crate) struct CompactionRuntimePolicy {
 /// 各自触发点的估算基准填入帧与事件载荷）。
 #[derive(Debug, Clone)]
 pub(crate) struct CompactionOutcome {
-    pub boundary: crate::backend::wire::CompactionBoundary,
+    pub boundary: craftwave_engine::backend::wire::CompactionBoundary,
 }
 
 /// 从 AppConfig 读压缩策略（模型窗口取当前 run 模型；摘要专用模型未配时
@@ -2221,7 +2186,7 @@ fn tool_estimate_inputs(
 fn accumulate_compaction_usage(
     session_usage: &Mutex<HashMap<String, UsageTotal>>,
     events: &Arc<dyn EventSink>,
-    ledger: &crate::host::usage::UsageLedger,
+    ledger: &craftwave_engine::usage::UsageLedger,
     session_id: &str,
     run_id: &str,
     summary_model: (&str, &str),
@@ -2229,7 +2194,7 @@ fn accumulate_compaction_usage(
 ) {
     let mut delta = UsageTotal::default();
     for usage in usages {
-        delta.accumulate(&crate::backend::turn::usage_total(usage));
+        delta.accumulate(&craftwave_engine::backend::turn::usage_total(usage));
     }
     if delta == UsageTotal::default() {
         return; // 无计量（mock/未知用量不伪造）
@@ -2237,7 +2202,7 @@ fn accumulate_compaction_usage(
     ledger.record(
         session_id,
         &format!("{run_id}:compact"),
-        crate::host::usage::run_kind::AUX,
+        craftwave_engine::usage::run_kind::AUX,
         summary_model.0,
         summary_model.1,
         delta,
@@ -2266,7 +2231,7 @@ pub(crate) fn estimate_after_compaction(
     tools: &[(String, String, String)],
     reserve: u64,
 ) -> u64 {
-    crate::backend::estimator::estimate_request_tokens(
+    craftwave_engine::backend::estimator::estimate_request_tokens(
         &[summary],
         remaining_entries,
         "",
@@ -2285,18 +2250,18 @@ pub(crate) fn estimate_after_compaction(
 /// 「事件点复用」——落点即本函数的三个相位）；失败升 Warn。
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn execute_compaction<W, T>(
-    store: &Arc<crate::storage::SessionStore>,
+    store: &Arc<craftwave_engine::storage::SessionStore>,
     events: &Arc<dyn EventSink>,
     session_usage: &Mutex<HashMap<String, UsageTotal>>,
-    ledger: &crate::host::usage::UsageLedger,
+    ledger: &craftwave_engine::usage::UsageLedger,
     session_id: &str,
     owner: &str,
     summary_model: (&str, &str),
-    scope: &crate::backend::compaction::CompactionScope,
+    scope: &craftwave_engine::backend::compaction::CompactionScope,
     summary_driver: &TurnDriver<W, T>,
     policy: &CompactionRuntimePolicy,
-    session_log: Option<&Arc<crate::host::session_log::SessionLogger>>,
-) -> Result<CompactionOutcome, crate::backend::compaction::CompactionError>
+    session_log: Option<&Arc<craftwave_engine::session_log::SessionLogger>>,
+) -> Result<CompactionOutcome, craftwave_engine::backend::compaction::CompactionError>
 where
     W: rig::wire::Wire<Op = rig::operation::Completion>,
     T: rig::driver::Transport<W>,
@@ -2304,8 +2269,8 @@ where
     if let Some(logger) = session_log {
         logger.session_line(
             session_id,
-            crate::providers::types::LogLevel::Info,
-            crate::host::session_log::LogKind::Compact,
+            craftwave_engine::providers::types::LogLevel::Info,
+            craftwave_engine::session_log::LogKind::Compact,
             "上下文压缩开始".to_owned(),
             Some(serde_json::json!({ "entries": scope.entries.len() })),
             Some(owner),
@@ -2330,8 +2295,8 @@ where
         match &result {
             Ok(_) => logger.session_line(
                 session_id,
-                crate::providers::types::LogLevel::Info,
-                crate::host::session_log::LogKind::Compact,
+                craftwave_engine::providers::types::LogLevel::Info,
+                craftwave_engine::session_log::LogKind::Compact,
                 "上下文压缩完成".to_owned(),
                 Some(serde_json::json!({
                     "cutEntryId": scope.cut_entry_id,
@@ -2343,8 +2308,8 @@ where
             ),
             Err(e) => logger.session_line(
                 session_id,
-                crate::providers::types::LogLevel::Warn,
-                crate::host::session_log::LogKind::Compact,
+                craftwave_engine::providers::types::LogLevel::Warn,
+                craftwave_engine::session_log::LogKind::Compact,
                 "上下文压缩失败".to_owned(),
                 Some(serde_json::json!({ "error": e.to_string() })),
                 Some(owner),
@@ -2359,22 +2324,22 @@ where
 /// 压缩编排本体（原 [`execute_compaction`] 主体；生命周期行在外层包装）。
 #[allow(clippy::too_many_arguments)]
 async fn execute_compaction_inner<W, T>(
-    store: &Arc<crate::storage::SessionStore>,
+    store: &Arc<craftwave_engine::storage::SessionStore>,
     events: &Arc<dyn EventSink>,
     session_usage: &Mutex<HashMap<String, UsageTotal>>,
-    ledger: &crate::host::usage::UsageLedger,
+    ledger: &craftwave_engine::usage::UsageLedger,
     session_id: &str,
     owner: &str,
     summary_model: (&str, &str),
-    scope: &crate::backend::compaction::CompactionScope,
+    scope: &craftwave_engine::backend::compaction::CompactionScope,
     summary_driver: &TurnDriver<W, T>,
     policy: &CompactionRuntimePolicy,
-) -> Result<CompactionOutcome, crate::backend::compaction::CompactionError>
+) -> Result<CompactionOutcome, craftwave_engine::backend::compaction::CompactionError>
 where
     W: rig::wire::Wire<Op = rig::operation::Completion>,
     T: rig::driver::Transport<W>,
 {
-    let (summary, usages) = crate::backend::compaction::summarize(
+    let (summary, usages) = craftwave_engine::backend::compaction::summarize(
         summary_driver,
         scope.old_summary.as_deref(),
         &scope.entries,
@@ -2386,17 +2351,17 @@ where
     // 不推进边界——摘要结果被丢弃，下次重试重新摘要）
     let (_, count) = store
         .compaction_overview(session_id)
-        .map_err(|e| crate::backend::compaction::CompactionError::Failed(e.to_string()))?;
-    let entry = crate::storage::StoredCompactionEntry {
-        id: crate::backend::compaction::compaction_entry_id(owner, count + 1),
+        .map_err(|e| craftwave_engine::backend::compaction::CompactionError::Failed(e.to_string()))?;
+    let entry = craftwave_engine::storage::StoredCompactionEntry {
+        id: craftwave_engine::backend::compaction::compaction_entry_id(owner, count + 1),
         cut_entry_id: scope.cut_entry_id.clone(),
         summary: summary.clone(),
-        tokens_before: crate::backend::estimator::estimate_entries_tokens(&scope.entries),
+        tokens_before: craftwave_engine::backend::estimator::estimate_entries_tokens(&scope.entries),
         created_at: now_ms(),
     };
     store
         .append_compaction(session_id, entry)
-        .map_err(|e| crate::backend::compaction::CompactionError::Failed(e.to_string()))?;
+        .map_err(|e| craftwave_engine::backend::compaction::CompactionError::Failed(e.to_string()))?;
     accumulate_compaction_usage(
         session_usage,
         events,
@@ -2407,7 +2372,7 @@ where
         &usages,
     );
     Ok(CompactionOutcome {
-        boundary: crate::backend::wire::CompactionBoundary {
+        boundary: craftwave_engine::backend::wire::CompactionBoundary {
             cut_entry_id: scope.cut_entry_id.clone(),
             summary,
         },
@@ -2436,7 +2401,7 @@ pub(crate) async fn maybe_compact_before_run<W, T>(
     summary_model: (&str, &str),
     sink: &mut dyn FrameSink,
     custom_prompt: Option<&str>,
-) -> Result<(Option<crate::backend::wire::CompactionBoundary>, u64), IpcError>
+) -> Result<(Option<craftwave_engine::backend::wire::CompactionBoundary>, u64), IpcError>
 where
     W: rig::wire::Wire<Op = rig::operation::Completion>,
     T: rig::driver::Transport<W>,
@@ -2447,7 +2412,7 @@ where
         .map_err(|e| IpcError::internal(e.to_string()))?;
     let boundary = overview
         .0
-        .map(|c| crate::backend::wire::CompactionBoundary {
+        .map(|c| craftwave_engine::backend::wire::CompactionBoundary {
             cut_entry_id: c.cut_entry_id,
             summary: c.summary,
         });
@@ -2461,7 +2426,7 @@ where
             m.parts
                 .iter()
                 .filter_map(|p| match p {
-                    crate::storage::WirePart::Text { text } => Some(text.as_str()),
+                    craftwave_engine::storage::WirePart::Text { text } => Some(text.as_str()),
                     _ => None,
                 })
                 .collect::<String>()
@@ -2472,14 +2437,14 @@ where
         .into_iter()
         .flatten()
         .collect();
-    let estimated = crate::backend::estimator::estimate_request_tokens(
+    let estimated = craftwave_engine::backend::estimator::estimate_request_tokens(
         &prefixes,
         body,
         &prompt_text,
         &tool_inputs,
         policy.reply_reserve,
     );
-    if !crate::backend::estimator::should_auto_compact(
+    if !craftwave_engine::backend::estimator::should_auto_compact(
         estimated,
         policy.context_window,
         policy.threshold,
@@ -2492,7 +2457,7 @@ where
         keys::RUN_COMPACTING,
         serde_json::json!({ "sessionId": session_id }),
     );
-    let scope = crate::backend::compaction::compression_scope(
+    let scope = craftwave_engine::backend::compaction::compression_scope(
         body,
         boundary
             .as_ref()
@@ -2516,7 +2481,7 @@ where
             .await
         }
         // 无可压内容但已达阈值（如首次请求即超大附件）：按超预算兜底
-        None => Err(crate::backend::compaction::CompactionError::Failed(
+        None => Err(craftwave_engine::backend::compaction::CompactionError::Failed(
             "已达压缩阈值但无可压缩的历史内容".to_owned(),
         )),
     };
@@ -2528,14 +2493,14 @@ where
                 serde_json::json!({ "sessionId": session_id }),
             );
             // 失败兜底：原上下文能放入硬预算（窗口 ×0.9）则继续
-            if !crate::backend::estimator::is_over_wire_budget(estimated, policy.context_window) {
+            if !craftwave_engine::backend::estimator::is_over_wire_budget(estimated, policy.context_window) {
                 return Ok((boundary, estimated));
             }
             return Err(context_overflow(estimated, policy));
         }
     };
     // tokensAfter：新边界下的重算（压缩已在史册生效，重读概览取最新边界）
-    let new_boundary = crate::backend::wire::CompactionBoundary {
+    let new_boundary = craftwave_engine::backend::wire::CompactionBoundary {
         cut_entry_id: outcome.boundary.cut_entry_id.clone(),
         summary: outcome.boundary.summary.clone(),
     };
@@ -2562,11 +2527,11 @@ where
     Ok((Some(new_boundary), tokens_after))
 }
 
-/// 活动路径的边界裁剪切片（与 [`crate::backend::wire::split_prompt_with_boundary`]
+/// 活动路径的边界裁剪切片（与 [`craftwave_engine::backend::wire::split_prompt_with_boundary`]
 /// 同一裁剪口径的条目视图；边界锚点缺失按参数错误拒绝——不静默全量展开）。
 fn boundary_ref_slice<'a>(
     entries: &'a [MessageEntry],
-    boundary: Option<&crate::backend::wire::CompactionBoundary>,
+    boundary: Option<&craftwave_engine::backend::wire::CompactionBoundary>,
 ) -> Result<&'a [MessageEntry], IpcError> {
     match boundary {
         None => Ok(entries),
@@ -2598,10 +2563,10 @@ fn boundary_ref_slice<'a>(
 /// `ledger` 与 `summary_model`（摘要模型身份）随闭包传入（落账面）。
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn maybe_compact_after_ask<W, T>(
-    store: &Arc<crate::storage::SessionStore>,
+    store: &Arc<craftwave_engine::storage::SessionStore>,
     events: &Arc<dyn EventSink>,
     session_usage: &Mutex<HashMap<String, UsageTotal>>,
-    ledger: &crate::host::usage::UsageLedger,
+    ledger: &craftwave_engine::usage::UsageLedger,
     session_id: &str,
     run_id: &str,
     summary_model: (&str, &str),
@@ -2610,15 +2575,15 @@ pub(crate) async fn maybe_compact_after_ask<W, T>(
     tools: &[Arc<rig::completion::request::ToolDefinition>],
     policy: &CompactionRuntimePolicy,
     summary_driver: &TurnDriver<W, T>,
-    session_log: Option<&Arc<crate::host::session_log::SessionLogger>>,
+    session_log: Option<&Arc<craftwave_engine::session_log::SessionLogger>>,
 ) where
     W: rig::wire::Wire<Op = rig::operation::Completion>,
     T: rig::driver::Transport<W>,
 {
-    let pending_tokens = crate::backend::estimator::estimate_text_tokens(&pending.args_json);
-    let tool_tokens = crate::backend::estimator::estimate_tool_tokens(&tool_estimate_inputs(tools));
+    let pending_tokens = craftwave_engine::backend::estimator::estimate_text_tokens(&pending.args_json);
+    let tool_tokens = craftwave_engine::backend::estimator::estimate_tool_tokens(&tool_estimate_inputs(tools));
     let estimated = state.last_input + pending_tokens + tool_tokens + policy.reply_reserve;
-    if !crate::backend::estimator::should_auto_compact(
+    if !craftwave_engine::backend::estimator::should_auto_compact(
         estimated,
         policy.context_window,
         policy.threshold,
@@ -2634,24 +2599,24 @@ pub(crate) async fn maybe_compact_after_ask<W, T>(
     let compacted = async {
         let tree = store
             .load_session_tree(session_id)
-            .map_err(|e| crate::backend::compaction::CompactionError::Failed(e.to_string()))?;
+            .map_err(|e| craftwave_engine::backend::compaction::CompactionError::Failed(e.to_string()))?;
         let overview = store
             .compaction_overview(session_id)
-            .map_err(|e| crate::backend::compaction::CompactionError::Failed(e.to_string()))?;
+            .map_err(|e| craftwave_engine::backend::compaction::CompactionError::Failed(e.to_string()))?;
         let boundary = overview
             .0
-            .map(|c| crate::backend::wire::CompactionBoundary {
+            .map(|c| craftwave_engine::backend::wire::CompactionBoundary {
                 cut_entry_id: c.cut_entry_id,
                 summary: c.summary,
             });
-        let scope = crate::backend::compaction::compression_scope(
+        let scope = craftwave_engine::backend::compaction::compression_scope(
             &tree.messages,
             boundary
                 .as_ref()
                 .map(|b| (b.cut_entry_id.as_str(), b.summary.as_str())),
         );
         let scope = scope.ok_or_else(|| {
-            crate::backend::compaction::CompactionError::Failed("无可压缩的历史内容".to_owned())
+            craftwave_engine::backend::compaction::CompactionError::Failed("无可压缩的历史内容".to_owned())
         })?;
         execute_compaction(
             store,
@@ -2675,7 +2640,7 @@ pub(crate) async fn maybe_compact_after_ask<W, T>(
                 .load_session_tree(session_id)
                 .ok()
                 .and_then(|tree| {
-                    let boundary = crate::backend::wire::CompactionBoundary {
+                    let boundary = craftwave_engine::backend::wire::CompactionBoundary {
                         cut_entry_id: outcome.boundary.cut_entry_id.clone(),
                         summary: outcome.boundary.summary.clone(),
                     };
@@ -2738,8 +2703,8 @@ pub async fn compact_session_core(
         .store
         .load_session_tree(session_id)
         .map_err(|e| match e {
-            crate::storage::StorageError::NotFound(_) => IpcError::new(
-                crate::util::errors::E_NOT_FOUND,
+            craftwave_engine::storage::StorageError::NotFound(_) => IpcError::new(
+                craftwave_engine::util::errors::E_NOT_FOUND,
                 format!("会话不存在：{session_id}"),
             ),
             other => IpcError::internal(other.to_string()),
@@ -2750,7 +2715,7 @@ pub async fn compact_session_core(
         .map_err(|e| IpcError::internal(e.to_string()))?;
     let boundary = overview
         .0
-        .map(|c| crate::backend::wire::CompactionBoundary {
+        .map(|c| craftwave_engine::backend::wire::CompactionBoundary {
             cut_entry_id: c.cut_entry_id,
             summary: c.summary,
         });
@@ -2760,14 +2725,14 @@ pub async fn compact_session_core(
         .into_iter()
         .flatten()
         .collect();
-    let tokens_before = crate::backend::estimator::estimate_request_tokens(
+    let tokens_before = craftwave_engine::backend::estimator::estimate_request_tokens(
         &prefixes,
         &tree.messages,
         "",
         &[],
         policy.reply_reserve,
     );
-    let scope = crate::backend::compaction::compression_scope(
+    let scope = craftwave_engine::backend::compaction::compression_scope(
         &tree.messages,
         boundary
             .as_ref()
@@ -2842,7 +2807,7 @@ pub(crate) async fn compact_session(
 /// 压缩或开启新会话）。
 fn context_overflow(estimated: u64, policy: &CompactionRuntimePolicy) -> IpcError {
     IpcError::new(
-        crate::util::errors::E_CONTEXT_OVERFLOW,
+        craftwave_engine::util::errors::E_CONTEXT_OVERFLOW,
         format!(
             "上下文占用约 {estimated} token，超过模型窗口（{}）的硬预算且压缩后仍放不下：\
              已暂停本次发送，输入已保留，可重试压缩或开启新会话",
@@ -2909,7 +2874,7 @@ pub async fn start_chat_core(
     // ① 会话偏好起点快照：prefs 文件优先于
     //    RunConfig（前端两者同步写，文件缺失/字段未设时回落 RunConfig——
     //    旧前端载荷兼容面）。模型解析与 thinking 初值都按此快照生效。
-    let prefs_initial = crate::storage::prefs::load_prefs(app.store.root(), &session_id);
+    let prefs_initial = craftwave_engine::storage::prefs::load_prefs(app.store.root(), &session_id);
     let initial_model_id = prefs_initial.model_id.or(run_config.model_id.clone());
     let initial_thinking = prefs_initial.thinking.or(run_config.thinking);
     // ① 模型解析
@@ -2922,11 +2887,11 @@ pub async fn start_chat_core(
     // ①b wire 参数校验（末条 user 为 prompt；image part 按 vision 双
     //    形态校验——非 vision 模型的本次新附图在此拒绝）——压缩编排前
     //    先验，让参数错误优先于任何有副作用的流程
-    let vision_policy = crate::backend::wire::VisionPolicy {
+    let vision_policy = craftwave_engine::backend::wire::VisionPolicy {
         vision: model.vision,
         blobs: &image_blobs,
     };
-    crate::backend::wire::split_prompt_visioned(&messages, None, &vision_policy)
+    craftwave_engine::backend::wire::split_prompt_visioned(&messages, None, &vision_policy)
         .map_err(|e| IpcError::invalid_arg(e.to_string()))?;
     // ② 系统级前缀与压缩策略（注入次序：customPrompt → 压缩 summary →
     //    当前计划 → 技能清单）。save_config 即时生效于下次 run（config.load
@@ -2939,18 +2904,18 @@ pub async fn start_chat_core(
     // ai_language 注入层（次序：customPrompt → 项目指令 →
     // ai_language → 压缩 summary → 技能清单）：模型回复语言偏好，非空用
     // 自定义值、空跟随界面语言
-    let ai_language_layer = crate::backend::wire::ai_language_layer(
+    let ai_language_layer = craftwave_engine::backend::wire::ai_language_layer(
         config_snapshot.ui.ai_language.as_deref(),
         config_snapshot.ui.language.as_str(),
     );
     // 技能快照与渐进披露（run 开始固定版本——重扫/启停只
     // 影响下一 run；未信任技能询问在本步同步完成，拒绝者不进清单）。
-    let run_skills = crate::knowledge::commands::ensure_skills_snapshot(app, &session_id).await;
+    let run_skills = crate::host::commands::knowledge_cmds::ensure_skills_snapshot(app, &session_id).await;
     // 项目指令信任核验与注入：AGENTS.md 等
     // 首次加载弹 projectTrust 询问，deny/未信任不注入（本步同步完成，
     // 与技能信任同一装配时机）。
     let instructions =
-        crate::knowledge::instructions::ensure_instruction_disclosure(app, &session_id).await;
+        craftwave_engine::knowledge::instructions::ensure_instruction_disclosure(app, &session_id).await;
     let disclosure = run_skills.disclosure.clone();
     let policy = compaction_policy(app, &model);
     // 摘要驱动（专用小模型未配则当前 run 模型——无会话覆盖时即
@@ -2964,9 +2929,9 @@ pub async fn start_chat_core(
     // ③ 工具集（三处同源过滤）——静态段 + MCP 动态段（
     // 动态段快照随 run 装配固化，tools/list_changed 的热更新下一 run 生效）；
     // 预算检查含工具表
-    let mut registry_specs = crate::tools::build_registry();
+    let mut registry_specs = craftwave_engine::tools::build_registry();
     registry_specs.extend(app.mcp.registry().snapshot());
-    let tool_specs = crate::tools::filter_for_tier(registry_specs, run_config.tier);
+    let tool_specs = craftwave_engine::tools::filter_for_tier(registry_specs, run_config.tier);
     let tools = to_rig_tool_definitions(tool_specs)?;
 
     // ④ 同会话互斥预检（E_SESSION_RUNNING 快速失败；正式互斥仍由
@@ -3014,19 +2979,19 @@ pub async fn start_chat_core(
     )
     .await?;
     // wire 硬预算复查（压缩后仍 > 窗口 ×0.9 → 暂停保留输入，不静默裁历史）
-    if crate::backend::estimator::is_over_wire_budget(estimated_after, policy.context_window) {
+    if craftwave_engine::backend::estimator::is_over_wire_budget(estimated_after, policy.context_window) {
         return Err(context_overflow(estimated_after, &policy));
     }
     // ⑤ wire 切分（压缩边界 + image 双形态）：cutEntryId 前跳过/
     //    后展开，摘要交前缀层；image part 按视觉策略映射（vision 多模态块 /
     //    非 vision 占位）
     let (history, prompt, compaction_summary) =
-        crate::backend::wire::split_prompt_visioned(&messages, boundary.as_ref(), &vision_policy)
+        craftwave_engine::backend::wire::split_prompt_visioned(&messages, boundary.as_ref(), &vision_policy)
             .map_err(|e| IpcError::invalid_arg(e.to_string()))?;
     // 系统前缀注入层（次序：customPrompt → 项目指令 → 压缩 summary →
     // 技能清单）。项目指令插入第二位（与
     // customPrompt 同类——用户/仓库侧给 AI 的常驻指引）。
-    let history = crate::backend::wire::with_system_prefix_layers(
+    let history = craftwave_engine::backend::wire::with_system_prefix_layers(
         history,
         [
             custom_prompt.as_deref(),
@@ -3055,10 +3020,10 @@ pub async fn start_chat_core(
     let initial_directive = effective_thinking_directive(initial_thinking, &model);
     let mut spec = RunSpec {
         max_turns: Some(run_config.max_turns as usize),
-        options: crate::backend::turn::reasoning_directive_to_options(&initial_directive),
+        options: craftwave_engine::backend::turn::reasoning_directive_to_options(&initial_directive),
         ..RunSpec::new()
     };
-    if let Some(cap) = crate::backend::turn::directive_max_tokens(
+    if let Some(cap) = craftwave_engine::backend::turn::directive_max_tokens(
         &initial_directive,
         model.max_tokens,
         model.api_format,
@@ -3077,7 +3042,7 @@ pub async fn start_chat_core(
         session_id: session_id.clone(),
         run_id: run_id.clone(),
         api_host: HostLlmLogger::host_of(&model.base_url),
-        blob_dir: crate::storage::imgblob::imgblob_dir(app.store.root(), &session_id),
+        blob_dir: craftwave_engine::storage::imgblob::imgblob_dir(app.store.root(), &session_id),
         current_model: current_model.clone(),
     }));
     // 每拍请求刷新源：运行中切换模型/thinking 在同一 run
@@ -3109,7 +3074,7 @@ pub async fn start_chat_core(
     let session_memory_enabled = approval_config.session_memory_enabled;
     let approval_memory_for_task = app.approval_memory.clone();
     let session_id_for_memory = session_id.clone();
-    let executor: Arc<dyn crate::backend::run_loop::CancellableExecutor> = Arc::new(
+    let executor: Arc<dyn craftwave_engine::backend::run_loop::CancellableExecutor> = Arc::new(
         ToolsetExecutor::new(
             // 会话 roots（含外部授权目录）：项目会话 = 项目主目录 +
             // 数据目录下 `workspace/`
@@ -3120,10 +3085,10 @@ pub async fn start_chat_core(
             //（spill/logs）仍挂 AppState.store 根，不经本 roots。
             {
                 let roots =
-                    crate::host::commands::workspace::resolve_session_roots(app, &session_id);
+                    craftwave_engine::session_roots::resolve_session_roots(app, &session_id);
                 let _ = std::fs::create_dir_all(&roots.project_root);
                 let _ = std::fs::create_dir_all(&roots.workspace_root);
-                crate::tools::ToolsContext::new(roots.project_root, roots.workspace_root)
+                craftwave_engine::tools::ToolsContext::new(roots.project_root, roots.workspace_root)
                     .with_extra_roots(roots.extra_dirs)
             },
             run_config.tier,
@@ -3152,7 +3117,7 @@ pub async fn start_chat_core(
             store: Some(app.store.clone()),
             // MCP 动态工具调用面：归一名反查 + 结果未知语义在
             // mcp/pool 收口。
-            mcp: Some(Arc::new(crate::mcp::commands::McpCallerAdapter {
+            mcp: Some(Arc::new(crate::host::commands::mcp_cmds::McpCallerAdapter {
                 host: app.mcp.clone(),
             })),
             // run 内技能快照：`skill` 工具只读快照——正文
@@ -3180,7 +3145,7 @@ pub async fn start_chat_core(
             // 网络工具执行环境（web_fetch/http_request）：SSRF 策略
             // （network.allowPrivateNetwork）+ 代理 + 进程级节流器，按当前
             // AppConfig 装配（save_config 后下一次 start_chat 生效）。
-            network: Some(Arc::new(crate::tools::NetworkEnv::from_config(
+            network: Some(Arc::new(craftwave_engine::tools::NetworkEnv::from_config(
                 app.config.load()?.as_ref(),
             ))),
         }),
@@ -3194,13 +3159,13 @@ pub async fn start_chat_core(
     // 目录两根）、会话级免批桶（always_session，主 run 与子代理同桶）、
     // 审批策略快照（四开关 ①④ + 白名单条目，按 run 读取生效）。
     let gate = {
-        let roots = crate::host::commands::workspace::resolve_session_roots(app, &session_id);
+        let roots = craftwave_engine::session_roots::resolve_session_roots(app, &session_id);
         let canonical = |p: &std::path::Path| std::fs::canonicalize(p).ok();
         let gate_ws = match (
             canonical(&roots.project_root),
             canonical(&roots.workspace_root),
         ) {
-            (Some(project), Some(data)) => Some(crate::backend::gate::GateWorkspace {
+            (Some(project), Some(data)) => Some(craftwave_engine::backend::gate::GateWorkspace {
                 roots: {
                     // 全根 canonical（含授权目录——授权判定与围栏判定同域
                     // 比较）
@@ -3218,10 +3183,10 @@ pub async fn start_chat_core(
         };
         let approval = approval_config.clone();
         let mut gate = ApprovalGate::new(run_config.tier, handle.plan.clone())
-            .with_mcp(Arc::new(crate::mcp::commands::McpGateAdapter {
+            .with_mcp(Arc::new(crate::host::commands::mcp_cmds::McpGateAdapter {
                 host: app.mcp.clone(),
             }))
-            .with_internal_guard(crate::safety::internal_state::InternalStateGuard::new(
+            .with_internal_guard(craftwave_engine::safety::internal_state::InternalStateGuard::new(
                 // 内部状态禁区判定：数据目录根 + 项目主目录两根
                 // ——注意第二根是 workspace 子目录，禁区
                 // 判定仍以数据目录根为界（config/sessions 等恒在禁区）。
@@ -3236,7 +3201,7 @@ pub async fn start_chat_core(
             // 装配会话桶——「本会话始终允许」的授权目录跨 run 生效（进程内
             // 不持久化）。
             .with_plan_scope_memory(app.plan_scopes.bucket(&session_id))
-            .with_policy(crate::backend::gate::ApprovalPolicy {
+            .with_policy(craftwave_engine::backend::gate::ApprovalPolicy {
                 enabled: approval.enabled,
                 allowlist_enabled: approval.allowlist_enabled,
                 command_allowlist: approval.command_allowlist.clone(),
@@ -3316,7 +3281,7 @@ pub async fn start_chat_core(
     // 项目主目录（范围门恢复循环）：always_session 授权时把
     // 计划外写目标的词法路径展开为绝对路径再归一（与范围门判定同款基准）。
     let project_root_for_scope =
-        crate::host::commands::workspace::resolve_session_roots(app, &session_id).project_root;
+        craftwave_engine::session_roots::resolve_session_roots(app, &session_id).project_root;
     // steer 插话源：RunHandle 的插话队列 + 宿主副作用
     // （canonical 落盘 + run:inject 回执）收进 HostSteerSource，RunLoop 于
     // turn 边界经 trait 取文本
@@ -3392,8 +3357,8 @@ pub async fn start_chat_core(
         // run 开始行（kind=run：runId/模型）
         session_log_for_sink.session_line(
             &session_id,
-            crate::providers::types::LogLevel::Info,
-            crate::host::session_log::LogKind::Run,
+            craftwave_engine::providers::types::LogLevel::Info,
+            craftwave_engine::session_log::LogKind::Run,
             "run 开始".to_owned(),
             Some(serde_json::json!({ "model": model_name_for_log })),
             Some(&run_id),
@@ -3410,7 +3375,7 @@ pub async fn start_chat_core(
         });
         // 错误终态信息（带 code：看门狗终止 E_RUN_STALLED，其余
         // E_INTERNAL 兜底）：loop 内记录、收尾随 run:error 事件发出
-        let mut errored: Option<RunFailure> = None;
+        let mut errored: Option<craftwave_engine::followup::RunFailure> = None;
         let final_exit: RunExit = loop {
             let attempt = drive_run(
                 &driver,
@@ -3430,7 +3395,7 @@ pub async fn start_chat_core(
             match attempt {
                 Err(err) => {
                     let message = err.to_string();
-                    errored = Some(RunFailure {
+                    errored = Some(craftwave_engine::followup::RunFailure {
                         code: E_INTERNAL.to_owned(),
                         message: message.clone(),
                     });
@@ -3442,14 +3407,14 @@ pub async fn start_chat_core(
                 // 内发出（预算越界 E_CONTEXT_OVERFLOW 等），记录失败终态供
                 // run:error 事件与队列暂停分流（暂停保留输入）。
                 Ok(RunExit::Failed { code, message }) => {
-                    errored = Some(RunFailure {
+                    errored = Some(craftwave_engine::followup::RunFailure {
                         code: code.clone(),
                         message: message.clone(),
                     });
                     break RunExit::Failed { code, message };
                 }
                 Ok(RunExit::Suspended(info)) => {
-                    let crate::backend::run_loop::SuspendedInfo {
+                    let craftwave_engine::backend::run_loop::SuspendedInfo {
                         run_json,
                         pending,
                         state,
@@ -3464,7 +3429,7 @@ pub async fn start_chat_core(
                     // 展示）。allow 经审计放行单槽直接恢复（不重复审计）；block
                     // 按拒绝收场（E_AUDIT_BLOCKED）；ask/失败转人工（载荷带
                     // 结论）；取消传播终止审计并按取消收场。
-                    let mut audit_note: Option<crate::backend::ask::AuditNote> = None;
+                    let mut audit_note: Option<craftwave_engine::backend::ask::AuditNote> = None;
                     if pending.name == "command"
                         && gate.audit_class(&pending.name, &pending.args_json)
                     {
@@ -3475,7 +3440,7 @@ pub async fn start_chat_core(
                             .unwrap_or_else(|| pending.model_call_id.clone());
                         sink.send(ChatFrame::ToolAudit {
                             call_id: frame_call_id.clone(),
-                            state: crate::backend::frames::AuditState::Running,
+                            state: craftwave_engine::backend::frames::AuditState::Running,
                             reason: None,
                         });
                         let plan_baseline: Vec<String> = handle
@@ -3522,10 +3487,10 @@ pub async fn start_chat_core(
                                     verdict.reason.clone()
                                 };
                                 match verdict.decision {
-                                    crate::backend::audit::AuditDecision::Allow => {
+                                    craftwave_engine::backend::audit::AuditDecision::Allow => {
                                         sink.send(ChatFrame::ToolAudit {
                                             call_id: frame_call_id,
-                                            state: crate::backend::frames::AuditState::Allow,
+                                            state: craftwave_engine::backend::frames::AuditState::Allow,
                                             reason: Some(reason),
                                         });
                                         // 审计放行单槽（消费即清）：恢复重放的
@@ -3541,7 +3506,7 @@ pub async fn start_chat_core(
                                             }
                                             Err(e) => {
                                                 let message = format!("审计放行恢复失败：{e}");
-                                                errored = Some(RunFailure {
+                                                errored = Some(craftwave_engine::followup::RunFailure {
                                                     code: E_INTERNAL.to_owned(),
                                                     message: message.clone(),
                                                 });
@@ -3550,10 +3515,10 @@ pub async fn start_chat_core(
                                             }
                                         }
                                     }
-                                    crate::backend::audit::AuditDecision::Block => {
+                                    craftwave_engine::backend::audit::AuditDecision::Block => {
                                         sink.send(ChatFrame::ToolAudit {
                                             call_id: frame_call_id.clone(),
-                                            state: crate::backend::frames::AuditState::Block,
+                                            state: craftwave_engine::backend::frames::AuditState::Block,
                                             reason: Some(reason.clone()),
                                         });
                                         audit_block_finish(
@@ -3562,27 +3527,27 @@ pub async fn start_chat_core(
                                             &state,
                                             &reason,
                                         );
-                                        errored = Some(RunFailure {
-                                            code: crate::util::errors::E_AUDIT_BLOCKED.to_owned(),
+                                        errored = Some(craftwave_engine::followup::RunFailure {
+                                            code: craftwave_engine::util::errors::E_AUDIT_BLOCKED.to_owned(),
                                             message: format!(
                                                 "命令审计模型判断高风险，已拒绝执行：{reason}"
                                             ),
                                         });
                                         break RunExit::Failed {
-                                            code: crate::util::errors::E_AUDIT_BLOCKED.to_owned(),
+                                            code: craftwave_engine::util::errors::E_AUDIT_BLOCKED.to_owned(),
                                             message: format!(
                                                 "命令审计模型判断高风险，已拒绝执行：{reason}"
                                             ),
                                         };
                                     }
-                                    crate::backend::audit::AuditDecision::Ask => {
+                                    craftwave_engine::backend::audit::AuditDecision::Ask => {
                                         sink.send(ChatFrame::ToolAudit {
                                             call_id: frame_call_id,
-                                            state: crate::backend::frames::AuditState::Ask,
+                                            state: craftwave_engine::backend::frames::AuditState::Ask,
                                             reason: Some(reason.clone()),
                                         });
-                                        audit_note = Some(crate::backend::ask::AuditNote {
-                                            state: crate::backend::ask::AuditNoteState::Ask,
+                                        audit_note = Some(craftwave_engine::backend::ask::AuditNote {
+                                            state: craftwave_engine::backend::ask::AuditNoteState::Ask,
                                             reason,
                                         });
                                     }
@@ -3604,11 +3569,11 @@ pub async fn start_chat_core(
                                 }
                                 sink.send(ChatFrame::ToolAudit {
                                     call_id: frame_call_id,
-                                    state: crate::backend::frames::AuditState::Manual,
+                                    state: craftwave_engine::backend::frames::AuditState::Manual,
                                     reason: Some(reason.clone()),
                                 });
-                                audit_note = Some(crate::backend::ask::AuditNote {
-                                    state: crate::backend::ask::AuditNoteState::Manual,
+                                audit_note = Some(craftwave_engine::backend::ask::AuditNote {
+                                    state: craftwave_engine::backend::ask::AuditNoteState::Manual,
                                     reason,
                                 });
                             }
@@ -3651,7 +3616,7 @@ pub async fn start_chat_core(
                                 // （canonicalize 失败），内存面仍生效让本 run
                                 // 继续；否则重放判定不命中会再次挂起成死循环。
                                 if let Ok(canonical) =
-                                    crate::safety::safe_join::canonicalize_best_effort(
+                                    craftwave_engine::safety::safe_join::canonicalize_best_effort(
                                         std::path::Path::new(dir),
                                     )
                                 {
@@ -3674,7 +3639,7 @@ pub async fn start_chat_core(
                                     project_root_for_scope.join(raw)
                                 };
                                 if let Ok(resolved) =
-                                    crate::safety::safe_join::canonicalize_best_effort(&lexical)
+                                    craftwave_engine::safety::safe_join::canonicalize_best_effort(&lexical)
                                 {
                                     let dir = resolved
                                         .parent()
@@ -3733,7 +3698,7 @@ pub async fn start_chat_core(
                                 }
                                 Err(e) => {
                                     let message = format!("审批恢复失败：{e}");
-                                    errored = Some(RunFailure {
+                                    errored = Some(craftwave_engine::followup::RunFailure {
                                         code: E_INTERNAL.to_owned(),
                                         message: message.clone(),
                                     });
@@ -3752,7 +3717,7 @@ pub async fn start_chat_core(
                 // 已在 drive_run 内发出（结果保留、副作用不重放），这里记
                 // 失败终态供 run:error 事件与队列暂停分流。
                 Ok(RunExit::Stalled { message }) => {
-                    errored = Some(RunFailure {
+                    errored = Some(craftwave_engine::followup::RunFailure {
                         code: E_RUN_STALLED.to_owned(),
                         message: message.clone(),
                     });
@@ -3788,7 +3753,7 @@ pub async fn start_chat_core(
 
         // run 终态事件：前端 Tab 指示与系统通知门
         // （TauriEventSink 旁路）共用这三个键；payload 口径照文档。失败终态
-        // 的 code 从 RunFailure 带出（看门狗终止 = E_RUN_STALLED）。
+        // 的 code 从 craftwave_engine::followup::RunFailure 带出（看门狗终止 = E_RUN_STALLED）。
         let duration_ms = (now_ms() - handle.snapshot().started_at).max(0) as u64;
         // run 收尾行（kind=run：runId/模型/耗时/tokens/终态 reason）。
         // tokens = run 内累计（RunState 的 usage 快照与 usage 帧同源）；
@@ -3803,7 +3768,7 @@ pub async fn start_chat_core(
         // 运行元数据——无会话 id 关联正文，只记 runId 与错误码）
         if reason == "error" {
             session_log_for_end.app_line(
-                crate::providers::types::LogLevel::Warn,
+                craftwave_engine::providers::types::LogLevel::Warn,
                 format!("run 失败：{run_id}"),
                 Some(serde_json::json!({ "runId": run_id, "code": error_code })),
             );
@@ -3811,11 +3776,11 @@ pub async fn start_chat_core(
         session_log_for_end.session_line(
             &session_id,
             if reason == "error" {
-                crate::providers::types::LogLevel::Warn
+                craftwave_engine::providers::types::LogLevel::Warn
             } else {
-                crate::providers::types::LogLevel::Info
+                craftwave_engine::providers::types::LogLevel::Info
             },
-            crate::host::session_log::LogKind::Run,
+            craftwave_engine::session_log::LogKind::Run,
             match reason {
                 "done" => "run 完成".to_owned(),
                 "error" => "run 失败".to_owned(),
@@ -3857,8 +3822,8 @@ pub async fn start_chat_core(
         let leftover_steer = drain_steer(&handle);
         let followups = &app_for_delivery.followups;
         let events_for_task = &events;
-        match followup_disposition(&final_exit, &errored) {
-            QueueDisposition::AutoDeliver => {
+        match craftwave_engine::followup::followup_disposition(&final_exit, &errored) {
+            craftwave_engine::followup::QueueDisposition::AutoDeliver => {
                 for text in leftover_steer {
                     let entry = followup_entry_from_text(&text, &run_config_for_delivery);
                     followups.push(&session_id, entry);
@@ -3873,13 +3838,13 @@ pub async fn start_chat_core(
             }
             // 失败终态（含看门狗终止 E_RUN_STALLED 与 runEnded(error) 兜底）：
             // 暂停队列 + 持久保留全部待发，steer 残余交还
-            QueueDisposition::PauseKeep => {
+            craftwave_engine::followup::QueueDisposition::PauseKeep => {
                 followups.set_paused(&session_id, true);
                 emit_queue_state(events_for_task, &session_id, followups, leftover_steer);
             }
             // 取消终态（含审批 deny 收场）：清空队列 + 全部文本交还草稿
             // （返还草稿；暂停态随清空一并复位）
-            QueueDisposition::ClearReturn => {
+            craftwave_engine::followup::QueueDisposition::ClearReturn => {
                 let mut returned = followups.clear(&session_id);
                 returned.extend(leftover_steer);
                 emit_queue_state(events_for_task, &session_id, followups, returned);
@@ -4006,11 +3971,11 @@ async fn deliver_followup_head(
     // ③ 构造 user 消息与 RunConfig（附着快照原样生效）。带图待发：
     //    附件引用展开为 image part（blob 已在 attach_image 落盘；
     //    wire 重建按投递时的模型视觉能力决定多模态块/占位文本）。
-    let mut parts = vec![crate::storage::WirePart::Text {
+    let mut parts = vec![craftwave_engine::storage::WirePart::Text {
         text: entry.text.clone(),
     }];
     for attachment in &entry.attachments {
-        parts.push(crate::storage::WirePart::Image {
+        parts.push(craftwave_engine::storage::WirePart::Image {
             blob_hash: attachment.blob_hash.clone(),
             mime_type: attachment.mime_type.clone(),
         });
@@ -4055,7 +4020,7 @@ async fn deliver_followup_head(
             // 保留未暂停态由重试机制自然续投；其他错误（模型未配等）暂停
             // 队列等待用户明确继续（避免反复失败刷屏）
             app.followups.push_front(session_id, entry);
-            if err.code != crate::util::errors::E_SESSION_RUNNING {
+            if err.code != craftwave_engine::util::errors::E_SESSION_RUNNING {
                 app.followups.set_paused(session_id, true);
             }
             emit_queue_state(&app.events, session_id, &app.followups, Vec::new());
@@ -4293,7 +4258,7 @@ pub(crate) async fn resolve_ask(
 ) -> Result<(), IpcError> {
     match resolve_ask_core(&runs, &ask_id, answer.clone()).await {
         Ok(()) => Ok(()),
-        Err(err) if err.code == crate::util::errors::E_NOT_FOUND => {
+        Err(err) if err.code == craftwave_engine::util::errors::E_NOT_FOUND => {
             // 子代理槽：活跃子代理的审批挂起
             if let Some(sub) = app.subs.find_by_ask(&ask_id) {
                 let tx = sub
