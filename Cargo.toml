@@ -4,3 +4,11 @@ members = ["src-tauri", "crates/engine", "crates/ui"]
 
 # 统一最低部署目标（rustc 编译与链接阶段均识别）；
 # 各成员与 CI、直接 cargo 命令都需在环境里设置。
+
+# dev 构建只保留行号级调试信息（函数/行映射，panic 回溯与断点定位不受
+# 影响），去掉变量级调试信息——后者是 deps 与 incremental 缓存体积的
+# 绝对大头（本仓依赖树重，实测前曾膨胀到 60G+）。需要调试器看变量值的
+# 场景：临时注释本段重编（一次性，可逆）。release 与发布产物不受影响。
+[profile.dev]
+debug = "line-tables-only"
+

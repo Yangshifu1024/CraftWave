@@ -73,3 +73,16 @@
 ## 10. 常见失败模式（出现即打回）
 
 一个 Entity 塞全应用状态；render 里混业务逻辑/网络请求；重排内容用随机/下标 ID；硬编码色/圆角破坏主题；有语义组件还用 clickable div 重造焦点/键盘/disabled/无障碍；受控模型旁复制本地状态漂移；render 变更引发 notify 循环；无 owner 的嵌套滚动；为一次性页面加组件 variant；低风险操作也弹确认框；测试只调内部方法从不执行指针/键盘行为。
+
+## 11. 构建验证纪律（三档口径，混合跑 = 缓存变体膨胀）
+
+背景：不同 cargo 子命令启用不同 feature 集，产物按 feature 组合留盘互不覆盖——曾把 target/ 膨胀到 67G（14G 是 feature 组合差异堆出的 incremental 缓存）。每批任务只允许三档命令，禁止混跑其他形态：
+
+1. **日常迭代**：`MACOSX_DEPLOYMENT_TARGET=13.0 cargo check -p <包名>`（最小 feature 集，最快反馈）；
+2. **收尾验收**：`MACOSX_DEPLOYMENT_TARGET=13.0 cargo clippy --workspace --all-targets -- -D warnings` + `MACOSX_DEPLOYMENT_TARGET=13.0 cargo test --workspace`（这两档共享同一套全 feature 产物）；
+3. **完整构建**：`cargo build` 只在提交前检查与用户要求看运行效果时跑。
+
+- 批量验证（测试套件/CI）设 `CARGO_INCREMENTAL=0`——测试与 clippy 不消费增量缓存，设了只产垃圾；本地手动开发不受影响；
+- **依赖与 profile 变更一律显式提交**（版本号逐个写明理由，禁止 `cargo upgrade` 类批量升级；禁止顺手升依赖、禁止改了 Cargo.toml 不提交）——曾有批次被中途打断留下 rig 0.45/0.46 半成品混搭导致构建挂；
+- dev profile 已降为行号级调试信息（根 Cargo.toml `[profile.dev]`），需要调试器看变量值时临时注释重编。
+

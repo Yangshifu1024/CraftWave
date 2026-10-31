@@ -138,4 +138,5 @@
 - **提交**：切片独立分支、Conventional Commits、重构与功能不混提交；依赖升级一律 pin rev 显式提交；
 - **双壳期功能流向**：新需求只进 engine，旧壳只修挡路问题；
 - **测试**：引擎测试沿既有 `_test.rs` 独立文件约定；UI 行为用 `#[gpui::test]` 装置（同样独立 `_test.rs`）；
+- **构建验证三档口径**（详见 coding-guides.md §11）：迭代用 `check -p`、验收用 `clippy --workspace --all-targets` + `test --workspace`、`build` 只在提交前与看效果时跑；批量验证设 `CARGO_INCREMENTAL=0`；依赖与 profile 变更一律显式提交；
 - **规范资产**：`docs/ZCode桌面端UI-UX优化方案.md` 已升格为渲染规范验收条目（见 rendering.md）。
