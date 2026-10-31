@@ -100,6 +100,55 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// 应用启动装配（GPUI 壳的启动入口；平移自旧壳 `lib.rs` setup 的
+    /// 装配顺序，壳差异不进）：
+    ///
+    /// ① 数据目录建目录（`~/.craftwave` 或测试临时目录）；
+    /// ② [`Self::new_in`]（config/storage/知识/MCP/日志/账本各域一次配齐）；
+    /// ③ 内置技能根写入（`resource_skills_dir`：打包态由壳解析资源目录
+    ///    传入；dev/headless 传 None 或源码树路径）；
+    /// ④ 子代理全局并发上限按配置应用一次（save_config 修改后在保存边界
+    ///    热生效）；
+    /// ⑤ 技能注册表装配：三来源根一次配齐 + 首扫（进程级单例）；
+    /// ⑥ 启动序记账（app.log 运行元数据，不涉会话正文）。
+    ///
+    /// 与旧壳 setup 的差异（均为壳专属，随 ShellOnly 排除清单不进 engine）：
+    /// 通知门（NotifyGate）与 `rebind_config`（通知门共享 config 的统一）
+    /// ——engine 无通知门，`new_in` 内 config 与日志器本就共享同一份；
+    /// 托盘/窗口几何记忆（GPUI 壳自绘）；tauri `manage`（GPUI 壳直接持
+    /// 返回值注入自己的状态面）。
+    ///
+    /// 装配产物可直接通过 `api::` 全部函数的参数校验（api 面就绪）；
+    /// 测试用临时目录驱动，不碰真实 `~/.craftwave`。
+    pub fn assemble(
+        data_dir: PathBuf,
+        events: Arc<dyn EventSink>,
+        resource_skills_dir: Option<PathBuf>,
+    ) -> std::sync::Arc<Self> {
+        // ① 数据目录（含 sessions/ 等子目录按需惰性建；根先行）
+        let _ = std::fs::create_dir_all(&data_dir);
+        // ② 各域装配（new_in：config 缓存 + SessionStore + ProjectStore +
+        //    FollowUpManager + McpHost + SubRegistry + HttpClientFactory +
+        //    UsageLedger + SessionLogger）
+        let state = Self::new_in(data_dir.clone(), events);
+        // ③ 内置技能根（目录清单；None = 无内置来源，不报错）
+        let mut state = state;
+        state.resource_skills_dir = resource_skills_dir.filter(|d| d.is_dir());
+        // ④ 子代理全局并发上限：启动时按配置应用一次
+        state.apply_subagent_limit();
+        // ⑤ 技能注册表：三来源根一次配齐 + 首扫
+        crate::api::knowledge::configure_registry(&state);
+        // ⑥ 启动序记账（app.log：运行元数据）
+        state.session_log.app_line(
+            crate::providers::types::LogLevel::Info,
+            "应用启动完成".to_owned(),
+            Some(serde_json::json!({
+                "dataDir": data_dir.display().to_string(),
+            })),
+        );
+        std::sync::Arc::new(state)
+    }
+
     /// `~/.craftwave` 数据目录下的 config.json。
     pub fn new_in(data_dir: PathBuf, events: Arc<dyn EventSink>) -> Self {
         let store = Arc::new(SessionStore::with_root(data_dir.clone()));

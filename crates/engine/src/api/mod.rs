@@ -28,10 +28,11 @@
 //!
 //! ## 实现状态标注
 //!
-//! [`ApiStatus::Ready`] = 本模块内已有完整实现，GPUI 壳可直接调用；
-//! [`ApiStatus::Planned`] = 签名与契约已定，函数体待平移旧壳 chat.rs 的
-//! run 装配树（目标切片见各函数文档）；[`ApiStatus::ShellOnly`] = 纯壳
-//! 命令，不进 API 面（见下方排除清单）。
+//! [`ApiStatus::Ready`] = 本模块内已有完整实现，GPUI 壳可直接调用
+//! （阶段 2.C-2a 起全部 68 条非壳命令 Ready——run 装配树见 `run` 模块
+//! 文档的子模块划分）；[`ApiStatus::Planned`] = 签名已定、函数体待平移
+//! （当前已清零，枚举变体保留供后续切片复用）；[`ApiStatus::ShellOnly`] =
+//! 纯壳命令，不进 API 面（见下方排除清单）。
 //!
 //! ## 旧命令 → 新 API 映射表（契约文档，一条一行）
 //!
@@ -79,14 +80,14 @@
 //!
 //! | 旧命令 | 新 API | 状态 |
 //! |---|---|---|
-//! | `start_chat` | [`run::start_chat`] | Planned（阶段 2.C 2.11 帧流切片平移 run 装配树） |
+//! | `start_chat` | [`run::start_chat`] | Ready（阶段 2.C-2a 平移 run 装配树） |
 //! | `cancel_run` | [`run::cancel_run`] | Ready |
 //! | `inject_run_message` | [`run::inject_run_message`] | Ready |
-//! | `resume_followup_queue` | [`run::resume_followup_queue`] | Planned（依赖 start_chat 平移，同切片） |
+//! | `resume_followup_queue` | [`run::resume_followup_queue`] | Ready（阶段 2.C-2a 同切片平移） |
 //! | `remove_followup` | [`run::remove_followup`] | Ready |
 //! | `resolve_ask` | [`run::resolve_ask`] | Ready |
 //! | `approve_plan` | [`run::approve_plan`] | Ready |
-//! | `compact_session` | [`run::compact_session`] | Planned（依赖 run 装配树的压缩编排，同切片） |
+//! | `compact_session` | [`run::compact_session`] | Ready（阶段 2.C-2a 同切片平移） |
 //! | `attach_run` | [`run::attach_run`] | Ready |
 //! | `session_run_snapshot` | [`run::session_run_snapshot`] | Ready |
 //! | `session_pending_ask` | [`run::session_pending_ask`] | Ready |
@@ -208,7 +209,7 @@ pub struct ApiSpec {
 /// 全部旧命令 → 新 API 的机器可读清单（与上方映射表同源手写；
 /// `api_test` 断言总数与名单完整，防文档表与清单漂移）。
 pub fn api_manifest() -> Vec<ApiSpec> {
-    use ApiStatus::{Planned, Ready, ShellOnly};
+    use ApiStatus::{Ready, ShellOnly};
     vec![
         // 会话树持久化
         ApiSpec { name: "save_session_tree", status: Ready },
@@ -235,14 +236,14 @@ pub fn api_manifest() -> Vec<ApiSpec> {
         ApiSpec { name: "allow_external_dir", status: Ready },
         ApiSpec { name: "revoke_external_dir", status: Ready },
         // 运行
-        ApiSpec { name: "start_chat", status: Planned },
+        ApiSpec { name: "start_chat", status: Ready },
         ApiSpec { name: "cancel_run", status: Ready },
         ApiSpec { name: "inject_run_message", status: Ready },
-        ApiSpec { name: "resume_followup_queue", status: Planned },
+        ApiSpec { name: "resume_followup_queue", status: Ready },
         ApiSpec { name: "remove_followup", status: Ready },
         ApiSpec { name: "resolve_ask", status: Ready },
         ApiSpec { name: "approve_plan", status: Ready },
-        ApiSpec { name: "compact_session", status: Planned },
+        ApiSpec { name: "compact_session", status: Ready },
         ApiSpec { name: "attach_run", status: Ready },
         ApiSpec { name: "session_run_snapshot", status: Ready },
         ApiSpec { name: "session_pending_ask", status: Ready },

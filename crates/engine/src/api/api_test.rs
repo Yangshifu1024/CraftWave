@@ -10,6 +10,7 @@ use super::{ApiSpec, ApiStatus, api_manifest};
 /// 旧壳 `ipc_commands!` 清单总条数（含 dev-only 的 mock_chat_run）。
 const TOTAL_COMMANDS: usize = 78;
 
+
 /// 排除的纯壳命令名单（模块文档「排除清单」的机器可读镜像）。
 const SHELL_ONLY: &[&str] = &[
     "activate_custom_titlebar",
@@ -24,8 +25,9 @@ const SHELL_ONLY: &[&str] = &[
     "mock_chat_run",
 ];
 
-/// 实现待平移的 Planned 名单（随阶段 2.C 2.11 帧流切片消解）。
-const PLANNED: &[&str] = &["start_chat", "resume_followup_queue", "compact_session"];
+/// 实现待平移的 Planned 名单（阶段 2.C-2a 后清零——run 装配树三条命令
+/// 已落地；变体保留供后续切片复用，本名单钉住「不再有半平移命令」）。
+const PLANNED: &[&str] = &[];
 
 #[test]
 fn manifest_总数与旧壳清单一致() {

@@ -1,19 +1,38 @@
 //! 运行域 API：start_chat、cancel、steer/followUp 队列、ask 权限处置、
 //! 计划批准、压缩与帧重放续流。
 //!
-//! 平移来源：`host/commands/chat.rs`（帧流编排域）。其中：
-//! - **Ready 函数**：逻辑已在本模块（薄编排，全部使用 engine 原语）；
-//! - **Planned 函数**（`start_chat` / `compact_session` /
-//!   `resume_followup_queue`）：签名与契约已定，函数体待平移旧壳
-//!   chat.rs 的 run 装配树（约 3000 行：模型解析、压缩编排、审计、
-//!   标题任务、followUp 自动投递、EventfulSink 记账事件层、
-//!   HostRequestRefresher 每拍刷新）——**目标切片 = 阶段 2.C 2.11「帧流」**
-//!   （spec：engine start_chat → 帧消费 → 64ms 节流；abort 桥 cancel）。
-//!   调用这三个函数当前 `todo!()` panic——切片对着签名开发的假数据
-//!   装置不受影响（原则 6：切片测试不依赖其他切片完成）。
+//! 平移来源：`host/commands/chat.rs`（帧流编排域）+ `subagent.rs`（委派
+//! 执行）+ `knowledge_cmds.rs` 的 run 装配面。全部旧命令已 Ready（阶段
+//! 2.C-2a 完成三条 Planned 的落地）。
+//!
+//! ## 装配树子模块（按装配阶段拆分，母本 = 旧壳 chat.rs 装配树）
+//!
+//! - [`model`]：模型解析接缝（`ModelResolver`）与 thinking 优先级链；
+//! - [`sinks`]：帧出口事件层（EventfulSink）与宿主日志实现；
+//! - [`approval`]：审批挂起恢复循环（载荷构造 / 等待 / 灰区审计）；
+//! - [`tasks`]：每拍刷新源 / steer 源 / suggest 与标题后台任务；
+//! - [`compaction`]：压缩编排（触发点①② + 手动压缩的共享编排）；
+//! - [`subagent`]：子代理委派执行（`SubagentSpawner` 生产实现）；
+//! - [`skills`]：run 装配面技能信任核验与快照；
+//! - [`run_task`]：run 任务主体（驱动循环 + 终态收尾 + 队列分流）；
+//! - [`assemble`]：start_chat 装配树本体（①~⑨ 阶段编排）；
+//! - [`delivery`]：followUp 队列自动投递。
 //!
 //! 帧下发端约定：旧壳 `Channel<SequencedFrame>` 换成
 //! [`SequencedSink`] 参数（GPUI 壳实现它把帧推入 Entity 触发重渲染）。
+//! 运行期异步任务走 `tokio::spawn`——GPUI 壳需持有一个 tokio 运行时
+//! （`std::runtime` 或在 `#[tokio::main]` 上下文内调用本模块）。
+
+pub(crate) mod approval;
+pub(crate) mod assemble;
+pub(crate) mod compaction;
+pub(crate) mod delivery;
+pub(crate) mod model;
+pub(crate) mod run_task;
+pub(crate) mod sinks;
+pub(crate) mod skills;
+pub(crate) mod subagent;
+pub(crate) mod tasks;
 
 use std::sync::Arc;
 
@@ -253,29 +272,33 @@ pub struct SessionPendingAsk {
     pub payload: AskPayload,
 }
 
-/// 发起一次 run（旧命令 `start_chat`）。
+/// 发起一次 run（旧命令 `start_chat`）：完整装配链——会话加载 →
+/// provider/模型解析 → rig completion → 工具循环 → 帧发射（经
+/// `sink`）→ 记账 → 树持久化 → 终态事件。
 ///
-/// **Planned**（阶段 2.C 2.11 帧流切片平移旧壳 chat.rs `start_chat_core`
-/// 及其装配树）：会话偏好起点快照 → 模型解析（RunConfig.modelId >
-/// AppConfig.activeModelId，免 Key 本地供应商占位）→ 图片 blob 装配 →
-/// wire 校验 → 系统前缀与压缩编排（customPrompt → summary → 计划 →
-/// 技能清单）→ 工具集（档位过滤）→ RunManager 注册（重复启动
-/// E_SESSION_RUNNING）→ spawn `backend::run_loop::drive_run`；
-/// 审批挂起恢复循环（`RunExit::Suspended` → AskSlot + ask:opened →
-/// `resolve_ask`/取消/autoConfirm 300s）；suggest 后台小调用；
-/// `EventfulSink` 事件层（usage 帧 → 会话累计 + tokens:update + 记账三面）
-/// 与每拍 prefs 刷新（`HostRequestRefresher`）。
+/// 装配树详见 [`assemble`]；模型解析走生产接缝
+/// [`model::dialect_resolver`]（AppConfig 查找 + 三方言驱动 + 代理工厂）。
 ///
 /// `sink`：帧下发端（seq/ts 由 FrameHub 统一填写后经它下发）。
 /// `auto_confirm`：审批自动放行开关（读 `AppConfig.approval.autoConfirm`）。
 pub async fn start_chat(
-    _app: &AppState,
-    _runs: &RunManager,
-    _args: StartChatArgs,
-    _sink: Box<dyn SequencedSink>,
-    _auto_confirm: bool,
+    app: &AppState,
+    runs: &RunManager,
+    args: StartChatArgs,
+    sink: Box<dyn SequencedSink>,
+    auto_confirm: bool,
 ) -> Result<StartChatResult, IpcError> {
-    todo!("阶段 2.C 2.11 帧流切片平移旧壳 chat.rs start_chat_core 装配树（见模块文档 Planned 约定）")
+    assemble::start_chat_assembled(
+        app,
+        runs,
+        args.session_id,
+        args.messages,
+        args.run_config,
+        sink,
+        auto_confirm,
+        model::dialect_resolver(),
+    )
+    .await
 }
 
 /// 取消会话活跃 run（旧命令 `cancel_run`）：取消令牌置位即返回，
@@ -339,7 +362,7 @@ pub fn inject_run_message(app: &AppState, args: InjectRunMessageArgs) -> Result<
 
 /// 从纯文本构造 followUp 待发条目（runConfig 快照随行——投递时按它开新
 /// run；附件引用由调用方挂入）。
-fn followup_entry_from_text(
+pub(crate) fn followup_entry_from_text(
     text: &str,
     run_config: &RunConfig,
     attachments: Vec<QueuedImageAttachment>,
@@ -378,9 +401,8 @@ pub(crate) fn emit_queue_state(
     events.emit(keys::RUN_QUEUE, payload);
 }
 
-/// 解除失败暂停并投递队列头（旧命令 `resume_followup_queue`）。
-///
-/// **Planned**（随 start_chat 同切片平移）：`set_paused(false)` + `run:queue`
+/// 解除失败暂停并投递队列头（旧命令 `resume_followup_queue`）：
+/// `set_paused(false)` + `run:queue`
 /// 事件后，若无活跃 run 且队列非空 → 投递队列头（读条目 → `start_chat`
 /// 开新 run，runId 带值）。投递未发生（竞态暂停/队列空）或失败（已回队/
 /// 暂停并广播）不算命令错误（delivered=false）。
@@ -388,8 +410,48 @@ pub async fn resume_followup_queue(
     app: &AppState,
     args: ResumeFollowupQueueArgs,
 ) -> Result<ResumeFollowupQueueResult, IpcError> {
-    let _ = (app, args);
-    todo!("阶段 2.C 2.11 帧流切片随 start_chat 平移（旧壳 chat.rs resume_followup_queue_core + deliver_followup_head）")
+    resume_followup_queue_with(app, args, model::dialect_resolver()).await
+}
+
+/// resume_followup_queue 的泛型本体（模型解析经接缝注入）。
+async fn resume_followup_queue_with<W: model::RunWire, T: model::RunTransport<W>>(
+    app: &AppState,
+    args: ResumeFollowupQueueArgs,
+    resolve: model::ModelResolver<W, T>,
+) -> Result<ResumeFollowupQueueResult, IpcError> {
+    if args.session_id.trim().is_empty() {
+        return Err(IpcError::invalid_arg("sessionId 不能为空"));
+    }
+    app.followups.set_paused(&args.session_id, false);
+    emit_queue_state(&app.events, &args.session_id, &app.followups, Vec::new());
+    if app.runs.get(&args.session_id).is_some() {
+        // 有活跃 run：只解除暂停，该 run 正常完成后自动投递
+        return Ok(ResumeFollowupQueueResult {
+            run_id: None,
+            delivered: false,
+        });
+    }
+    if app.followups.snapshot(&args.session_id).size == 0 {
+        return Ok(ResumeFollowupQueueResult {
+            run_id: None,
+            delivered: false,
+        });
+    }
+    match delivery::deliver_followup_head(app, resolve, &args.session_id).await {
+        Ok(Some(run_id)) => Ok(ResumeFollowupQueueResult {
+            run_id: Some(run_id),
+            delivered: true,
+        }),
+        // 投递未发生（竞态暂停/队列空）或失败（已回队/暂停并广播）：不算命令错误
+        Ok(None) => Ok(ResumeFollowupQueueResult {
+            run_id: None,
+            delivered: false,
+        }),
+        Err(_) => Ok(ResumeFollowupQueueResult {
+            run_id: None,
+            delivered: false,
+        }),
+    }
 }
 
 /// 移除一条待发消息（队列条删除与「编辑取出」共用；旧命令
@@ -493,19 +555,120 @@ pub fn approve_plan(app: &AppState, args: ApprovePlanArgs) -> Result<(), IpcErro
     Ok(())
 }
 
-/// 手动上下文压缩（旧命令 `compact_session`）。
-///
-/// **Planned**（随 start_chat 同切片平移旧壳 chat.rs
-/// `compact_session_core`）：模型解析 → 压缩策略（`compaction_policy`）→
-/// 历史边界解析 → 压缩范围计算（`backend::compaction::compression_scope`）
-/// → 摘要模型执行压缩（`execute_compaction`）→ 前后 token 估算返回。
+/// 手动上下文压缩（旧命令 `compact_session`）：模型解析 → 压缩策略
+/// （`compaction_policy`）→ 历史边界解析 → 压缩范围计算
+/// （`backend::compaction::compression_scope`）→ 摘要模型执行压缩
+/// （`execute_compaction`）→ 前后 token 估算返回。
 /// 会话运行中拒绝（E_SESSION_RUNNING）。
 pub async fn compact_session(
     app: &AppState,
     args: CompactSessionArgs,
 ) -> Result<CompactSessionResult, IpcError> {
-    let _ = (app, args);
-    todo!("阶段 2.C 2.11 帧流切片随 start_chat 平移（旧壳 chat.rs compact_session_core + compaction_policy + execute_compaction）")
+    compact_session_with(app, args, model::dialect_resolver()).await
+}
+
+/// compact_session 的泛型本体（模型解析经接缝注入；旧壳
+/// `compact_session_core` 平移）。对活跃 run 外的
+/// 会话快照无条件压缩（不走 0.6 阈值判定）。
+/// 无可压内容时原样返回估算值且不带 cutEntryId。
+async fn compact_session_with<W: model::RunWire, T: model::RunTransport<W>>(
+    app: &AppState,
+    args: CompactSessionArgs,
+    resolve: model::ModelResolver<W, T>,
+) -> Result<CompactSessionResult, IpcError> {
+    use crate::backend::estimator::estimate_request_tokens;
+    use crate::backend::wire::CompactionBoundary;
+    use crate::backend::turn::TurnDriver;
+
+    let session_id = args.session_id.as_str();
+    if session_id.trim().is_empty() {
+        return Err(IpcError::invalid_arg("sessionId 不能为空"));
+    }
+    if app.runs.get(session_id).is_some() {
+        return Err(IpcError::session_running(format!(
+            "session already has an active run: {session_id}"
+        )));
+    }
+    let model = resolve(app, None)?;
+    let policy = compaction::compaction_policy(app, &model);
+    let summary_model_id = app.config.load()?.compaction.model_id.clone();
+    let summary_resolved = match summary_model_id.as_deref() {
+        Some(id) => resolve(app, Some(id))?,
+        None => resolve(app, None)?,
+    };
+    let summary_driver = TurnDriver::new(summary_resolved.driver, rig::run::spec::RunSpec::new(), Vec::new());
+    let tree = app
+        .store
+        .load_session_tree(session_id)
+        .map_err(|e| match e {
+            crate::storage::StorageError::NotFound(_) => IpcError::new(
+                crate::util::errors::E_NOT_FOUND,
+                format!("会话不存在：{session_id}"),
+            ),
+            other => IpcError::internal(other.to_string()),
+        })?;
+    let overview = app
+        .store
+        .compaction_overview(session_id)
+        .map_err(|e| IpcError::internal(e.to_string()))?;
+    let boundary = overview
+        .0
+        .map(|c| CompactionBoundary {
+            cut_entry_id: c.cut_entry_id,
+            summary: c.summary,
+        });
+    // 手动压缩估算面：史册 + 摘要前缀 + 回复预留（工具表不计——无 run 配置，
+    // before/after 同口径即可比）
+    let prefixes: Vec<&str> = [boundary.as_ref().map(|b| b.summary.as_str())]
+        .into_iter()
+        .flatten()
+        .collect();
+    let tokens_before = estimate_request_tokens(
+        &prefixes,
+        &tree.messages,
+        "",
+        &[],
+        policy.reply_reserve,
+    );
+    let scope = crate::backend::compaction::compression_scope(
+        &tree.messages,
+        boundary
+            .as_ref()
+            .map(|b| (b.cut_entry_id.as_str(), b.summary.as_str())),
+    );
+    let Some(scope) = scope else {
+        return Ok(CompactSessionResult {
+            cut_entry_id: None,
+            tokens_before,
+            tokens_after: tokens_before,
+        });
+    };
+    let outcome = compaction::execute_compaction(
+        &app.store,
+        &app.events,
+        &app.session_usage,
+        &app.ledger,
+        session_id,
+        "manual",
+        (&summary_resolved.id, &summary_resolved.name),
+        &scope,
+        &summary_driver,
+        &policy,
+        Some(&app.session_log),
+    )
+    .await
+    .map_err(|e| IpcError::internal(e.to_string()))?;
+    let tokens_after = compaction::estimate_after_compaction(
+        compaction::boundary_ref_slice(&tree.messages, Some(&outcome.boundary))?,
+        &outcome.boundary.summary,
+        &[],
+        policy.reply_reserve,
+    );
+    Ok(CompactSessionResult {
+        cut_entry_id: Some(outcome.boundary.cut_entry_id),
+        tokens_before,
+        tokens_after,
+    })
 }
 
 /// 帧重放与热重连（旧命令 `attach_run`）：重放 `(sinceSeq, 当前头]` 区间帧
@@ -560,3 +723,9 @@ pub fn session_pending_ask(
         payload: ask.payload.clone(),
     }))
 }
+
+// 测试挂载：run 装配树端到端（仅 cargo test 时编译；#[path] 相对本文件
+// 所在目录解析，子模块测试与装配子模块同住 run/ 目录）。
+#[cfg(test)]
+#[path = "run/run_test.rs"]
+mod run_test;
