@@ -2,7 +2,7 @@
 //!
 //! 模块划分（§2.2）：host（Tauri 命令与窗口/托盘）、agent 与 backend（run 循环）、
 //! providers（模型接入与配置）、tools（工具实现）、safety（路径围栏）、
-//! storage（会话落盘）、spike（早期原型验证代码的保留存档）、util（最底层通用件）。
+//! storage（会话落盘）、util（最底层通用件）。
 //!
 //! 装配流程见 [`run`]：单实例插件最先注册 → 窗口关闭一律拦截为隐藏 →
 //! setup 回调内建数据目录、事件汇、通知门与 AppState → 挂上 IPC 处理器 →
@@ -32,7 +32,6 @@ pub mod knowledge;
 pub mod mcp;
 pub mod providers;
 pub mod safety;
-pub mod spike;
 pub mod storage;
 pub mod tools;
 pub mod util;
