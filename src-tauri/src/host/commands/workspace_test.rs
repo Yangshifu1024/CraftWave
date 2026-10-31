@@ -7,9 +7,8 @@ use std::fs;
 use std::sync::Arc;
 
 use super::workspace::{
-    allow_external_dir_core, check_external_path_core, clear_all_external_grants,
-    read_workspace_file_core, resolve_session_roots, revoke_external_dir_core,
-    search_workspace_paths_core,
+    allow_external_dir_core, check_external_path_core, read_workspace_file_core,
+    resolve_session_roots, revoke_external_dir_core, search_workspace_paths_core,
 };
 use crate::host::AppState;
 use crate::storage::SessionMeta;
@@ -488,8 +487,9 @@ fn grant_then_read_then_revoke() {
     revoke_external_dir_core(&state, "s-1", ext_dir.to_str().unwrap()).unwrap();
 }
 
-/// Q41 恢复授权接线面：clear_all_external_grants 清空全部会话授权
-///（33 号票恢复流程调用；普通重启不调用——授权跨重启保留）。
+/// Q41 恢复保护序列的外部授权步骤（33 号票接线）：恢复标记存在时
+/// apply_restore_protection 清空全部会话授权（普通重启不调用——授权跨
+/// 重启保留）。测试同时放置恢复标记，走保护序列真实路径。
 #[test]
 fn clear_all_grants_for_backup_restore() {
     let dir = tempfile::tempdir().unwrap();
@@ -501,7 +501,7 @@ fn clear_all_grants_for_backup_restore() {
         state.store.index().upsert(meta(sid, None)).unwrap();
         allow_external_dir_core(&state, sid, ext_dir.to_str().unwrap()).unwrap();
     }
-    // 正常重启口径：同数据目录新 AppState 授权仍在
+    // 正常重启口径：同数据目录新 AppState 授权仍在（且未放恢复标记，保护不触发）
     let restarted = app(dir.path());
     assert_eq!(
         restarted
@@ -514,9 +514,26 @@ fn clear_all_grants_for_backup_restore() {
         1,
         "普通重启保留有效授权"
     );
-    // 恢复流程口径：清空全部
-    let cleared = clear_all_external_grants(&state).unwrap();
-    assert_eq!(cleared, 2, "清理两个会话");
+    assert!(
+        !crate::storage::backup::restore_pending_path(dir.path()).exists(),
+        "无恢复标记 = 普通重启"
+    );
+    // 恢复流程口径：放置恢复标记后执行保护序列，全部授权清空
+    fs::write(
+        crate::storage::backup::restore_pending_path(dir.path()),
+        b"{\"version\":1}",
+    )
+    .unwrap();
+    let report = crate::storage::backup::apply_restore_protection(dir.path(), Some(&state.config));
+    assert!(report.applied, "恢复标记存在时应执行保护");
+    assert!(
+        report.failures.is_empty(),
+        "保护序列不应失败：{:?}",
+        report.failures
+    );
+    // 信任清空 + 外部授权清空 + 审批白名单清空三动作齐备（mcp-tools 与
+    // 队列文件在本测试场景不存在，不产生动作条目）
+    assert_eq!(report.actions.len(), 3, "动作清单：{:?}", report.actions);
     assert!(
         state
             .store
@@ -533,5 +550,9 @@ fn clear_all_grants_for_backup_restore() {
                 .authorized_external_dirs
                 .is_empty(),
         "恢复后授权失效（须重新确认）"
+    );
+    assert!(
+        !crate::storage::backup::restore_pending_path(dir.path()).exists(),
+        "保护完成后恢复标记应被删除（防重复触发）"
     );
 }

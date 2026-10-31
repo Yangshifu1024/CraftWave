@@ -163,10 +163,13 @@ pub struct OpenDirArgs {
 /// `<项目主目录>/.craftwave/`（save_project 注册即建，必存在）。
 /// 日志目录应用启动不预建，此处幂等补建——白名单校验（PathGuard）要求
 /// 根真实存在，且"打开日志目录"按钮的语义就是目录没建也能点开。
+/// 备份目录 `~/.craftwave/backups/`（33 号票 Q43 删除确认的目录入口）同款
+/// 幂等补建——从未升级过格式的安装没有该目录，入口按钮不该报不存在。
 fn open_dir_roots(app: &AppState) -> Result<Vec<PathBuf>, IpcError> {
     let data_root = app.store.root().to_path_buf();
     let logs = data_root.join("logs");
     let _ = std::fs::create_dir_all(&logs);
+    let _ = std::fs::create_dir_all(crate::storage::backup::backups_dir(&data_root));
     let mut roots = vec![data_root, logs];
     let projects = app
         .projects

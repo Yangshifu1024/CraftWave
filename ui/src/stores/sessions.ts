@@ -36,6 +36,9 @@ export interface UiStatePayload {
    *  前端自管域 schema 见 onboarding/onboarding-state.ts；无记录 = 全新
    *  数据目录，触发自动弹向导）。 */
   onboarding?: OnboardingState;
+  /** 上次更新检查时刻（33 号票，FR-16-03 静默检查间隔记账；Unix 毫秒，
+   *  0/缺省 = 从未检查过。不敏感、不进 config——§3.2 update 组注记）。 */
+  lastUpdateCheckAt?: number;
 }
 
 /** 一条待发消息的 UI 侧形状（后端 FollowUpEntry 的展示投影；06 号票）。 */
@@ -72,6 +75,8 @@ export interface SessionsStore {
   /** 首启引导状态（FR-13-18，30 号票，ui-state 持久化；null = 无记录
    *  = 全新数据目录，首启自动弹向导的唯一判定输入）。 */
   onboarding: OnboardingState | null;
+  /** 上次更新检查时刻（33 号票静默检查间隔记账；0 = 从未检查）。 */
+  lastUpdateCheckAt: number;
 
   /** 启动恢复：并行拉项目/会话/ui-state，重建 Tab 布局（空则兜底最新会话或新建）。 */
   bootstrap: () => Promise<void>;
@@ -107,6 +112,8 @@ export interface SessionsStore {
   /** 首启引导状态写入（30 号票：完成/单步跳过/整包关闭均即时落盘——
    *  经既有 persistUiState 防抖写通道，与滚动锚点同一条路径）。 */
   setOnboarding: (next: OnboardingState) => void;
+  /** 上次更新检查时刻记账（33 号票，Unix 毫秒；静默检查间隔判定输入）。 */
+  setLastUpdateCheckAt: (at: number) => void;
   /** 清空队列并把返还文本合并回草稿（06 号票取消/失败返还面；returned
    *  为后端 run:queue.returned 交还的权威文本，追加在原草稿之后）。 */
   returnQueueToDraft: (sessionId: string, returned: string[]) => void;
@@ -160,6 +167,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
   queuePaused: {},
   scrollAnchors: {},
   onboarding: null,
+  lastUpdateCheckAt: 0,
 
   bootstrap: async () => {
     const emptyUiState: UiStatePayload = { tabIds: [], activeId: null };
@@ -190,6 +198,11 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
       scrollAnchors: sanitizeScrollAnchors(uiState.scrollAnchors),
       // 引导记录同域同口径：形状不可信，清洗（损坏回 null = 视作首启）
       onboarding: sanitizeOnboarding(uiState.onboarding),
+      // 上次更新检查时刻（33 号票）：非正数视作从未检查
+      lastUpdateCheckAt:
+        typeof uiState.lastUpdateCheckAt === "number" && uiState.lastUpdateCheckAt > 0
+          ? uiState.lastUpdateCheckAt
+          : 0,
     });
     if (tabs.length > 0) {
       const active = tabs.find((m) => m.id === uiState.activeId) ?? tabs[0];
@@ -320,6 +333,12 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
     get().persistUiState();
   },
 
+  /** 上次更新检查时刻记账（33 号票，FR-16-03 静默检查间隔判定输入）。 */
+  setLastUpdateCheckAt: (at: number) => {
+    set({ lastUpdateCheckAt: at });
+    get().persistUiState();
+  },
+
   returnQueueToDraft: (sessionId, returned) => {
     set((s) => {
       const queues = { ...s.queues };
@@ -352,6 +371,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
         queuePaused,
         scrollAnchors,
         onboarding,
+        lastUpdateCheckAt,
       } = get();
       void client
         .setUiState({
@@ -363,6 +383,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
           queuePaused,
           scrollAnchors,
           onboarding: onboarding ?? undefined,
+          lastUpdateCheckAt: lastUpdateCheckAt > 0 ? lastUpdateCheckAt : undefined,
         } satisfies UiStatePayload)
         .catch((err) => console.warn("[ui-state] 布局落盘失败（忽略）", err));
     }, 300);

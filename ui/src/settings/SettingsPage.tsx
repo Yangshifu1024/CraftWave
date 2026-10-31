@@ -62,6 +62,7 @@ import {
   type PageKey,
 } from "@/settings/registry";
 import { SkillsPage } from "@/settings/SkillsPage";
+import { UpdateSection } from "@/settings/UpdateSection";
 import { useSessionsStore } from "@/stores/sessions";
 import { useSettingsStore } from "@/stores/settings";
 import { pushToast } from "@/stores/toast";
@@ -1796,7 +1797,8 @@ function AgentPage() {
   );
 }
 
-/** 关于页：应用身份只读信息 + 打开数据目录入口（03 号票，FR-14-07） */
+/** 关于页：应用身份只读信息 + 检查更新区（33 号票，FR-16-03）+ 打开数据
+ * 目录与备份目录入口（03 号票 FR-14-07 / 33 号票 Q43 备份目录入口） */
 function AboutPage() {
   const t = useT();
   return (
@@ -1820,6 +1822,10 @@ function AboutPage() {
         </div>
       </section>
       <section className="settings-section">
+        <h3 className="settings-section-title">{t("settings.sectionUpdate")}</h3>
+        <UpdateSection />
+      </section>
+      <section className="settings-section">
         <h3 className="settings-section-title">{t("settings.sectionData")}</h3>
         <div className="settings-section-card">
           <SettingsRow title={t("settings.dataDir")} description={t("settings.dataDirDesc")}>
@@ -1827,6 +1833,13 @@ function AboutPage() {
               testId="open-data-dir"
               label={t("settings.openDataDir")}
               path="~/.craftwave"
+            />
+          </SettingsRow>
+          <SettingsRow title={t("settings.backupDir")} description={t("settings.backupDirDesc")}>
+            <OpenDirButton
+              testId="open-backups-dir"
+              label={t("settings.openBackupDir")}
+              path="~/.craftwave/backups"
             />
           </SettingsRow>
         </div>

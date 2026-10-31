@@ -61,6 +61,14 @@ tauri-plugin-notification = "2.7.0"
 # 红字 + Toast 零新增契约面；Rust 侧只挂 with_handler 回调（快捷键按下时
 # toggle 主窗，host::shell::toggle_main_window）。
 tauri-plugin-global-shortcut = "2"
+# 【M2 33 号票】应用内更新骨架（FR-16-03，§12.4）：tauri-plugin-updater 2.x
+# 官方插件（crates.io 官方源）——check/downloadAndInstall 全链在 Rust 侧执行
+# （前端经插件 JS API 转调，下载不走 WebView，CSP connect-src 不动）；
+# tauri-plugin-process 2.x 提供 relaunch（安装完成后的「重启以完成更新」）。
+# pubkey 占位空串期间插件 check 必败，入口以 update_status.pubkeyConfigured
+# 禁用兜底（票内取舍 Answer：骨架先行，密钥由 HITL 配齐后填入）。
+tauri-plugin-updater = "2.14.1"
+tauri-plugin-process = "2.4.0"
 open = "5"
 
 # 【M2 08 号票】MCP 客户端（FR-08，§9.7）：rig-rmcp 0.45 为票面点名选型，

@@ -10,12 +10,13 @@ import { t } from "@/i18n/core";
 import { Button } from "./button";
 
 /** 底部动作区的一个按钮描述：label 文案；variant 按钮变体（默认 outline）；
- *  disabled 禁用态；onClick 点击回调。 */
+ *  disabled 禁用态；onClick 点击回调；testId 测试锚点（33 号票安装按钮）。 */
 export interface DialogActionItem {
   label: string;
   variant?: "default" | "outline" | "ghost" | "danger";
   disabled?: boolean;
   onClick: () => void;
+  testId?: string;
 }
 
 /** Dialog 的 props：open 是否显示；title 标题；onClose 关闭回调（Esc/遮罩）；
@@ -85,6 +86,7 @@ export function Dialog({ open, title, onClose, children, actions, width = 440 }:
                 variant={action.variant ?? "outline"}
                 disabled={action.disabled}
                 onClick={action.onClick}
+                {...(action.testId ? { "data-testid": action.testId } : {})}
               >
                 {action.label}
               </Button>

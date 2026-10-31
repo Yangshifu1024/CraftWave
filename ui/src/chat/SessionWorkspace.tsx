@@ -62,6 +62,7 @@ import {
   deleteProject,
   deleteSession,
   listenEvent,
+  openDir,
   renameSession,
   resolveExitRequest,
   saveProject,
@@ -783,6 +784,28 @@ function Sidebar({
           confirm?.kind === "session"
             ? t("workspace.deleteSessionDescription")
             : t("workspace.deleteProjectDescription")
+        }
+        extra={
+          confirm?.kind === "session" ? (
+            // Q43/ADR-0003：删除确认说明历史升级备份可能仍含已删除内容
+            //（恢复会回到旧时点），并提供备份目录入口供用户自行管理——
+            // 不宣称删除已擦除所有历史副本
+            <div className="mt-3 rounded-lg border border-[var(--border)] bg-[var(--muted)]/50 p-3 text-ui-sm">
+              <p className="text-[var(--muted-foreground)]">
+                {t("workspace.deleteSessionBackupNote")}
+              </p>
+              <button
+                type="button"
+                data-testid="open-backups-dir-from-delete"
+                className="mt-2 rounded-lg border border-[var(--border)] px-2 py-1 text-ui-sm text-[var(--foreground)] hover:border-[var(--ring)]"
+                onClick={() => {
+                  void openDir("~/.craftwave/backups").catch(() => {});
+                }}
+              >
+                {t("workspace.openBackupDir")}
+              </button>
+            </div>
+          ) : undefined
         }
         confirmLabel={t("workspace.delete")}
         onCancel={() => setConfirm(null)}

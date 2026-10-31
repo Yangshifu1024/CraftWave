@@ -456,6 +456,51 @@ pub struct CommandAuditConfig {
     pub model_id: Option<String>,
 }
 
+/// 启动静默检查的最小间隔小时数缺省值（§3.2 update 组，FR-16-03「检查
+/// 频率可调」，33 号票）：一天一次是桌面应用的常规节奏。
+pub const DEFAULT_UPDATE_INTERVAL_HOURS: u32 = 24;
+/// 静默检查间隔的合法区间下限（小时；低于 1 小时的轮询对 GitHub Releases
+/// 无意义且浪费请求）。
+pub const MIN_UPDATE_INTERVAL_HOURS: u32 = 1;
+/// 静默检查间隔的合法区间上限（小时；一年 = 配置形同关闭，不在此拒绝——
+/// 关闭语义走 enabled=false，区间只防手滑输入非法值）。
+pub const MAX_UPDATE_INTERVAL_HOURS: u32 = 8760;
+
+/// 应用内更新配置（§3.2 update 组，FR-16-03，33 号票实装）。
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateConfig {
+    /// 更新检查开关（缺省 true，serde default 回填旧配置）：false = 启动
+    /// 静默检查与设置页手动检查全部禁用（NFR-11：关闭后不发起任何更新
+    /// 外联请求）。tauri.conf.json 的 updater pubkey 为占位空串（HITL
+    /// 密钥未配）时入口同样禁用——update_status 命令的
+    /// `pubkeyConfigured=false` 传导，配置开关与构建面双门兜底。
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// 启动静默检查的最小间隔小时数（缺省 24，合法区间 1–8760，越界拒绝
+    /// 整份提交）：间隔记账在前端 ui-state 的 `lastUpdateCheckAt`（不敏感，
+    /// 不进 config，§3.2 注记）；设置页手动检查不受间隔限制，只受 enabled
+    /// 与 pubkey 门控。save_config 即时生效（下一次静默检查判定读取）。
+    #[serde(default = "default_update_interval_hours")]
+    pub interval_hours: u32,
+}
+
+/// serde 缺省值函数：静默检查间隔缺省 24 小时（§3.2 update 组）。
+fn default_update_interval_hours() -> u32 {
+    DEFAULT_UPDATE_INTERVAL_HOURS
+}
+
+// UpdateConfig 的缺省值：启用 + 24 小时间隔（§3.2 update 组缺省口径）。
+impl Default for UpdateConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            interval_hours: DEFAULT_UPDATE_INTERVAL_HOURS,
+        }
+    }
+}
+
 /// 上下文压缩配置（§3.2 compaction 组，FR-03-05，04 号票实装）。
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -715,6 +760,11 @@ pub struct AppConfig {
     /// serde default 回填）。
     #[serde(default)]
     pub search: SearchConfig,
+    /// 应用内更新（FR-16-03，33 号票；缺省值经 Default：启用 + 24 小时。
+    /// 旧配置无该组时 serde default 回填，schemaVersion 维持 2——新增域
+    /// 不破坏旧版读取，serde 忽略未知字段）。
+    #[serde(default)]
+    pub update: UpdateConfig,
 }
 
 /// serde 缺省值函数：schemaVersion 字段缺省时取当前版本号 2。
@@ -799,6 +849,7 @@ impl Default for AppConfig {
             watchdog: WatchdogConfig::default(),
             network: NetworkConfig::default(),
             search: SearchConfig::default(),
+            update: UpdateConfig::default(),
         }
     }
 }
@@ -927,6 +978,17 @@ impl AppConfig {
             .take()
             .map(|k| k.trim().to_owned())
             .filter(|k| !k.is_empty());
+        // update.intervalHours：合法区间 1–8760 小时（§3.2 update 组，33 号票
+        // ——过短对 GitHub Releases 无意义且浪费请求，过长失去检查意义；
+        // 越界视为配置错误拒绝整份提交。旧配置缺字段由 serde default 回填 24）。
+        if !(MIN_UPDATE_INTERVAL_HOURS..=MAX_UPDATE_INTERVAL_HOURS)
+            .contains(&self.update.interval_hours)
+        {
+            return Err(IpcError::invalid_arg(format!(
+                "update.intervalHours 必须在 {MIN_UPDATE_INTERVAL_HOURS}–{MAX_UPDATE_INTERVAL_HOURS} 小时内（实际 {}）",
+                self.update.interval_hours
+            )));
+        }
         // proxy（FR-02-10，19 号票）：manual 模式必须有地址且 scheme 在
         // 白名单（http/https/socks5/socks5h——socks5h = 域名由代理远端解析）；
         // 校验口径与 providers::http::validate_proxy_url 同源（保存前拦截，

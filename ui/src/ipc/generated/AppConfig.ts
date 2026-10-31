@@ -10,6 +10,7 @@ import type { ProxyConfig } from "./ProxyConfig";
 import type { SearchConfig } from "./SearchConfig";
 import type { ToolsConfig } from "./ToolsConfig";
 import type { UiConfig } from "./UiConfig";
+import type { UpdateConfig } from "./UpdateConfig";
 import type { WatchdogConfig } from "./WatchdogConfig";
 
 /**
@@ -76,4 +77,10 @@ network: NetworkConfig,
  * SearXNG 不启用 + Key 未配 = 零配置默认走内置抓取。旧配置无该组时
  * serde default 回填）。
  */
-search: SearchConfig, };
+search: SearchConfig, 
+/**
+ * 应用内更新（FR-16-03，33 号票；缺省值经 Default：启用 + 24 小时。
+ * 旧配置无该组时 serde default 回填，schemaVersion 维持 2——新增域
+ * 不破坏旧版读取，serde 忽略未知字段）。
+ */
+update: UpdateConfig, };

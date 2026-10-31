@@ -53,6 +53,9 @@ export const DEFAULT_CONFIG: AppConfig = {
     searxng: { enabled: false, baseUrl: "http://127.0.0.1:8888", maxResults: 10 },
     tavilyApiKey: undefined,
   },
+  // 应用内更新（33 号票，§3.2 update 组）：缺省启用 + 24 小时静默检查间隔
+  //（与 Rust 侧 UpdateConfig::default 同口径）
+  update: { enabled: true, intervalHours: 24 },
 };
 
 /** 设置状态仓库的形状：草稿/基线双份 + 读写动作（说明见各字段行内注释）。 */

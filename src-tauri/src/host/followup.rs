@@ -275,6 +275,43 @@ impl FollowUpManager {
     pub fn peek_head(&self, session_id: &str) -> Option<FollowUpEntry> {
         self.load(session_id).entries.front().cloned()
     }
+
+    /// 全部会话的队列快照（33 号票 `update_precheck` 安装门判定面）：以
+    /// **磁盘为权威**扫描 `sessions/*.queue.json` 全量（不依赖内存表——
+    /// 队列加载是惰性的，内存表只含被触碰过的会话；漏扫会把从未打开过
+    /// 界面的待发队列误判为「没有队列」放行安装）。只读，不改内存缓存、
+    /// 不落盘。文件损坏/版本未知按「存在且未暂停的有待发队列」保守计入
+    /// running（更新门从严：解析不出的队列不能当不存在放行重启）。
+    pub fn all_snapshots(&self) -> Vec<(String, QueueSnapshot)> {
+        let sessions_dir = self.root.join("sessions");
+        let Ok(entries) = std::fs::read_dir(&sessions_dir) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
+            let Some(name) = name else { continue };
+            let Some(session_id) = name.strip_suffix(".queue.json") else {
+                continue;
+            };
+            let snapshot = std::fs::read(&path)
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<FollowUpQueueFile>(&bytes).ok())
+                .map(|file| QueueSnapshot {
+                    size: file.entries.len(),
+                    paused: file.paused,
+                })
+                // 损坏/版本未知：保守计为「有队列且未暂停」（更新门从严）
+                .unwrap_or(QueueSnapshot {
+                    size: 1,
+                    paused: false,
+                });
+            out.push((session_id.to_owned(), snapshot));
+        }
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
+    }
 }
 
 /// 队列管理器的调试实现（内含互斥锁，只打印可比较的记账面）。

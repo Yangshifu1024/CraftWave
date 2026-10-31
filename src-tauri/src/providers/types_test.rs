@@ -360,6 +360,59 @@ fn watchdog_stall_timeout_defaults_and_bounds() {
     }
 }
 
+// 断言（33 号票）：update 组的 normalize 与缺省——enabled 缺省 true、
+// intervalHours 缺省 24、合法区间 1–8760，越界拒绝整份提交；旧配置无
+// update 键容忍（serde default 回填），schemaVersion 维持 2 不受影响。
+#[test]
+fn update_config_defaults_and_bounds() {
+    use crate::providers::types::DEFAULT_UPDATE_INTERVAL_HOURS;
+
+    // 缺省：UpdateConfig::default() = 启用 + 24 小时（§3.2 update 组）
+    let mut config = AppConfig::default();
+    assert!(config.update.enabled, "更新检查缺省启用");
+    assert_eq!(config.update.interval_hours, DEFAULT_UPDATE_INTERVAL_HOURS);
+    config.normalize().unwrap();
+
+    // serde 缺省容忍：旧配置（无 update 键）反序列化 → enabled=true / 24h，
+    // 且新增域不破坏 schemaVersion=2 读取
+    let raw = r#"{"schemaVersion":2,"providers":[],"approval":{"enabled":true,"autoConfirm":false,"commandAllowlist":[]},"ui":{"language":"zh-CN","theme":"system"},"log":{"level":"info"},"notifications":{"enabled":true,"interventionOnly":false}}"#;
+    let parsed: AppConfig = serde_json::from_str(raw).unwrap();
+    assert!(parsed.update.enabled, "旧配置无 update 键 → 缺省启用");
+    assert_eq!(
+        parsed.update.interval_hours, 24,
+        "旧配置无 update 键 → 缺省 24h"
+    );
+
+    // 合法边界：1 与 8760 都通过，且 serde 往返保持 camelCase 键面
+    for ok in [1, 24, 8760] {
+        let mut config = AppConfig::default();
+        config.update.interval_hours = ok;
+        config.normalize().unwrap();
+        let value = serde_json::to_value(&config).unwrap();
+        assert_eq!(value["update"]["intervalHours"], ok);
+        assert_eq!(value["update"]["enabled"], true);
+        assert_eq!(serde_json::from_value::<AppConfig>(value).unwrap(), config);
+    }
+
+    // enabled=false 往返（关闭开关可持久）
+    let mut config = AppConfig::default();
+    config.update.enabled = false;
+    let value = serde_json::to_value(&config).unwrap();
+    assert_eq!(value["update"]["enabled"], false);
+    assert_eq!(serde_json::from_value::<AppConfig>(value).unwrap(), config);
+
+    // 非法：0（低于下限）与 8761（超上限）拒绝整份提交
+    for bad in [0, 8761] {
+        let mut config = AppConfig::default();
+        config.update.interval_hours = bad;
+        assert_eq!(
+            config.normalize().unwrap_err().code,
+            E_INVALID_ARG,
+            "intervalHours = {bad} 应拒绝"
+        );
+    }
+}
+
 // 断言（10 号票，Q13）：agent.maxConcurrentSubagents 的 normalize 与缺省——
 // 旧配置缺 agent 组/缺字段回填 4（正整数语义），0/超限拒绝整份提交，
 // save_config 往返保持 camelCase 键面。

@@ -129,6 +129,12 @@ use host::commands::stats::{
 use host::commands::logs::{
     ReadSessionLogArgs, ReadSessionLogResult, list_log_files, open_logs_dir, read_session_log,
 };
+// 更新器支撑三命令（33 号票，§3.3 #59m/#59n/#59o）
+#[allow(unused_imports)]
+use host::commands::updater::{
+    PauseFollowupQueueArgs, PauseFollowupQueueResult, UpdatePrecheckResult, UpdateStatusResult,
+    pause_followup_queue, update_precheck, update_status,
+};
 // 配额快照命令（21 号票，§3.3 #53）：QuotaSnapshot 是 Vec<_> 元素（非名义
 // 根，经 quota_snapshots 返回），导出需显式补根（ipc_manifest_test）
 #[allow(unused_imports)]
@@ -322,6 +328,10 @@ ipc_commands! {
     host::commands::logs::read_session_log => args: ReadSessionLogArgs, ret: ReadSessionLogResult;
     host::commands::logs::list_log_files => args: (), ret: Vec<String>;
     host::commands::logs::open_logs_dir => args: (), ret: ();
+    // 更新器支撑三命令（33 号票，§3.3 #59m/#59n/#59o：状态门/安装门/主动暂停）
+    host::commands::updater::update_status => args: (), ret: UpdateStatusResult;
+    host::commands::updater::update_precheck => args: (), ret: UpdatePrecheckResult;
+    host::commands::updater::pause_followup_queue => args: PauseFollowupQueueArgs, ret: PauseFollowupQueueResult;
     // git 只读三命令（26 号票，§3.3 #37–#39）
     git::git_status => args: GitStatusArgs, ret: GitStatusResult;
     git::git_diff => args: GitDiffArgs, ret: GitDiffResult;
@@ -375,6 +385,14 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_decoration::init())
         .plugin(tauri_plugin_notification::init())
+        // 应用内更新（33 号票，FR-16-03/§12.4）：check/downloadAndInstall 由
+        // 前端经插件 JS API 发起（实际下载与签名校验在 Rust 侧执行，不经
+        // WebView——CSP connect-src 无需放开）；pubkey 占位空串期间 check
+        // 必败，入口由 update_status.pubkeyConfigured 禁用兜底（票内 Answer）。
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        // relaunch（安装完成后的「重启以完成更新」）：前端插件 JS API 直调，
+        // capabilities 仅放行 process:allow-restart（NFR-10 最小权限）。
+        .plugin(tauri_plugin_process::init())
         // 全局热键（29 号票，FR-13-11/§10.7）：插件的快捷键注册由前端按配置
         // 发起（冲突错误经插件 JS API 原生回传设置页），Rust 侧只挂回调——
         // 快捷键按下即 toggle 主窗（可见隐藏 / 隐藏唤起，shell::toggle_main_window）。
@@ -492,6 +510,15 @@ pub fn run() {
             // 通知门三件套先独立构造（AppHandle/配置缓存/活跃会话标识），
             // 再与 AppState 共享同一份 Arc（配置改写后通知偏好即读即生效）
             let config = std::sync::Arc::new(ConfigStore::new(data_dir.join("config.json")));
+            // Q41 恢复保护序列（33 号票，§7.7）：数据目录根存在恢复标记
+            // （用户手动恢复旧升级备份后按说明复制回 .restore-pending.json）
+            // 时，先执行保护——信任/MCP 工具许可/外部目录授权/审批白名单
+            // 清空、全部待发队列强制暂停——再进入正常装配，保证保护在
+            // 首次启动前生效。普通重启（无标记）零动作。config 用同一份
+            // Arc：白名单清空经 ConfigStore.update 走唯一写入口，缓存热
+            // 替换后与后续全部读取一致。执行报告在启动序记账处落 app.log。
+            let restore_report =
+                storage::backup::apply_restore_protection(&data_dir, Some(config.as_ref()));
             let active_session = std::sync::Arc::new(std::sync::Mutex::new(None));
             let notify = std::sync::Arc::new(host::notify::NotifyGate::new(
                 handle.clone(),
@@ -536,6 +563,24 @@ pub fn run() {
             host::shell::install_tray(&handle)?;
             // 启动序记账（32 号票，app.log：运行元数据——不涉会话正文）
             if let Some(state) = app.try_state::<host::AppState>() {
+                // 恢复保护序列记账（33 号票，Q41）：有恢复才落账；失败面
+                // 逐条 Warn（不静默——用户据此知道哪些面可能残留旧许可）
+                if restore_report.applied {
+                    for action in &restore_report.actions {
+                        state.session_log.app_line(
+                            crate::providers::types::LogLevel::Info,
+                            action.clone(),
+                            None,
+                        );
+                    }
+                    for failure in &restore_report.failures {
+                        state.session_log.app_line(
+                            crate::providers::types::LogLevel::Warn,
+                            failure.clone(),
+                            None,
+                        );
+                    }
+                }
                 state.session_log.app_line(
                     crate::providers::types::LogLevel::Info,
                     "应用启动完成".to_owned(),

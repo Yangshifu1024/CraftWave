@@ -39,6 +39,10 @@ const zh = {
   /** 删除会话确认框。 */
   deleteSessionTitle: "删除会话「{{title}}」？",
   deleteSessionDescription: "会话历史与工具记录将一并删除，不可恢复。",
+  /** Q43/ADR-0003：删除确认的备份残留说明与目录入口（33 号票）。 */
+  deleteSessionBackupNote:
+    "注意：历史升级备份（~/.craftwave/backups/）可能仍保留本会话的内容副本，从备份恢复会回到旧时点、已删除内容会重新出现。应用不会替你改写或删除历史备份。",
+  openBackupDir: "打开备份目录",
   /** 删除项目确认框。 */
   deleteProjectTitle: "删除项目「{{name}}」？",
   deleteProjectDescription: "仅解除注册（项目目录不动），名下会话转为临时会话保留。",
@@ -88,6 +92,9 @@ const zh = {
   /** followUp 队列条。 */
   queuePaused: "上一次运行失败，待发队列已暂停（{{count}} 条待发）",
   resume: "继续",
+  /** 主动暂停行（33 号票更新门配套：更新安装前须暂停并保留队列）。 */
+  queuePauseHint: "安装应用更新前须暂停待发队列（更新后仍保持暂停，需手动继续）",
+  pauseQueue: "暂停队列",
   queuedBadge: "排队",
   editQueuedAria: "编辑排队消息",
   editQueuedTitle: "取出编辑（改完 Alt+Enter 重新排队）",
@@ -254,6 +261,9 @@ const en: Record<keyof typeof zh, string> = {
   deleteSessionTitle: 'Delete session "{{title}}"?',
   deleteSessionDescription:
     "Session history and tool records will be removed together. This cannot be undone.",
+  deleteSessionBackupNote:
+    "Note: historical upgrade backups (~/.craftwave/backups/) may still contain copies of this session's content; restoring a backup returns to that point and deleted content reappears. The app never rewrites or deletes historical backups for you.",
+  openBackupDir: "Open backup directory",
   deleteProjectTitle: 'Delete project "{{name}}"?',
   deleteProjectDescription:
     "Only unregisters the project (directory untouched); its sessions become temporary sessions.",
@@ -296,6 +306,9 @@ const en: Record<keyof typeof zh, string> = {
   suggestion3: "Add unit tests for a module",
   suggestion4: "Explain a piece of code I don't understand",
   queuePaused: "Last run failed; the queue is paused ({{count}} pending)",
+  queuePauseHint:
+    "The pending queue must be paused before installing app updates (it stays paused after the update until you resume it)",
+  pauseQueue: "Pause queue",
   resume: "Resume",
   queuedBadge: "Queued",
   editQueuedAria: "Edit queued message",

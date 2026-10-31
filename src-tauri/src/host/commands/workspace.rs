@@ -677,24 +677,3 @@ pub(crate) async fn revoke_external_dir(
 ) -> Result<ExternalRootsResult, IpcError> {
     revoke_external_dir_core(&app, &args.session_id, &args.dir)
 }
-
-/// Q41 恢复授权接线面：清空**全部会话**的外部目录授权（33 号票备份恢复
-/// 流程调用——「恢复不自动启用备份中的外部 roots」；普通重启不调用）。
-/// 返回清理的会话条数。资源信任（trust/project.json）的同等清空面在
-/// [`crate::storage::trust::TrustStore::clear_all`]。
-/// 本票只出接口与测试（33 号票未动工），生产调用点随 33 号票接线。
-#[allow(dead_code)]
-pub(crate) fn clear_all_external_grants(app: &AppState) -> Result<usize, IpcError> {
-    let mut cleared = 0usize;
-    for meta in app.store.index().list() {
-        if meta.authorized_external_dirs.is_empty() {
-            continue;
-        }
-        app.store
-            .index()
-            .mutate(&meta.id, |m| m.authorized_external_dirs.clear())
-            .map_err(|e| IpcError::internal(format!("会话索引写入失败：{e:?}")))?;
-        cleared += 1;
-    }
-    Ok(cleared)
-}

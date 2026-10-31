@@ -13,6 +13,7 @@ import { useSessionsStore } from "@/stores/sessions";
 import { routeEnterKey } from "./composer-keys";
 import {
   type defaultFollowUpDeps,
+  pauseFollowUpQueue,
   queueFollowUp,
   removeQueuedFollowUp,
   resumeFollowUpQueue,
@@ -23,12 +24,15 @@ import {
 const injectRunMessage = vi.fn();
 const removeFollowup = vi.fn();
 const resumeFollowupQueue = vi.fn();
+const pauseFollowupQueue = vi.fn();
 
 const deps = {
   injectRunMessage: (...args: Parameters<typeof injectRunMessage>) => injectRunMessage(...args),
   removeFollowup: (...args: Parameters<typeof removeFollowup>) => removeFollowup(...args),
   resumeFollowupQueue: (...args: Parameters<typeof resumeFollowupQueue>) =>
     resumeFollowupQueue(...args),
+  pauseFollowupQueue: (...args: Parameters<typeof pauseFollowupQueue>) =>
+    pauseFollowupQueue(...args),
 } satisfies typeof defaultFollowUpDeps;
 
 beforeEach(() => {
@@ -134,6 +138,16 @@ describe("resumeFollowUpQueue（失败暂停的明确继续）", () => {
     expect(resumeFollowupQueue).toHaveBeenCalledWith("s1");
     resumeFollowupQueue.mockRejectedValue(new Error("x"));
     await expect(resumeFollowUpQueue("s1", deps)).resolves.toBeUndefined();
+  });
+});
+
+describe("pauseFollowUpQueue（33 号票主动暂停，更新门配套）", () => {
+  it("调用后端暂停命令；失败只记日志不抛", async () => {
+    pauseFollowupQueue.mockResolvedValue({ size: 1, paused: true });
+    await pauseFollowUpQueue("s1", deps);
+    expect(pauseFollowupQueue).toHaveBeenCalledWith("s1");
+    pauseFollowupQueue.mockRejectedValue(new Error("x"));
+    await expect(pauseFollowUpQueue("s1", deps)).resolves.toBeUndefined();
   });
 });
 

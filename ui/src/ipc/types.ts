@@ -130,6 +130,9 @@ export * from "./generated/OpenDirArgs";
 export * from "./generated/OpenInEditorArgs";
 export * from "./generated/PathKindArgs";
 export * from "./generated/PathKindResult";
+// 更新器支撑命令载荷（33 号票，§3.3 #59m/#59n/#59o）
+export * from "./generated/PauseFollowupQueueArgs";
+export * from "./generated/PauseFollowupQueueResult";
 export * from "./generated/PermissionTier";
 export * from "./generated/PlanItem";
 export * from "./generated/PlanItemStatus";
@@ -223,6 +226,10 @@ export * from "./generated/ToolsConfig";
 export * from "./generated/TotalUsage";
 export * from "./generated/TrustDecision";
 export * from "./generated/UiConfig";
+// 更新器配置与状态/安装门载荷（33 号票，§3.2 update 组/§3.3 #59m/#59n）
+export * from "./generated/UpdateConfig";
+export * from "./generated/UpdatePrecheckResult";
+export * from "./generated/UpdateStatusResult";
 export * from "./generated/UsageTotal";
 export * from "./generated/WatchdogConfig";
 export * from "./generated/WirePart";

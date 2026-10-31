@@ -37,6 +37,13 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    # updater 产物签名密钥（33 号票，FR-16-03）：tauri CLI 用它给 updater
+    # 产物（.tar.gz/.exe/.AppImage + .sig）签名。secrets 未配时 env 为空——
+    # 占位 pubkey（tauri.conf.json）期间骨架可退化构建，发布实测属 HITL。
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      MACOSX_DEPLOYMENT_TARGET: "13.0"
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -63,8 +70,6 @@ jobs:
         working-directory: src-tauri
       # macOS 仅出 arm64（2026-10-28 用户决策放弃 Intel，FR-16-01 universal 口径随之收窄）
       - run: pnpm build
-        env:
-          MACOSX_DEPLOYMENT_TARGET: "13.0"
       - name: 收集安装包
         shell: bash
         run: |
@@ -85,6 +90,53 @@ jobs:
         shell: bash
         run: |
           gh release upload "$TAG" $FILES --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+      # updater 元数据（33 号票，FR-16-03/§12.4）：读本平台 updater 产物与
+      # .sig 组装平台条目。脚本本身不跑网络——三平台各自只产出自己的条目
+      # 不成立（latest.json 是单文件），改为把 updater 产物名与 .sig 内容
+      # 以 artifact 形式汇总到 release job 再统一组装（见 release job 增量）。
+      - name: 提取 updater 平台条目
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          mkdir -p updater-meta
+          bash scripts/gen-latest-json.sh platform-entry "$TAG" > "updater-meta/${{ matrix.os }}.json"
+          cat "updater-meta/${{ matrix.os }}.json"
+        env:
+          TAG: ${{ github.ref_name }}
+      - uses: actions/upload-artifact@v4
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          name: updater-meta-${{ matrix.os }}
+          path: updater-meta/*.json
+
+  latest-json:
+    name: 组装并上传 latest.json
+    needs: [release, build]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: updater-meta
+      - name: 组装 latest.json（三平台条目合并）
+        shell: bash
+        run: |
+          mkdir -p merged
+          for f in updater-meta/updater-meta-*/*.json; do
+            cp "$f" "merged/$(basename "$(dirname "$f")").json"
+          done
+          bash scripts/gen-latest-json.sh merge "$TAG" merged > latest.json
+          cat latest.json
+        env:
+          TAG: ${{ github.ref_name }}
+      - name: 上传 latest.json 到 Release
+        shell: bash
+        run: |
+          gh release upload "$TAG" latest.json --clobber
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}

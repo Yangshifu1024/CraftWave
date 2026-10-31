@@ -27,6 +27,8 @@ pub mod stats;
 pub mod subagent;
 pub mod system;
 pub mod ui_state;
+// 更新器支撑命令（33 号票，§3.3 #59m/#59n/#59o：状态门/安装门/主动暂停）
+pub mod updater;
 pub mod workspace;
 
 /// macOS 交通灯精确摆位（依赖 AppKit，仅桌面 mac 编译）。
@@ -48,6 +50,10 @@ mod image_test;
 #[cfg(test)]
 #[path = "system_test.rs"]
 mod system_test;
+
+#[cfg(test)]
+#[path = "updater_test.rs"]
+mod updater_test;
 
 #[cfg(test)]
 #[path = "workspace_test.rs"]

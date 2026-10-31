@@ -83,6 +83,7 @@ const BASE_CONFIG: AppConfig = {
   search: {
     searxng: { enabled: false, baseUrl: "http://127.0.0.1:8888", maxResults: 10 },
   },
+  update: { enabled: true, intervalHours: 24 },
 };
 
 // 每个用例前：重置 mock、把 store 置为"草稿=基线"的干净状态（不脏）

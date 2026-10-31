@@ -46,8 +46,8 @@ pub struct SessionMeta {
     /// 已授权的外部目录（§9.9 会话 roots 快照，24 号票）："始终允许"授权
     /// 经 #34 `allow_external_dir` 并入后持久于本字段（canonical 绝对路径
     /// 字符串），会话内跨 run 生效、跨会话不延续。旧索引无此字段时 serde
-    /// default 回填空表；备份恢复（Q41）由恢复流程清空（33 号票接线，
-    /// 本票提供 `clear_all_external_grants`）。
+    /// default 回填空表；备份恢复（Q41）由恢复保护序列清空（33 号票接线，
+    /// [`SessionIndex::clear_authorized_external_dirs`]）。
     #[serde(default)]
     pub authorized_external_dirs: Vec<String>,
 }
@@ -158,6 +158,29 @@ impl SessionIndex {
         let removed = file.sessions.remove(pos);
         self.write(&file)?;
         Ok(Some(removed))
+    }
+
+    /// 一次读写清空**全部会话**的外部目录授权（Q41 恢复保护序列步骤 ③，
+    /// 33 号票接线——恢复旧备份后授权须重新确认，普通重启不调用）。
+    /// 返回实际被清空过授权的会话条数（本来就没授权的条目不计）。
+    /// 单次读改写完成，避免逐会话 mutate 的 N 次全文件读写。
+    pub fn clear_authorized_external_dirs(&self) -> Result<usize, IndexError> {
+        let _guard = self
+            .lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut file = self.read()?;
+        let mut cleared = 0usize;
+        for meta in &mut file.sessions {
+            if !meta.authorized_external_dirs.is_empty() {
+                meta.authorized_external_dirs.clear();
+                cleared += 1;
+            }
+        }
+        if cleared > 0 {
+            self.write(&file)?;
+        }
+        Ok(cleared)
     }
 
     /// 把 updatedAt 最旧的溢出条目追加到 archive.jsonl 并从索引移除

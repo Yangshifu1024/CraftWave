@@ -89,6 +89,7 @@ function baseConfig(): AppConfig {
     search: {
       searxng: { enabled: false, baseUrl: "http://127.0.0.1:8888", maxResults: 10 },
     },
+    update: { enabled: true, intervalHours: 24 },
   };
 }
 

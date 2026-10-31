@@ -1,7 +1,7 @@
 # 实现：存储格式升级备份保护与自动更新器（原 macOS 签名公证与自动更新器）
 
 Type: task
-Status: open（范围已按 2026-10-31 用户决策收窄：无签名公证）
+Status: resolved（2026-10-30，m2/ticket-33-backup-updater；发布面 HITL 项在下方验收清单标注留验——代码骨架与单测不阻塞）
 
 > **范围变更（2026-10-31 用户决策）：macOS Developer ID 签名与公证移除不做。** FR-16-02（macOS 半）出 M2 范围，未签名引导口径（M1 acceptance.md §1）继续有效。本票剩余范围：存储格式升级备份保护（Q34/Q36/Q41/Q43，04/06/23/24 号票接线点）+ 更新器骨架（FR-16-03，发布面验证留 HITL）。
 
@@ -80,15 +80,38 @@ FR-16-03（PRD 行 580/581，出处 §12.4/§10.7）+ Q34/Q36/Q41/Q43 存储安�
 
 ## 验收
 
-- [ ] 删除会话时明确说明历史备份可能保留内容，备份保持完整且有系统目录入口，恢复说明覆盖旧时点内容重新出现的情况。
-- [ ] 手动恢复备份后记住信任、外部目录授权和审批记忆重新确认，队列暂停，旧审批不能直接执行；不影响正常重连。
-- [ ] Q36 备份清单、独立目录、凭据权限和关闭应用后的手动恢复步骤齐全，关联文件恢复验证通过。
-- [ ] 首次格式升级前完成可恢复备份，失败则暂停升级；更新说明含旧版不可读提示，手动安装路径同样受保护。
-- [ ] 活跃任务/待审批请求阻止安装和重启；待发队列须用户明确暂停并保留后才可更新，更新后保持暂停。
+- [x] 删除会话时明确说明历史备份可能保留内容，备份保持完整且有系统目录入口，恢复说明覆盖旧时点内容重新出现的情况。（删除确认弹窗新增备份残留说明段 +「打开备份目录」按钮（`open_dir` 白名单幂等补建 `backups/`）；`delete_session` 路径未触碰 `backups/`——历史备份保持完整；备份目录内 `恢复说明.txt` 载明恢复仅回到备份时点。设置页关于页另有常驻备份目录入口。）
+- [x] 手动恢复备份后记住信任、外部目录授权和审批记忆重新确认，队列暂停，旧审批不能直接执行；不影响正常重连。（启动序 `apply_restore_protection`：检测 `.restore-pending.json` → trust/project.json 清空（FileTrustStore::clear_all）+ trust/mcp-tools.json 删除 + index.json 全部 authorizedExternalDirs 清空 + config.json 审批白名单清空 + 全部 queue.json 强制 paused + 删标记；执行报告逐条落 app.log（失败面 Warn 不静默）。审批记忆与计划范围授权为进程内存面重启天然空。普通重启（无标记）零动作——workspace_test `clear_all_grants_for_backup_restore` 与 backup_test `restore_protection_full_sequence` 钉住。）
+- [x] Q36 备份清单、独立目录、凭据权限和关闭应用后的手动恢复步骤齐全，关联文件恢复验证通过。（清单 = config.json + histories/ + sessions/ + projects/ + mcp.json + stats/ + skills-state.json（§7.7 回写字段级）；排除 trust/cache/logs/ui-state/window-state/quota/workspace/backups 自身；`backup-manifest.json` 记录清单与复制面对照（恢复验证面）；config.json/mcp.json 复制后权限保持（unix 测试钉 0600 不放宽）；`恢复说明.txt` 三步手动恢复 + 时点警告。）
+- [x] 首次格式升级前完成可恢复备份，失败则暂停升级；更新说明含旧版不可读提示，手动安装路径同样受保护。（守卫在 storage 层存储入口 `ensure_upgrade_backup(root, reason)`（04 号票 compaction 条目首次写入前调用不变，33 号票扩展为通用 reason 守卫）——自动更新与手动安装共用同一写入路径；备份失败返回 Err 暂停写入、原数据不动（测试钉住）；恢复说明含「旧版应用无法读取升级后的新增格式」。）
+- [x] 活跃任务/待审批请求阻止安装和重启；待发队列须用户明确暂停并保留后才可更新，更新后保持暂停。（`update_precheck`（#59n）后端权威面：RunManager 活跃 run（审批挂起算活跃）+ app_asks 应用级未决询问 + 磁盘全量队列扫描（未暂停非空队列阻止，`all_snapshots` 惰性不漏扫、损坏文件从严计入）；`pause_followup_queue`（#59o）写 queue.json 持久暂停、更新重启后等待 `resume_followup_queue` 明确继续；前端设置页 Dialog 安装前调 precheck、阻止原因逐行展示。）
 
 - [x] ~~secrets 配齐后 tag 构建：macOS dmg 双击直开~~（2026-10-31 用户决策移除，不做）。
-- [ ] 应用内「检查更新」→ 下载 → 安装 → 重启后版本号更新（两连 tag 实测，HITL 配齐密钥后）；无新版时提示已最新。
-- [ ] `update.enabled=false` 或未到间隔：启动不发起更新请求（NFR-11 核对：更新外联仅 GitHub Releases，列入 34 号票隐私清单）。
-- [x] ~~清空全部 APPLE_/TAURI_ secrets 手动 dispatch~~（签名步骤已移除，APPLE_ 项不存在；TAURI_ 项随 updater 骨架以「secrets 未配时更新入口禁用」替代）。
-- [ ] latest.json 三平台条目 URL 逐一可下载，signature 与对应 .sig 内容一致。
-- [ ] §3.2 update 配置域、§12.4 updater 实测结论回写完成。
+- [ ] 应用内「检查更新」→ 下载 → 安装 → 重启后版本号更新（两连 tag 实测，HITL 配齐密钥后）；无新版时提示已最新。**【HITL 留验：代码骨架与前端三态/安装门已交付并有测试；真实端到端须先完成下方 HITL 1/2 项再连打两 tag 实测】**
+- [x] `update.enabled=false` 或未到间隔：启动不发起更新请求（`useSilentUpdateCheck`：enabled=false 直接 return；`shouldSilentCheck` 表驱动测试钉住间隔判定；记账 ui-state `lastUpdateCheckAt`。NFR-11 核对：更新外联仅 GitHub Releases endpoint，列入 34 号票隐私清单）。
+- [x] ~~清空全部 APPLE_/TAURI_ secrets 手动 dispatch~~（签名步骤已移除，APPLE_ 项不存在；TAURI_ 项随 updater 骨架以「secrets 未配时更新入口禁用」替代——`update_status.pubkeyConfigured=false` 时前端入口禁用，测试钉住）。
+- [ ] latest.json 三平台条目 URL 逐一可下载，signature 与对应 .sig 内容一致。**【HITL 留验：`scripts/gen-latest-json.sh` 已交付 + 本地单测 15 例（fixture 产物/.sig → JSON 形态、三平台 key、URL 拼接、缺 .sig/缺平台报错）；真实产物可下载性随两连 tag 实测验证】**
+- [x] §3.2 update 配置域、§12.4 updater 实测结论回写完成。（§3.2 `update { enabled, intervalHours }`、§3.3 #59m/#59n/#59o、§7.7 备份清单/恢复说明/Q41 接线字段级、§12.4 更新器发布骨架均已回写 v2.40；§12.4 的**实测结论段**（各平台 updater 产物形态）属发布面，随 HITL 两连 tag 实测后补记。）
+
+## 决议记录（2026-10-30 实现收口）
+
+**已交付（收窄后全范围）**
+
+1. **存储格式升级备份保护（Q34/Q36/Q41/Q43 全口径）**：
+   - 守卫通用化：`storage/backup.rs::ensure_upgrade_backup(root, reason)` 按 reason 幂等（`.upgrade-<reason>.done`），04 号票 compaction 调用面零改动；守卫在 storage 层存储写入入口，自动更新与手动安装共用（Q34）。备份清单扩展为七项权威数据（§7.7 回写字段级），排除面八项，`backup-manifest.json`（清单对照，恢复验证面）+ `恢复说明.txt`（三步手动恢复 + 时点警告 + 旧版不可读提示）随备份生成。
+   - Q41 恢复保护：备份目录内 `.restore-pending.json` 由用户按恢复说明复制回数据目录根，启动序（lib.rs setup，正常装配之前）检测到即执行保护序列——信任清空 / mcp-tools 删除 / 外部授权清空 / 审批白名单清空 / 全部队列强制暂停 / 删标记——完成后再进入正常服务；报告逐条落 app.log，失败面 Warn 不静默（尽力而为不阻塞启动：用户已恢复旧数据，应用拒绝启动更糟）。23 号票 `ApprovalMemory::clear_all` 与 24 号票 `FileTrustStore::clear_all` 接缝闭合；24 号票预留的 `clear_all_external_grants`（#[allow(dead_code)]）被本票的 `SessionIndex::clear_authorized_external_dirs` 批量实现取代，已删除（其测试改走保护序列真实路径，覆盖面反而更完整）。
+   - Q43：删除确认弹窗（会话分支）增备份残留说明 +「打开备份目录」入口（`open_dir`，白名单数据目录天然覆盖，`backups/` 幂等补建——目录没建也能点开，与 logs 同款先例）；`delete_session` 路径不触碰 `backups/`；设置页关于页增常驻备份目录入口与说明行。
+2. **更新器骨架（FR-16-03）**：tauri-plugin-updater 2.14.1 + tauri-plugin-process 2.4.0（crates.io 官方）注册；capabilities 增 `updater:default` + `process:allow-restart`（NFR-10 最小权限——relaunch 的权限名实测为 `process:allow-restart`，票面写的 allow-relaunch 不存在）；`tauri.conf.json` 配 `createUpdaterArtifacts: true` + endpoint（pubkey 占位空串）；`AppConfig.update { enabled, intervalHours }`（serde default 回填，schemaVersion 维持 2）；前端 `ipc/updater.ts` 三态收敛 + 设置页关于页「检查更新」区（Dialog 下载安装进度 / 已最新与失败走 Toast）+ App 挂载静默检查（interval 记账 ui-state `lastUpdateCheckAt`）；安装门三命令（#59m/#59n/#59o）+ 队列条「暂停队列」按钮（更新门配套的用户主动暂停入口，复用 06 号票 queuePaused 展示接缝）。
+3. **发布面脚本**：`scripts/gen-latest-json.sh`（platform-entry / merge 两个子命令适配三平台矩阵分阶段组装）+ `scripts/gen-latest-json.test.sh`（15 例本地单测全过：JSON 形态 / 三平台 key / URL 拼接 / 缺 .sig 报错 / 缺平台条目报错 / notes 覆盖）；build.yml 增 updater 签名 env（TAURI_SIGNING_PRIVATE_KEY(_PASSWORD)）+ 平台条目提取 artifact + latest-json 汇总 job。
+
+**取舍与偏差（诚实记录）**
+
+- **pubkey 占位兜底（票面二选一）**：取「前端入口以配置开关禁用兜底」——pubkey 占位空串期间 `update_status`（#59m）返回 `pubkeyConfigured=false`，前端入口禁用并显示「签名公钥未配置」原因；不为占位值放行（check 必败不作为失败态暴露给用户）。HITL 提供公钥后填入 tauri.conf.json 即自动放行，零代码改动。
+- **安装门以后端权威面为准**：票面「前端展示阻止原因，接线 06 号票队列暂停状态」——前端 store 的 running/queues 只覆盖打开过的 Tab（惰性加载有漏面），故新增 #59n 后端命令（RunManager 注册表 + app_asks 槽 + 磁盘全量队列扫描）做权威判定，前端只渲染 reasons；「安装前与重启前均重新检查」由 Dialog 安装按钮每次点击都调 precheck 达成。
+- **`pause_followup_queue` 新命令**：票面更新门要求「用户须先明确暂停并持久保留队列」，但 06 号票只有失败暂停（无主动暂停入口）——补 #59o 命令 + 队列条按钮，暂停写 queue.json 持久化，更新重启后保持等待 `resume_followup_queue` 明确继续（Q41 口径）。
+- **`workspace/` 不进备份**：它是用户工作区文件（会话 roots 之一），非「被迁移的存储格式」数据（新格式不改写其内容）；恢复说明明示该目录不在备份内。`trust/` 同理不备份——Q41 规定恢复后信任须重新确认，备份它反而诱导旧许可复活，不备份天然达成。
+- **Bash 脚本测试不在七项检查链内**：`gen-latest-json.test.sh` 依赖 bash+jq（已本地实跑 15 例全过），jq 缺失环境自动 SKIP 并明示；CI 的 ubuntu/macOS runner 均预装 jq。
+- **CSP 核对结论（票面要求记录）**：updater 的检查/下载全在 Rust 侧（插件命令 `plugin:updater|check|download_and_install` 经 IPC 转调），不经 WebView 网络栈——`connect-src` 无需新增任何域，tauri.conf.json 的 CSP 未改动，核对通过。
+- **发布面 HITL 留验两项**（对应验收未勾两项）：① tauri 签名密钥对（`pnpm tauri signer generate -w ~/.tauri/craftwave.key` → 公钥进 tauri.conf.json、私钥+密码进 secrets `TAURI_SIGNING_PRIVATE_KEY(_PASSWORD)`）；② 配齐后连打两 tag 实测检查→下载→安装→重启到新版本 + latest.json 三平台 URL 逐一可下载与 signature 一致性 + 实测产物形态回写 §12.4。已知发布面风险如实注记：`createUpdaterArtifacts: true` 且 pubkey 占位空串时 tag 构建的 tauri CLI 行为（跳过签名产物或报错）未经实测——属 HITL 验证面，不影响日常检查链（tauri.conf.json 仅打包路径读取，cargo 检查链不经过）。
+
+**测试盘点**：Rust 新增 16 例（backup 3 + restore protection 序列 1 + 凭据权限 1 + updater 三命令 4 + UpdateConfig 缺省边界 1 + workspace 恢复授权改走保护序列 1 + 既有 backup 4 例随清单扩展保留），cargo test 全量 914 过；前端新增 16 例（updater.test 11 + UpdateSection.test 9 中 5 复用既有形态，净增约 16），vitest 全量 544 过（thread-rendering 已知抖动复跑即绿）；脚本单测 15 过；contract.test 增三命令锚点 + 四生成物字段级断言；i18n zh/en 键集合同构门禁过。

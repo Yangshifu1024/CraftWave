@@ -55,6 +55,7 @@ import {
 } from "@/chat/composer-attachments";
 import { useComposerKeys } from "@/chat/composer-keys";
 import {
+  pauseFollowUpQueue,
   queueFollowUp,
   removeQueuedFollowUp,
   resumeFollowUpQueue,
@@ -232,7 +233,8 @@ function ThreadEmptyState() {
 
 /** 队列条（FR-01-07 排队面，06 号票后端队列）：followUp 待发消息逐条展示
  *  （带「排队」徽标）——× 移除（后端删除 + 本地同步）、铅笔取出编辑（删除
- *  后文本回填输入框，改完 Alt+Enter 重新排队）；暂停态（run 失败，06 号票）
+ *  后文本回填输入框，改完 Alt+Enter 重新排队）、⏸ 主动暂停（33 号票更新门
+ *  配套：更新安装前用户须明确暂停并保留队列）；暂停态（run 失败，06 号票）
  *  显示横幅与「继续」入口。后端 queue.json 为投递权威，本地队列条以事件
  *  （run:queue）与本地操作共同驱动（stores/sessions.ts queues 桶）。 */
 function FollowUpQueueBar() {
@@ -251,11 +253,34 @@ function FollowUpQueueBar() {
       if (ok) aui.composer.setText(entry.text, { origin: "user" });
     });
   };
+  const pause = () => {
+    // 主动暂停（33 号票 #59o）：写 queue.json paused=true 持久化，更新重启
+    // 后仍等待用户明确继续；run:queue 事件回推校正本地状态
+    void pauseFollowUpQueue(sessionId).catch(() => {});
+  };
   const resume = () => {
     void resumeFollowUpQueue(sessionId);
   };
   return (
     <div data-testid="followup-queue" className="mb-1 space-y-1">
+      {!paused && entries.length > 0 && (
+        <div
+          data-testid="followup-pause"
+          className="flex items-center gap-2 rounded-xl border border-[var(--border)] px-2.5 py-1 text-ui-sm text-[var(--muted-foreground)]"
+        >
+          <span className="min-w-0 flex-1 truncate">
+            {t("workspace.queuePauseHint", { count: entries.length })}
+          </span>
+          <button
+            type="button"
+            data-testid="followup-pause-button"
+            onClick={pause}
+            className="shrink-0 rounded-lg border border-[var(--border)] px-2 py-0.5 text-ui-sm text-[var(--foreground)] hover:border-[var(--ring)]"
+          >
+            {t("workspace.pauseQueue")}
+          </button>
+        </div>
+      )}
       {paused && (
         <div
           data-testid="followup-paused"

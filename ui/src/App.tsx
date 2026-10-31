@@ -16,7 +16,7 @@ import { MirrorDemo } from "@/chat/mirror/MirrorDemo";
 import { SessionWorkspace } from "@/chat/SessionWorkspace";
 import { ToastHost } from "@/components/ToastHost";
 import { applyHotkey } from "@/hotkey";
-import { initLangFromConfig } from "@/i18n/core";
+import { initLangFromConfig, t } from "@/i18n/core";
 import { applyTheme } from "@/theme";
 import { applyUiFontSize } from "@/ui-font-size";
 
@@ -146,11 +146,65 @@ function useTitlebarActivation() {
   }, []);
 }
 
+/**
+ * 启动静默更新检查（33 号票，FR-16-03「检查可开关可调频率」）：
+ * App 挂载后按配置判定——`update.enabled=false` 不发起任何请求（NFR-11）；
+ * updater pubkey 未实配（HITL 密钥未配，占位空串）同样不发起（入口兜底门
+ * 同源）；距上次静默检查不足 intervalHours 小时跳过（记账在 ui-state 的
+ * lastUpdateCheckAt，本轮检查完成后立即记账）。检查到新版仅 Toast 轻提示
+ * 引导到设置→关于（静默语义：不打断启动流程，不自动下载）；失败静默。
+ */
+function useSilentUpdateCheck() {
+  useEffect(() => {
+    let cancelled = false;
+    void invoke<{
+      update?: { enabled?: boolean; intervalHours?: number };
+    }>("get_config")
+      .then(async (config) => {
+        if (cancelled) return;
+        const update = config.update;
+        if (!update?.enabled) return;
+        // pubkey 门：与设置页入口同一兜底（update_status 命令，33 号票 #59m）
+        const status = await invoke<{
+          pubkeyConfigured: boolean;
+          endpoints: string[];
+        }>("update_status");
+        if (cancelled || !status.pubkeyConfigured) return;
+        const intervalHours = update.intervalHours ?? 24;
+        const { shouldSilentCheck } = await import("@/ipc/updater");
+        const sessions = await import("@/stores/sessions");
+        const store = sessions.useSessionsStore.getState();
+        if (!shouldSilentCheck(Date.now(), store.lastUpdateCheckAt, intervalHours, true)) {
+          return;
+        }
+        store.setLastUpdateCheckAt(Date.now());
+        const { checkForUpdate } = await import("@/ipc/updater");
+        const state = await checkForUpdate();
+        if (cancelled) return;
+        if (state.kind === "available") {
+          const { pushToast } = await import("@/stores/toast");
+          pushToast(
+            "info",
+            t("settings.updateSilentFound", { version: state.version }),
+            t("settings.updateSilentHint"),
+          );
+        }
+      })
+      .catch(() => {
+        // 静默检查任何失败（纯浏览器/网络/配置）都不打扰用户
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+}
+
 /** 应用根组件：先挂启动期 hook，再按 URL 选择镜像演示页或主界面。 */
 export default function App() {
   useTitlebarActivation();
   useThemeBoot();
   useHotkeyBoot();
+  useSilentUpdateCheck();
   // 【S1 spike 原型入口】spike 指验证技术可行性的临时原型：URL 带 ?mirror=1
   // 时切到镜像工具桥接演示页，验证完随时可移除
   if (new URLSearchParams(window.location.search).has("mirror")) {

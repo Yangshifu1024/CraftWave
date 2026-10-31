@@ -73,6 +73,7 @@ function baseConfig(): AppConfig {
     watchdog: { stallTimeoutSecs: 300 },
     network: { allowPrivateNetwork: false },
     search: { searxng: { enabled: false, baseUrl: "http://127.0.0.1:8888", maxResults: 10 } },
+    update: { enabled: true, intervalHours: 24 },
   } as AppConfig;
 }
 

@@ -54,6 +54,7 @@ import type {
   OpenDirArgs,
   PathKindArgs,
   PathKindResult,
+  PauseFollowupQueueResult,
   PreviewRegisterResult,
   ProjectMeta,
   ProviderConfig,
@@ -95,6 +96,8 @@ import type {
   TestProviderArgs,
   TestProviderResult,
   ToolOutcome,
+  UpdatePrecheckResult,
+  UpdateStatusResult,
   WorkspacePathHit,
 } from "./types";
 
@@ -177,6 +180,10 @@ export const COMMANDS = {
   readSessionLog: "read_session_log",
   listLogFiles: "list_log_files",
   openLogsDir: "open_logs_dir",
+  // 更新器支撑三命令（33 号票，§3.3 #59m/#59n/#59o：状态门/安装门/主动暂停）
+  updateStatus: "update_status",
+  updatePrecheck: "update_precheck",
+  pauseFollowupQueue: "pause_followup_queue",
   // 产物面板与编辑器打开（28 号票，§3.3 #59l/#35/#36）
   listArtifacts: "list_artifacts",
   listEditors: "list_editors",
@@ -329,6 +336,21 @@ export function listLogFiles(): Promise<string[]> {
 /** 系统文件管理器打开日志目录（32 号票，§3.3 #56）。 */
 export function openLogsDir(): Promise<void> {
   return invoke<void>(COMMANDS.openLogsDir);
+}
+
+/** 更新器状态（33 号票，§3.3 #59m）：pubkeyConfigured=false 时更新入口禁用。 */
+export function updateStatus(): Promise<UpdateStatusResult> {
+  return invoke<UpdateStatusResult>(COMMANDS.updateStatus);
+}
+
+/** 更新安装/重启前置检查（33 号票，§3.3 #59n）：安装前与重启前均须重新调用。 */
+export function updatePrecheck(): Promise<UpdatePrecheckResult> {
+  return invoke<UpdatePrecheckResult>(COMMANDS.updatePrecheck);
+}
+
+/** 用户主动暂停待发队列（33 号票，§3.3 #59o：更新门配套）。 */
+export function pauseFollowupQueue(sessionId: string): Promise<PauseFollowupQueueResult> {
+  return invoke<PauseFollowupQueueResult>(COMMANDS.pauseFollowupQueue, { sessionId });
 }
 
 /** §3.3 #18：启动一次 run（一轮模型对话）。channel 由调用方建立：Channel 是

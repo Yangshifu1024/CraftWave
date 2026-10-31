@@ -811,6 +811,53 @@ describe("§12.3 manifest 双向扫描", () => {
       path: "/usr/local/bin/code",
     };
     expect(editor.name).toBe("VS Code");
+    // 33 号票三命令（§3.3 #59m/#59n/#59o：更新器状态门/安装门/主动暂停）
+    expect(find("update_status")).toMatchObject({
+      args_type: "()",
+      ret_type: "UpdateStatusResult",
+    });
+    expect(find("update_precheck")).toMatchObject({
+      args_type: "()",
+      ret_type: "UpdatePrecheckResult",
+    });
+    expect(find("pause_followup_queue")).toMatchObject({
+      args_type: "PauseFollowupQueueArgs",
+      ret_type: "PauseFollowupQueueResult",
+    });
+    for (const name of ["update_status", "update_precheck", "pause_followup_queue"]) {
+      expect(Object.values(COMMANDS), `${name} 应在 client.ts 接线`).toContain(name);
+    }
+    // #59m/#59n 生成物字段级（UpdateStatusResult 禁用门两字段 +
+    // UpdatePrecheckResult 安装门六字段）
+    const status: import("./generated/UpdateStatusResult").UpdateStatusResult = {
+      pubkeyConfigured: false,
+      endpoints: ["https://github.com/o/r/releases/latest/download/latest.json"],
+    };
+    expect(status.pubkeyConfigured).toBe(false);
+    const precheck: import("./generated/UpdatePrecheckResult").UpdatePrecheckResult = {
+      blocked: true,
+      reasons: ["有 1 个会话的任务正在运行（或等待审批），安装重启会中断运行"],
+      runningCount: 1,
+      pendingAskCount: 0,
+      runningQueueCount: 0,
+      pausedQueueCount: 0,
+    };
+    expect(precheck.blocked).toBe(true);
+    expect(precheck.reasons).toHaveLength(1);
+    // #59o 生成物字段级（PauseFollowupQueueResult 快照两字段）
+    const paused: import("./generated/PauseFollowupQueueResult").PauseFollowupQueueResult = {
+      size: 2,
+      paused: true,
+    };
+    expect(paused.size).toBe(2);
+    expect(paused.paused).toBe(true);
+    // §3.2 update 配置域生成物字段级（enabled 缺省 true / intervalHours 缺省 24）
+    const update: import("./generated/UpdateConfig").UpdateConfig = {
+      enabled: true,
+      intervalHours: 24,
+    };
+    expect(update.enabled).toBe(true);
+    expect(update.intervalHours).toBe(24);
   });
 });
 

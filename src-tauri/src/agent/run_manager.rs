@@ -427,6 +427,17 @@ impl RunManager {
             .is_empty()
     }
 
+    /// 活跃 run 数量（33 号票 `update_precheck` 安装门判定面：任一会话有
+    /// 活跃 run——含审批挂起中——即阻止安装与重启；数量供前端展示阻止原因）。
+    /// 空判定由 [`Self::has_active`] 承担（语义命名保留，不强行改名 is_empty）。
+    #[allow(clippy::len_without_is_empty)]
+    pub fn len(&self) -> usize {
+        self.runs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len()
+    }
+
     /// 按未决询问的 askId 反查持有它的 run（resolve_ask 命令用它把应答
     /// 路由到正确的 run；当前单会话规模下遍历注册表足够）。
     pub fn find_by_ask(&self, ask_id: &str) -> Option<std::sync::Arc<RunHandle>> {

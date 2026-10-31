@@ -73,6 +73,7 @@ export interface FollowUpDeps {
   injectRunMessage: typeof client.injectRunMessage;
   removeFollowup: typeof client.removeFollowup;
   resumeFollowupQueue: typeof client.resumeFollowupQueue;
+  pauseFollowupQueue: typeof client.pauseFollowupQueue;
 }
 
 /** 生产依赖：ipc/client 真实出口。 */
@@ -80,6 +81,7 @@ export const defaultFollowUpDeps: FollowUpDeps = {
   injectRunMessage: client.injectRunMessage,
   removeFollowup: client.removeFollowup,
   resumeFollowupQueue: client.resumeFollowupQueue,
+  pauseFollowupQueue: client.pauseFollowupQueue,
 };
 
 /**
@@ -169,5 +171,21 @@ export async function resumeFollowUpQueue(
     await deps.resumeFollowupQueue(sessionId);
   } catch (err) {
     console.error("[followUp] 继续队列失败", err);
+  }
+}
+
+/**
+ * 主动暂停队列（33 号票 #59o，更新门配套）：用户在更新前须「明确暂停并
+ * 持久保留队列」——后端置 queue.json paused=true 持久化；本地暂停横幅由
+ * run:queue 事件回推驱动（与失败暂停同一展示接缝）。
+ */
+export async function pauseFollowUpQueue(
+  sessionId: string,
+  deps: FollowUpDeps = defaultFollowUpDeps,
+): Promise<void> {
+  try {
+    await deps.pauseFollowupQueue(sessionId);
+  } catch (err) {
+    console.error("[followUp] 暂停队列失败", err);
   }
 }
