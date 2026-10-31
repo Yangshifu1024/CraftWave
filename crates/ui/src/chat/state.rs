@@ -34,6 +34,7 @@
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
+use gpui_kit::component::input::InputState;
 use gpui_kit::{Context, Entity, FollowMode, IntoElement, ListAlignment, ListState, Task, px};
 
 use craftwave_engine::snapshot::{StreamPart, StreamingMessage, ThinkingSpan};
@@ -123,6 +124,63 @@ pub struct ConversationState {
     /// 会累积旧回调，编码指南 §1）。
     #[allow(dead_code)] // 保活语义：持有即订阅在，从不读取
     pub(crate) _subscriptions: Vec<gpui_kit::Subscription>,
+    /// 挂起的询问/审批卡队列（3.4；ask:opened 事件驱动，依序展示）。
+    /// 状态与读写方法住 `ask.rs`（impl ConversationState 的分片）。
+    pub(crate) pending_asks: Vec<super::ask::PendingAsk>,
+    /// 处置终态行（卡片收束后的流内痕迹，会话切换/新发送时清空）。
+    pub(crate) resolved_asks: Vec<super::ask::ResolvedAsk>,
+    /// 问卷自由文本题的输入框实体（键 = (askId, questionId)）。惰性创建
+    /// 在 Render 里做——`InputState::new` 需要 `&mut Window`，事件路径
+    /// （泵任务）拿不到，见 `ConversationState::ensure_ask_inputs`。
+    pub(crate) ask_inputs: HashMap<(String, String), Entity<InputState>>,
+    /// 问卷选项题的 chips 单选表（键 = (askId, questionId) → 选项 id）。
+    pub(crate) question_selections: HashMap<(String, String), String>,
+    /// 子代理事件表（3.6；sub:* 事件累积的本会话子代理轻量行，按到达序，
+    /// sub_id 去重 upsert——帧面之外的结构源，含事件面独有的 error 文本）。
+    pub(crate) sub_events: Vec<super::subagent::SubagentLite>,
+    /// 子代理详情视图（3.6；None = 关闭，对话流正常展示）。
+    pub(crate) sub_view: Option<super::subagent::SubagentView>,
+    /// run 级错误卡（B6）：run:error 终态的常驻记录——落盘重载后流式行
+    /// 消失，错误卡独立存活到下次发送/会话切换/用户关闭，保证长报错始终
+    /// 可读可复制。
+    pub(crate) run_error: Option<RunErrorCard>,
+}
+
+/// B6 run 级错误卡的数据面：错误码 + 完整错误文本（纪律三：永不截断，
+/// 详情默认展开全文可选）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunErrorCard {
+    /// 错误码（E_PROVIDER_* / E_INVALID_ARG / E_INTERNAL 等）。
+    pub code: String,
+    /// 完整错误消息（模型通道的人话说明，原样展示与复制）。
+    pub message: String,
+}
+
+impl RunErrorCard {
+    /// 是否模型/供应商类错误（B6 分流：是 → 设置入口；否 → 重试入口）。
+    /// 判据与旧栈 ChatErrorBanner 同口径：错误码前缀 + 消息关键词启发式
+    /// ——模型解析失败在 engine 走 E_INVALID_ARG（"未配置激活模型"等），
+    /// 单看错误码会漏。
+    pub fn is_model_error(&self) -> bool {
+        self.code.starts_with("E_PROVIDER")
+            || [
+                "模型",
+                "供应商",
+                "api key",
+                "apikey",
+                "认证",
+                "鉴权",
+                "401",
+                "403",
+            ]
+            .iter()
+            .any(|kw| self.message.to_lowercase().contains(kw))
+    }
+
+    /// 完整错误文本（一键复制的内容 = 错误码 + 消息，含载荷的展示全量）。
+    pub fn full_text(&self) -> String {
+        format!("{}: {}", self.code, self.message)
+    }
 }
 
 impl ConversationState {
@@ -155,6 +213,13 @@ impl ConversationState {
             splice_retest_count: 0,
             remeasure_count: 0,
             _subscriptions: Vec::new(),
+            pending_asks: Vec::new(),
+            resolved_asks: Vec::new(),
+            ask_inputs: HashMap::new(),
+            question_selections: HashMap::new(),
+            sub_events: Vec::new(),
+            sub_view: None,
+            run_error: None,
         }
     }
 
@@ -514,6 +579,33 @@ impl ConversationState {
     }
 
     // ==================================================================
+    // B6 run 级错误卡（数据面；渲染在 subagent.rs render_run_error）
+    // ==================================================================
+
+    /// 记录一次 run 错误终态（run:error 事件与终态帧双来源同内容幂等）。
+    /// 常驻到下次发送/会话切换/用户关闭——落盘重载后流式行消失，错误卡
+    /// 独立存活保证长报错始终可读可复制。
+    pub(crate) fn set_run_error(
+        &mut self,
+        code: String,
+        message: String,
+        cx: &mut Context<Self>,
+    ) {
+        let next = Some(RunErrorCard { code, message });
+        if self.run_error != next {
+            self.run_error = next;
+            cx.notify();
+        }
+    }
+
+    /// 用户关闭错误卡（×）/ 重试前清理。
+    pub(crate) fn dismiss_run_error(&mut self, cx: &mut Context<Self>) {
+        if self.run_error.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    // ==================================================================
     // 行分发（四形态 + 过滤器；元素构建在 row.rs，这里只做判定与路由）
     // ==================================================================
 
@@ -600,8 +692,9 @@ pub(crate) struct CallLite {
     /// 错误载荷文本（错误码 + 消息；None = 无）。失败时的 Output 分节
     /// 把它并入展示与复制面（B3「失败原因可复制」）。
     pub error_text: Option<String>,
-    /// 该调用派生了子代理（折叠头出跳转占位钮；真实跳转 3.6 接线）。
-    pub subagent: bool,
+    /// 该调用派生了子代理时的目标 id（3.6 接线：跳转钮 + 详情视图；
+    /// None = 非委派调用）。
+    pub sub_id: Option<String>,
 }
 
 /// 流式行的渲染上下文（thinking 面板 B4 与工具簇跳转钮的数据源；历史行
@@ -611,8 +704,8 @@ pub(crate) struct StreamView {
     pub thinking_span: Option<ThinkingSpan>,
     /// run 仍在流式（流动摘要 / 计时递增的开关）。
     pub live: bool,
-    /// 派生了子代理的调用 id 集（CallLite::subagent 的判定源）。
-    pub subagent_call_ids: Vec<String>,
+    /// 本 run 的子代理结构态（CallLite::sub_id 的判定源与状态展示源）。
+    pub subagents: Vec<craftwave_engine::snapshot::SubagentState>,
 }
 
 impl StreamView {
@@ -621,7 +714,7 @@ impl StreamView {
         Self {
             thinking_span: None,
             live: false,
-            subagent_call_ids: Vec::new(),
+            subagents: Vec::new(),
         }
     }
 }
@@ -670,6 +763,8 @@ pub(crate) fn slots_from_wire(parts: &[WirePart]) -> Vec<Slot> {
                     } if id == call_id => Some((*ok, summary.clone())),
                     _ => None,
                 });
+                // 委派调用的子代理目标：engine 侧 subStarted 帧的 call_id
+                // 恒等于 sub_id（同一 uuid），wire 落盘的调用 id 即回看键
                 calls.push(CallLite {
                     name: name.clone(),
                     args_json: args_json.clone(),
@@ -677,10 +772,9 @@ pub(crate) fn slots_from_wire(parts: &[WirePart]) -> Vec<Slot> {
                     summary: result
                         .map(|(_, summary)| summary)
                         .unwrap_or_default(),
-                    // wire 不携带错误载荷与子代理关联（边车 detail 与跳转
-                    // 随 3.6 详情面接入）
+                    // wire 不携带错误载荷（边车 detail 的拉取在 3.5 面板族接入）
                     error_text: None,
-                    subagent: false,
+                    sub_id: (name == "subagent").then(|| call_id.clone()),
                 });
             }
             // 工具结果已并入调用、图片不进 Assistant 正文面（气泡面归 User）
@@ -693,10 +787,10 @@ pub(crate) fn slots_from_wire(parts: &[WirePart]) -> Vec<Slot> {
 }
 
 /// StreamPart 序列 → 槽位序列（流式行）。结果内嵌在 ToolCall part，
-/// 无需配对；`subagent_call_ids` 是派生过子代理的调用 id 集。
+/// 无需配对；`subagents` 是本 run 的子代理结构态（按 call_id 关联目标）。
 pub(crate) fn slots_from_stream(
     parts: &[StreamPart],
-    subagent_call_ids: &[String],
+    subagents: &[craftwave_engine::snapshot::SubagentState],
 ) -> Vec<Slot> {
     let mut thinking = String::new();
     let mut body = String::new();
@@ -731,7 +825,10 @@ pub(crate) fn slots_from_stream(
                         .as_ref()
                         .map(|e| format!("{}: {}", e.code, e.message))
                 }),
-                subagent: subagent_call_ids.iter().any(|id| id == call_id),
+                sub_id: subagents
+                    .iter()
+                    .find(|sub| sub.call_id == *call_id)
+                    .map(|sub| sub.sub_id.clone()),
             }),
         }
     }

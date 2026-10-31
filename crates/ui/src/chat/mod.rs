@@ -19,6 +19,7 @@
 //! - `None`（测试装置）：回声模式——发送直接追加一条演示条目，装载演示
 //!   历史（2.C-1 行为原样保留，既有 UI 测试零退化）。
 
+mod ask;
 mod composer;
 mod fixture;
 mod images;
@@ -26,6 +27,7 @@ mod markdown_links;
 mod row;
 mod service;
 mod state;
+mod subagent;
 
 #[cfg(test)]
 #[path = "conversation_test.rs"]
@@ -55,6 +57,14 @@ mod tree_test;
 #[path = "empty_test.rs"]
 mod empty_test;
 
+#[cfg(test)]
+#[path = "ask_test.rs"]
+mod ask_test;
+
+#[cfg(test)]
+#[path = "subagent_test.rs"]
+mod subagent_test;
+
 use std::rc::Rc;
 
 use gpui_kit::component::ActiveTheme as _;
@@ -77,6 +87,11 @@ pub use state::ConversationState;
 pub struct EngineService(pub Entity<SessionService>);
 
 impl Global for EngineService {}
+
+// 会话权限档快切 action（3.4）：Shift+Tab 循环（键位在 main.rs 绑定，
+// 派发沿 focus path 冒泡到 ConversationState 处理——与 composer 徽标
+// 点击同一条 cycle_tier 路，一个逻辑命令只建模一次）
+gpui_kit::actions!(craftwave, [CyclePermissionTier]);
 
 /// 中栏装配：建会话实体 →（真通道）建 / 复用会话服务并登记新视图 →
 /// 建 Composer（窗口闭包内）→ 订阅输入事件（Enter 发送 / @ 补全刷新）。
@@ -187,6 +202,12 @@ pub fn install(
                     // 编辑重发待发态（3.3）：本次发送走 branch_resend 挂到
                     // 目标 parent 下产生新分支，随后清除待发态（一次一分支）
                     let resend_parent = conversation.resend_parent.take();
+                    // 权限档快切（3.4）：发送配置从 composer 快切档取
+                    let tier = conversation
+                        .composer
+                        .as_ref()
+                        .map(|composer| composer.read(cx).tier())
+                        .unwrap_or(craftwave_engine::safety::tier::PermissionTier::AutoEdit);
                     match &conversation.service {
                         // 真通道：服务的发送链要回写本会话实体
                         // （apply_snapshot），而当前正处于会话实体的
@@ -200,7 +221,7 @@ pub fn install(
                                         service.branch_resend(parent, text, attachments, cx);
                                     }
                                     None => {
-                                        service.send_message(text, attachments, cx);
+                                        service.send_message(text, attachments, tier, cx);
                                     }
                                 });
                             });
@@ -247,6 +268,9 @@ impl Render for ConversationState {
             window.viewport_size().width.as_f32(),
             window.viewport_size().height.as_f32(),
         );
+        // 3.4 问卷自由文本输入框的惰性补建（InputState::new 要 window；
+        // 有条件一次性 mutate，建满即收敛不 notify）
+        self.ensure_ask_inputs(window, cx);
         let list_state = self.list.clone();
         let entity = cx.entity();
         // 消息流：不等高惰性测量（Bottom 对齐 + 512 overscan），Tail 跟随在
@@ -275,7 +299,23 @@ impl Render for ConversationState {
             .size_full()
             .flex()
             .flex_col()
+            // Shift+Tab 快切权限档（3.4）：按键沿 focus path（composer 内
+            // 输入框 → 本实体）冒泡到这里处理
+            .on_action(cx.listener(|this: &mut ConversationState, _: &CyclePermissionTier, _, cx| {
+                if let Some(composer) = &this.composer {
+                    composer.update(cx, |composer, cx| composer.cycle_tier(cx));
+                }
+            }))
             .child(stream_area);
+        // B6 run 级错误卡 + Ask 条带（3.4/3.6：消息流尾部、composer 之前的
+        // 内联条带区——「出现在消息流当前 run 的位置」的形态取舍见 ask.rs
+        // 模块注释）
+        if let Some(error_card) = subagent::render_run_error(self, cx) {
+            column = column.child(error_card);
+        }
+        if let Some(ask_bar) = ask::render_ask_bar(self, cx) {
+            column = column.child(ask_bar);
+        }
         if let Some(composer) = &self.composer {
             // 编辑重发提示条（3.3）：待发态可见（发送将产生新分支），点 ×
             // 取消回到常规发送
@@ -288,6 +328,11 @@ impl Render for ConversationState {
                 })
                 .child(composer.clone());
             column = column.child(composer_area);
+        }
+        // 子代理详情视图（3.6）：开着时覆盖中栏（含 composer——详情是
+        // 独立会话视角，返回入口收场）
+        if let Some(sub_view) = subagent::render_sub_view(self, cx) {
+            column = column.child(sub_view);
         }
         // zoom 覆盖层（2.9）：开着时叠在中栏上（inset_0 + occlude 挡住下层
         // 点击），背景点击 / 关闭钮收场

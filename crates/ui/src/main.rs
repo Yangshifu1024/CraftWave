@@ -337,6 +337,9 @@ fn key_bindings() -> Vec<KeyBinding> {
         // 设置 / 新会话（本阶段占位 action，阶段 3 接面板）
         KeyBinding::new("cmd-,", OpenSettings, None),
         KeyBinding::new("cmd-n", NewSession, None),
+        // 权限档快切（3.4：Shift+Tab 循环，旧栈 permission-tier 同键位；
+        // 派发沿 focus path 冒泡，ConversationState 的 on_action 处理）
+        KeyBinding::new("shift-tab", chat::CyclePermissionTier, None),
         // 应用与窗口标准键位
         KeyBinding::new("cmd-q", Quit, None),
         KeyBinding::new("cmd-w", CloseWindow, None),

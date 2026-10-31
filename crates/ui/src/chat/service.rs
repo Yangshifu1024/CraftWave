@@ -50,8 +50,10 @@ use std::sync::Arc;
 
 use gpui_kit::{App, AppContext as _, Context, Task, WeakEntity};
 
+use craftwave_engine::api::misc::{self, LoadSubagentHistoryArgs, StopSubagentArgs};
 use craftwave_engine::api::run::{
-    self, AttachRunArgs, DEFAULT_MAX_TURNS, RunConfig, StartChatArgs,
+    self, AttachRunArgs, DEFAULT_MAX_TURNS, ResolveAskArgs, RunConfig, SessionPendingAskArgs,
+    StartChatArgs,
 };
 use craftwave_engine::api::session::{
     self, CreateSessionArgs, LoadSessionTreeArgs, ReadImageBlobArgs, SaveSessionTreeArgs,
@@ -60,12 +62,14 @@ use craftwave_engine::api::workspace::{
     self as workspace_api, SearchWorkspacePathsArgs, WorkspacePathHit,
 };
 use craftwave_engine::app_state::AppState;
+use craftwave_engine::backend::ask::{AskAnswer, AskPayload};
 use craftwave_engine::backend::frames::{ChatFrame, EndReason, FrameError};
 use craftwave_engine::followup::QueuedImageAttachment;
 use craftwave_engine::safety::tier::PermissionTier;
-use craftwave_engine::snapshot::{FrameAggregator, SNAPSHOT_INTERVAL};
+use craftwave_engine::snapshot::{FrameAggregator, SubRunState, SNAPSHOT_INTERVAL};
 use craftwave_engine::storage::{self, MessageEntry, MessageRole, WirePart};
 use craftwave_engine::util::errors::IpcError;
+use craftwave_engine::util::events::keys;
 use craftwave_engine::util::ids::new_uuid;
 
 use crate::engine::{FrameBridge, MailEventSink, UiMail};
@@ -73,6 +77,7 @@ use crate::i18n::t;
 
 use super::composer::CompletionSource;
 use super::state::{ConversationState, SiblingInfo};
+use super::subagent::SubEventPatch;
 
 /// 会话服务：engine 调用面 + 帧流管道的 owner。
 pub struct SessionService {
@@ -98,6 +103,9 @@ pub struct SessionService {
     tasks: Vec<Task<()>>,
     /// 有进行中的 run（停止钮的显示面；终态收口置回 false）。
     busy: bool,
+    /// 最近一次发送的权限档（3.4 快切；B6 重试等无 composer 交互的发送
+    /// 路径沿用，避免静默换档）。send_message 时从 composer 读入。
+    last_tier: PermissionTier,
 }
 
 impl SessionService {
@@ -120,6 +128,7 @@ impl SessionService {
             mailbox: None,
             tasks: Vec::new(),
             busy: false,
+            last_tier: PermissionTier::AutoEdit,
         }
     }
 
@@ -173,11 +182,13 @@ impl SessionService {
     // ==================================================================
 
     /// 发送一条消息：建会话（无会话时）→ user 条目落盘 → 管道重置 →
-    /// start_chat（tokio）。模型与权限档本批用默认值（设置界面阶段 3）。
+    /// start_chat（tokio）。权限档 = composer 快切档（3.4），模型走全局
+    /// 激活配置（设置界面 3.7）。
     pub fn send_message(
         &mut self,
         text: String,
         attachments: Vec<QueuedImageAttachment>,
+        tier: PermissionTier,
         cx: &mut Context<Self>,
     ) {
         let text = text.trim().to_owned();
@@ -194,6 +205,7 @@ impl SessionService {
         let Some(session_id) = self.session_id.clone() else {
             return;
         };
+        self.last_tier = tier;
         // ② 发送前树同步（双写协议：user 拓扑先落盘再 start_chat——engine
         //    侧另有幂等兜底，这里按正常协议走）；常规发送挂当前活动叶
         let user_entry = match self.persist_user_at(&session_id, AttachTo::ActiveLeaf, &text, attachments) {
@@ -207,17 +219,18 @@ impl SessionService {
         let mut history = (*self.history).clone();
         history.push(Rc::new(user_entry.clone()));
         self.reset_pipeline(Rc::new(history), cx);
-        // ④ user 气泡即刻上屏（不等首帧）
+        // ④ user 气泡即刻上屏（不等首帧）；错误卡与上轮终态行随新发送清
+        self.clear_run_error_and_resolved(cx);
         self.push_history(cx);
         // ⑤ busy 上屏（停止钮出现）；⑥ start_chat 跑 tokio
         self.set_busy(true, cx);
-        self.launch_run(session_id, user_entry);
+        self.launch_run(session_id, user_entry, tier);
     }
 
     /// 编辑重发产生新分支（3.3）：新 user 节点挂到 `parent_id` 下（与被
     /// 编辑的原消息成为同父兄弟——旧栈 `ActionBarPrimitive.Edit` 的分支
     /// 语义），active 叶切到新节点后正常起 run。会话须已存在（编辑重发
-    /// 只可能发生在打开的会话里）。
+    /// 只可能发生在打开的会话里）。B6 重试按钮同走本链（挂原父）。
     pub fn branch_resend(
         &mut self,
         parent_id: Option<String>,
@@ -232,6 +245,8 @@ impl SessionService {
         let Some(session_id) = self.session_id.clone() else {
             return;
         };
+        // B6 重试路径没有 composer 交互——档位沿用上一次发送的快切档
+        let tier = self.last_tier;
         let user_entry =
             match self.persist_user_at(&session_id, AttachTo::Parent(parent_id), &text, attachments) {
                 Ok(entry) => entry,
@@ -243,15 +258,16 @@ impl SessionService {
         let mut history = (*self.history).clone();
         history.push(Rc::new(user_entry.clone()));
         self.reset_pipeline(Rc::new(history), cx);
+        self.clear_run_error_and_resolved(cx);
         self.push_history(cx);
         self.set_busy(true, cx);
-        self.launch_run(session_id, user_entry);
+        self.launch_run(session_id, user_entry, tier);
     }
 
     /// start_chat 跑 tokio：装配树 + run 任务全在线程池；帧经 FrameBridge
     /// 回主线程泵，完成回执经同一通道。JoinHandle 不存（回执驱动，见模块
     /// 文档）。send_message / branch_resend 共用（同一条 ⑥ 段）。
-    fn launch_run(&mut self, session_id: String, user_entry: MessageEntry) {
+    fn launch_run(&mut self, session_id: String, user_entry: MessageEntry, tier: PermissionTier) {
         let state = self.state.clone();
         let mailbox = match self.mailbox.clone() {
             Some(mailbox) => mailbox,
@@ -269,7 +285,7 @@ impl SessionService {
                 StartChatArgs {
                     session_id,
                     messages: vec![user_entry],
-                    run_config: default_run_config(),
+                    run_config: default_run_config(tier),
                 },
                 Box::new(FrameBridge::new(mailbox.clone())),
                 auto_confirm,
@@ -294,6 +310,211 @@ impl SessionService {
                 }
             }
             Err(err) => eprintln!("[craftwave] 取消失败：{err:?}"),
+        }
+    }
+
+    // ==================================================================
+    // 事件接线（3.4 ask / 3.6 子代理 / B6 run 错误 → 真 UI 流）
+    // ==================================================================
+
+    /// 泵任务的事件分流：按载荷 sessionId 过滤（MailEventSink 的邮箱是
+    /// 全局单绑定，跨会话事件会串话——只收当前会话的；sessionId 为空的
+    /// 应用级询问（MCP 启动信任等）任意会话上下文可见，旧栈同语义）。
+    /// 子代理与 run 错误只收当前会话。
+    pub(crate) fn handle_event(
+        &mut self,
+        key: &str,
+        payload: &serde_json::Value,
+        cx: &mut Context<Self>,
+    ) {
+        let session_of = payload.get("sessionId").and_then(|v| v.as_str());
+        let app_level = session_of == Some("");
+        if !app_level && session_of != self.session_id.as_deref() {
+            return;
+        }
+        let Some(conversation) = self.conversation.upgrade() else {
+            return;
+        };
+        match key {
+            keys::ASK_OPENED => {
+                if let (Some(ask_id), Ok(payload)) = (
+                    payload.get("askId").and_then(|v| v.as_str()),
+                    serde_json::from_value::<AskPayload>(payload.get("payload").cloned().unwrap_or_default()),
+                ) {
+                    conversation.update(cx, |conversation, cx| {
+                        conversation.open_ask(ask_id.to_owned(), payload, cx)
+                    });
+                }
+            }
+            keys::ASK_CLOSED => {
+                if let Some(ask_id) = payload.get("askId").and_then(|v| v.as_str()) {
+                    conversation.update(cx, |conversation, cx| {
+                        conversation.close_ask(ask_id, cx)
+                    });
+                }
+            }
+            keys::SUB_SPAWN => conversation.update(cx, |conversation, cx| {
+                conversation.sub_event(
+                    string_field(payload, "subId"),
+                    SubEventPatch {
+                        role: Some(string_field(payload, "role")),
+                        ..SubEventPatch::default()
+                    },
+                    cx,
+                )
+            }),
+            keys::SUB_STEP => conversation.update(cx, |conversation, cx| {
+                conversation.sub_event(
+                    string_field(payload, "subId"),
+                    SubEventPatch {
+                        turn: payload.get("turn").and_then(|v| v.as_u64()).map(|v| v as u32),
+                        ..SubEventPatch::default()
+                    },
+                    cx,
+                )
+            }),
+            keys::SUB_REPORT => conversation.update(cx, |conversation, cx| {
+                conversation.sub_event(
+                    string_field(payload, "subId"),
+                    SubEventPatch {
+                        report: Some(string_field(payload, "report")),
+                        ..SubEventPatch::default()
+                    },
+                    cx,
+                )
+            }),
+            keys::SUB_DONE => conversation.update(cx, |conversation, cx| {
+                conversation.sub_event(
+                    string_field(payload, "subId"),
+                    SubEventPatch {
+                        state: Some(SubRunState::Done(sub_outcome(&string_field(
+                            payload, "outcome",
+                        )))),
+                        ..SubEventPatch::default()
+                    },
+                    cx,
+                )
+            }),
+            keys::SUB_ERROR => conversation.update(cx, |conversation, cx| {
+                conversation.sub_event(
+                    string_field(payload, "subId"),
+                    SubEventPatch {
+                        state: Some(SubRunState::Done(
+                            craftwave_engine::backend::frames::SubOutcome::NoReport,
+                        )),
+                        error: Some(format!(
+                            "{}: {}",
+                            payload
+                                .get("code")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("E_INTERNAL"),
+                            payload
+                                .get("message")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                        )),
+                        ..SubEventPatch::default()
+                    },
+                    cx,
+                )
+            }),
+            // B6 错误卡的事件来源（终态帧路径在泵里兜合成帧等无事件场景）
+            keys::RUN_ERROR => {
+                let code = string_field(payload, "code");
+                let message = string_field(payload, "message");
+                conversation.update(cx, |conversation, cx| {
+                    conversation.set_run_error(code, message, cx)
+                });
+            }
+            _ => {}
+        }
+    }
+
+    /// 应答一个 ask（3.4 处置链）：`resolve_ask` 是同步语义（oneshot
+    /// 投递无 await 点——run 槽 / 子代理槽 / 应用级槽三路查找 + 通道
+    /// send），直接在主线程跑。成功 = 卡收束为终态行；失效 = 终态行
+    /// 「已失效」；其余失败 = 卡内原位错误可重试。
+    pub(crate) fn answer_ask(
+        &mut self,
+        ask_id: String,
+        answer: AskAnswer,
+        cx: &mut Context<Self>,
+    ) {
+        let outcome = match &answer {
+            AskAnswer::Approval { option_id, .. } if option_allows(option_id) => {
+                super::ask::AskOutcome::Allowed
+            }
+            AskAnswer::Approval { .. } => super::ask::AskOutcome::Denied,
+            AskAnswer::Question { .. } => super::ask::AskOutcome::Answered,
+        };
+        let result = self.runtime.block_on(run::resolve_ask(
+            &self.state,
+            ResolveAskArgs {
+                ask_id: ask_id.clone(),
+                answer,
+            },
+        ));
+        let Some(conversation) = self.conversation.upgrade() else {
+            return;
+        };
+        conversation.update(cx, |conversation, cx| match result {
+            Ok(()) => conversation.settle_ask(&ask_id, outcome, cx),
+            Err(err) if err.code == craftwave_engine::util::errors::E_NOT_FOUND => {
+                conversation.expire_ask(&ask_id, cx);
+            }
+            Err(err) => conversation.ask_failed(&ask_id, err.message, cx),
+        });
+    }
+
+    /// 停止一个运行中的子代理（3.6）：engine `stop_subagent` 级联取消；
+    /// 终态以该子代理的 subFrame 序列（runEnded + subDone）为权威，UI 随
+    /// 帧面/事件面自然翻牌。不存在/已结束 = 日志（幂等防御）。
+    pub(crate) fn stop_subagent(&mut self, sub_id: &str, _cx: &mut Context<Self>) {
+        match misc::stop_subagent(&self.state, StopSubagentArgs { sub_id: sub_id.to_owned() }) {
+            Ok(()) => {}
+            Err(err) => eprintln!("[craftwave] 子代理停止失败：{err:?}"),
+        }
+    }
+
+    /// 装载子代理历史（3.6 详情视图的数据源）：engine `load_subagent_history`
+    /// 读盘跑后台线程池，回写按 sub_id 对账（用户已切走即丢弃）。
+    pub(crate) fn load_sub_history(&mut self, sub_id: String, cx: &mut Context<Self>) {
+        let Some(session_id) = self.session_id.clone() else {
+            return;
+        };
+        let state = self.state.clone();
+        let conversation = self.conversation.clone();
+        let probe = sub_id.clone();
+        cx.spawn(async move |_, cx| {
+            let result = cx
+                .background_spawn(async move {
+                    misc::load_subagent_history(
+                        &state,
+                        LoadSubagentHistoryArgs {
+                            session_id,
+                            sub_id: probe,
+                        },
+                    )
+                })
+                .await;
+            let _ = conversation.update(cx, |conversation, cx| {
+                conversation.sub_history_loaded(&sub_id, result, cx);
+            });
+        })
+        .detach();
+    }
+
+    /// 新发送时清 B6 错误卡与上轮 ask 终态行（挂起 ask 不动——它属于
+    /// 引擎槽，与本地发送互不影响）。
+    fn clear_run_error_and_resolved(&mut self, cx: &mut Context<Self>) {
+        if let Some(conversation) = self.conversation.upgrade() {
+            conversation.update(cx, |conversation, cx| {
+                conversation.dismiss_run_error(cx);
+                if !conversation.resolved_asks.is_empty() {
+                    conversation.resolved_asks.clear();
+                    cx.notify();
+                }
+            });
         }
     }
 
@@ -342,7 +563,8 @@ impl SessionService {
 
     /// 切换 / 打开会话：装载历史 + 重置管道 + `attach_run` 续流（该会话
     /// 有进行中 run 时帧从 0 重放并重新接上节流）。阶段 3.1 多会话侧栏
-    /// 的接线点。
+    /// 的接线点。3.4：挂起 ask 以 engine 槽为权威恢复展示；3.6 与 B6 的
+    /// 本地痕迹（子代理事件表/详情视图/错误卡）随会话切换清空。
     pub fn open_session(&mut self, session_id: String, cx: &mut Context<Self>) {
         // 旧管道收摊（泵/节流 drop；旧通道关闭）
         self.tasks.clear();
@@ -373,6 +595,22 @@ impl SessionService {
         if running {
             self.spawn_stream_loop(rx, cx);
         }
+        // 会话本地痕迹清空 + 挂起 ask 恢复（engine 槽位是唯一权威：
+        // 槽位收口（已答/已取消/超时）即查不到）
+        if let Some(conversation) = self.conversation.upgrade() {
+            let state = self.state.clone();
+            let sid = session_id.clone();
+            conversation.update(cx, |conversation, cx| {
+                conversation.clear_asks(cx);
+                conversation.clear_subagents(cx);
+                conversation.dismiss_run_error(cx);
+                match run::session_pending_ask(&state, SessionPendingAskArgs { session_id: sid }) {
+                    Ok(Some(pending)) => conversation.open_ask(pending.ask_id, pending.payload, cx),
+                    Ok(None) => {}
+                    Err(err) => eprintln!("[craftwave] 挂起 ask 恢复查询失败：{err:?}"),
+                }
+            });
+        }
         self.push_history(cx);
         self.push_branches(branches, cx);
         self.push_busy(cx);
@@ -389,6 +627,13 @@ impl SessionService {
         self.busy = false;
         self.session_id = None;
         self.history = Rc::new(Vec::new());
+        if let Some(conversation) = self.conversation.upgrade() {
+            conversation.update(cx, |conversation, cx| {
+                conversation.clear_asks(cx);
+                conversation.clear_subagents(cx);
+                conversation.dismiss_run_error(cx);
+            });
+        }
         self.push_history(cx);
         self.push_busy(cx);
         // 侧栏高亮与空态随会话实体重渲自然对齐（侧栏 render 每帧读服务）
@@ -593,7 +838,13 @@ impl SessionService {
                     match rx.try_recv() {
                         Ok(UiMail::Frame(frame)) => aggregator.push(frame),
                         Ok(UiMail::Event { key, payload }) => {
-                            // 事件到达面（终态三键等）；通知等壳能力阶段 4 接
+                            // 事件到达面（3.4/3.6/B6 接线：ask、子代理、
+                            // run 错误进 UI 流；终态三键的通知等壳能力
+                            // 阶段 4 接，仍按到达日志留痕）
+                            let key = key.clone();
+                            let _ = this.update(cx, |service, cx| {
+                                service.handle_event(&key, &payload, cx)
+                            });
                             eprintln!("[craftwave] 事件 {key}: {payload}");
                         }
                         Ok(UiMail::Started(Ok(_run_id))) => {
@@ -653,6 +904,22 @@ impl SessionService {
                 let _ = conversation.update(cx, |conversation, cx| {
                     conversation.apply_snapshot(history.clone(), streaming, cx);
                 });
+                // B6：错误终态落常驻错误卡（终态帧与 run:error 事件双来源
+                // 同内容幂等；事件面在 handle_event 里设，这里兜合成帧等
+                // 无事件路径——命令面失败 Started(Err) 即走此路）
+                if let Some(ended) = aggregator
+                    .snapshot_streaming()
+                    .as_ref()
+                    .and_then(|streaming| streaming.ended.as_ref())
+                    && ended.reason == EndReason::Error
+                    && let Some(error) = &ended.error
+                {
+                    let code = error.code.clone();
+                    let message = error.message.clone();
+                    let _ = conversation.update(cx, |conversation, cx| {
+                        conversation.set_run_error(code, message, cx);
+                    });
+                }
                 if ended {
                     terminal_emitted = true;
                     continue;
@@ -708,16 +975,47 @@ impl SessionService {
 }
 
 /// 本批默认运行配置：模型走全局激活配置（modelId None）、thinking 未设
-/// （按 per-model reasoningEffort 回落）、权限档 AutoEdit（与 engine
-/// followUp 队列的缺省档一致）。设置界面阶段 3 接入后由设置面提供。
-fn default_run_config() -> RunConfig {
+/// （按 per-model reasoningEffort 回落）、权限档 = composer 快切档
+/// （3.4；缺省 AutoEdit，与 engine followUp 队列的缺省档一致）。
+/// 设置界面阶段 3 接入后由设置面提供模型。
+fn default_run_config(tier: PermissionTier) -> RunConfig {
     RunConfig {
         model_id: None,
         thinking: None,
-        tier: PermissionTier::AutoEdit,
+        tier,
         max_turns: DEFAULT_MAX_TURNS,
         steer: false,
     }
+}
+
+/// 事件载荷的字符串字段（缺省空串——缺字段按空处理，不 panic）。
+fn string_field(payload: &serde_json::Value, name: &str) -> String {
+    payload
+        .get(name)
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_owned()
+}
+
+/// 事件面 outcome 字符串 → 终态象限（未知值按 no_report 收口，旧栈
+/// normalizeOutcome 同表）。
+fn sub_outcome(outcome: &str) -> craftwave_engine::backend::frames::SubOutcome {
+    use craftwave_engine::backend::frames::SubOutcome;
+    match outcome {
+        "report" => SubOutcome::Report,
+        "partial" => SubOutcome::Partial,
+        "cancelled" => SubOutcome::Cancelled,
+        _ => SubOutcome::NoReport,
+    }
+}
+
+/// 选项 id 是否放行类（与 engine `wait_approval_with` 判定同口径；
+/// ask.rs 的同名函数负责渲染面，本份供终态行判定）。
+fn option_allows(option_id: &str) -> bool {
+    matches!(
+        option_id,
+        "allow_once" | "always_session" | "always_allow" | "allow"
+    )
 }
 
 /// 会话展示面（活动路径历史 + 分支表）——装载函数的返回载体。

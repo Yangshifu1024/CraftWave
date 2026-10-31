@@ -48,6 +48,7 @@ use gpui_kit::{App, Entity, SharedString, Task, WeakEntity, Window, div, px};
 
 use craftwave_engine::api::workspace::WorkspacePathHit;
 use craftwave_engine::followup::QueuedImageAttachment;
+use craftwave_engine::safety::tier::PermissionTier;
 
 use crate::i18n::t;
 use crate::theme::{self, ActiveCraftwave as _};
@@ -106,6 +107,11 @@ pub struct ComposerState {
     attachment_images: HashMap<String, ImageLoad>,
     /// 在途装载任务句柄（存 owner）。
     image_tasks: Vec<Task<()>>,
+    /// 会话权限档（3.4 快切；内存态按 composer 归当前会话——服务在
+    /// 会话切换时经 [`Self::set_tier`] 恢复，重启回缺省 AutoEdit，与
+    /// 旧栈 permission-tier store 的语义一致）。start_chat 的 RunConfig
+    /// 从这里取值（mod.rs 发送分流）。
+    tier: PermissionTier,
 }
 
 impl ComposerState {
@@ -134,6 +140,7 @@ impl ComposerState {
             image_loader: None,
             attachment_images: HashMap::new(),
             image_tasks: Vec::new(),
+            tier: PermissionTier::AutoEdit,
         }
     }
 
@@ -166,6 +173,39 @@ impl ComposerState {
         self.input
             .update(cx, |state, cx| state.set_value(text, window, cx));
         cx.notify();
+    }
+
+    // ==================================================================
+    // 权限档快切（3.4；旧栈 Shift+Tab 循环 + Composer 徽标，内存态）
+    // ==================================================================
+
+    /// 当前权限档（发送链取值面）。
+    pub(crate) fn tier(&self) -> PermissionTier {
+        self.tier
+    }
+
+    /// 直接设档（会话切换恢复 / 快切入口共用）。变化才 notify。
+    pub(crate) fn set_tier(&mut self, tier: PermissionTier, cx: &mut Context<Self>) {
+        if self.tier != tier {
+            self.tier = tier;
+            cx.notify();
+        }
+    }
+
+    /// 循环切下一档（从严到宽：Plan → ConfirmEach → AutoEdit →
+    /// FullAccess → Plan；Shift+Tab 与徽标点击同一条路）。
+    pub(crate) fn cycle_tier(&mut self, cx: &mut Context<Self>) {
+        const TIERS: [PermissionTier; 4] = [
+            PermissionTier::Plan,
+            PermissionTier::ConfirmEach,
+            PermissionTier::AutoEdit,
+            PermissionTier::FullAccess,
+        ];
+        let current = TIERS
+            .iter()
+            .position(|tier| *tier == self.tier)
+            .unwrap_or(2);
+        self.set_tier(TIERS[(current + 1) % TIERS.len()], cx);
     }
 
     // ==================================================================
@@ -612,6 +652,38 @@ impl Render for ComposerState {
                                 .child(t("Stop")),
                         )
                     })
+                    // 权限档徽标（3.4 快切）：档名 + 点击循环（Shift+Tab
+                    // 同一条路）；fullAccess 档警示橙（旧栈同款），tooltip
+                    // 给当前档说明
+                    .child({
+                        let description = tier_description(self.tier);
+                        div()
+                            .id("tier-badge")
+                            .debug_selector(|| "tier-badge".to_owned())
+                            .cursor_pointer()
+                            .flex_shrink_0()
+                            .flex()
+                            .items_center()
+                            .px(px(theme::SPACE_2))
+                            .py(px(theme::SPACE_1))
+                            .rounded(px(theme::rounded_md(zoom)))
+                            .text_size(px(theme::font_size(theme::FONT_UI_SM, zoom)))
+                            .when(self.tier == PermissionTier::FullAccess, |badge| {
+                                badge.text_color(theme.warning)
+                            })
+                            .when(self.tier != PermissionTier::FullAccess, |badge| {
+                                badge.text_color(theme.muted_foreground)
+                            })
+                            .hover(|style| style.bg(theme.list_hover))
+                            .tooltip(move |window, cx| {
+                                gpui_kit::component::tooltip::Tooltip::new(description)
+                                    .build(window, cx)
+                            })
+                            .on_click(cx.listener(|this: &mut Self, _, _, cx| {
+                                this.cycle_tier(cx);
+                            }))
+                            .child(tier_label(self.tier))
+                    })
                     // 附件按钮：＋（真文件选择器通道阶段 4 接 rfd，本批入
                     // 演示占位；真落盘通道由测试驱动验证）
                     .child(
@@ -632,6 +704,27 @@ impl Render for ComposerState {
                     ),
             )
             .into_any_element()
+    }
+}
+
+/// 档位的用户可读名（旧栈 tierLabel 同表）。
+pub(crate) fn tier_label(tier: PermissionTier) -> &'static str {
+    match tier {
+        PermissionTier::Plan => t("Plan"),
+        PermissionTier::ConfirmEach => t("Confirm each"),
+        PermissionTier::AutoEdit => t("Auto edit"),
+        PermissionTier::FullAccess => t("Full trust"),
+    }
+}
+
+/// 档位描述（旧栈 tierDescription 同表；render 时算好再 move 进 tooltip
+/// 闭包——闭包里拿不到 composer 状态）。
+fn tier_description(tier: PermissionTier) -> &'static str {
+    match tier {
+        PermissionTier::Plan => t("Plan before editing."),
+        PermissionTier::ConfirmEach => t("Ask before each file change."),
+        PermissionTier::AutoEdit => t("Edit files automatically."),
+        PermissionTier::FullAccess => t("Fewer confirmations."),
     }
 }
 

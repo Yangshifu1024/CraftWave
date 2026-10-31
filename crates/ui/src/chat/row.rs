@@ -83,14 +83,9 @@ pub(crate) fn render_row(
                 let view = StreamView {
                     thinking_span: streaming.thinking.clone(),
                     live: streaming.ended.is_none(),
-                    subagent_call_ids: streaming
-                        .subagents
-                        .iter()
-                        .map(|sub| sub.call_id.clone())
-                        .collect(),
+                    subagents: streaming.subagents.clone(),
                 };
-                let slots =
-                    super::state::slots_from_stream(&streaming.parts, &view.subagent_call_ids);
+                let slots = super::state::slots_from_stream(&streaming.parts, &view.subagents);
                 render_assistant(state, ix, slots, &view, cx)
             }
             None => div().into_any_element(),
@@ -772,15 +767,20 @@ fn render_tool_cluster(
     } else {
         format!("{} {}", calls.len(), t("tool calls"))
     };
-    // 派生了子代理：折叠头给跳转占位钮（真实跳转 3.6 接线——多派时展开区
-    // 逐调用给，头上的钮只在其恰好一派时显示，Wake open_child_button 语义）
-    let subagent_calls: Vec<usize> = calls
+    // 派生了子代理：折叠头给跳转钮（多派时展开区逐调用给，头上的钮只在
+    // 其恰好一派时显示，Wake open_child_button 语义）；目标 = call 的
+    // sub_id，点击开详情视图（3.6 接线）
+    let subagent_calls: Vec<(usize, String)> = calls
         .iter()
         .enumerate()
-        .filter_map(|(call_ix, call)| call.subagent.then_some(call_ix))
+        .filter_map(|(call_ix, call)| {
+            call.sub_id
+                .clone()
+                .map(|sub_id| (call_ix, sub_id))
+        })
         .collect();
     let head_jump = match (&expanded, subagent_calls.as_slice()) {
-        (false, [only]) => Some(*only),
+        (false, [(_, sub_id)]) => Some(sub_id.clone()),
         _ => None,
     };
     let mut head = div()
@@ -819,10 +819,11 @@ fn render_tool_cluster(
         Some(arg) => head = head.child(mono_text(arg, &face, theme.muted_foreground).flex_1()),
         None => head = head.child(div().flex_1()),
     }
-    if head_jump.is_some() {
+    if let Some(head_sub_id) = head_jump {
         head = head.child(
             div()
                 .id(("tool-open-subagent", ix))
+                .debug_selector(move || format!("tool-open-subagent-{ix}"))
                 .flex_shrink_0()
                 .flex()
                 .items_center()
@@ -835,10 +836,11 @@ fn render_tool_cluster(
                 .tooltip(|window, cx| {
                     gpui_kit::component::tooltip::Tooltip::new(t("Open subagent")).build(window, cx)
                 })
-                // 跳转占位钮：目标面板是 3.5 面板族 / 3.6 子代理回看，本批
-                // 只占位——点击吞掉（stop_propagation），不透传给折叠头误触
-                // 开合；真实跳转随 3.6 接线
-                .on_click(|_, _, cx| cx.stop_propagation())
+                // 跳转钮（3.6 接线）：开子代理详情视图。stop_propagation
+                // 不透传给折叠头误触开合
+                .on_click(cx.listener(move |this: &mut ConversationState, _, _, cx| {
+                    this.open_sub_view(head_sub_id.clone(), cx);
+                }))
                 .child(
                     Icon::new(IconName::CornerDownRight).with_size(px(theme::ICON_SM)),
                 ),
@@ -935,30 +937,12 @@ fn render_tool_cluster_body(
                     ),
             );
         }
-        if call.subagent {
-            item = item.child(
-                div()
-                    .id(("tool-open-subagent-item", ix))
-                    .flex_shrink_0()
-                    .flex()
-                    .items_center()
-                    .gap(px(theme::SPACE_1))
-                    .px(px(theme::SPACE_1))
-                    .py(px(theme::SPACE_1) / 2.0)
-                    .rounded(px(theme::rounded_sm(zoom)))
-                    .cursor_pointer()
-                    .text_size(px(theme::font_size(theme::FONT_UI_SM, zoom)))
-                    .text_color(theme.muted_foreground)
-                    .hover(|style| style.bg(theme.list_hover))
-                    .tooltip(|window, cx| {
-                        gpui_kit::component::tooltip::Tooltip::new(t("Open subagent"))
-                            .build(window, cx)
-                    })
-                    // 同折叠头的占位钮：点击吞掉，真实跳转 3.6 接线
-                    .on_click(|_, _, cx| cx.stop_propagation())
-                    .child(Icon::new(IconName::CornerDownRight).with_size(px(theme::ICON_SM)))
-                    .child(t("Open subagent")),
-            );
+        if let Some(sub_id) = &call.sub_id {
+            // 子代理摘要行（3.6）：状态徽标（运行中扫光）+ turn 计数 +
+            // 跳转钮 + 运行中停止钮——委派在对话流的内联呈现
+            item = item.child(render_subagent_summary_line(
+                state, ix, call_ix, sub_id, face, cx,
+            ));
         }
         // Input 分节（参数 JSON 非空白才给——空白只参与「有无」判断，
         // 展示与复制保留原始字节）
@@ -1007,7 +991,145 @@ fn render_tool_cluster_body(
     body
 }
 
-/// 600 字符契约的分节（纪律三，Wake tool_section 行为照搬）：
+/// 子代理摘要行（3.6 呈现面，工具簇展开区内每个委派调用一行）：CornerDownRight 图标 + 角色 + 状态徽标（运行中扫光 / 四象限着色终态）+ turn 计数 + 「打开子代理」跳转 + 运行中「停止」。子代理 id 不在已知集合（帧面与事件表都未达——极窄窗口）时按纯跳转钮渲染。
+fn render_subagent_summary_line(
+    state: &ConversationState,
+    ix: usize,
+    call_ix: usize,
+    sub_id: &str,
+    face: &MonoFace,
+    cx: &mut Context<ConversationState>,
+) -> gpui_kit::Div {
+    let theme = cx.theme().colors;
+    let zoom = face.zoom;
+    let row = state.sub_row_of(sub_id);
+    let running = row
+        .as_ref()
+        .is_none_or(|row| row.state == craftwave_engine::snapshot::SubRunState::Running);
+    let mut line = div()
+        .w_full()
+        .min_w_0()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(theme::SPACE_2))
+        .px(px(theme::SPACE_2))
+        .py(px(theme::SPACE_1) / 2.0)
+        .rounded(px(theme::rounded_sm(zoom)))
+        .bg(theme.muted.opacity(0.5))
+        .debug_selector(move || format!("subagent-line-{ix}-{call_ix}"))
+        .child(
+            Icon::new(IconName::CornerDownRight)
+                .with_size(px(theme::ICON_SM))
+                .text_color(theme.muted_foreground)
+                .flex_shrink_0(),
+        );
+    // 角色徽标（未知时给「subagent」兜底文案）
+    line = line.child(
+        div()
+            .flex_shrink_0()
+            .px(px(theme::SPACE_2))
+            .rounded(px(theme::rounded_sm(zoom)))
+            .bg(theme.accent)
+            .text_size(px(theme::font_size(theme::FONT_UI_2XS, zoom)))
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(theme.foreground)
+            .child(
+                row.as_ref()
+                    .map(|row| row.role.clone())
+                    .unwrap_or_else(|| "subagent".to_owned()),
+            ),
+    );
+    // 状态徽标：运行中扫光（B3 不用 spinner）/ 终态四象限着色
+    line = line.child(match &row {
+        Some(row) if row.state != craftwave_engine::snapshot::SubRunState::Running => {
+            let color = match row.state {
+                craftwave_engine::snapshot::SubRunState::Done(
+                    craftwave_engine::backend::frames::SubOutcome::Report,
+                ) => theme.success,
+                craftwave_engine::snapshot::SubRunState::Done(
+                    craftwave_engine::backend::frames::SubOutcome::Partial,
+                ) => theme.warning,
+                craftwave_engine::snapshot::SubRunState::Done(
+                    craftwave_engine::backend::frames::SubOutcome::Cancelled,
+                ) => theme.muted_foreground,
+                _ => theme.danger,
+            };
+            div()
+                .flex_shrink_0()
+                .text_size(px(theme::font_size(theme::FONT_UI_2XS, zoom)))
+                .text_color(color)
+                .child(row.state_label())
+        }
+        _ => div().flex_shrink_0().child(
+            ShimmerText::new(t("Running"))
+                .text_size(px(theme::font_size(theme::FONT_UI_2XS, zoom)))
+                .text_color(theme.muted_foreground),
+        ),
+    });
+    // turn 计数（已知时）
+    if let Some(row) = &row {
+        line = line.child(
+            div()
+                .flex_shrink_0()
+                .text_size(px(theme::font_size(theme::FONT_UI_2XS, zoom)))
+                .text_color(theme.muted_foreground)
+                .child(crate::i18n::t("turn N").replace("{n}", &row.turn.to_string())),
+        );
+    }
+    line = line.child(div().flex_1());
+    // 跳转钮
+    let jump_target = sub_id.to_owned();
+    line = line.child(
+        div()
+            .id(SharedString::from(format!(
+                "subagent-line-open-{ix}-{call_ix}"
+            )))
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .gap(px(theme::SPACE_1))
+            .px(px(theme::SPACE_1))
+            .rounded(px(theme::rounded_sm(zoom)))
+            .cursor_pointer()
+            .text_size(px(theme::font_size(theme::FONT_UI_SM, zoom)))
+            .text_color(theme.muted_foreground)
+            .hover(|style| style.bg(theme.list_hover).text_color(theme.foreground))
+            .tooltip(|window, cx| {
+                gpui_kit::component::tooltip::Tooltip::new(t("Open subagent")).build(window, cx)
+            })
+            .on_click(cx.listener(move |this: &mut ConversationState, _, _, cx| {
+                this.open_sub_view(jump_target.clone(), cx);
+            }))
+            .child(t("Open subagent")),
+    );
+    // 运行中停止钮（接 engine stop_subagent）
+    if running {
+        let stop_target = sub_id.to_owned();
+        line = line.child(
+            div()
+                .id(SharedString::from(format!(
+                    "subagent-line-stop-{ix}-{call_ix}"
+                )))
+                .flex_shrink_0()
+                .px(px(theme::SPACE_2))
+                .py(px(theme::SPACE_1) / 2.0)
+                .rounded(px(theme::rounded_sm(zoom)))
+                .cursor_pointer()
+                .text_size(px(theme::font_size(theme::FONT_UI_2XS, zoom)))
+                .text_color(theme.danger)
+                .hover(|style| style.bg(theme.danger.opacity(0.08)))
+                .debug_selector(move || format!("subagent-line-stop-{ix}-{call_ix}"))
+                .on_click(cx.listener(move |this: &mut ConversationState, _, _, cx| {
+                    super::subagent::stop_subagent(this, &stop_target, cx);
+                }))
+                .child(t("Stop")),
+        );
+    }
+    line
+}
+
+
 /// 展示 = 前 600 字符 + 截断时明示 "First 600 characters"；复制按钮永远
 /// 写完整原文进剪贴板；错误面 danger 淡底 + danger 字色；正文 whitespace
 /// normal 自然增高（不嵌套滚动容器抢主阅读区滚轮）。

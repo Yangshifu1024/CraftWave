@@ -74,3 +74,6 @@ gpui-kit = { version = "0.8.1", features = ["test-support"] }
 craftwave-engine = { path = "../engine", features = ["test-utils"] }
 rig = { version = "0.45.0", features = ["test-utils"] }
 tempfile = "3"
+# 子代理 stop 链路测试（subagent_test）构造 SubHandle 用；与 engine 的
+# tokio-util 0.7 同源同锁，零新增下载。
+tokio-util = "0.7"
