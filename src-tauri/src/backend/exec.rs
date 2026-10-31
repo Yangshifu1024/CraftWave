@@ -80,6 +80,16 @@ pub trait SubagentSpawner: Send + Sync {
 /// 执行器写入、宿主命令 resolve_ask 读取后送回应答）。
 pub type AskSlotCell = Mutex<Option<AskSlot>>;
 
+/// 问卷类 ask 开关的日志接缝（32 号票，kind=approval 的 ask 协议两端口）：
+/// backend 层只定义回调面——落盘实现在宿主（host 的 SessionLogger），
+/// 避免 backend 反向依赖 host（§2.2 依赖方向）。
+pub trait AskLogSink: Send + Sync {
+    /// 询问打开（ask 工具注册槽、发 ask:opened 处）。
+    fn ask_opened(&self, session_id: &str, ask_id: &str, run_id: &str);
+    /// 询问收口（槽清空、发 ask:closed 处；answered = 是否真正拿到应答）。
+    fn ask_closed(&self, session_id: &str, ask_id: &str, run_id: &str, answered: bool);
+}
+
 /// 交互类工具的执行环境：ask/plan 工具需要的事件出口与共享状态，以及
 /// 工具结果边车文件的数据根目录（边车文件 = 与主存储分开、按需加载的
 /// 附属数据文件，见 §7.5）。
@@ -98,6 +108,10 @@ pub struct ExecutorEnv {
     /// 数据根目录（§7.1）：工具结果边车落在 `sessions/<会话id>.toolres/`
     /// 目录下（§7.5）。
     pub data_root: std::path::PathBuf,
+    /// 问卷类 ask 开关日志接缝（32 号票，kind=approval 的 ask 协议端口）：
+    /// backend 只定义回调面（[`AskLogSink`]），落盘在宿主 SessionLogger
+    /// ——避免 backend 反向依赖 host（§2.2 依赖方向）。None = 不记。
+    pub ask_log: Option<Arc<dyn AskLogSink>>,
     /// MCP 动态工具调用面（None = 未装配 MCP；08 号票）。
     pub mcp: Option<Arc<dyn McpCaller>>,
     /// run 内技能快照（09 号票，Q20 版本固定：run 开始时拍定正文全文，
@@ -385,6 +399,10 @@ impl ToolsetExecutor {
                 "payload": payload,
             }),
         );
+        // 问卷打开行（32 号票 kind=approval 的 ask 端口，经宿主接缝落盘）
+        if let Some(log) = &env.ask_log {
+            log.ask_opened(&env.session_id, &ask_id, &env.run_id);
+        }
         // biased：select! 的分支按书写顺序优先判定——先查取消再看应答，
         // 两者同时就绪时以取消为准（取消优先，避免取消后还处理应答）。
         tokio::select! {
@@ -485,6 +503,10 @@ impl ToolsetExecutor {
             keys::ASK_CLOSED,
             serde_json::json!({ "askId": ask_id, "answered": answered }),
         );
+        // 问卷收口行（32 号票 ask 端口，answered = 是否真正拿到应答）
+        if let Some(log) = &env.ask_log {
+            log.ask_closed(&env.session_id, ask_id, &env.run_id, answered);
+        }
     }
 
     /// 把工具结果全量写入边车文件（§7.5；未装配执行环境则跳过——无界面

@@ -16,7 +16,7 @@ fn recorder() -> (Arc<SessionStore>, PersistingSink, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     let store = Arc::new(SessionStore::with_root(dir.path().to_path_buf()));
     let sink = PersistingSink::new(
-        RunRecorder::new(store.clone(), "s1".to_string(), "run-1".to_string()),
+        RunRecorder::new(store.clone(), "s1".to_string(), "run-1".to_string(), None),
         Box::new(CollectingSink::default()),
     );
     (store, sink, dir)

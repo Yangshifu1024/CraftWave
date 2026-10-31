@@ -55,6 +55,10 @@ pub struct RunRecorder {
     store: Arc<SessionStore>,
     session_id: String,
     run_id: String,
+    /// 应用日志通道（32 号票，§7.3 ⑤ 落盘失败记账：canonical/index 写失败
+    /// 记 app 行不中断 run——帧面可用性优先，M1 取舍的记账面）。None =
+    /// 测试装配。
+    app_log: Option<Arc<crate::host::session_log::SessionLogger>>,
     started_at: Option<i64>,
     turns: BTreeMap<u32, TurnBuffer>,
     current_turn: u32,
@@ -87,7 +91,13 @@ impl FrameSink for PersistingSink {
 
 impl RunRecorder {
     /// 构造时读一次史册 activeLeaf 作为 canonical 链尾（新会话 → None）。
-    pub fn new(store: Arc<SessionStore>, session_id: String, run_id: String) -> Self {
+    /// `app_log` = 应用日志通道（32 号票：落盘失败记账面；测试传 None）。
+    pub fn new(
+        store: Arc<SessionStore>,
+        session_id: String,
+        run_id: String,
+        app_log: Option<Arc<crate::host::session_log::SessionLogger>>,
+    ) -> Self {
         let last_entry_id = store
             .load_session_tree(&session_id)
             .ok()
@@ -96,6 +106,7 @@ impl RunRecorder {
             store,
             session_id,
             run_id,
+            app_log,
             started_at: None,
             turns: BTreeMap::new(),
             current_turn: 0,
@@ -324,6 +335,15 @@ impl RunRecorder {
                     "[craftwave] canonical 落盘失败（session={} run={}）：{e:?}",
                     self.session_id, self.run_id
                 );
+                // 落盘失败记账（32 号票，§7.3 ⑤ app 通道；无内容副本——
+                // 只记元数据与错误形态）
+                if let Some(log) = &self.app_log {
+                    log.app_line(
+                        crate::providers::types::LogLevel::Warn,
+                        format!("canonical 落盘失败：run={}", self.run_id),
+                        Some(serde_json::json!({ "sessionId": self.session_id, "error": format!("{e:?}") })),
+                    );
+                }
                 #[cfg(not(debug_assertions))]
                 let _ = e;
             }
@@ -374,6 +394,14 @@ impl RunRecorder {
                 "[craftwave] index.json upsert 失败（{}）：{e:?}",
                 self.session_id
             );
+            // 落盘失败记账（32 号票，§7.3 ⑤ app 通道）
+            if let Some(log) = &self.app_log {
+                log.app_line(
+                    crate::providers::types::LogLevel::Warn,
+                    "index.json upsert 失败".to_owned(),
+                    Some(serde_json::json!({ "sessionId": self.session_id, "error": format!("{e:?}") })),
+                );
+            }
             #[cfg(not(debug_assertions))]
             let _ = e;
         }

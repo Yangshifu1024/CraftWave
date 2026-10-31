@@ -9,6 +9,8 @@ pub mod chat;
 pub mod config;
 // 图片附件承载命令（17 号票，§3.3 #59h/#59i）
 pub mod image;
+// 日志命令（32 号票，§3.3 #54–56：读取/清单/打开目录）
+pub mod logs;
 pub mod project;
 // 配额快照命令（21 号票，§3.3 #53）
 pub mod quota;

@@ -47,6 +47,17 @@ impl SessionTrustSet {
         }
     }
 
+    /// 会话删除联动（32 号票，Q43 盘点）：摘除该会话的全部「本次会话
+    /// 允许」标记——删除后重建的同 id 会话不继承（进程内内存面，uuid
+    /// 不撞 id，本方法主要防集合随删除残留增长）。
+    pub fn forget(&self, session_id: &str) {
+        let mut keys = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        keys.retain(|(sid, _, _, _)| sid != session_id);
+    }
+
     /// 查询：该会话对该作用域的同名同内容资源是否已「本次会话允许」。
     pub fn contains(
         &self,

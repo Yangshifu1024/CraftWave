@@ -347,6 +347,9 @@ pub(crate) struct ResolvedModel {
     /// per-model reasoning 档配置（§3.2 ProviderModel.reasoningEffort；
     /// 会话未显式设置 thinking 时的回落源，§11.4 优先级链第二级）。
     pub reasoning_effort: Option<crate::providers::types::ReasoningEffort>,
+    /// API 端点基地址（供应商 baseUrl 或官方缺省，resolve 时快照）——
+    /// 会话日志 llm 行的 host 元数据面（32 号票，诊断用；不涉敏感值）。
+    pub base_url: String,
 }
 
 /// §11.1 模型解析：RunConfig.modelId > AppConfig.activeModelId →
@@ -420,6 +423,7 @@ pub(crate) fn resolve_model(
         vision: model.vision.unwrap_or(false),
         api_format: provider.api_format,
         reasoning_effort: model.reasoning_effort,
+        base_url,
     })
 }
 
@@ -512,6 +516,11 @@ struct EventfulSink {
     /// 本 run 是否已计当日该模型的 runs 次数（首个有计量的 usage 帧计一次；
     /// 无计量不伪造，Q40）。
     run_counted: bool,
+    /// 会话日志器（32 号票，工具起止行的落点；测试直驱路径 None）。
+    session_log: Option<Arc<crate::host::session_log::SessionLogger>>,
+    /// 在飞工具起点表（32 号票：ToolStarted 记名与时刻，ToolResult 收口
+    /// 算耗时落 tool 行——帧面无耗时字段，宿主侧配对补齐）。
+    tool_starts: HashMap<String, (String, std::time::Instant)>,
 }
 
 impl EventfulSink {
@@ -603,6 +612,61 @@ impl FrameSink for EventfulSink {
         } else {
             self.sync_run_state(&frame, None);
         }
+        // 工具起止行（32 号票）：ToolStarted 记起点，ToolResult 收口算
+        // 耗时（错误码随 error 面）；恢复重放批可能无 started（挂起前
+        // 已发过）——耗时省略，行照记。
+        match &frame {
+            ChatFrame::ToolStarted { call_id, name } => {
+                self.tool_starts
+                    .insert(call_id.clone(), (name.clone(), std::time::Instant::now()));
+            }
+            ChatFrame::ToolResult {
+                call_id,
+                ok,
+                error,
+                ui_summary,
+            } => {
+                if let Some(logger) = &self.session_log {
+                    let (name, elapsed_ms) = match self.tool_starts.remove(call_id) {
+                        Some((name, started)) => (name, started.elapsed().as_millis() as u64),
+                        // 无起点（审批挂起恢复重放 / 子代理帧等）：耗时未知
+                        None => (String::new(), 0),
+                    };
+                    let code = error.as_ref().map(|e| e.code.clone());
+                    let msg = if *ok {
+                        format!("工具执行完成：{ui_summary}")
+                    } else {
+                        format!(
+                            "工具执行失败：{}",
+                            error
+                                .as_ref()
+                                .map(|e| e.message.clone())
+                                .unwrap_or_else(|| ui_summary.clone())
+                        )
+                    };
+                    logger.session_line(
+                        &self.session_id,
+                        if *ok {
+                            crate::providers::types::LogLevel::Info
+                        } else {
+                            crate::providers::types::LogLevel::Warn
+                        },
+                        crate::host::session_log::LogKind::Tool,
+                        msg,
+                        Some(serde_json::json!({
+                            "name": name,
+                            "ok": ok,
+                            "durationMs": elapsed_ms,
+                            "code": code,
+                        })),
+                        Some(&self.run_id),
+                        Some(call_id),
+                        None,
+                    );
+                }
+            }
+            _ => {}
+        }
         self.inner.send(frame);
     }
 }
@@ -614,6 +678,222 @@ fn sub_usage(a: &UsageTotal, b: &UsageTotal) -> UsageTotal {
         output: a.output.saturating_sub(b.output),
         cache_read: a.cache_read.saturating_sub(b.cache_read),
         cache_write: a.cache_write.saturating_sub(b.cache_write),
+    }
+}
+
+/// 问卷类 ask 开关的宿主日志实现（32 号票，`crate::backend::exec::
+/// AskLogSink`）：把 backend 的回调面落到会话日志 kind=approval 行
+/// （问卷与审批卡共用同一 kind；askId 作 callId 锚）。pub(crate)：子代理
+/// 环境的 ExecutorEnv 装配（subagent.rs）复用同一实现。
+pub(crate) struct HostAskLogger {
+    pub(crate) session_log: Arc<crate::host::session_log::SessionLogger>,
+}
+
+impl crate::backend::exec::AskLogSink for HostAskLogger {
+    fn ask_opened(&self, session_id: &str, ask_id: &str, run_id: &str) {
+        self.session_log.session_line(
+            session_id,
+            crate::providers::types::LogLevel::Info,
+            crate::host::session_log::LogKind::Approval,
+            "等待用户回答问卷".to_owned(),
+            None,
+            Some(run_id),
+            Some(ask_id),
+            None,
+        );
+    }
+
+    fn ask_closed(&self, session_id: &str, ask_id: &str, run_id: &str, answered: bool) {
+        self.session_log.session_line(
+            session_id,
+            crate::providers::types::LogLevel::Info,
+            crate::host::session_log::LogKind::Approval,
+            if answered {
+                "问卷已回答".to_owned()
+            } else {
+                "问卷未回答（取消）".to_owned()
+            },
+            Some(serde_json::json!({ "answered": answered })),
+            Some(run_id),
+            Some(ask_id),
+            None,
+        );
+    }
+}
+
+/// 模型调用日志的宿主实现（32 号票，[`TurnDriver` 所挂的
+/// `backend::turn::LlmLogSink`]）：
+/// - Info 级：每次收口记一行元数据（host/model/耗时/usage，不涉内容）；
+/// - Debug 级（verbose）：追加请求/响应原文两行——**落盘前必须过脱敏
+///   闸**（图片 base64 段摘要化为路径/哈希/格式/大小 + 密钥名单与
+///   `Bearer`/`sk-` 兜底替换，NFR-09 红线），序列化本身也只在 verbose
+///   才发生（大载荷成本不进常规路径）。
+///
+/// 图片路径口径（票面 Q16）：请求里的图片本体段替换为摘要后，宿主把
+/// 会话 imgblob 目录传入摘要器——附件/粘贴图以内容寻址落在该目录，
+/// 哈希命中即补真实 blob 路径；read 读图的工作区源路径在工具结果文本
+/// 内（base64 段外的普通文本，不被替换、原样保留）。无来源的图片
+/// 不虚构路径。
+struct HostLlmLogger {
+    session_log: Arc<crate::host::session_log::SessionLogger>,
+    session_id: String,
+    run_id: String,
+    /// API 端点 host（resolve 时快照的 baseUrl 取 host 部分，诊断面）。
+    api_host: String,
+    /// 会话图片 blob 目录（摘要补路径用；内容寻址、仅实际存在才补）。
+    blob_dir: std::path::PathBuf,
+    /// 当前生效模型槽 `(配置 id, 显示名)`（与 refresher/sink 共享的同一
+    /// 句柄——运行中切模型后日志读到的是本拍实际执行模型，Q37 同源）。
+    current_model: Arc<Mutex<Option<(String, String)>>>,
+}
+
+impl HostLlmLogger {
+    /// 从 baseUrl 提取 host 部分（`scheme://host[:port]/…` → `host[:port]`；
+    /// 解析不出原样返回，诊断面不做强校验）。
+    fn host_of(base_url: &str) -> String {
+        let after_scheme = base_url.split("://").nth(1).unwrap_or(base_url);
+        after_scheme
+            .split(['/', '?', '#'])
+            .next()
+            .unwrap_or(base_url)
+            .to_owned()
+    }
+
+    /// 当前模型显示名（槽未置位时回退配置 id 的空串占位）。
+    fn model_label(&self) -> String {
+        self.current_model
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .map(|(_, name)| name)
+            .unwrap_or_default()
+    }
+
+    /// usage 四口径折一行 JSON（None = 无计量，如取消路径）。
+    fn usage_json(usage: Option<&rig::completion::Usage>) -> serde_json::Value {
+        match usage {
+            None => serde_json::Value::Null,
+            Some(u) => serde_json::json!({
+                "input": u.input_tokens.unwrap_or(0),
+                "output": u.output_tokens.unwrap_or(0),
+                "cacheRead": u.cached_input_tokens.unwrap_or(0),
+                "cacheWrite": u.cache_creation_input_tokens.unwrap_or(0),
+            }),
+        }
+    }
+}
+
+impl crate::backend::turn::LlmLogSink for HostLlmLogger {
+    fn on_request(&self, turn: u32, request: &rig::completion::request::CompletionRequest) {
+        // verbose 才序列化（级别检查在 verbose()，防大载荷进常规路径）
+        if !self.session_log.verbose() {
+            return;
+        }
+        let Ok(mut raw) = serde_json::to_value(request) else {
+            return;
+        };
+        // 脱敏闸（NFR-09 红线）：先图片本体摘要化（补真实 blob 路径），
+        // 再密钥名单与 Bearer/sk- 兜底
+        crate::util::redact::summarize_images(&mut raw, Some(&self.blob_dir));
+        crate::util::redact::redact_json(&mut raw);
+        self.session_log.session_line(
+            &self.session_id,
+            crate::providers::types::LogLevel::Debug,
+            crate::host::session_log::LogKind::Llm,
+            if turn == 0 {
+                "模型请求原文（辅助调用，已脱敏，图片仅路径/哈希/格式/大小）".to_owned()
+            } else {
+                "模型请求原文（已脱敏，图片仅路径/哈希/格式/大小）".to_owned()
+            },
+            Some(raw),
+            Some(&self.run_id),
+            None,
+            None,
+        );
+    }
+
+    fn on_response(
+        &self,
+        turn: u32,
+        duration_ms: u64,
+        usage: Option<&rig::completion::Usage>,
+        response: Option<&rig::completion::request::CompletionResponse>,
+        error: Option<&str>,
+    ) {
+        let meta = || {
+            serde_json::json!({
+                "host": self.api_host,
+                "model": self.model_label(),
+                "durationMs": duration_ms,
+                "usage": Self::usage_json(usage),
+            })
+        };
+        match error {
+            // 取消：Info 行（流被丢弃，无 usage 无响应体——不算失败）
+            Some("cancelled") => {
+                self.session_log.session_line(
+                    &self.session_id,
+                    crate::providers::types::LogLevel::Info,
+                    crate::host::session_log::LogKind::Llm,
+                    "模型请求被取消".to_owned(),
+                    Some(meta()),
+                    Some(&self.run_id),
+                    None,
+                    None,
+                );
+            }
+            // 失败：Warn 行，失败说明过字符串兜底防密钥经错误消息漏出；
+            // 失败无响应体，Debug 级不追加
+            Some(e) => {
+                let safe = crate::util::redact::redact_string(e).unwrap_or_else(|| (*e).to_owned());
+                self.session_log.session_line(
+                    &self.session_id,
+                    crate::providers::types::LogLevel::Warn,
+                    crate::host::session_log::LogKind::Llm,
+                    format!("模型请求失败：{safe}"),
+                    Some(meta()),
+                    Some(&self.run_id),
+                    None,
+                    None,
+                );
+            }
+            // 正常收口：Info 行
+            None => {
+                let msg = if turn == 0 {
+                    "模型辅助调用完成".to_owned()
+                } else {
+                    "模型请求完成".to_owned()
+                };
+                self.session_log.session_line(
+                    &self.session_id,
+                    crate::providers::types::LogLevel::Info,
+                    crate::host::session_log::LogKind::Llm,
+                    msg,
+                    Some(meta()),
+                    Some(&self.run_id),
+                    None,
+                    None,
+                );
+            }
+        }
+        // Debug 级追加响应原文（脱敏闸同请求面；取消/失败路径 response=None）
+        if let (Some(response), true) = (response, self.session_log.verbose()) {
+            let Ok(mut raw) = serde_json::to_value(response) else {
+                return;
+            };
+            crate::util::redact::summarize_images(&mut raw, Some(&self.blob_dir));
+            crate::util::redact::redact_json(&mut raw);
+            self.session_log.session_line(
+                &self.session_id,
+                crate::providers::types::LogLevel::Debug,
+                crate::host::session_log::LogKind::Llm,
+                "模型响应原文（已脱敏）".to_owned(),
+                Some(raw),
+                Some(&self.run_id),
+                None,
+                None,
+            );
+        }
     }
 }
 
@@ -1154,6 +1434,8 @@ pub(crate) enum ApprovalResolution {
 /// 挂起时随载荷展示的批准基线对照摘要（宿主从共享计划状态拼装）。
 /// `audit_note`（36 号票，§8.7）：灰区命令审计结论注记（ask/manual），
 /// 随普通审批卡展示；None = 未经审计或审计已放行/拒绝（不产生审批卡）。
+/// `session_log`（32 号票）：审批开关两行的落点（kind=approval：opened/
+/// closed + answered）；None = 测试直驱路径不记。
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn wait_approval_with(
     events: &Arc<dyn EventSink>,
@@ -1166,6 +1448,7 @@ pub(crate) async fn wait_approval_with(
     session_memory_enabled: bool,
     plan_scope_note: Option<&str>,
     audit_note: Option<&crate::backend::ask::AuditNote>,
+    session_log: Option<&Arc<crate::host::session_log::SessionLogger>>,
 ) -> ApprovalResolution {
     let (tx, rx) = tokio::sync::oneshot::channel::<AskAnswer>();
     let ask_id = uuid::Uuid::new_v4().to_string();
@@ -1198,6 +1481,21 @@ pub(crate) async fn wait_approval_with(
             "payload": payload,
         }),
     );
+    // 审批打开行（32 号票 kind=approval：askId + 操作名；载荷内容不进
+    // 日志——参数里可能含正文，审批详情走帧面与审批卡）
+    if let Some(logger) = session_log {
+        let msg = format!("等待审批：{}", pending.name);
+        logger.session_line(
+            session_id,
+            crate::providers::types::LogLevel::Info,
+            crate::host::session_log::LogKind::Approval,
+            msg,
+            Some(serde_json::json!({ "tool": pending.name })),
+            Some(run_id),
+            Some(&ask_id),
+            None,
+        );
+    }
 
     // 挂起的三种醒来方式（select 多路等待的结果归一化）
     enum Wait {
@@ -1259,6 +1557,25 @@ pub(crate) async fn wait_approval_with(
         keys::ASK_CLOSED,
         serde_json::json!({ "askId": ask_id, "answered": answered }),
     );
+    // 审批收口行（32 号票 kind=approval：answered + 裁决摘要）
+    if let Some(logger) = session_log {
+        let outcome = match &resolution {
+            ApprovalResolution::Allowed { option_id } => format!("已批准（{option_id}）"),
+            ApprovalResolution::Denied if answered => "已拒绝".to_owned(),
+            ApprovalResolution::Denied => "未回答（取消）".to_owned(),
+        };
+        let msg = format!("审批收口：{outcome}");
+        logger.session_line(
+            session_id,
+            crate::providers::types::LogLevel::Info,
+            crate::host::session_log::LogKind::Approval,
+            msg,
+            Some(serde_json::json!({ "answered": answered, "outcome": outcome })),
+            Some(run_id),
+            Some(&ask_id),
+            None,
+        );
+    }
     resolution
 }
 
@@ -1967,8 +2284,84 @@ pub(crate) fn estimate_after_compaction(
 ///    暂停写入并报错，原数据不动）；③ 摘要用量计入会话累计（C-9）。
 /// 中途失败不提交条目、不推进边界（Q31 原子提交面），错误原样上抛由调用
 /// 方发 run:compact_failed 与兜底判定。
+/// 压缩生命周期日志（32 号票 kind=compact 三事件：开始/完成/失败，票面
+/// 「04 号票事件点复用」——落点即本函数的三个相位）；失败升 Warn。
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn execute_compaction<W, T>(
+    store: &Arc<crate::storage::SessionStore>,
+    events: &Arc<dyn EventSink>,
+    session_usage: &Mutex<HashMap<String, UsageTotal>>,
+    ledger: &crate::host::usage::UsageLedger,
+    session_id: &str,
+    owner: &str,
+    summary_model: (&str, &str),
+    scope: &crate::backend::compaction::CompactionScope,
+    summary_driver: &TurnDriver<W, T>,
+    policy: &CompactionRuntimePolicy,
+    session_log: Option<&Arc<crate::host::session_log::SessionLogger>>,
+) -> Result<CompactionOutcome, crate::backend::compaction::CompactionError>
+where
+    W: rig::wire::Wire<Op = rig::operation::Completion>,
+    T: rig::driver::Transport<W>,
+{
+    if let Some(logger) = session_log {
+        logger.session_line(
+            session_id,
+            crate::providers::types::LogLevel::Info,
+            crate::host::session_log::LogKind::Compact,
+            "上下文压缩开始".to_owned(),
+            Some(serde_json::json!({ "entries": scope.entries.len() })),
+            Some(owner),
+            None,
+            None,
+        );
+    }
+    let result = execute_compaction_inner(
+        store,
+        events,
+        session_usage,
+        ledger,
+        session_id,
+        owner,
+        summary_model,
+        scope,
+        summary_driver,
+        policy,
+    )
+    .await;
+    if let Some(logger) = session_log {
+        match &result {
+            Ok(_) => logger.session_line(
+                session_id,
+                crate::providers::types::LogLevel::Info,
+                crate::host::session_log::LogKind::Compact,
+                "上下文压缩完成".to_owned(),
+                Some(serde_json::json!({
+                    "cutEntryId": scope.cut_entry_id,
+                    "entries": scope.entries.len(),
+                })),
+                Some(owner),
+                None,
+                None,
+            ),
+            Err(e) => logger.session_line(
+                session_id,
+                crate::providers::types::LogLevel::Warn,
+                crate::host::session_log::LogKind::Compact,
+                "上下文压缩失败".to_owned(),
+                Some(serde_json::json!({ "error": e.to_string() })),
+                Some(owner),
+                None,
+                None,
+            ),
+        }
+    }
+    result
+}
+
+/// 压缩编排本体（原 [`execute_compaction`] 主体；生命周期行在外层包装）。
+#[allow(clippy::too_many_arguments)]
+async fn execute_compaction_inner<W, T>(
     store: &Arc<crate::storage::SessionStore>,
     events: &Arc<dyn EventSink>,
     session_usage: &Mutex<HashMap<String, UsageTotal>>,
@@ -2121,6 +2514,7 @@ where
                 &scope,
                 summary_driver,
                 policy,
+                Some(&app.session_log),
             )
             .await
         }
@@ -2219,6 +2613,7 @@ pub(crate) async fn maybe_compact_after_ask<W, T>(
     tools: &[Arc<rig::completion::request::ToolDefinition>],
     policy: &CompactionRuntimePolicy,
     summary_driver: &TurnDriver<W, T>,
+    session_log: Option<&Arc<crate::host::session_log::SessionLogger>>,
 ) where
     W: rig::wire::Wire<Op = rig::operation::Completion>,
     T: rig::driver::Transport<W>,
@@ -2272,6 +2667,7 @@ pub(crate) async fn maybe_compact_after_ask<W, T>(
             &scope,
             summary_driver,
             policy,
+            session_log,
         )
         .await
     }
@@ -2398,6 +2794,7 @@ pub async fn compact_session_core(
         &scope,
         &summary_driver,
         &policy,
+        Some(&app.session_log),
     )
     .await
     .map_err(|e| IpcError::internal(e.to_string()))?;
@@ -2675,6 +3072,17 @@ pub async fn start_chat_core(
     // 同一 Arc 热更新模型客户端与请求参数；suggest 后台小调用也经 Arc 复用
     // 终态时的最新模型。
     let driver = Arc::new(TurnDriver::new(model.driver, spec.clone(), tools.clone()));
+    // 模型调用日志钩子（32 号票）：Info 级每次收口记 host/model/耗时/
+    // usage 元数据；verbose（Debug 级）追加请求/响应原文——宿主实现内
+    // 过图片摘要 + 密钥脱敏闸后落会话日志（NFR-09）。
+    driver.set_llm_logger(Arc::new(HostLlmLogger {
+        session_log: app.session_log.clone(),
+        session_id: session_id.clone(),
+        run_id: run_id.clone(),
+        api_host: HostLlmLogger::host_of(&model.base_url),
+        blob_dir: crate::storage::imgblob::imgblob_dir(app.store.root(), &session_id),
+        current_model: current_model.clone(),
+    }));
     // 每拍请求刷新源（§11.1，18 号票）：运行中切换模型/thinking 在同一 run
     // 的下一次模型请求生效。起点快照 = ①步合并值；当前快照同起点。
     let refresher: Arc<dyn RequestRefresher> = Arc::new(HostRequestRefresher {
@@ -2738,6 +3146,10 @@ pub async fn start_chat_core(
             session_id: session_id.clone(),
             run_id: run_id.clone(),
             data_root: app.store.root().to_path_buf(),
+            // 问卷 ask 开关日志（32 号票）：经接缝落 kind=approval 行
+            ask_log: Some(Arc::new(HostAskLogger {
+                session_log: app.session_log.clone(),
+            })),
             // 产物登记（28 号票，FR-10-06）：主代理环境装配存储器——
             // write/edit 成功落盘后写 <sid>.artifacts.json（子代理环境不装配）
             store: Some(app.store.clone()),
@@ -2925,7 +3337,13 @@ pub async fn start_chat_core(
     let summary_driver_for_task = summary_driver;
     let policy_for_task = policy;
     let store_for_task = app.store.clone();
-    let recorder = RunRecorder::new(app.store.clone(), session_id.clone(), run_id.clone());
+    // run 落盘器（32 号票：落盘失败记账挂 app 通道）
+    let recorder = RunRecorder::new(
+        app.store.clone(),
+        session_id.clone(),
+        run_id.clone(),
+        Some(app.session_log.clone()),
+    );
     // run 收尾的队列依赖面（06 号票）：全部字段同源的共享句柄副本（Arc
     // 克隆零深拷贝）——收尾后按终态分流 followUp 队列并自动投递（投递要
     // 以完整状态面重新走 start_chat_core，故捕获句柄而非细粒度克隆件）
@@ -2942,6 +3360,11 @@ pub async fn start_chat_core(
     let ledger_for_finalize = app.ledger.clone();
     let current_model_for_sink = current_model.clone();
     let model_slot_for_suggest = current_model.clone();
+    // 会话日志依赖面（32 号票）：run 开始/收尾行与工具起止行共用的克隆件
+    let session_log_for_sink = app.session_log.clone();
+    let session_log_for_end = app.session_log.clone();
+    let session_log_for_ask = app.session_log.clone();
+    let model_name_for_log = model_name.clone();
     // 审计的依赖面（36 号票，§8.7）：审计模型未配时跟随会话当前模型（槽快照
     // id）+ 用户目标 + 用量账本/会话累计共享句柄。
     let model_slot_for_audit = current_model.clone();
@@ -2965,7 +3388,21 @@ pub async fn start_chat_core(
             ledger: ledger_for_sink,
             current_model: current_model_for_sink,
             run_counted: false,
+            // 会话日志器（32 号票）：工具起止行落点
+            session_log: Some(session_log_for_sink.clone()),
+            tool_starts: HashMap::new(),
         };
+        // run 开始行（32 号票 kind=run：runId/模型）
+        session_log_for_sink.session_line(
+            &session_id,
+            crate::providers::types::LogLevel::Info,
+            crate::host::session_log::LogKind::Run,
+            "run 开始".to_owned(),
+            Some(serde_json::json!({ "model": model_name_for_log })),
+            Some(&run_id),
+            None,
+            None,
+        );
         let mut run = AgentRun::from_spec(&spec, (*prompt).clone(), Some(history));
         // 计划提醒（FR-06-04，25 号票，§8.6）：根会话 run 启用变更计数与
         // 注入（子代理 run 的 DriveState 缺省关闭——"根会话"口径）；初始
@@ -3198,6 +3635,7 @@ pub async fn start_chat_core(
                         session_memory_enabled,
                         plan_scope_note.as_deref(),
                         audit_note.as_ref(),
+                        Some(&session_log_for_ask),
                     )
                     .await
                     {
@@ -3288,6 +3726,7 @@ pub async fn start_chat_core(
                                 &tools,
                                 &policy_for_task,
                                 &summary_driver_for_task,
+                                Some(&session_log_for_ask),
                             )
                             .await;
                             match resume_run(&run_json) {
@@ -3355,6 +3794,48 @@ pub async fn start_chat_core(
         // （TauriEventSink 旁路）共用这三个键；payload 口径照文档。失败终态
         // 的 code 从 RunFailure 带出（37 号票起看门狗终止 = E_RUN_STALLED）。
         let duration_ms = (now_ms() - handle.snapshot().started_at).max(0) as u64;
+        // run 收尾行（32 号票 kind=run：runId/模型/耗时/tokens/终态 reason）。
+        // tokens = run 内累计（RunState 的 usage 快照与 usage 帧同源）；
+        // 终态 reason = done/error/cancelled（挂起不可能到收尾）。
+        let final_usage = handle.snapshot().usage;
+        let (reason, error_code) = match (&final_exit, &errored) {
+            (RunExit::Done(_), _) => ("done", None),
+            (_, Some(failure)) => ("error", Some(failure.code.clone())),
+            _ => ("cancelled", None),
+        };
+        // 失败终态同时记应用通道（32 号票：run 报错是 app.log 的关键
+        // 运行元数据——无会话 id 关联正文，只记 runId 与错误码）
+        if reason == "error" {
+            session_log_for_end.app_line(
+                crate::providers::types::LogLevel::Warn,
+                format!("run 失败：{run_id}"),
+                Some(serde_json::json!({ "runId": run_id, "code": error_code })),
+            );
+        }
+        session_log_for_end.session_line(
+            &session_id,
+            if reason == "error" {
+                crate::providers::types::LogLevel::Warn
+            } else {
+                crate::providers::types::LogLevel::Info
+            },
+            crate::host::session_log::LogKind::Run,
+            match reason {
+                "done" => "run 完成".to_owned(),
+                "error" => "run 失败".to_owned(),
+                _ => "run 已取消".to_owned(),
+            },
+            Some(serde_json::json!({
+                "model": model_name_for_log,
+                "durationMs": duration_ms,
+                "tokens": final_usage,
+                "reason": reason,
+                "code": error_code,
+            })),
+            Some(&run_id),
+            None,
+            None,
+        );
         match (&final_exit, &errored) {
             (RunExit::Done(_), _) => events.emit(
                 keys::RUN_DONE,

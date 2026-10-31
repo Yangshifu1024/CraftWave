@@ -17,6 +17,7 @@
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Instant;
 
 use futures::StreamExt;
 use rig::completion::Message;
@@ -45,6 +46,31 @@ pub enum StreamExit {
     Completed,
     /// 取消中途退出（流被丢弃，模型侧停止生成）。
     Cancelled,
+}
+
+/// 模型调用日志钩子（32 号票，FR-15-01 verbose 面）：挂在 [`TurnDriver`]
+/// 上，每次模型调用的请求出口/响应收口回调宿主。backend 层只递引用与
+/// 元数据——**是否序列化、脱敏与落盘都在宿主实现内**（verbose = Debug 级
+/// 才序列化请求/响应原文，经 `util::redact` 闸后落会话日志）。
+///
+/// `turn` 为轮次号（从 1 起）；`0` 表示非 run 轮次的一次性辅助调用
+/// （标题生成/压缩摘要/命令审计等 `complete_once*` 路径）。
+pub trait LlmLogSink: Send + Sync {
+    /// 请求出口（请求尚未发出）。`request` 含完整 chat_history（vision
+    /// 时图片以 base64 内嵌——宿主落盘前必须过图片摘要 + 密钥脱敏闸）。
+    fn on_request(&self, turn: u32, request: &CompletionRequest);
+    /// 响应收口。`usage` = 收口用量（取消/失败为 None）；`response` =
+    /// 完整响应（成功收口才有）；`error` = 失败说明（成功/取消为 None，
+    /// 取消固定 "cancelled"）。
+    #[allow(clippy::too_many_arguments)]
+    fn on_response(
+        &self,
+        turn: u32,
+        duration_ms: u64,
+        usage: Option<&Usage>,
+        response: Option<&rig::completion::request::CompletionResponse>,
+        error: Option<&str>,
+    );
 }
 
 /// 单轮流式调用的驱动器：持有模型客户端、运行规格与工具表，完成
@@ -81,6 +107,9 @@ where
     /// 发送前把请求 history 中的多模态图片块替换为占位文本（允许纯文字
     /// 继续）；AgentRun 内部历史不动，切回 vision 模型自动恢复原图。
     downgrade_images: AtomicBool,
+    /// 模型调用日志钩子（32 号票）：None = 不挂日志（既有测试路径零
+    /// 行为漂移）；宿主 start_chat 装配后经 [`Self::set_llm_logger`] 注入。
+    llm_logger: Mutex<Option<Arc<dyn LlmLogSink>>>,
 }
 
 /// 一次流式调用的收口产出。
@@ -181,7 +210,25 @@ where
             spec: Mutex::new(spec),
             tools,
             downgrade_images: AtomicBool::new(false),
+            llm_logger: Mutex::new(None),
         }
+    }
+
+    /// 注入模型调用日志钩子（32 号票，宿主 start_chat 装配点；重复设置
+    /// 覆盖前值——同一 driver 只服务一个 run）。
+    pub fn set_llm_logger(&self, logger: Arc<dyn LlmLogSink>) {
+        *self
+            .llm_logger
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(logger);
+    }
+
+    /// 取当前钩子快照（锁内 clone 即释放，回调不持锁）。
+    fn llm_logger(&self) -> Option<Arc<dyn LlmLogSink>> {
+        self.llm_logger
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     /// 热替换模型客户端（18 号票，运行中切模型）：下一拍请求起用新模型，
@@ -273,7 +320,8 @@ where
     }
 
     /// complete_once / complete_once_capped 的共享执行体：请求发出 → 拼接
-    /// 文本响应 → 返回（文本, usage）。
+    /// 文本响应 → 返回（文本, usage）。日志钩子（32 号票）：一次性辅助调用
+    /// 也记 llm 行（turn=0 标注非 run 轮次）。
     async fn complete_request(
         &self,
         request: CompletionRequest,
@@ -283,11 +331,33 @@ where
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
-        let response = model
-            .call(request)
-            .await
-            .map_err(|e| PromptError::from(rig::error::ProviderError::request(e.to_string())))?;
-        let text = response
+        // 请求出口钩子（turn=0 = 辅助调用）
+        if let Some(logger) = self.llm_logger() {
+            logger.on_request(0, &request);
+        }
+        let started = Instant::now();
+        let call = model.call(request).await.map_err(|e| {
+            if let Some(logger) = self.llm_logger() {
+                logger.on_response(
+                    0,
+                    started.elapsed().as_millis() as u64,
+                    None,
+                    None,
+                    Some(&e.to_string()),
+                );
+            }
+            PromptError::from(rig::error::ProviderError::request(e.to_string()))
+        })?;
+        if let Some(logger) = self.llm_logger() {
+            logger.on_response(
+                0,
+                started.elapsed().as_millis() as u64,
+                Some(&call.usage),
+                Some(&call),
+                None,
+            );
+        }
+        let text = call
             .choice
             .iter()
             .filter_map(|block| match block {
@@ -296,11 +366,13 @@ where
             })
             .collect::<Vec<_>>()
             .join("");
-        Ok((text, response.usage))
+        Ok((text, call.usage))
     }
 
     /// 流式一轮的实际实现（上面两个公开方法是它的包装）：构造请求 → 开流 →
     /// 逐事件"装配记账 + 桥接出帧" → 流收尾把完整回合回喂 run。
+    /// 外层包一层错误路径的日志钩子（成功/取消的钩子在 inner 内的收口点，
+    /// 彼处响应体仍在作用域内）。
     #[allow(clippy::too_many_arguments)]
     async fn do_stream_turn(
         &self,
@@ -311,6 +383,40 @@ where
         token: &CancellationToken,
         bridge: &mut RigEventBridge,
         on_frame: &mut (dyn FnMut(ChatFrame) + Send),
+    ) -> Result<TurnOutcome, PromptError> {
+        let started = Instant::now();
+        let result = self
+            .do_stream_turn_inner(
+                run, prompt, history, turn_no, token, bridge, on_frame, started,
+            )
+            .await;
+        if let Err(err) = &result
+            && let Some(logger) = self.llm_logger()
+        {
+            logger.on_response(
+                turn_no,
+                started.elapsed().as_millis() as u64,
+                None,
+                None,
+                Some(&err.to_string()),
+            );
+        }
+        result
+    }
+
+    /// [`Self::do_stream_turn`] 的主体（请求出口/成功收口/取消三处日志
+    /// 钩子在彼处就地回调——响应体彼处仍在作用域内）。
+    #[allow(clippy::too_many_arguments)]
+    async fn do_stream_turn_inner(
+        &self,
+        run: &mut AgentRun,
+        prompt: Arc<Message>,
+        history: Vec<Arc<Message>>,
+        turn_no: u32,
+        token: &CancellationToken,
+        bridge: &mut RigEventBridge,
+        on_frame: &mut (dyn FnMut(ChatFrame) + Send),
+        started: Instant,
     ) -> Result<TurnOutcome, PromptError> {
         // 客户端与规格快照（18 号票：锁内 clone 即释放，不跨 await——
         // 每拍请求前宿主可能已经 swap 过，本拍用最新组合）
@@ -347,6 +453,11 @@ where
         let policy = prepared.policy.clone();
 
         let request = prepared.apply(CompletionRequest::new(prompt));
+        // 请求出口钩子（32 号票）：请求尚未发出，宿主决定是否序列化
+        // （verbose/Debug 级才动——大载荷成本只在详细模式发生）
+        if let Some(logger) = self.llm_logger() {
+            logger.on_request(turn_no, &request);
+        }
         let mut stream = model
             .stream(request)
             .map_err(|e| PromptError::from(rig::error::ProviderError::request(e.to_string())))?;
@@ -358,6 +469,16 @@ where
             let item = tokio::select! {
                 biased;
                 _ = token.cancelled() => {
+                    // 取消收口钩子（32 号票）：usage/response 皆无
+                    if let Some(logger) = self.llm_logger() {
+                        logger.on_response(
+                            turn_no,
+                            started.elapsed().as_millis() as u64,
+                            None,
+                            None,
+                            Some("cancelled"),
+                        );
+                    }
                     return Ok(TurnOutcome { exit: StreamExit::Cancelled, usage: None });
                 }
                 next = stream.next() => match next {
@@ -384,6 +505,16 @@ where
             .await
             .map_err(|e| PromptError::from(rig::error::ProviderError::request(e.to_string())))?;
         let usage = response.usage;
+        // 响应收口钩子（32 号票）：完整响应与用量在彼处仍在作用域内
+        if let Some(logger) = self.llm_logger() {
+            logger.on_response(
+                turn_no,
+                started.elapsed().as_millis() as u64,
+                Some(&usage),
+                Some(&response),
+                None,
+            );
+        }
         run.record_streamed_completion_call(
             response.usage,
             response.identity(),

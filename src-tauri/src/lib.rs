@@ -124,6 +124,11 @@ use host::commands::stats::{
     SessionUsageArgs, SessionUsageResult, StatsTokenArgs, StatsTokenResult, session_usage,
     stats_token,
 };
+// 日志三命令（32 号票，§3.3 #54–56）
+#[allow(unused_imports)]
+use host::commands::logs::{
+    ReadSessionLogArgs, ReadSessionLogResult, list_log_files, open_logs_dir, read_session_log,
+};
 // 配额快照命令（21 号票，§3.3 #53）：QuotaSnapshot 是 Vec<_> 元素（非名义
 // 根，经 quota_snapshots 返回），导出需显式补根（ipc_manifest_test）
 #[allow(unused_imports)]
@@ -313,6 +318,10 @@ ipc_commands! {
     host::commands::artifacts::list_artifacts => args: ListArtifactsArgs, ret: ListArtifactsResult;
     host::commands::artifacts::list_editors => args: (), ret: Vec<EditorEntry>;
     host::commands::artifacts::open_in_editor => args: OpenInEditorArgs, ret: ();
+    // 日志三命令（32 号票，§3.3 #54–56：读取/清单/打开目录）
+    host::commands::logs::read_session_log => args: ReadSessionLogArgs, ret: ReadSessionLogResult;
+    host::commands::logs::list_log_files => args: (), ret: Vec<String>;
+    host::commands::logs::open_logs_dir => args: (), ret: ();
     // git 只读三命令（26 号票，§3.3 #37–#39）
     git::git_status => args: GitStatusArgs, ret: GitStatusResult;
     git::git_diff => args: GitDiffArgs, ret: GitDiffResult;
@@ -491,13 +500,16 @@ pub fn run() {
             ));
             host::notify::install_click_routing(&notify);
             let mut state = host::AppState::new_in(
-                data_dir,
+                data_dir.clone(),
                 std::sync::Arc::new(host::TauriEventSink {
                     app: handle.clone(),
                     notify: notify.clone(),
                 }),
             );
-            state.config = config;
+            // 配置缓存句柄统一（32 号票 rebind_config）：通知门持有的这份
+            // config 是唯一权威——AppState 与会话日志器必须同指一份，否则
+            // save_config 的内存热替换到不了日志级别过滤（热生效失效）
+            state.rebind_config(config.clone());
             state.active_session = active_session;
             // 内置技能根（09 号票，§9.8 目录清单）：打包态经 Resource 目录
             // 解析（bundle.resources 声明的 resources/skills/**）；解析失败
@@ -522,6 +534,17 @@ pub fn run() {
             app.manage(state.store.clone());
             app.manage(state);
             host::shell::install_tray(&handle)?;
+            // 启动序记账（32 号票，app.log：运行元数据——不涉会话正文）
+            if let Some(state) = app.try_state::<host::AppState>() {
+                state.session_log.app_line(
+                    crate::providers::types::LogLevel::Info,
+                    "应用启动完成".to_owned(),
+                    Some(serde_json::json!({
+                        "dataDir": data_dir.display().to_string(),
+                        "version": app.package_info().version.to_string(),
+                    })),
+                );
+            }
             // 窗口几何恢复（29 号票，§10.7）：此刻窗口仍隐藏（visible:false、
             // 激活协议未亮窗），先读 window-state.json 应用几何——恢复天然
             // 先于亮窗；越界/损坏回 tauri.conf.json 默认。

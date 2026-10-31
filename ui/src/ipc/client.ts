@@ -60,6 +60,8 @@ import type {
   QuotaSnapshot,
   ReadImageBlobArgs,
   ReadImageBlobResult,
+  ReadSessionLogArgs,
+  ReadSessionLogResult,
   ReadWorkspaceResult,
   RemoveFollowupResult,
   ResumeFollowupQueueResult,
@@ -171,6 +173,10 @@ export const COMMANDS = {
   gitStatus: "git_status",
   gitDiff: "git_diff",
   gitRecentLog: "git_recent_log",
+  // 日志三命令（32 号票，§3.3 #54–56）
+  readSessionLog: "read_session_log",
+  listLogFiles: "list_log_files",
+  openLogsDir: "open_logs_dir",
   // 产物面板与编辑器打开（28 号票，§3.3 #59l/#35/#36）
   listArtifacts: "list_artifacts",
   listEditors: "list_editors",
@@ -305,6 +311,24 @@ export async function deleteProvider(providerId: DeleteProviderArgs["providerId"
  *  目录不存在 reject E_NOT_FOUND，OS 打开失败 reject E_IO。 */
 export function openDir(path: string): Promise<void> {
   return invoke<void>(COMMANDS.openDir, { path } satisfies OpenDirArgs);
+}
+
+/**
+ * 读取会话日志尾部（32 号票，§3.3 #54）：`tail` 缺省 500、上限 5000
+ * （后端 clamp）；文件不存在 → 空 lines 不报错。
+ */
+export function readSessionLog(args: ReadSessionLogArgs): Promise<ReadSessionLogResult> {
+  return invoke<ReadSessionLogResult>(COMMANDS.readSessionLog, { ...args });
+}
+
+/** 列出日志文件相对名（32 号票，§3.3 #55：app.log* + sessions/*）。 */
+export function listLogFiles(): Promise<string[]> {
+  return invoke<string[]>(COMMANDS.listLogFiles);
+}
+
+/** 系统文件管理器打开日志目录（32 号票，§3.3 #56）。 */
+export function openLogsDir(): Promise<void> {
+  return invoke<void>(COMMANDS.openLogsDir);
 }
 
 /** §3.3 #18：启动一次 run（一轮模型对话）。channel 由调用方建立：Channel 是

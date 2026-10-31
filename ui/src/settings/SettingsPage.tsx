@@ -17,7 +17,7 @@
  */
 
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/components/ui/cn";
@@ -28,9 +28,12 @@ import { Switch } from "@/components/ui/switch";
 import { applyHotkey, eventToAccelerator, formatAccelerator, useHotkeyStore } from "@/hotkey";
 import { setLang, t, useT } from "@/i18n/core";
 import {
+  listLogFiles,
   notificationPermissionStatus,
   openDir,
+  openLogsDir,
   openNotificationSettings,
+  readSessionLog,
   searchTest,
 } from "@/ipc/client";
 import type { AppConfig, NotificationPermissionStatus, SearchTestResult } from "@/ipc/types";
@@ -1387,7 +1390,220 @@ function AllowlistSection({
   );
 }
 
-/** 日志页：日志级别下拉 + 打开日志目录入口（03 号票，FR-14-07） */
+/**
+ * 「打开日志目录」按钮（32 号票改走 open_logs_dir，§3.3 #56）：固定打开
+ * `~/.craftwave/logs/`（后端创建 + 白名单口径与 open_dir 同源），失败在
+ * 按钮旁行内提示，不打断页面。
+ */
+function OpenLogsDirButton() {
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <div className="flex min-w-0 flex-col items-end gap-1">
+      <Button
+        variant="outline"
+        size="sm"
+        data-testid="open-logs-dir"
+        onClick={() => {
+          setError(null);
+          openLogsDir().catch((err: unknown) => {
+            const code =
+              typeof err === "object" && err !== null && "code" in err
+                ? String((err as { code: unknown }).code)
+                : "E_INTERNAL";
+            const message =
+              typeof err === "object" && err !== null && "message" in err
+                ? String((err as { message: unknown }).message)
+                : String(err);
+            setError(`${code}: ${message}`);
+          });
+        }}
+      >
+        {t("settings.openLogsDir")}
+      </Button>
+      {error && (
+        <span className="max-w-full text-right text-ui-sm break-all text-[var(--danger)]">
+          {error}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * 会话日志条目行（32 号票，kind/level 着色 + 长行折行）：行 JSON 解析成功
+ * 时按 level 着色（error 红 / warn 黄 / debug 灰）并前缀 kind 徽标；坏行
+ * 原样灰显（日志是诊断面，坏行不给读制造障碍）。
+ */
+function LogLine({ raw }: { raw: string }) {
+  // 行解析面（行 JSON 的已知字段；坏行原样展示）
+  type ParsedLogLine = {
+    ts?: string;
+    level?: string;
+    kind?: string;
+    msg?: string;
+  };
+  let parsed: ParsedLogLine | null = null;
+  try {
+    parsed = JSON.parse(raw) as ParsedLogLine;
+  } catch {
+    parsed = null;
+  }
+  const level = parsed?.level ?? "";
+  const levelClass =
+    level === "error"
+      ? "text-[var(--danger)]"
+      : level === "warn"
+        ? "text-[var(--warning)]"
+        : level === "debug"
+          ? "text-[var(--muted-foreground)]"
+          : "text-[var(--foreground)]";
+  if (!parsed) {
+    return (
+      <div className="text-ui-sm break-all whitespace-pre-wrap text-[var(--muted-foreground)]">
+        {raw}
+      </div>
+    );
+  }
+  return (
+    <div className={`text-ui-sm break-all whitespace-pre-wrap ${levelClass}`}>
+      <span className="mr-2 font-mono text-[var(--muted-foreground)]">
+        {parsed.ts}
+        {parsed.kind ? ` [${parsed.kind}]` : ""}
+      </span>
+      {parsed.msg}
+    </div>
+  );
+}
+
+/**
+ * 会话日志查看器（32 号票，FR-15-01/§10.7 诊断组）：会话选择器（日志文件
+ * 清单过滤 sessions/ 前缀，活跃 Tab 做标题映射）→ read_session_log 拉尾部
+ * 500 行渲染只读日志面 +「刷新」钮。拉取式（无实时流，票面边界）。
+ */
+function LogViewerSection() {
+  const t = useT();
+  const tabs = useSessionsStore((s) => s.tabs);
+  const [files, setFiles] = useState<string[]>([]);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [lines, setLines] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  /** 会话日志文件 → (sessionId, 展示名)：活跃 Tab 的标题优先。 */
+  const sessionOptions = useMemo(() => {
+    const ids = new Set<string>();
+    for (const name of files) {
+      if (!name.startsWith("sessions/")) continue;
+      const base = name.slice("sessions/".length).replace(/\.jsonl(\.1)?$/, "");
+      if (base) ids.add(base);
+    }
+    return Array.from(ids).map((id) => ({
+      id,
+      label: tabs.find((tab) => tab.id === id)?.title ?? id,
+    }));
+  }, [files, tabs]);
+
+  const refreshList = useCallback(() => {
+    listLogFiles()
+      .then((names) => setFiles(names))
+      .catch((err: unknown) => {
+        console.error("[settings] 日志清单拉取失败", err);
+        setFiles([]);
+      });
+  }, []);
+  // 挂载拉一次清单（拉取式：不在页签时不轮询）
+  useEffect(() => {
+    refreshList();
+  }, [refreshList]);
+
+  const fetchTail = useCallback((sessionId: string) => {
+    setLoading(true);
+    setError(null);
+    readSessionLog({ sessionId, tail: 500 })
+      .then((result) => setLines(result.lines))
+      .catch((err: unknown) => {
+        const message =
+          typeof err === "object" && err !== null && "message" in err
+            ? String((err as { message: unknown }).message)
+            : String(err);
+        setError(message);
+        setLines([]);
+      })
+      .finally(() => setLoading(false));
+  }, []);
+
+  function onSelect(sessionId: string) {
+    setSelected(sessionId);
+    fetchTail(sessionId);
+  }
+
+  return (
+    <SettingsSection title={t("settings.sectionLogViewer")}>
+      <p className="border-b border-[var(--border)] px-4 py-3 text-ui-sm text-[var(--muted-foreground)]">
+        {t("settings.logViewerDesc")}
+      </p>
+      <div className="flex items-center gap-3 px-4 py-3">
+        <Select
+          width="mid"
+          aria-label={t("settings.logSessionPickerAria")}
+          data-testid="log-session-select"
+          value={selected ?? ""}
+          onChange={(e) => {
+            if (e.target.value !== "") onSelect(e.target.value);
+          }}
+        >
+          <option value="">{t("settings.logSessionPicker")}</option>
+          {sessionOptions.map((option) => (
+            <option key={option.id} value={option.id}>
+              {option.label}
+            </option>
+          ))}
+        </Select>
+        <Button
+          variant="outline"
+          size="sm"
+          data-testid="log-refresh"
+          aria-label={t("settings.logRefreshAria")}
+          disabled={selected === null || loading}
+          onClick={() => {
+            refreshList();
+            if (selected !== null) fetchTail(selected);
+          }}
+        >
+          {loading ? "…" : t("settings.logRefresh")}
+        </Button>
+      </div>
+      {error && (
+        <p data-testid="log-viewer-error" className="px-4 pb-3 text-ui-sm text-[var(--danger)]">
+          {error}
+        </p>
+      )}
+      {selected === null && lines.length === 0 ? (
+        <p className="px-4 py-10 text-center text-ui-base text-[var(--muted-foreground)]">
+          {t("settings.logEmpty")}
+        </p>
+      ) : (
+        <pre
+          data-testid="log-viewer-lines"
+          role="log"
+          aria-label={t("settings.logLinesAria")}
+          className="m-4 max-h-96 overflow-auto rounded border border-[var(--border)] bg-[var(--muted)] p-3 font-mono text-ui-sm"
+        >
+          {lines.map((raw, index) => (
+            <LogLine
+              // biome-ignore lint/suspicious/noArrayIndexKey: 日志面是只读 append-only 列表，行无稳定 id（内容可能重复），序号即身份（DiffView 同款先例）
+              key={index}
+              raw={raw}
+            />
+          ))}
+        </pre>
+      )}
+    </SettingsSection>
+  );
+}
+
+/** 日志页：级别下拉（verbose 说明）+ 打开日志目录（open_logs_dir）+
+ *  会话日志查看器（32 号票，FR-15-01/FR-14-04/FR-14-07）。 */
 function LogsPage() {
   const t = useT();
   const config = useSettingsStore((s) => s.config);
@@ -1411,13 +1627,10 @@ function LogsPage() {
           </Select>
         </SettingsRow>
         <SettingsRow title={t("settings.logDir")} description={t("settings.logDirDesc")}>
-          <OpenDirButton
-            testId="open-logs-dir"
-            label={t("settings.openLogsDir")}
-            path="~/.craftwave/logs"
-          />
+          <OpenLogsDirButton />
         </SettingsRow>
       </SettingsSection>
+      <LogViewerSection />
     </div>
   );
 }

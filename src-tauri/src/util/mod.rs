@@ -10,6 +10,9 @@ pub mod encoding;
 pub mod errors;
 pub mod events;
 pub mod ids;
+// 日志脱敏（32 号票，D12 复刻点 / NFR-09）：密钥名单替换 + 字符串兜底 +
+// 图片本体摘要化——日志落盘前的最后一道闸。
+pub mod redact;
 
 #[cfg(test)]
 pub mod test_support;

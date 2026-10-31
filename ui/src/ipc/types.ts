@@ -153,6 +153,8 @@ export * from "./generated/QuotaStatus";
 export * from "./generated/ReadImageBlobArgs";
 export * from "./generated/ReadImageBlobResult";
 export * from "./generated/ReadRange";
+export * from "./generated/ReadSessionLogArgs";
+export * from "./generated/ReadSessionLogResult";
 export * from "./generated/ReadWorkspaceFileArgs";
 export * from "./generated/ReadWorkspaceResult";
 export * from "./generated/ReasoningEffort";

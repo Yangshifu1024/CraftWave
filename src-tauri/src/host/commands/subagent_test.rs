@@ -626,6 +626,7 @@ async fn child_env_rejects_delegation_and_outside_tools() {
                 session_id: "s".to_owned(),
                 run_id: "r".to_owned(),
                 data_root: std::env::temp_dir().join("cw-subagent-test"),
+                ask_log: None,
                 mcp: None,
                 skills: None,
                 // 子代理边界：无委派面（Q13 执行入口拒绝）

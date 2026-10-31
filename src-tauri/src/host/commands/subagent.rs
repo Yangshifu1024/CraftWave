@@ -803,6 +803,18 @@ async fn run_subagent(
             "role": role.name,
         }),
     );
+    // 子代理生命周期行（32 号票 kind=subagent：spawn，锚 subId；task 文本
+    // 不进日志——正文不入诊断面，详情走抽屉回看通道）
+    app.session_log.session_line(
+        &ctx.session_id,
+        crate::providers::types::LogLevel::Info,
+        crate::host::session_log::LogKind::Subagent,
+        format!("子代理启动：{}", role.name),
+        Some(serde_json::json!({ "role": role.name, "budgetSteps": budget })),
+        Some(&ctx.parent_run_id),
+        None,
+        Some(&sub_id),
+    );
     write_sub_meta(
         &SubMeta {
             version: 1,
@@ -906,6 +918,10 @@ async fn run_subagent(
             session_id: ctx.session_id.clone(),
             run_id: sub_run_id.clone(),
             data_root: data_root.clone(),
+            // 问卷 ask 开关日志（32 号票）：子代理问卷行也落父会话日志
+            ask_log: Some(Arc::new(crate::host::commands::chat::HostAskLogger {
+                session_log: app.session_log.clone(),
+            })),
             // 产物登记（28 号票）：子代理环境不装配——worktree 内写入不进
             // 会话产物面（ADR-0001：改动经汇回进主工作区，主代理写操作登记）
             store: None,
@@ -1046,6 +1062,8 @@ async fn run_subagent(
                     // 审计结论注记（36 号票，§8.7）：灰区审计只挂主 run 恢复
                     // 循环，子代理审批卡恒不带，None。
                     None,
+                    // 会话日志（32 号票）：子代理审批开关行也落父会话日志
+                    Some(&app.session_log),
                 )
                 .await
                 {
@@ -1349,6 +1367,25 @@ fn finalize_spawn(
             "subId": sub_id,
             "outcome": outcome_key(&outcome),
         }),
+    );
+    // 子代理收口行（32 号票 kind=subagent：终态 outcome；失败带错误码）
+    app.session_log.session_line(
+        &ctx.session_id,
+        if matches!(outcome, SubOutcome::Cancelled) {
+            crate::providers::types::LogLevel::Info
+        } else {
+            crate::providers::types::LogLevel::Warn
+        },
+        crate::host::session_log::LogKind::Subagent,
+        format!("子代理收口：{}", outcome_key(&outcome)),
+        Some(serde_json::json!({
+            "role": role.name,
+            "outcome": outcome_key(&outcome),
+            "code": error_note.as_ref().map(|(c, _)| c.clone()),
+        })),
+        Some(&ctx.parent_run_id),
+        None,
+        Some(sub_id),
     );
     // 摘除 + 释放名额
     app.subs.remove(sub_id);

@@ -75,6 +75,10 @@ pub struct DeleteSessionArgs {
 }
 
 /// 删除会话主体（公开给集成测试；命令体转调——Q43 用量联动在本函数）。
+/// 32 号票扩展（Q43 删除边界）：会话专属日志与轮转副本同步删除
+/// （`close_and_purge` 失败清单非空 = 有残留，**必须报告**，不得声称
+/// 全部删除成功）；followUp 队列文件、子代理历史目录一并盘点清理；
+/// 会话级内存桶（审批记忆/资源信任/计划范围授权）随删。
 pub fn delete_session_core(
     app: &AppState,
     runs: &RunManager,
@@ -105,7 +109,72 @@ pub fn delete_session_core(
     // 会话级审批记忆随删（23 号票，Q41：记忆不跨会话生命周期——删除后
     // 重建的同 id 会话须重新审批）
     app.approval_memory.forget(session_id);
+    // 会话级资源信任集与计划范围授权桶随删（Q43 盘点：进程内内存面，
+    // 删除后不残留——24/25 号票「本次会话允许」语义随会话销毁）
+    app.session_trust.forget(session_id);
+    app.plan_scopes.forget(session_id);
+    // followUp 队列文件（06 号票，Q43 盘点：会话专属副本随删；队列文件
+    // 不删会残留正文副本）
+    let queue_file = app
+        .store
+        .root()
+        .join("sessions")
+        .join(format!("{session_id}.queue.json"));
+    match std::fs::remove_file(&queue_file) {
+        // 不存在 = 本来就干净
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => {
+            return Err(IpcError::new(
+                crate::util::errors::E_IO,
+                format!("删除会话残留失败：{}：{e}", queue_file.display()),
+            ));
+        }
+    }
+    // 子代理历史盘点清理（Q43/票面：`histories/subs/<parentRunId>/` 按
+    // meta.json 的 sessionId 归属——命中即删整个父目录；meta 缺失/损坏
+    // 的目录不误删（保守：宁保留不误删，Q43 不误伤原则）。删除失败记账
+    // 汇入失败清单）
+    let mut all_failures = app.session_log.close_and_purge(session_id);
+    all_failures.extend(purge_sub_histories(app.store.root(), session_id));
+    // 删除失败必须报告（票面红线：不能声称全部删除成功）
+    if !all_failures.is_empty() {
+        return Err(IpcError::new(
+            crate::util::errors::E_IO,
+            format!(
+                "会话已删除，但部分专属副本清理失败（残留清单）：{}",
+                all_failures.join("；")
+            ),
+        ));
+    }
     Ok(())
+}
+
+/// 子代理历史目录的会话归属盘点（Q43）：遍历 `histories/subs/*/meta.json`，
+/// `session_id` 匹配则删除整个 `<parentRunId>/` 目录。返回失败清单
+/// （删除失败才报；目录不存在 = 没有子历史，静默）。
+fn purge_sub_histories(data_root: &std::path::Path, session_id: &str) -> Vec<String> {
+    let subs_root = data_root.join("histories").join("subs");
+    let Ok(entries) = std::fs::read_dir(&subs_root) else {
+        return Vec::new();
+    };
+    let mut failures = Vec::new();
+    for entry in entries.flatten() {
+        let run_dir = entry.path();
+        let meta_path = run_dir.join("meta.json");
+        let Ok(bytes) = std::fs::read(&meta_path) else {
+            continue; // meta 缺失/不可读：无法归属，保守保留
+        };
+        let Ok(meta) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+            continue; // meta 损坏：无法归属，保守保留
+        };
+        if meta.get("sessionId").and_then(|v| v.as_str()) == Some(session_id)
+            && let Err(e) = std::fs::remove_dir_all(&run_dir)
+        {
+            failures.push(format!("{}: {e}", run_dir.display()));
+        }
+    }
+    failures
 }
 
 /// 删除会话（§3.3 #16）：运行中拒绝（E_SESSION_RUNNING）；index 条目 +
@@ -285,6 +354,9 @@ pub(crate) async fn set_session_prefs(
     set_session_prefs_core(&app, &args.session_id, args.prefs.unwrap_or_default())
 }
 
+#[cfg(test)]
+#[path = "session_delete_test.rs"]
+mod session_delete_test;
 #[cfg(test)]
 #[path = "session_prefs_test.rs"]
 mod session_prefs_test;

@@ -14,6 +14,9 @@ mod error;
 pub mod followup;
 pub mod notify;
 pub mod run_persistence;
+// 会话级日志写入通道（32 号票，FR-15-01/§7.1 日志布局）：app.log +
+// sessions/<sid>.jsonl 双通道、轮转与级别热过滤、删除联动清理。
+pub mod session_log;
 pub mod shell;
 // Rust 侧用户可见文案表（31 号票，§10.8：托盘菜单 + 系统通知正文）
 pub mod strings;
@@ -116,6 +119,11 @@ pub struct AppState {
     /// 窗口几何记忆（29 号票，§10.7）：`window-state.json` 的读恢复/防抖
     /// 保存/关闭强写三面（路径 + 最新几何缓存 + 防抖序号）。
     pub window_geometry: Arc<crate::host::window_state::WindowStateStore>,
+    /// 会话级日志器（32 号票，FR-15-01/§7.1 日志布局）：`logs/app.log`
+    /// 应用通道 + `logs/sessions/<sid>.jsonl` 会话通道，级别随
+    /// `config.log.level` 热过滤；会话删除经 [`SessionLogger::close_and_purge`]
+    /// 联动清理专属日志与轮转副本（Q43）。
+    pub session_log: Arc<session_log::SessionLogger>,
 }
 
 impl AppState {
@@ -128,6 +136,10 @@ impl AppState {
         // 首次启动无配置 / 载入失败 → None = no_proxy 直连（防环境变量泄漏）
         let config_store: ConfigStore<AppConfig> = ConfigStore::new(data_dir.join("config.json"));
         let proxy = config_store.load().ok().and_then(|c| c.proxy.clone());
+        // 配置缓存 Arc 提前构造：AppState.config 与会话日志器（32 号票，
+        // 级别热过滤数据源）共享同一份——save_config 热替换后日志级别
+        // 下一行即生效
+        let config = Arc::new(config_store);
         let http = Arc::new(
             crate::providers::http::HttpClientFactory::from_config(proxy.as_ref()).unwrap_or_else(
                 |_| {
@@ -137,7 +149,7 @@ impl AppState {
             ),
         );
         Self {
-            config: Arc::new(config_store),
+            config: config.clone(),
             runs: RunManager::new(),
             events,
             session_usage: Arc::new(Mutex::new(HashMap::new())),
@@ -166,7 +178,23 @@ impl AppState {
             window_geometry: Arc::new(crate::host::window_state::WindowStateStore::new(
                 data_dir.join("window-state.json"),
             )),
+            // 日志根（32 号票，§7.1：~/.craftwave/logs/）；config 缓存句柄
+            // 复用上方已构造的同一份（save_config 热替换后级别即时生效）
+            session_log: Arc::new(session_log::SessionLogger::new(
+                data_dir.join("logs"),
+                config.clone(),
+            )),
         }
+    }
+
+    /// 重绑配置缓存句柄（lib.rs setup 装配用）：外部传入的 config 实例是
+    /// 唯一权威（通知门共享它），`AppState.config` 与会话日志器（32 号票）
+    /// 必须指向同一实例——否则 save_config 的内存缓存热替换只到通知门、
+    /// 日志级别过滤读不到新值（热生效失效）。日志根目录不变，只换缓存源。
+    pub fn rebind_config(&mut self, config: Arc<ConfigStore<AppConfig>>) {
+        let logs_dir = self.session_log.root().to_path_buf();
+        self.config = config.clone();
+        self.session_log = Arc::new(session_log::SessionLogger::new(logs_dir, config));
     }
 
     /// 把配置里的子代理全局并发上限热应用到注册表（save_config 边界调用；
@@ -220,6 +248,7 @@ impl AppState {
             session_trust: self.session_trust.clone(),
             plan_scopes: self.plan_scopes.clone(),
             window_geometry: self.window_geometry.clone(),
+            session_log: self.session_log.clone(),
         }
     }
 

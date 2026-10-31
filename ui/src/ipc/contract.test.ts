@@ -761,10 +761,38 @@ describe("§12.3 manifest 双向扫描", () => {
       args_type: "OpenInEditorArgs",
       ret_type: "()",
     });
+    // #54 read_session_log：会话日志尾部（tail 缺省 500/上限 5000，32 号票）
+    expect(find("read_session_log")).toMatchObject({
+      args_type: "ReadSessionLogArgs",
+      ret_type: "ReadSessionLogResult",
+    });
+    // #55 list_log_files：日志文件相对名清单（app.log* + sessions/*）
+    expect(find("list_log_files")).toMatchObject({
+      args_type: "()",
+      ret_type: "Vec<String>",
+    });
+    // #56 open_logs_dir：系统打开日志目录（固定 ~/.craftwave/logs）
+    expect(find("open_logs_dir")).toMatchObject({
+      args_type: "()",
+      ret_type: "()",
+    });
     // 双向：client.ts 已接线（禁止只注册不使用）
     for (const name of ["list_artifacts", "list_editors", "open_in_editor"]) {
       expect(Object.values(COMMANDS), `${name} 应在 client.ts 接线`).toContain(name);
     }
+    // 32 号票三命令接线
+    for (const name of ["read_session_log", "list_log_files", "open_logs_dir"]) {
+      expect(Object.values(COMMANDS), `${name} 应在 client.ts 接线`).toContain(name);
+    }
+    // #54 生成物字段级（tail 可缺省 = Option；lines 必有）
+    const logArgs: import("./generated/ReadSessionLogArgs").ReadSessionLogArgs = {
+      sessionId: "s1",
+    };
+    expect(logArgs.sessionId).toBe("s1");
+    const logResult: import("./generated/ReadSessionLogResult").ReadSessionLogResult = {
+      lines: ['{"ts":"2026-10-30T00:00:00Z","level":"info","kind":"run","msg":"run 开始"}'],
+    };
+    expect(logResult.lines).toHaveLength(1);
     // 生成物字段级（§3.3 #59l/#35 回写形态：ArtifactRow 四字段 + EditorEntry 两字段）
     const row: import("./generated/ArtifactRow").ArtifactRow = {
       path: "/proj/a.txt",

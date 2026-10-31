@@ -21,6 +21,14 @@ const permissionStatusMock = vi.fn<() => Promise<NotificationPermissionStatus>>(
 const openSettingsMock = vi.fn<() => Promise<void>>();
 const openDirMock = vi.fn<(path: string) => Promise<void>>();
 const searchTestMock = vi.fn<(args: { target: string }) => Promise<unknown>>();
+const listLogFilesMock = vi.fn<() => Promise<string[]>>();
+const openLogsDirMock = vi.fn<() => Promise<void>>();
+const readSessionLogMock =
+  vi.fn<
+    (args: { sessionId: string; tail?: number }) => Promise<{
+      lines: string[];
+    }>
+  >();
 // 只替换读/存配置、通知引导、open_dir 与搜索连通测试，其余保留 client.ts 真实现
 vi.mock("@/ipc/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/ipc/client")>();
@@ -32,6 +40,9 @@ vi.mock("@/ipc/client", async (importOriginal) => {
     openNotificationSettings: () => openSettingsMock(),
     openDir: (path: string) => openDirMock(path),
     searchTest: (args: { target: string }) => searchTestMock(args),
+    listLogFiles: () => listLogFilesMock(),
+    openLogsDir: () => openLogsDirMock(),
+    readSessionLog: (args: { sessionId: string; tail?: number }) => readSessionLogMock(args),
   };
 });
 
@@ -87,6 +98,13 @@ beforeEach(() => {
   permissionStatusMock.mockResolvedValue({ status: "granted", hasSettingsEntry: true });
   // openDir 默认成功（三入口接线用例按需覆盖为 reject）
   openDirMock.mockResolvedValue(undefined);
+  // 32 号票日志三命令：缺省空清单/成功打开/空行（查看器用例按需覆盖）
+  listLogFilesMock.mockReset();
+  openLogsDirMock.mockReset();
+  readSessionLogMock.mockReset();
+  listLogFilesMock.mockResolvedValue([]);
+  openLogsDirMock.mockResolvedValue(undefined);
+  readSessionLogMock.mockResolvedValue({ lines: [] });
   useSettingsStore.setState({
     config: structuredClone(BASE_CONFIG),
     baseline: structuredClone(BASE_CONFIG),
@@ -273,11 +291,15 @@ describe("数据目录入口（03 号票 open_dir 三按钮）", () => {
     await waitFor(() => expect(screen.getByText(/E_PATH_OUTSIDE_ROOTS/)).toBeTruthy());
   });
 
-  it("日志页「打开日志目录」按 ~/ 语义路径调 open_dir", async () => {
+  it("日志页「打开日志目录」走 open_logs_dir（32 号票：免路径传参，后端固定打开 ~/.craftwave/logs）", async () => {
     render(<SettingsPage initialPage="logs" onClose={() => {}} />);
     const button = await screen.findByTestId("open-logs-dir");
     fireEvent.click(button);
-    await waitFor(() => expect(openDirMock).toHaveBeenCalledWith("~/.craftwave/logs"));
+    await waitFor(() => expect(openLogsDirMock).toHaveBeenCalledWith());
+    // 失败 → 行内提示错误码与消息
+    openLogsDirMock.mockRejectedValue({ code: "E_IO", message: "系统打开目录失败" });
+    fireEvent.click(button);
+    await waitFor(() => expect(screen.getByText(/E_IO/)).toBeTruthy());
   });
 
   it("工作区与智能体页：有项目会话时按钮携带 <homeDir>/.craftwave；无项目会话禁用", async () => {
@@ -586,6 +608,76 @@ describe("命令审计模型（36 号票，agent.commandAudit.modelId）", () =>
     fireEvent.change(select, { target: { value: "" } });
     expect(useSettingsStore.getState().config?.agent?.commandAudit?.modelId).toBeUndefined();
     unmount();
+  });
+});
+
+describe("会话日志查看器（32 号票：级别写回/拉取/空态/标题映射）", () => {
+  it("级别下拉写进草稿 log.level 并随保存提交；旁注含 verbose 说明", async () => {
+    saveConfigMock.mockImplementation(async (config) => structuredClone(config));
+    render(<SettingsPage initialPage="logs" onClose={() => {}} />);
+    // 日志组里唯一的 select 是级别下拉
+    const levelSelect = await screen
+      .findAllByRole("combobox")
+      .then((all) => all.find((el) => (el as HTMLSelectElement).value === "info"));
+    expect(levelSelect).toBeTruthy();
+    fireEvent.change(levelSelect as HTMLSelectElement, { target: { value: "debug" } });
+    expect(useSettingsStore.getState().config?.log.level).toBe("debug");
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(saveConfigMock).toHaveBeenCalled());
+    expect(saveConfigMock.mock.calls.at(-1)?.[0].log).toEqual({ level: "debug" });
+    // 旁注：Debug=详细模式说明（图片仅路径/摘要、已脱敏）
+    expect(screen.getByText(/Debug=详细模式/).textContent).toContain("不含图片本体");
+  });
+
+  it("查看器：清单过滤 sessions/ 前缀、活跃 Tab 标题映射、拉尾部渲染只读日志面", async () => {
+    useSessionsStore.setState({
+      tabs: [
+        {
+          id: "s1",
+          title: "修登录页的会话",
+          createdAt: 0,
+          updatedAt: 0,
+          revision: 0,
+          messageCount: 1,
+          totalTokens: 0,
+          authorizedExternalDirs: [],
+        },
+      ],
+    });
+    listLogFilesMock.mockResolvedValue(["app.log", "sessions/s1.jsonl", "sessions/s2.jsonl.1"]);
+    readSessionLogMock.mockResolvedValue({
+      lines: [
+        '{"ts":"2026-10-30T08:00:00Z","level":"info","kind":"run","msg":"run 开始"}',
+        '{"ts":"2026-10-30T08:00:01Z","level":"error","kind":"tool","msg":"工具执行失败：文件不存在"}',
+        "这行是坏行（非 JSON）",
+      ],
+    });
+    render(<SettingsPage initialPage="logs" onClose={() => {}} />);
+    // 选择器：s1 用 Tab 标题映射，s2 无映射显示 id；app.log 不入选项
+    await waitFor(() => expect(listLogFilesMock).toHaveBeenCalled());
+    const picker = await screen.findByTestId("log-session-select");
+    const options = Array.from(picker.querySelectorAll("option")).map((o) => o.textContent);
+    expect(options).toContain("修登录页的会话");
+    expect(options.join()).toContain("s2");
+    expect(options.join()).not.toContain("app.log");
+    // 选择 s1 → 拉尾部 500 行 → 只读面渲染三行（坏行原样）
+    fireEvent.change(picker, { target: { value: "s1" } });
+    await waitFor(() =>
+      expect(readSessionLogMock).toHaveBeenCalledWith({ sessionId: "s1", tail: 500 }),
+    );
+    const linesBox = await screen.findByTestId("log-viewer-lines");
+    expect(linesBox.textContent).toContain("run 开始");
+    expect(linesBox.textContent).toContain("工具执行失败：文件不存在");
+    expect(linesBox.textContent).toContain("这行是坏行（非 JSON）");
+    // 刷新钮：再拉一次
+    fireEvent.click(screen.getByTestId("log-refresh"));
+    await waitFor(() => expect(readSessionLogMock).toHaveBeenCalledTimes(2));
+  });
+
+  it("空态：无日志文件时显示引导文案（先开 Debug 再跑对话）", async () => {
+    render(<SettingsPage initialPage="logs" onClose={() => {}} />);
+    await waitFor(() => expect(listLogFilesMock).toHaveBeenCalled());
+    expect(screen.getByText(/暂无该会话的日志/).textContent).toContain("Debug");
   });
 });
 

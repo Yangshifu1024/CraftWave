@@ -146,10 +146,21 @@ const zh = {
   // ---- 日志页 ----
   sectionLogging: "日志记录",
   logLevel: "日志级别",
-  logLevelDesc: "进程日志的输出级别；排障时可临时调到 debug。",
+  logLevelDesc:
+    "进程日志的输出级别；Debug=详细模式，记录请求响应文字及图片路径/摘要信息（已脱敏，不含图片本体）。修改即时生效，无需重启。",
   logDir: "日志目录",
-  logDirDesc: "进程日志与排障信息的落盘位置（~/.craftwave/logs）。",
+  logDirDesc: "应用日志、会话日志与命令输出的落盘位置（~/.craftwave/logs）。",
   openLogsDir: "打开日志目录",
+  // ---- 会话日志查看器（32 号票） ----
+  sectionLogViewer: "会话日志查看器",
+  logViewerDesc: "按会话拉取诊断日志（拉取式，非实时流）。",
+  logSessionPicker: "选择会话",
+  logSessionPickerAria: "选择要查看日志的会话",
+  logRefresh: "刷新",
+  logRefreshAria: "重新拉取日志尾部",
+  logEmpty:
+    "暂无该会话的日志；把日志级别调到 Debug（详细模式）并跑一轮对话后，这里可以看到脱敏后的请求/响应与运行过程。",
+  logLinesAria: "会话日志内容（只读）",
   // ---- 智能体页 ----
   sectionAgent: "智能体",
   customPrompt: "自定义提示词",
@@ -466,10 +477,20 @@ const en: Record<keyof typeof zh, string> = {
     'Allowlist is empty; tick "Add to allowlist" in approval dialogs or type a command prefix here — matching commands skip approval globally.',
   sectionLogging: "Logging",
   logLevel: "Log level",
-  logLevelDesc: "Process log output level; temporarily switch to debug when troubleshooting.",
+  logLevelDesc:
+    "Process log output level; Debug = verbose mode, records request/response text plus image path/summary info (redacted, no image bytes). Changes apply immediately, no restart needed.",
   logDir: "Log directory",
-  logDirDesc: "Where process logs and troubleshooting info are written (~/.craftwave/logs).",
+  logDirDesc: "Where app logs, session logs and command output are written (~/.craftwave/logs).",
   openLogsDir: "Open log directory",
+  sectionLogViewer: "Session log viewer",
+  logViewerDesc: "Fetch diagnostic logs per session (pull-based, no live stream).",
+  logSessionPicker: "Select session",
+  logSessionPickerAria: "Select the session whose logs to view",
+  logRefresh: "Refresh",
+  logRefreshAria: "Re-fetch the log tail",
+  logEmpty:
+    "No logs for this session yet; switch the log level to Debug (verbose) and run a conversation to see redacted requests/responses and runtime activity here.",
+  logLinesAria: "Session log content (read-only)",
   sectionAgent: "Agent",
   customPrompt: "Custom prompt",
   customPromptDesc:

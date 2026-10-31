@@ -98,6 +98,7 @@ fn assemble(
         session_id: "sess-e2e".to_owned(),
         run_id: "run-e2e".to_owned(),
         data_root: std::env::temp_dir().join("cw-web-gate-e2e"),
+        ask_log: None,
         mcp: None,
         skills: None,
         subagents: None,
