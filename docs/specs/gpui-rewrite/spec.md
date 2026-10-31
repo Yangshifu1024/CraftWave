@@ -7,7 +7,8 @@
 
 - **决策**：用 GPUI 纯 Rust 技术栈完全取代现有 Tauri + React + assistant-ui + TypeScript 技术栈。不经 nsh（评估结论：nsh+TSX 需维护两层语言与桥接，组件生态更小，无第三方生产案例；GPUI 有 Zed 大规模生产验证 + Wake 同型验证）。
 - **蓝本依据**：Wake 精读覆盖了本应用全部关键面——聊天消息渲染、侧栏、⌘K、桌面骨架（菜单/键位/窗口/深浅色）、分发链（三平台 CI）、UI 测试装置。参考位置在各票内标注。
-- **组件生态**：gpui-component（Wake pin rev `fd3bc2bbb8a2c4dfe268c1475682476ada54cd0c`）提供 Markdown 渲染（TextView）、tree-sitter 代码高亮、不等高虚拟列表、Input、系统通知、AutoScroll 等；后续可评估演进版 gpui-kit（pin GPUI 版本并 re-export）。**依赖一律 pin rev，升级走显式提交。**
+- **组件生态（已定稿，07 号票）**：**gpui-kit 0.8.1 门面**（crates.io，内部为 gpui-pre 家族 + gpui-base/gpui-component 0.8.1）+ gpui-fps 0.8.1（性能 HUD）+ tray-icon/global-hotkey（托盘/热键）。**不直接依赖 crates.io 的 `gpui` 0.2.2**（与 gpui-kit 内部 gpui-pre 家族是双实例，trait 互不相认）；**不 git 依赖 zed 仓库**（Wake 的做法，供应链风险大，已验证不需要）。API 面核对全部通过：TextView::markdown、AutoScroll、Textarea+submit_on_enter、TitleBar、SystemNotification、主题 token。**版本变更一律显式提交。**
+- **Spike 结论（2026-10-31，七票全绿零失败）**：性能达标（3000 条混合消息 FRAME 5.5-12.6ms、GPU <2%、MEM ~130MB）、IME 全流程通过、托盘/热键共存实测通过、macOS 13.0 维持、引擎解耦无需 trait（剥壳+挪 AppState+剥 backup.rs，一天内）。关键坑与解法记录于 tasks/01-07 各票 Comments。
 - **框架级未知项已清零**：托盘/全局热键走独立 crate（`tray-icon`/`global-hotkey`，框架无关，channel→`cx.spawn` 消费即可）；系统通知 gpui-component 原生；更新器查 gpui-kit Auto Update 页，覆盖则用，否则按自研骨架继续。
 
 ## 终态定义
