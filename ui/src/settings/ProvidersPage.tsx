@@ -29,6 +29,7 @@ import { Card } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/ui/confirm";
 import { Dialog } from "@/components/ui/dialog";
 import { CheckableTag, Tag } from "@/components/ui/tag";
+import { useT } from "@/i18n/core";
 import type { ProviderConfig, ProviderModel } from "@/ipc/types";
 import { PencilIcon, PlusIcon, TrashIcon } from "@/settings/icons";
 import {
@@ -73,6 +74,7 @@ type View = { kind: "list" } | { kind: "add" } | { kind: "edit"; providerId: str
  * 所有改动只写设置草稿（patchConfig），统一由设置页页头「保存」提交。
  */
 export function ProvidersPage() {
+  const t = useT();
   const config = useSettingsStore((s) => s.config);
   const patchConfig = useSettingsStore((s) => s.patchConfig);
 
@@ -271,19 +273,17 @@ export function ProvidersPage() {
     <div className="setting-anchor" data-setting-id="providers">
       <section className="settings-section settings-provider-section">
         <div className="flex items-center justify-between gap-3">
-          <h3 className="settings-section-title">供应商</h3>
+          <h3 className="settings-section-title">{t("settings.providersSection")}</h3>
           <Button onClick={startAddProvider}>
             <PlusIcon className="h-4 w-4" />
-            添加供应商
+            {t("settings.addProvider")}
           </Button>
         </div>
         <div className="settings-section-card">
           {activeConfig.providers.length === 0 ? (
             <div className="px-5 py-14 text-center text-ui-base text-[var(--muted-foreground)]">
-              暂无供应商
-              <div className="mt-1 text-ui-sm">
-                点右上「添加供应商」，配置端点与 API Key 后即可开始对话。
-              </div>
+              {t("settings.noProviders")}
+              <div className="mt-1 text-ui-sm">{t("settings.noProvidersHint")}</div>
             </div>
           ) : (
             <div className="settings-provider-cards">
@@ -307,7 +307,7 @@ export function ProvidersPage() {
                       // 用 x-api-key + anthropic-version），不再限制方言
                       onClick={() => testSavedProvider(p)}
                     >
-                      测试连接
+                      {t("settings.testConnectionShort")}
                     </Button>,
                     <Button
                       key="edit"
@@ -316,7 +316,7 @@ export function ProvidersPage() {
                       onClick={() => startEditProvider(p)}
                     >
                       <PencilIcon className="h-3.5 w-3.5" />
-                      编辑
+                      {t("settings.edit")}
                     </Button>,
                     <Button
                       key="delete"
@@ -326,43 +326,53 @@ export function ProvidersPage() {
                       onClick={() => setConfirmState({ kind: "provider", provider: p })}
                     >
                       <TrashIcon className="h-3.5 w-3.5" />
-                      删除
+                      {t("settings.delete")}
                     </Button>,
                   ]}
                 >
                   <div className="settings-provider-card-content">
                     <div className="settings-provider-endpoint">
-                      <span className="settings-provider-block-label">API 端点</span>
+                      <span className="settings-provider-block-label">
+                        {t("settings.apiEndpoint")}
+                      </span>
                       <span
                         className="settings-provider-endpoint-url"
                         title={p.baseUrl || undefined}
                       >
                         {p.baseUrl || "-"}
                       </span>
-                      {p.local && <Tag>本地 / 离线可用</Tag>}
+                      {p.local && <Tag>{t("settings.localTag")}</Tag>}
                     </div>
                     <ConnectionTestResult test={cardTests[p.id] ?? { state: "idle" }} />
                     <div className="border-t border-[var(--border)] pt-3">
-                      <span className="settings-provider-block-label">模型列表</span>
+                      <span className="settings-provider-block-label">
+                        {t("settings.modelList")}
+                      </span>
                       <div className="mt-1.5">
                         {p.models.length > 0 ? (
                           p.models.map((model) => (
                             <div className="settings-provider-model" key={model.id}>
                               <span className="settings-provider-model-name">{model.model}</span>
                               <span className="settings-provider-model-limits">
-                                {Math.round(model.contextWindow / 1000)}k 上下文 ·{" "}
-                                {Math.round(model.maxTokens / 1000)}k 输出
+                                {t("settings.modelWindowOutput", {
+                                  window: Math.round(model.contextWindow / 1000),
+                                  output: Math.round(model.maxTokens / 1000),
+                                })}
                               </span>
                               <span className="settings-provider-model-tags">
-                                {model.vision && <Tag>图像</Tag>}
+                                {model.vision && <Tag>{t("settings.modelVisionTag")}</Tag>}
                                 {activeConfig.activeModelId === model.id && (
-                                  <Tag className="settings-provider-active-tag">当前</Tag>
+                                  <Tag className="settings-provider-active-tag">
+                                    {t("settings.modelActiveTag")}
+                                  </Tag>
                                 )}
                               </span>
                             </div>
                           ))
                         ) : (
-                          <span className="settings-provider-model-limits">暂无模型</span>
+                          <span className="settings-provider-model-limits">
+                            {t("settings.noModels")}
+                          </span>
                         )}
                       </div>
                     </div>
@@ -380,24 +390,28 @@ export function ProvidersPage() {
         title={
           modelEditor
             ? modelEditor.isNew
-              ? "添加模型"
-              : "编辑模型"
+              ? t("settings.addModel")
+              : t("settings.editModel")
             : view.kind === "add"
-              ? "添加供应商"
-              : "编辑供应商"
+              ? t("settings.addProviderTitle")
+              : t("settings.editProviderTitle")
         }
         onClose={closeProviderModal}
         width={860}
         actions={
           modelEditor
             ? [
-                { label: "返回供应商", variant: "ghost", onClick: () => setModelEditor(null) },
-                { label: "保存模型", onClick: commitModel },
+                {
+                  label: t("onboarding.backToProvider"),
+                  variant: "ghost",
+                  onClick: () => setModelEditor(null),
+                },
+                { label: t("onboarding.saveModel"), onClick: commitModel },
               ]
             : [
-                { label: "取消", variant: "ghost", onClick: closeProviderModal },
+                { label: t("settings.cancel"), variant: "ghost", onClick: closeProviderModal },
                 {
-                  label: view.kind === "add" ? "添加供应商" : "完成",
+                  label: view.kind === "add" ? t("settings.addProviderTitle") : t("settings.done"),
                   onClick: () => (view.kind === "add" ? submitAdd() : finishEdit()),
                 },
               ]
@@ -421,12 +435,14 @@ export function ProvidersPage() {
                 {view.kind === "add" && (
                   <>
                     <p className="mb-2 text-ui-sm text-[var(--muted-foreground)]">
-                      填写端点与凭据后添加；模型定义完全以你的输入为准（无内置目录）。建议保存前点供应商卡片上的「测试连接」验证连通。
+                      {t("settings.providerAddHint")}
                     </p>
                     {/* 预设快捷填充（19 号票）：本地三家标注「本地 / 离线可用」，
                         免 API Key（选中后 Key 行替换为说明文案） */}
                     <div className="mb-4 flex flex-wrap items-center gap-1.5">
-                      <span className="text-ui-sm text-[var(--cw-text-2)]">从预设填充：</span>
+                      <span className="text-ui-sm text-[var(--cw-text-2)]">
+                        {t("settings.fillFromPreset")}
+                      </span>
                       {BUILTIN_PRESETS.map((preset) => (
                         <CheckableTag
                           key={preset.slug}
@@ -436,7 +452,7 @@ export function ProvidersPage() {
                           onChange={() => applyPreset(preset.slug)}
                         >
                           {preset.name}
-                          {preset.local ? " · 本地" : ""}
+                          {preset.local ? t("settings.presetLocal") : ""}
                         </CheckableTag>
                       ))}
                     </div>
@@ -521,12 +537,14 @@ export function ProvidersPage() {
         open={confirmState !== null}
         title={
           confirmState?.kind === "provider"
-            ? `删除「${confirmState.provider.name || confirmState.provider.id}」?`
+            ? t("settings.deleteConfirmProvider", {
+                name: confirmState.provider.name || confirmState.provider.id,
+              })
             : confirmState?.kind === "model"
-              ? `删除「${confirmState.model.model}」?`
+              ? t("settings.deleteConfirmModel", { name: confirmState.model.model })
               : ""
         }
-        confirmLabel="删除"
+        confirmLabel={t("settings.delete")}
         onCancel={() => setConfirmState(null)}
         onConfirm={() => {
           if (confirmState?.kind === "provider") {

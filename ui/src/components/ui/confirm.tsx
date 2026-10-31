@@ -3,6 +3,7 @@
  * 居中小卡片 + 危险色确认按钮；Esc / 遮罩点击 = 取消。
  * 是 Dialog 的定装组合，供"删除供应商/模型"等二次确认场景复用。
  */
+import { t } from "@/i18n/core";
 import { Dialog, type DialogActionItem } from "./dialog";
 
 /** ConfirmDialog 的 props：open 是否显示；title 标题；description 补充说明；
@@ -26,7 +27,7 @@ export function ConfirmDialog({
   onCancel,
 }: ConfirmDialogProps) {
   const actions: DialogActionItem[] = [
-    { label: "取消", variant: "ghost", onClick: onCancel },
+    { label: t("workspace.cancel"), variant: "ghost", onClick: onCancel },
     { label: confirmLabel, variant: "danger", onClick: onConfirm },
   ];
   return (

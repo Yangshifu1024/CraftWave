@@ -1,28 +1,34 @@
 import { cjk } from "@streamdown/cjk";
 import { code } from "@streamdown/code";
 import { Streamdown, type StreamdownProps } from "streamdown";
+import { t } from "@/i18n/core";
 
 const plugins = { cjk, code };
 const streamingPlugins = { cjk };
-const translations: StreamdownProps["translations"] = {
-  close: "关闭",
-  copied: "已复制",
-  copyCode: "复制代码",
-  copyLink: "复制链接",
-  copyTable: "复制表格",
-  copyTableAsCsv: "复制为 CSV",
-  copyTableAsMarkdown: "复制为 Markdown",
-  copyTableAsTsv: "复制为 TSV",
-  downloadFile: "下载代码",
-  downloadTable: "下载表格",
-  downloadTableAsCsv: "下载 CSV",
-  downloadTableAsMarkdown: "下载 Markdown",
-  externalLinkWarning: "即将打开外部链接，请确认地址可信。",
-  openExternalLink: "打开外部链接",
-  openLink: "打开链接",
-  viewFullscreen: "全屏查看",
-  exitFullscreen: "退出全屏",
-};
+
+/** streamdown 组件文案（31 号票 i18n）：渲染时查词——语言切换后新渲染的
+ *  Markdown 块即新语言。 */
+function translations(): StreamdownProps["translations"] {
+  return {
+    close: t("workspace.mdClose"),
+    copied: t("workspace.mdCopied"),
+    copyCode: t("workspace.mdCopyCode"),
+    copyLink: t("workspace.mdCopyLink"),
+    copyTable: t("workspace.mdCopyTable"),
+    copyTableAsCsv: t("workspace.mdCopyTableAsCsv"),
+    copyTableAsMarkdown: t("workspace.mdCopyTableAsMarkdown"),
+    copyTableAsTsv: t("workspace.mdCopyTableAsTsv"),
+    downloadFile: t("workspace.mdDownloadFile"),
+    downloadTable: t("workspace.mdDownloadTable"),
+    downloadTableAsCsv: t("workspace.mdDownloadTableAsCsv"),
+    downloadTableAsMarkdown: t("workspace.mdDownloadTableAsMarkdown"),
+    externalLinkWarning: t("workspace.mdExternalLinkWarning"),
+    openExternalLink: t("workspace.mdOpenExternalLink"),
+    openLink: t("workspace.mdOpenLink"),
+    viewFullscreen: t("workspace.mdViewFullscreen"),
+    exitFullscreen: t("workspace.mdExitFullscreen"),
+  };
+}
 
 /** 流式期间只解析正文，结束后再启用高亮，避免高亮任务与增量渲染竞争。 */
 export function Markdown({
@@ -41,7 +47,7 @@ export function Markdown({
       // 放开让表格按内容完整展开（横向溢出仍由组件的 overflow-x-auto 兜底）
       tableMaxHeight="none"
       plugins={streaming ? streamingPlugins : plugins}
-      translations={translations}
+      translations={translations()}
     >
       {children}
     </Streamdown>

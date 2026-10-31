@@ -25,6 +25,7 @@ import { usePlanStateStore } from "@/chat/plan-state";
 import { useRunMetricsStore } from "@/chat/run-metrics";
 import { reconnectIfNeeded } from "@/chat/run-reconnect";
 import { usageDelta, useUsageStatsStore } from "@/chat/usage-stats";
+import { t } from "@/i18n/core";
 import { EVENT_KEYS, listenEvent, loadSessionTree } from "@/ipc/client";
 import type {
   AskClosedEvent,
@@ -138,11 +139,7 @@ export function useBackendEvents(deps: EventBridgeDeps = defaultEventBridgeDeps)
         // 29 号票收敛（04 号票挂账清偿）：失败反馈改走顶部 Toast，行内
         // 常驻提示撤除——phase 复位（清除可能残留的 compacting 指示条）
         useCompactionStore.getState().setPhase(p.sessionId, null);
-        pushToast(
-          "error",
-          "上下文压缩失败",
-          "本次对话已继续（如可容纳）；可在右侧面板重试压缩，或开启新会话",
-        );
+        pushToast("error", t("toasts.compactFailed"), t("toasts.compactFailedDetail"));
       }),
       deps.listen(EVENT_KEYS.runInject, (p: RunInjectEvent) => {
         // steer 被消费：时间线本地插入插话节点（canonical 由 Rust 同 id 落盘，

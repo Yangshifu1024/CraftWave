@@ -16,6 +16,7 @@ import { MirrorDemo } from "@/chat/mirror/MirrorDemo";
 import { SessionWorkspace } from "@/chat/SessionWorkspace";
 import { ToastHost } from "@/components/ToastHost";
 import { applyHotkey } from "@/hotkey";
+import { initLangFromConfig } from "@/i18n/core";
 import { applyTheme } from "@/theme";
 import { applyUiFontSize } from "@/ui-font-size";
 
@@ -28,19 +29,30 @@ const ACTIVATION_TIMEOUT_MS = 5000;
  * 启动主题应用（FR-13-03）：通过 IPC 读配置里的 ui.theme 并应用。
  * invoke 是 Tauri 的 IPC 调用函数（前端请求 Rust 后端执行命令）；IPC 失败
  * （例如纯浏览器环境）时保持默认 system 主题，不阻断启动。
+ * 31 号票同通道追加：界面语言初始化（config.ui.language → i18n 内存态，
+ * zh-CN 兜底）。
  */
 function useThemeBoot() {
   useEffect(() => {
     let cancelled = false;
-    void invoke<{ ui?: { theme?: "light" | "dark" | "system"; fontSize?: number } }>("get_config")
+    void invoke<{
+      ui?: {
+        theme?: "light" | "dark" | "system";
+        fontSize?: number;
+        language?: "zh-CN" | "en-US";
+      };
+    }>("get_config")
       .then((config) => {
         if (!cancelled) {
           applyTheme(config.ui?.theme ?? "system");
           applyUiFontSize(config.ui?.fontSize);
+          if (config.ui?.language !== undefined) {
+            initLangFromConfig(config.ui.language);
+          }
         }
       })
       .catch(() => {
-        // 纯浏览器/IPC 异常：维持默认 system
+        // 纯浏览器/IPC 异常：维持默认 system 主题与 zh-CN 语言
       });
     return () => {
       // 组件卸载后不再应用结果（避免竞态写主题）

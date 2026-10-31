@@ -26,6 +26,7 @@ import { Input, Textarea } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { applyHotkey, eventToAccelerator, formatAccelerator, useHotkeyStore } from "@/hotkey";
+import { setLang, t, useT } from "@/i18n/core";
 import {
   notificationPermissionStatus,
   openDir,
@@ -141,6 +142,7 @@ export function SettingsPage({
   onClose: () => void;
   initialPage?: PageKey;
 }) {
+  const t = useT();
   const config = useSettingsStore((s) => s.config);
   const baseline = useSettingsStore((s) => s.baseline);
   const loading = useSettingsStore((s) => s.loading);
@@ -186,13 +188,14 @@ export function SettingsPage({
   }, [config, baseline]);
   const anyDirty = PAGE_ORDER.some((key) => dirtyMap[key]);
 
-  // 搜索命中：按页名过滤（trim 后非空即搜索态，结果替掉导航列表）
+  // 搜索命中：按页名过滤（trim 后非空即搜索态，结果替掉导航列表；页名经
+  // t() 查当前语言后再匹配——搜索跟随界面语言）
   const searching = query.trim() !== "";
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (q === "") return [] as PageKey[];
-    return PAGE_ORDER.filter((key) => PAGE_LABEL[key].toLowerCase().includes(q));
-  }, [query]);
+    return PAGE_ORDER.filter((key) => t(PAGE_LABEL[key]).toLowerCase().includes(q));
+  }, [query, t]);
 
   /** 切页 / 返回工作区共用：有脏改动先走三选拦截 */
   function requestTab(next: PageKey) {
@@ -245,11 +248,15 @@ export function SettingsPage({
   async function handleSave(): Promise<boolean> {
     const ok = await saveAll();
     if (ok) {
-      pushToast("success", "设置已保存");
+      pushToast("success", t("toasts.settingsSaved"));
       const saved = useSettingsStore.getState().config;
       if (saved) void applyHotkey(saved.ui.hotkey);
     } else {
-      pushToast("error", "设置保存失败", useSettingsStore.getState().error ?? undefined);
+      pushToast(
+        "error",
+        t("toasts.settingsSaveFailed"),
+        useSettingsStore.getState().error ?? undefined,
+      );
     }
     return ok;
   }
@@ -326,9 +333,9 @@ export function SettingsPage({
       data-testid="settings-page"
       role="dialog"
       aria-modal="true"
-      aria-label="设置"
+      aria-label={t("settings.title")}
     >
-      <nav className="settings-nav" aria-label="设置分区导航">
+      <nav className="settings-nav" aria-label={t("settings.navAria")}>
         <div className="settings-nav-head">
           <Button
             ref={backRef}
@@ -337,14 +344,14 @@ export function SettingsPage({
             onClick={requestClose}
           >
             <ArrowLeftIcon className="h-4 w-4" />
-            返回工作区
+            {t("settings.navBack")}
           </Button>
           <div className="settings-search relative">
             <SearchIcon className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-[var(--muted-foreground)]" />
             <Input
               className="pl-9"
-              aria-label="搜索设置"
-              placeholder="搜索设置"
+              aria-label={t("settings.searchPlaceholder")}
+              placeholder={t("settings.searchPlaceholder")}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />
@@ -352,11 +359,17 @@ export function SettingsPage({
         </div>
 
         {searching ? (
-          <div className="settings-nav-list" role="listbox" aria-label="搜索结果">
+          <div
+            className="settings-nav-list"
+            role="listbox"
+            aria-label={t("settings.searchResultsAria")}
+          >
             {results.length === 0 ? (
               <div className="px-2 py-3 text-ui-sm text-[var(--cw-dim)]">
-                <div className="mb-1 text-ui-sm text-[var(--cw-text-2)]">没有匹配的设置页</div>
-                换个关键词试试
+                <div className="mb-1 text-ui-sm text-[var(--cw-text-2)]">
+                  {t("settings.searchNoMatch")}
+                </div>
+                {t("settings.searchTryOther")}
               </div>
             ) : (
               results.map((key) => (
@@ -369,9 +382,9 @@ export function SettingsPage({
                   onClick={() => requestTab(key)}
                 >
                   <span className="settings-nav-label">
-                    <span className="truncate">{PAGE_LABEL[key]}</span>
+                    <span className="truncate">{t(PAGE_LABEL[key])}</span>
                     <span className="ml-auto text-ui-sm text-[var(--cw-dim)]">
-                      {PAGE_LABEL[key]}
+                      {t(PAGE_LABEL[key])}
                     </span>
                   </span>
                 </button>
@@ -388,7 +401,7 @@ export function SettingsPage({
             {PAGE_GROUPS.map((group) => (
               <Fragment key={group.title}>
                 <div className="settings-nav-group" role="presentation">
-                  {group.title}
+                  {t(group.title)}
                 </div>
                 {group.pages.map((key) => {
                   const Icon = PAGE_ICON[key];
@@ -406,9 +419,9 @@ export function SettingsPage({
                     >
                       <span className="settings-nav-label">
                         <Icon className="settings-nav-icon" />
-                        {PAGE_LABEL[key]}
+                        {t(PAGE_LABEL[key])}
                         {dirtyMap[key] && (
-                          <span className="settings-dirty-dot" title="有未保存的改动" />
+                          <span className="settings-dirty-dot" title={t("settings.dirtyDot")} />
                         )}
                       </span>
                     </button>
@@ -421,11 +434,19 @@ export function SettingsPage({
       </nav>
 
       <div className="settings-content">
-        {error && <Alert variant="error" title={`错误：${error}`} className="m-4" />}
-        {loading && !config && <Alert variant="info" title="加载配置中…" className="m-4" />}
+        {error && (
+          <Alert
+            variant="error"
+            title={t("settings.errorPrefix", { message: error })}
+            className="m-4"
+          />
+        )}
+        {loading && !config && (
+          <Alert variant="info" title={t("settings.loading")} className="m-4" />
+        )}
         <div className="settings-actions">
-          <span className="settings-actions-title">{PAGE_LABEL[tab]}</span>
-          {anyDirty && <span className="settings-dirty-dot" title="有未保存的改动" />}
+          <span className="settings-actions-title">{t(PAGE_LABEL[tab])}</span>
+          {anyDirty && <span className="settings-dirty-dot" title={t("settings.dirtyDot")} />}
           <div className="settings-actions-buttons">
             <Button
               variant="outline"
@@ -434,10 +455,10 @@ export function SettingsPage({
                 void resetDraft().then(() => onClose());
               }}
             >
-              取消
+              {t("settings.cancel")}
             </Button>
             <Button disabled={!config || saving} onClick={() => void handleSave()}>
-              {saving ? "保存中…" : "保存"}
+              {saving ? t("settings.saving") : t("settings.save")}
             </Button>
           </div>
         </div>
@@ -455,15 +476,23 @@ export function SettingsPage({
 
       <Dialog
         open={leaveIntent !== null}
-        title="有未保存的设置改动"
+        title={t("settings.leaveTitle")}
         onClose={() => void answerLeave("stay")}
         actions={[
-          { label: "留在原地", variant: "ghost", onClick: () => void answerLeave("stay") },
-          { label: "放弃改动", variant: "danger", onClick: () => void answerLeave("discard") },
-          { label: "保存并离开", onClick: () => void answerLeave("save") },
+          {
+            label: t("settings.leaveStay"),
+            variant: "ghost",
+            onClick: () => void answerLeave("stay"),
+          },
+          {
+            label: t("settings.leaveDiscard"),
+            variant: "danger",
+            onClick: () => void answerLeave("discard"),
+          },
+          { label: t("settings.leaveSave"), onClick: () => void answerLeave("save") },
         ]}
       >
-        离开前请选择如何处理这些改动；取消按钮会直接放弃全部未保存改动。
+        {t("settings.leaveBody")}
       </Dialog>
     </div>
   );
@@ -629,15 +658,14 @@ function NotificationPermissionNotice({
   status: string;
   hasSettingsEntry: boolean;
 }) {
+  const t = useT();
   return (
     <Alert
       variant="warning"
       className="m-3"
       title={
         <span className="flex flex-wrap items-center gap-2">
-          {status === "denied"
-            ? "通知权限已被拒绝，系统通知无法送达。"
-            : "macOS 尚未授予通知权限，系统通知将无法送达。"}
+          {status === "denied" ? t("settings.notifyDenied") : t("settings.notifyNotDetermined")}
           {hasSettingsEntry && (
             <button
               type="button"
@@ -649,7 +677,7 @@ function NotificationPermissionNotice({
                 );
               }}
             >
-              打开系统设置
+              {t("settings.openSystemSettings")}
             </button>
           )}
         </span>
@@ -662,6 +690,7 @@ function NotificationPermissionNotice({
  *  （含 19 号票的 macOS 授权引导：未授权/被拒时提示并给系统设置入口）
  *  + 窗口行为（29 号票：关闭按钮行为 + 全局快捷键）。 */
 function AppearancePage() {
+  const t = useT();
   const config = useSettingsStore((s) => s.config);
   const patchConfig = useSettingsStore((s) => s.patchConfig);
   const permission = useNotificationPermission();
@@ -671,41 +700,46 @@ function AppearancePage() {
   const notifications = config.notifications ?? { enabled: true, interventionOnly: false };
   const patchNotifications = (patch: Partial<AppConfig["notifications"]>) =>
     patchConfig({ notifications: { ...notifications, ...patch } });
+  // 界面语言即时生效（31 号票）：选择即切 i18n 内存态（全界面无刷新换语言）
+  // 并整份保存落盘（语言是全局即时项，与其他草稿字段的「显式保存」不同——
+  // 先例：白名单追加/供应商表单的即时持久化通道）。
+  const changeLanguage = (language: AppConfig["ui"]["language"]) => {
+    setLang(language);
+    patchUi({ language });
+    void useSettingsStore.getState().saveAll();
+  };
 
   return (
     <div>
-      <SettingsSection title="主题">
+      <SettingsSection title={t("settings.sectionTheme")}>
         <div className="py-4">
           <div className="settings-choice-list">
             <ChoiceCard
               active={(config.ui.theme ?? "system") === "light"}
-              title="浅色"
-              description="常亮界面，适合白天与强光环境。"
+              title={t("settings.themeLight")}
+              description={t("settings.themeLightDesc")}
               onClick={() => patchUi({ theme: "light" })}
             />
             <ChoiceCard
               active={(config.ui.theme ?? "system") === "dark"}
-              title="深色"
-              description="暗色界面，适合夜间与低光环境。"
+              title={t("settings.themeDark")}
+              description={t("settings.themeDarkDesc")}
               onClick={() => patchUi({ theme: "dark" })}
             />
             <ChoiceCard
               active={(config.ui.theme ?? "system") === "system"}
-              title="跟随系统"
-              description="随操作系统的外观设置自动切换。"
+              title={t("settings.themeSystem")}
+              description={t("settings.themeSystemDesc")}
               onClick={() => patchUi({ theme: "system" })}
             />
           </div>
         </div>
       </SettingsSection>
-      <SettingsSection title="字号">
-        <SettingsRow
-          title="界面字号"
-          description="即时预览文字大小，保存后在下次启动时生效。默认 14px。"
-        >
+      <SettingsSection title={t("settings.sectionFontSize")}>
+        <SettingsRow title={t("settings.fontSizeTitle")} description={t("settings.fontSizeDesc")}>
           <label className="flex w-full items-center gap-3 text-ui-base">
             <input
-              aria-label="界面字号"
+              aria-label={t("settings.fontSizeTitle")}
               type="range"
               min={12}
               max={18}
@@ -718,7 +752,7 @@ function AppearancePage() {
           </label>
         </SettingsRow>
       </SettingsSection>
-      <SettingsSection title="系统通知">
+      <SettingsSection title={t("settings.sectionNotifications")}>
         {permission !== null &&
           permission.status !== "granted" &&
           permission.status !== "unknown" && (
@@ -728,8 +762,8 @@ function AppearancePage() {
             />
           )}
         <SettingsRow
-          title="启用系统通知"
-          description="窗口后台/失焦时，运行完成与人工介入经系统通知提醒。"
+          title={t("settings.notifyEnable")}
+          description={t("settings.notifyEnableDesc")}
         >
           <Switch
             checked={notifications.enabled}
@@ -737,8 +771,8 @@ function AppearancePage() {
           />
         </SettingsRow>
         <SettingsRow
-          title="仅人工介入时通知"
-          description="开启后只在询问/审批等待时通知，运行完成不提醒。"
+          title={t("settings.notifyInterventionOnly")}
+          description={t("settings.notifyInterventionOnlyDesc")}
         >
           <Switch
             checked={notifications.interventionOnly}
@@ -747,22 +781,23 @@ function AppearancePage() {
         </SettingsRow>
       </SettingsSection>
       <AppearanceWindowBehavior config={config} patchUi={patchUi} />
-      <SettingsSection title="语言">
-        <SettingsRow title="界面语言" description="设置界面与提示文案的显示语言。">
+      <SettingsSection title={t("settings.sectionLanguage")}>
+        <SettingsRow title={t("settings.uiLanguage")} description={t("settings.uiLanguageDesc")}>
           <Select
             width="mid"
             value={config.ui.language}
-            onChange={(e) => patchUi({ language: e.target.value as AppConfig["ui"]["language"] })}
+            onChange={(e) => changeLanguage(e.target.value as AppConfig["ui"]["language"])}
           >
+            {/* 语言名用各自语言的本地名（i18n 惯例：语言选择器不翻译自身） */}
             <option value="zh-CN">简体中文</option>
             <option value="en-US">English</option>
           </Select>
         </SettingsRow>
-        <SettingsRow title="AI 回复语言" description="留空跟随用户输入语言。">
+        <SettingsRow title={t("settings.aiLanguage")} description={t("settings.aiLanguageDesc")}>
           <Input
             className="w-[240px] max-w-full"
             maxLength={40}
-            placeholder="如：简体中文"
+            placeholder={t("settings.aiLanguagePlaceholder")}
             value={config.ui.aiLanguage ?? ""}
             onChange={(e) =>
               patchUi({ aiLanguage: e.target.value.trim() === "" ? undefined : e.target.value })
@@ -792,25 +827,20 @@ function AppearanceWindowBehavior({
 }) {
   const hotkeyError = useHotkeyStore((s) => s.error);
   const hotkey = config.ui.hotkey ?? { enabled: true, accelerator: "alt+space" };
+  const t = useT();
   return (
-    <SettingsSection title="窗口行为">
-      <SettingsRow
-        title="关闭窗口时收进托盘"
-        description="开启：点关闭按钮最小化到系统托盘，后台继续运行。关闭：点关闭按钮直接退出（有运行中任务时先确认）。"
-      >
+    <SettingsSection title={t("settings.sectionWindowBehavior")}>
+      <SettingsRow title={t("settings.closeToTray")} description={t("settings.closeToTrayDesc")}>
         <Switch
-          aria-label="关闭窗口时收进托盘"
+          aria-label={t("settings.closeToTray")}
           data-testid="close-to-tray-switch"
           checked={config.ui.closeToTray ?? true}
           onCheckedChange={(v) => patchUi({ closeToTray: v })}
         />
       </SettingsRow>
-      <SettingsRow
-        title="启用全局快捷键"
-        description="系统级唤起/隐藏窗口（应用在后台时同样生效）。关闭后不占用任何系统快捷键。"
-      >
+      <SettingsRow title={t("settings.hotkeyEnable")} description={t("settings.hotkeyEnableDesc")}>
         <Switch
-          aria-label="启用全局快捷键"
+          aria-label={t("settings.hotkeyEnable")}
           data-testid="hotkey-enabled-switch"
           checked={hotkey.enabled}
           onCheckedChange={(v) => patchUi({ hotkey: { ...hotkey, enabled: v } })}
@@ -818,8 +848,8 @@ function AppearanceWindowBehavior({
       </SettingsRow>
       {hotkey.enabled && (
         <SettingsRow
-          title="唤起/隐藏组合键"
-          description="点击后按下新的组合键完成录制（需含至少一个非修饰键）；Esc 取消录制。保存后生效。"
+          title={t("settings.hotkeyRecorderTitle")}
+          description={t("settings.hotkeyRecorderDesc")}
         >
           <div className="flex min-w-0 flex-col items-end gap-1">
             <HotkeyRecorder
@@ -831,8 +861,10 @@ function AppearanceWindowBehavior({
                 data-testid="hotkey-error"
                 className="max-w-full text-right text-ui-sm text-[var(--danger)]"
               >
-                快捷键被其他应用占用：{formatAccelerator(hotkey.accelerator)}（{hotkeyError}
-                ），可改用其他组合键或关闭开关
+                {t("settings.hotkeyOccupied", {
+                  accelerator: formatAccelerator(hotkey.accelerator),
+                  message: hotkeyError,
+                })}
               </span>
             )}
           </div>
@@ -854,6 +886,9 @@ function HotkeyRecorder({
   value: string;
   onChange: (accelerator: string) => void;
 }) {
+  const t = useT();
+  const recordingLabel = t("settings.hotkeyRecording");
+  const recordingLabelAria = t("settings.hotkeyRecordAria");
   const [recording, setRecording] = useState(false);
   useEffect(() => {
     if (!recording) return;
@@ -880,11 +915,11 @@ function HotkeyRecorder({
       size="sm"
       data-testid="hotkey-recorder"
       data-hotkey-recording={recording ? "true" : "false"}
-      aria-label="录制唤起/隐藏组合键"
+      aria-label={recordingLabelAria}
       className={cn("min-w-36 font-mono", recording && "border-[var(--cw-focus)]")}
       onClick={() => setRecording(true)}
     >
-      {recording ? "按下组合键…（Esc 取消）" : formatAccelerator(value)}
+      {recording ? recordingLabel : formatAccelerator(value)}
     </Button>
   );
 }
@@ -900,13 +935,13 @@ function proxyUrlIssue(url: string): string | undefined {
   const trimmed = url.trim();
   const schemeHint = "http:// / https:// / socks5:// / socks5h://";
   const sep = trimmed.indexOf("://");
-  if (sep < 0) return `缺少协议前缀（支持 ${schemeHint}）`;
+  if (sep < 0) return t("settings.proxyMissingScheme", { hint: schemeHint });
   const scheme = trimmed.slice(0, sep).toLowerCase();
   if (!["http", "https", "socks5", "socks5h"].includes(scheme)) {
-    return `协议不支持：${scheme}://（支持 ${schemeHint}）`;
+    return t("settings.proxyUnsupportedScheme", { scheme, hint: schemeHint });
   }
   if (trimmed.slice(sep + 3).trim() === "") {
-    return "缺少主机部分（如 127.0.0.1:7890）";
+    return t("settings.proxyMissingHost");
   }
   return undefined;
 }
@@ -926,6 +961,7 @@ function proxyUrlIssue(url: string): string | undefined {
  *   连通测试（测试会消耗 1 credit，指引文案注明）。
  */
 function NetworkPage() {
+  const t = useT();
   const config = useSettingsStore((s) => s.config);
   const patchConfig = useSettingsStore((s) => s.patchConfig);
   if (!config) return null;
@@ -946,45 +982,42 @@ function NetworkPage() {
 
   return (
     <div>
-      <SettingsSection title="代理">
+      <SettingsSection title={t("settings.sectionProxy")}>
         <div className="py-4">
           <div className="settings-choice-list">
             <ChoiceCard
               active={mode === "none"}
-              title="不使用代理"
-              description="所有请求直连目标服务器（忽略环境变量代理）。"
+              title={t("settings.proxyNone")}
+              description={t("settings.proxyNoneDesc")}
               onClick={() => patchConfig({ proxy: { mode: "none" } })}
             />
             <ChoiceCard
               active={mode === "system"}
-              title="系统代理"
-              description="读取环境变量与操作系统代理设置。"
+              title={t("settings.proxySystem")}
+              description={t("settings.proxySystemDesc")}
               onClick={() => patchConfig({ proxy: { mode: "system" } })}
             />
             <ChoiceCard
               active={mode === "manual"}
-              title="自定义"
-              description="手动指定 HTTP(S)/SOCKS5 代理地址。"
+              title={t("settings.proxyManual")}
+              description={t("settings.proxyManualDesc")}
               onClick={() => patchConfig({ proxy: { mode: "manual", url: manualUrl } })}
             />
           </div>
           <p className="mt-2 text-ui-sm text-[var(--muted-foreground)]">
-            保存后下一次对话生效；进行中的对话不受影响。
+            {t("settings.proxyApplyHint")}
           </p>
         </div>
         {mode === "manual" && (
           <div className="border-t border-[var(--border)] py-4">
-            <SettingsRow
-              title="代理地址"
-              description="支持 http://、https://、socks5://、socks5h:// 前缀。"
-            >
+            <SettingsRow title={t("settings.proxyUrl")} description={t("settings.proxyUrlDesc")}>
               <div className="flex w-full flex-col items-end gap-1">
                 <Input
                   className={cn(
                     "w-[360px] max-w-full font-mono text-ui-sm",
                     manualIssue && "settings-field-error-input",
                   )}
-                  placeholder="http://127.0.0.1:7890 或 socks5://127.0.0.1:1080"
+                  placeholder={t("workspace.proxyUrlPlaceholder")}
                   value={manualUrl}
                   onChange={(e) => patchConfig({ proxy: { mode: "manual", url: e.target.value } })}
                 />
@@ -1013,6 +1046,7 @@ function NetworkSearchPage({
   patchSearch: (patch: Partial<NonNullable<AppConfig["search"]>>) => void;
   patchSearxng: (patch: Partial<AppConfig["search"]["searxng"]>) => void;
 }) {
+  const t = useT();
   // 连通测试态：{ testing: 进行中, result: 结果 | null }；两通道独立
   const [searxngTest, setSearxngTest] = useState<{
     testing: boolean;
@@ -1059,24 +1093,24 @@ function NetworkSearchPage({
 
   return (
     <div>
-      <SettingsSection title="本地搜索（SearXNG）">
+      <SettingsSection title={t("settings.sectionSearxng")}>
         <SettingsRow
-          title="启用 SearXNG"
-          description="自托管元搜索，启用且连通时 AI 搜索优先走本地（不经代理、不出内网）。默认关闭。"
+          title={t("settings.searxngEnable")}
+          description={t("settings.searxngEnableDesc")}
         >
           <Switch
-            aria-label="启用 SearXNG"
+            aria-label={t("settings.searxngEnable")}
             data-testid="searxng-enabled-switch"
             checked={search.searxng.enabled}
             onCheckedChange={(v) => patchSearxng({ enabled: v })}
           />
         </SettingsRow>
         <SettingsRow
-          title="服务地址"
-          description="SearXNG 实例的基地址，默认 http://127.0.0.1:8888。"
+          title={t("settings.searxngBaseUrl")}
+          description={t("settings.searxngBaseUrlDesc")}
         >
           <Input
-            aria-label="SearXNG 服务地址"
+            aria-label={t("settings.searxngBaseUrlAria")}
             data-testid="searxng-base-url-input"
             className="w-[360px] max-w-full font-mono text-ui-sm"
             placeholder="http://127.0.0.1:8888"
@@ -1085,8 +1119,8 @@ function NetworkSearchPage({
           />
         </SettingsRow>
         <SettingsRow
-          title="连通测试"
-          description="按当前填写地址发一次真实搜索探测（不经保存）；失败会给出原因与配置引导。"
+          title={t("settings.connectivityTest")}
+          description={t("settings.connectivityTestDesc")}
         >
           <div className="flex min-w-0 flex-col items-end gap-1">
             <Button
@@ -1096,7 +1130,7 @@ function NetworkSearchPage({
               disabled={searxngTest.testing || search.searxng.baseUrl.trim() === ""}
               onClick={() => void runSearxngTest()}
             >
-              {searxngTest.testing ? "测试中…" : "测试连接"}
+              {searxngTest.testing ? t("settings.testing") : t("settings.testConnection")}
             </Button>
             {searxngTest.result && (
               <span
@@ -1106,8 +1140,10 @@ function NetworkSearchPage({
                 }`}
               >
                 {searxngTest.result.ok
-                  ? `连接成功（${searxngTest.result.latencyMs ?? "?"} ms）`
-                  : `连接失败：${searxngTest.result.error ?? "未知错误"}`}
+                  ? t("settings.testOk", { latency: searxngTest.result.latencyMs ?? "?" })
+                  : t("settings.testFailed", {
+                      error: searxngTest.result.error ?? t("settings.unknownError"),
+                    })}
               </span>
             )}
           </div>
@@ -1117,19 +1153,16 @@ function NetworkSearchPage({
             className="border-t border-[var(--border)] px-4 py-3 text-ui-sm text-[var(--muted-foreground)]"
             data-testid="searxng-format-hint"
           >
-            提示：SearXNG 需在其 settings.yml 的 search.formats 中加入
+            {t("settings.searxngFormatHintBefore")}
             <code className="mx-1 rounded bg-[var(--muted)] px-1 font-mono">json</code>
-            并重启服务，否则本应用会收到 403。
+            {t("settings.searxngFormatHintAfter")}
           </p>
         )}
       </SettingsSection>
-      <SettingsSection title="云搜索（Tavily，高级）">
-        <SettingsRow
-          title="API Key"
-          description="到 tavily.com 用邮箱免费注册（免绑卡，每月 1000 次免费额度，每月 1 日重置）后粘贴 Key。未填时该通道不参与；明文随配置文件保存。"
-        >
+      <SettingsSection title={t("settings.sectionTavily")}>
+        <SettingsRow title={t("settings.tavilyKey")} description={t("settings.tavilyKeyDesc")}>
           <Input
-            aria-label="Tavily API Key"
+            aria-label={t("settings.tavilyKeyAria")}
             data-testid="tavily-api-key-input"
             type="password"
             className="w-[360px] max-w-full font-mono text-ui-sm"
@@ -1141,8 +1174,8 @@ function NetworkSearchPage({
           />
         </SettingsRow>
         <SettingsRow
-          title="连通测试"
-          description="按当前填写的 Key 发一次真实搜索探测；注意会消耗 1 次免费额度。"
+          title={t("settings.connectivityTest")}
+          description={t("settings.tavilyTestDesc")}
         >
           <div className="flex min-w-0 flex-col items-end gap-1">
             <Button
@@ -1152,7 +1185,7 @@ function NetworkSearchPage({
               disabled={tavilyTest.testing || (search.tavilyApiKey ?? "").trim() === ""}
               onClick={() => void runTavilyTest()}
             >
-              {tavilyTest.testing ? "测试中…" : "测试连接"}
+              {tavilyTest.testing ? t("settings.testing") : t("settings.testConnection")}
             </Button>
             {tavilyTest.result && (
               <span
@@ -1162,8 +1195,10 @@ function NetworkSearchPage({
                 }`}
               >
                 {tavilyTest.result.ok
-                  ? `连接成功（${tavilyTest.result.latencyMs ?? "?"} ms）`
-                  : `连接失败：${tavilyTest.result.error ?? "未知错误"}`}
+                  ? t("settings.testOk", { latency: tavilyTest.result.latencyMs ?? "?" })
+                  : t("settings.testFailed", {
+                      error: tavilyTest.result.error ?? t("settings.unknownError"),
+                    })}
               </span>
             )}
           </div>
@@ -1178,6 +1213,7 @@ function NetworkSearchPage({
  *  选项展示）④ 命令白名单启用。白名单条目 = 命令前缀（词序列前缀匹配），
  *  手填增删。 */
 function SecurityPage() {
+  const t = useT();
   const config = useSettingsStore((s) => s.config);
   const patchConfig = useSettingsStore((s) => s.patchConfig);
   if (!config) return null;
@@ -1188,61 +1224,58 @@ function SecurityPage() {
 
   return (
     <div>
-      <SettingsSection title="审批策略">
+      <SettingsSection title={t("settings.sectionApproval")}>
         <SettingsRow
-          title="启用操作审批"
-          description="写入文件、执行命令等敏感操作先询问再执行；关闭后不再弹出审批，但灾难级命令与内部状态保护仍然生效。"
+          title={t("settings.approvalEnable")}
+          description={t("settings.approvalEnableDesc")}
         >
           <Switch
-            aria-label="启用操作审批"
+            aria-label={t("settings.approvalEnable")}
             checked={approval.enabled}
             onCheckedChange={(v) => patchApproval({ enabled: v })}
           />
         </SettingsRow>
-        <SettingsRow title="自动放行等待" description="审批等待 5 分钟无应答时自动选择推荐项。">
+        <SettingsRow title={t("settings.autoConfirm")} description={t("settings.autoConfirmDesc")}>
           <Switch
-            aria-label="自动放行等待"
+            aria-label={t("settings.autoConfirm")}
             checked={approval.autoConfirm}
             onCheckedChange={(v) => patchApproval({ autoConfirm: v })}
           />
         </SettingsRow>
         <SettingsRow
-          title="会话内记忆"
-          description="命令类审批提供「始终允许（本会话）」选项，选中后同一命令本会话不再重复询问；新会话恢复审批，记忆不跨会话保留。"
+          title={t("settings.sessionMemory")}
+          description={t("settings.sessionMemoryDesc")}
         >
           <Switch
-            aria-label="会话内记忆"
+            aria-label={t("settings.sessionMemory")}
             checked={approval.sessionMemoryEnabled}
             onCheckedChange={(v) => patchApproval({ sessionMemoryEnabled: v })}
           />
         </SettingsRow>
         <SettingsRow
-          title="命令白名单"
-          description="整体开关：关闭后下方白名单条目暂不生效（条目保留），命中的命令也不再免审批。"
+          title={t("settings.allowlistToggle")}
+          description={t("settings.allowlistToggleDesc")}
         >
           <Switch
-            aria-label="命令白名单"
+            aria-label={t("settings.allowlistToggle")}
             checked={approval.allowlistEnabled}
             onCheckedChange={(v) => patchApproval({ allowlistEnabled: v })}
           />
         </SettingsRow>
-        <SettingsRow
-          title="严格计划模式"
-          description="开启后，没有已批准计划时写入与联网类工具直接被拒绝（E_PLAN_REQUIRED），模型须先建计划并经你批准。默认关闭：有计划才守门，无计划不阻写。"
-        >
+        <SettingsRow title={t("settings.requirePlan")} description={t("settings.requirePlanDesc")}>
           <Switch
-            aria-label="严格计划模式"
+            aria-label={t("settings.requirePlan")}
             data-testid="require-plan-switch"
             checked={approval.requirePlan}
             onCheckedChange={(v) => patchApproval({ requirePlan: v })}
           />
         </SettingsRow>
         <SettingsRow
-          title="允许 AI 执行 stage/commit"
-          description="默认关闭：AI 不能 git add/commit/merge/rebase（版本历史只能由你推动）。开启后 stage/commit 经审批可执行，merge/rebase 仍然禁止；git push 无论何时都需要确认，强推永远被拦截。"
+          title={t("settings.gitAllowStageCommit")}
+          description={t("settings.gitAllowStageCommitDesc")}
         >
           <Switch
-            aria-label="允许 AI 执行 stage/commit"
+            aria-label={t("settings.gitAllowStageCommit")}
             data-testid="git-allow-stage-commit-switch"
             checked={approval.gitAllowStageCommit}
             onCheckedChange={(v) => patchApproval({ gitAllowStageCommit: v })}
@@ -1258,12 +1291,12 @@ function SecurityPage() {
 }
 
 /** 白名单条目的词边界校验（23 号票：与后端 allowlist_hit 的切词口径一致）：
- *  返回 null = 合法；返回字符串 = 人话拒绝原因。 */
+ *  返回 null = 合法；返回字符串 = 人话拒绝原因（经 t() 查词，31 号票 i18n）。 */
 function validateAllowlistEntry(entry: string): string | null {
   const trimmed = entry.trim();
-  if (trimmed === "") return "条目不能为空";
+  if (trimmed === "") return t("settings.allowlistEmpty");
   if (/[|;&><()`$]/.test(trimmed)) {
-    return "条目不能包含管道/分隔符/重定向等 shell 符号（| & ; > < ( ) ` $）——含这些符号的命令无法作为前缀命中";
+    return t("settings.allowlistShellChars");
   }
   return null;
 }
@@ -1278,6 +1311,7 @@ function AllowlistSection({
 }) {
   const [draft, setDraft] = useState("");
   const [hint, setHint] = useState<string | null>(null);
+  const t = useT();
   const add = () => {
     const error = validateAllowlistEntry(draft);
     if (error !== null) {
@@ -1286,7 +1320,7 @@ function AllowlistSection({
     }
     const entry = draft.trim();
     if (allowlist.includes(entry)) {
-      setHint("该条目已在白名单中");
+      setHint(t("settings.allowlistDuplicate"));
       return;
     }
     onChange([...allowlist, entry]);
@@ -1294,7 +1328,7 @@ function AllowlistSection({
     setHint(null);
   };
   return (
-    <SettingsSection title="命令白名单条目">
+    <SettingsSection title={t("settings.sectionAllowlist")}>
       <div className="flex items-start gap-2 pb-2">
         <input
           type="text"
@@ -1310,12 +1344,12 @@ function AllowlistSection({
               add();
             }
           }}
-          placeholder="命令前缀，如 git status"
-          aria-label="命令白名单条目"
+          placeholder={t("settings.allowlistPlaceholder")}
+          aria-label={t("settings.allowlistAria")}
           className="min-w-0 flex-1 rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1 font-mono text-ui-sm text-[var(--foreground)]"
         />
         <Button variant="outline" size="sm" data-testid="allowlist-add" onClick={add}>
-          添加
+          {t("settings.add")}
         </Button>
       </div>
       {hint !== null && (
@@ -1325,7 +1359,7 @@ function AllowlistSection({
       )}
       {allowlist.length === 0 ? (
         <p className="py-10 text-center text-ui-base text-[var(--muted-foreground)]">
-          白名单为空；审批弹窗勾选「加入白名单」或在此手填命令前缀，命中的命令全局免审批。
+          {t("settings.allowlistEmptyHint")}
         </p>
       ) : (
         <div className="py-3">
@@ -1343,7 +1377,7 @@ function AllowlistSection({
                 size="sm"
                 onClick={() => onChange(allowlist.filter((_, i) => i !== index))}
               >
-                删除
+                {t("workspace.delete")}
               </Button>
             </div>
           ))}
@@ -1355,13 +1389,14 @@ function AllowlistSection({
 
 /** 日志页：日志级别下拉 + 打开日志目录入口（03 号票，FR-14-07） */
 function LogsPage() {
+  const t = useT();
   const config = useSettingsStore((s) => s.config);
   const patchConfig = useSettingsStore((s) => s.patchConfig);
   if (!config) return null;
   return (
     <div>
-      <SettingsSection title="日志记录">
-        <SettingsRow title="日志级别" description="进程日志的输出级别；排障时可临时调到 debug。">
+      <SettingsSection title={t("settings.sectionLogging")}>
+        <SettingsRow title={t("settings.logLevel")} description={t("settings.logLevelDesc")}>
           <Select
             width="narrow"
             value={config.log.level}
@@ -1375,11 +1410,12 @@ function LogsPage() {
             <option value="error">error</option>
           </Select>
         </SettingsRow>
-        <SettingsRow
-          title="日志目录"
-          description="进程日志与排障信息的落盘位置（~/.craftwave/logs）。"
-        >
-          <OpenDirButton testId="open-logs-dir" label="打开日志目录" path="~/.craftwave/logs" />
+        <SettingsRow title={t("settings.logDir")} description={t("settings.logDirDesc")}>
+          <OpenDirButton
+            testId="open-logs-dir"
+            label={t("settings.openLogsDir")}
+            path="~/.craftwave/logs"
+          />
         </SettingsRow>
       </SettingsSection>
     </div>
@@ -1398,6 +1434,7 @@ function LogsPage() {
  *   无项目会话时按钮禁用并说明原因。
  */
 function AgentPage() {
+  const t = useT();
   const config = useSettingsStore((s) => s.config);
   const patchConfig = useSettingsStore((s) => s.patchConfig);
   const tabs = useSessionsStore((s) => s.tabs);
@@ -1429,17 +1466,17 @@ function AgentPage() {
 
   return (
     <div>
-      <SettingsSection title="智能体">
+      <SettingsSection title={t("settings.sectionAgent")}>
         <SettingsRow
-          title="自定义提示词"
-          description="注入为每次对话的系统级前缀；留空则不注入。保存后下次对话生效。"
+          title={t("settings.customPrompt")}
+          description={t("settings.customPromptDesc")}
         >
           <Textarea
-            aria-label="自定义提示词"
+            aria-label={t("settings.customPromptAria")}
             data-testid="custom-prompt-input"
             className="min-h-24 w-[360px] max-w-full"
             rows={4}
-            placeholder="例如：始终用中文回复；代码注释保持简洁。"
+            placeholder={t("settings.customPromptPlaceholder")}
             value={customPrompt}
             onChange={(e) =>
               patchAgent({ customPrompt: e.target.value === "" ? undefined : e.target.value })
@@ -1447,14 +1484,14 @@ function AgentPage() {
           />
         </SettingsRow>
       </SettingsSection>
-      <SettingsSection title="子代理">
+      <SettingsSection title={t("settings.sectionSubagents")}>
         <SettingsRow
-          title="全局并发上限"
-          description="应用内所有会话共用的子代理并发名额（满额排队不拒绝）。运行中修改：已启动任务继续；降低后暂停补入直到低于新上限，提高后立即按新上限启动排队任务。合法范围 1–16，默认 4；保存后立即生效。"
+          title={t("settings.subagentConcurrency")}
+          description={t("settings.subagentConcurrencyDesc")}
         >
           <label className="flex w-full items-center gap-3 text-ui-base">
             <input
-              aria-label="子代理全局并发上限"
+              aria-label={t("settings.subagentConcurrencyAria")}
               data-testid="subagent-concurrency-input"
               type="number"
               min={1}
@@ -1469,18 +1506,20 @@ function AgentPage() {
               }}
               className="w-32 rounded-[var(--cw-radius)] border border-[var(--cw-border)] bg-transparent px-3 py-2 text-ui-base tabular-nums outline-none focus:border-[var(--cw-focus)]"
             />
-            <span className="shrink-0 text-ui-sm text-[var(--muted-foreground)]">1–16 个</span>
+            <span className="shrink-0 text-ui-sm text-[var(--muted-foreground)]">
+              {t("settings.range116")}
+            </span>
           </label>
         </SettingsRow>
       </SettingsSection>
-      <SettingsSection title="运行监督">
+      <SettingsSection title={t("settings.sectionWatchdog")}>
         <SettingsRow
-          title="模型流停滞超时（秒）"
-          description="模型请求发出后持续无输出达到该时长即终止本次运行（E_RUN_STALLED），已输出内容保留。合法范围 5–3600 秒，默认 300 秒；保存后下次对话生效。"
+          title={t("settings.stallTimeout")}
+          description={t("settings.stallTimeoutDesc")}
         >
           <label className="flex w-full items-center gap-3 text-ui-base">
             <input
-              aria-label="模型流停滞超时秒数"
+              aria-label={t("settings.stallTimeoutAria")}
               data-testid="watchdog-stall-timeout-input"
               type="number"
               min={5}
@@ -1495,18 +1534,17 @@ function AgentPage() {
               }}
               className="w-32 rounded-[var(--cw-radius)] border border-[var(--cw-border)] bg-transparent px-3 py-2 text-ui-base tabular-nums outline-none focus:border-[var(--cw-focus)]"
             />
-            <span className="shrink-0 text-ui-sm text-[var(--muted-foreground)]">5–3600 秒</span>
+            <span className="shrink-0 text-ui-sm text-[var(--muted-foreground)]">
+              {t("settings.range53600")}
+            </span>
           </label>
         </SettingsRow>
       </SettingsSection>
-      <SettingsSection title="命令审计">
-        <SettingsRow
-          title="审计模型"
-          description="确定性规则无法定性的命令（灰区）由该模型单次审计（15 秒上限，低风险可自动放行，失败转人工）。未选择时跟随会话当前模型；指定模型失效按审计失败转人工，不静默换供应商。保存后下次对话生效。"
-        >
+      <SettingsSection title={t("settings.sectionAudit")}>
+        <SettingsRow title={t("settings.auditModel")} description={t("settings.auditModelDesc")}>
           <Select
             width="wide"
-            aria-label="命令审计模型"
+            aria-label={t("settings.auditModelAria")}
             data-testid="command-audit-model-select"
             value={config.agent?.commandAudit?.modelId ?? ""}
             onChange={(e) => {
@@ -1516,7 +1554,7 @@ function AgentPage() {
               });
             }}
           >
-            <option value="">跟随会话模型</option>
+            <option value="">{t("settings.auditFollowSession")}</option>
             {config.providers.flatMap((provider) =>
               provider.models.map((model) => (
                 <option key={model.id} value={model.id}>
@@ -1527,17 +1565,17 @@ function AgentPage() {
           </Select>
         </SettingsRow>
       </SettingsSection>
-      <SettingsSection title="项目数据">
+      <SettingsSection title={t("settings.sectionProjectData")}>
         <SettingsRow
-          title="项目数据目录"
-          description="当前项目会话的元数据落盘位置（<项目主目录>/.craftwave）。"
+          title={t("settings.projectDataDir")}
+          description={t("settings.projectDataDirDesc")}
         >
           <OpenDirButton
             testId="open-project-data-dir"
-            label="打开项目数据目录"
+            label={t("settings.openProjectDataDir")}
             path={projectDataDir ?? ""}
             disabled={projectDataDir === null}
-            disabledReason="当前没有项目会话（项目会话指挂在某个项目下的会话 Tab）"
+            disabledReason={t("settings.projectDataDirDisabled")}
           />
         </SettingsRow>
       </SettingsSection>
@@ -1547,30 +1585,36 @@ function AgentPage() {
 
 /** 关于页：应用身份只读信息 + 打开数据目录入口（03 号票，FR-14-07） */
 function AboutPage() {
+  const t = useT();
   return (
     <div>
       <section className="settings-section">
         <div className="settings-section-card flex items-center gap-4 p-5">
-          <img src="/app-icon.png" alt="CraftWave 图标" className="h-16 w-16 rounded-[14px]" />
+          <img
+            src="/app-icon.png"
+            alt={t("settings.appIconAlt")}
+            className="h-16 w-16 rounded-[14px]"
+          />
           <div className="flex min-w-0 flex-col gap-1">
             <span className="text-ui-lg font-semibold">CraftWave</span>
             <span className="text-ui-base text-[var(--muted-foreground)]">
-              本地优先的 AI 结对工作台（M1）
+              {t("settings.appTagline")}
             </span>
             <span className="font-mono text-ui-sm text-[var(--muted-foreground)]">
-              配置文件 ~/.craftwave/config.json
+              {t("settings.configPath")}
             </span>
           </div>
         </div>
       </section>
       <section className="settings-section">
-        <h3 className="settings-section-title">数据</h3>
+        <h3 className="settings-section-title">{t("settings.sectionData")}</h3>
         <div className="settings-section-card">
-          <SettingsRow
-            title="数据目录"
-            description="全部配置、会话历史与日志的落盘位置（~/.craftwave）。"
-          >
-            <OpenDirButton testId="open-data-dir" label="打开数据目录" path="~/.craftwave" />
+          <SettingsRow title={t("settings.dataDir")} description={t("settings.dataDirDesc")}>
+            <OpenDirButton
+              testId="open-data-dir"
+              label={t("settings.openDataDir")}
+              path="~/.craftwave"
+            />
           </SettingsRow>
         </div>
       </section>
@@ -1580,15 +1624,16 @@ function AboutPage() {
 
 /** 占位页：导航分组照抄 CodeWave，余下页内容随后续里程碑接线 */
 function PlaceholderPage({ page }: { page: PageKey }) {
+  const t = useT();
   const hints: Record<string, string> = {
-    mcp: "MCP 服务器管理（连接状态与 mcp.json 编辑）随后续里程碑提供。",
-    tools: "写入后检查与结果校验的配置随后续里程碑提供。",
+    mcp: t("settings.placeholderMcp"),
+    tools: t("settings.placeholderTools"),
   };
   return (
     <div>
       <section className="settings-section">
         <div className="settings-section-card px-5 py-10 text-center text-ui-base text-[var(--muted-foreground)]">
-          {hints[page] ?? "该分区随后续里程碑提供。"}
+          {hints[page] ?? t("settings.placeholderDefault")}
         </div>
       </section>
     </div>

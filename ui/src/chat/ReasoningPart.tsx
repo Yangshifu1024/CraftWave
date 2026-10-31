@@ -1,12 +1,13 @@
 import type { ReasoningMessagePart } from "@assistant-ui/react";
 import { Brain, ChevronRight } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { t, useT } from "@/i18n/core";
 
 /** 思考时长（ZCode Math.ceil 口径）：最少 1 秒，跨分钟带分。 */
 function formatThoughtDuration(seconds: number): string {
-  if (seconds < 60) return `持续了 ${seconds} 秒`;
+  if (seconds < 60) return t("workspace.thoughtSeconds", { n: seconds });
   const minutes = Math.floor(seconds / 60);
-  return `持续了 ${minutes} 分 ${seconds - minutes * 60} 秒`;
+  return t("workspace.thoughtMinSec", { m: minutes, s: seconds - minutes * 60 });
 }
 
 /**
@@ -18,6 +19,7 @@ function formatThoughtDuration(seconds: number): string {
  * - 展开内容：左导线 + 缩进 + 限高滚动 + 纯文本保留换行，吸底跟随。
  */
 export function ReasoningPart({ text, status, timing }: Omit<ReasoningMessagePart, "type">) {
+  const t = useT();
   const streaming = status?.type === "running";
   const [open, setOpen] = useState(false);
   const [, tick] = useState(0);
@@ -64,13 +66,19 @@ export function ReasoningPart({ text, status, timing }: Omit<ReasoningMessagePar
   // 展开或完成 → 「思考 · 持续了 N 秒」（展开中的流式按秒持续计时）。
   const thinkingLabel =
     streaming && !open ? (
-      <span className="cw-shimmer-text shrink-0 font-medium whitespace-nowrap">正在思考</span>
+      <span className="cw-shimmer-text shrink-0 font-medium whitespace-nowrap">
+        {t("workspace.thinkingNow")}
+      </span>
     ) : (
       <span className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap">
-        <span className="font-medium text-[var(--foreground-subtlest)]">思考</span>
+        <span className="font-medium text-[var(--foreground-subtlest)]">
+          {t("workspace.thoughtLabel")}
+        </span>
         <span className="font-normal text-[var(--foreground-subtlest)]">·</span>
         <span className="font-normal text-[var(--foreground-subtlest)]">
-          {seconds !== undefined ? formatThoughtDuration(seconds) : "持续了几秒"}
+          {seconds !== undefined
+            ? formatThoughtDuration(seconds)
+            : t("workspace.thoughtFewSeconds")}
         </span>
       </span>
     );

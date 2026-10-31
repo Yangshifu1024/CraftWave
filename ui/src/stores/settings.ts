@@ -12,6 +12,7 @@
  */
 
 import { create } from "zustand";
+import { t } from "@/i18n/core";
 import * as client from "@/ipc/client";
 import type { AppConfig, ProviderConfig } from "@/ipc/types";
 import { newProviderFromPreset } from "@/settings/presets";
@@ -138,7 +139,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   appendToAllowlist: async (prefix) => {
     const current = get().config;
-    if (!current) throw new Error("配置尚未加载，无法写入白名单");
+    if (!current) throw new Error(t("settings.allowlistNotLoaded"));
     const list = current.approval.commandAllowlist ?? [];
     if (list.includes(prefix)) return; // 幂等：已在白名单不重复追加
     const next = {

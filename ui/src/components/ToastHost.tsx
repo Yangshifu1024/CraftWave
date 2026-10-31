@@ -14,6 +14,7 @@
 import { CheckCircle2, CircleAlert, Info } from "lucide-react";
 import { useState } from "react";
 import { Dialog } from "@/components/ui/dialog";
+import { useT } from "@/i18n/core";
 import { type ToastItem, type ToastKind, useToastStore } from "@/stores/toast";
 
 /** 单类提示的图标与配色（不喧宾夺主：图标 + 左缘色条，正文正常字号）。 */
@@ -37,6 +38,7 @@ const KIND_STYLE: Record<ToastKind, { icon: typeof Info; border: string; text: s
 
 /** 应用根挂载的 Toast 渲染面（单例；MirrorDemo 演示页不挂）。 */
 export function ToastHost() {
+  const t = useT();
   const toasts = useToastStore((s) => s.toasts);
   const dismiss = useToastStore((s) => s.dismiss);
   // 点击展开的错误详情（Dialog 承载；关闭即清）
@@ -75,13 +77,13 @@ export function ToastHost() {
                     onClick={() => setDetailToast(toast)}
                     className="mt-0.5 shrink-0 rounded text-[var(--muted-foreground)] underline underline-offset-2 hover:text-[var(--foreground)]"
                   >
-                    查看详情
+                    {t("workspace.viewDetail")}
                   </button>
                 )}
               </div>
               <button
                 type="button"
-                aria-label="关闭提示"
+                aria-label={t("workspace.dismissToast")}
                 onClick={() => dismiss(toast.id)}
                 className="shrink-0 rounded px-1 text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
               >
@@ -94,9 +96,9 @@ export function ToastHost() {
       {/* 错误详情弹框（既有 Dialog 组件；关闭即清，不影响 store 出队节奏） */}
       <Dialog
         open={detailToast !== null}
-        title="错误详情"
+        title={t("workspace.errorDetailTitle")}
         onClose={() => setDetailToast(null)}
-        actions={[{ label: "知道了", onClick: () => setDetailToast(null) }]}
+        actions={[{ label: t("workspace.gotIt"), onClick: () => setDetailToast(null) }]}
       >
         <p className="mb-2 text-[var(--foreground)]">{detailToast?.title}</p>
         <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all font-mono text-ui-sm">

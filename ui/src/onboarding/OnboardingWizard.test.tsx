@@ -19,6 +19,7 @@
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { setLang, t } from "@/i18n/core";
 import type { AppConfig, ProviderConfig, TestProviderResult } from "@/ipc/types";
 import { useSessionsStore } from "@/stores/sessions";
 import { useSettingsStore } from "@/stores/settings";
@@ -93,6 +94,9 @@ function baseConfig(): AppConfig {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // 31 号票 i18n：语言是模块级全局态——语言步用例切 en-US 后须复位，
+  // 避免泄漏到后续用例（组件文案按 zh 基准断言）
+  setLang("zh-CN");
   getConfigMock.mockResolvedValue(baseConfig());
   // 整份保存原样返回（真实后端是归一化结果，测试里等价）
   saveConfigMock.mockImplementation(async (config) => config);
@@ -137,7 +141,7 @@ describe("四步导航与记账", () => {
       });
     });
     expect(onClose).not.toHaveBeenCalled();
-    expect(screen.getByText("配置 AI 供应商")).toBeTruthy();
+    expect(screen.getByText(t("onboarding.providerTitle"))).toBeTruthy();
   });
 
   it("语言步右上「跳过」：单步前进带 skippedAt，不触发语言写盘", async () => {
@@ -151,7 +155,7 @@ describe("四步导航与记账", () => {
     });
     expect(useSessionsStore.getState().onboarding?.skippedAt).toBeDefined();
     expect(saveConfigMock).not.toHaveBeenCalled();
-    expect(screen.getByText("配置 AI 供应商")).toBeTruthy();
+    expect(screen.getByText(t("onboarding.providerTitle"))).toBeTruthy();
   });
 
   it("顶部 × 整包关闭：completed=false、step 保持当前步、onClose 回调", () => {
@@ -168,7 +172,7 @@ describe("四步导航与记账", () => {
   it("从记录 step 续走：initialStep=2 直接渲染项目步", () => {
     useSessionsStore.setState({ onboarding: { completed: false, step: 2 } });
     render(<OnboardingWizard initialStep={2} onClose={() => {}} />);
-    expect(screen.getByText("打开或创建项目")).toBeTruthy();
+    expect(screen.getByText(t("onboarding.projectTitle"))).toBeTruthy();
   });
 });
 
@@ -307,17 +311,17 @@ describe("项目步与安全简介步", () => {
         step: 3,
       });
     });
-    expect(screen.getByText("权限与安全简介")).toBeTruthy();
+    expect(screen.getByText(t("onboarding.securityTitle"))).toBeTruthy();
   });
 
   it("安全简介步：四档说明 + 无右上「跳过」（纯展示）+「完成」收口 completed=true", () => {
     const onClose = vi.fn();
     render(<OnboardingWizard initialStep={3} onClose={onClose} />);
     // 四档各一句话（Shift+Tab 循环的四个档位）
-    expect(screen.getByText("计划")).toBeTruthy();
-    expect(screen.getByText("逐项确认")).toBeTruthy();
-    expect(screen.getByText("自动编辑")).toBeTruthy();
-    expect(screen.getByText("完全信任")).toBeTruthy();
+    expect(screen.getByText(t("onboarding.tierPlanLabel"))).toBeTruthy();
+    expect(screen.getByText(t("onboarding.tierConfirmEachLabel"))).toBeTruthy();
+    expect(screen.getByText(t("onboarding.tierAutoEditLabel"))).toBeTruthy();
+    expect(screen.getByText(t("onboarding.tierFullAccessLabel"))).toBeTruthy();
     // 末步不提供单步跳过（票面：仅一个「完成」钮，纯展示无写操作）
     expect(screen.queryByTestId("onboarding-skip-step")).toBeNull();
     fireEvent.click(screen.getByTestId("onboarding-finish"));
@@ -335,7 +339,9 @@ describe("「继续初始配置」横幅三态渲染", () => {
   it("未完成记录渲染；点击回调（父层从记录步重开向导）", () => {
     const onOpen = vi.fn();
     render(<OnboardingResumeBanner state={{ completed: false, step: 1 }} onOpen={onOpen} />);
-    expect(screen.getByTestId("onboarding-resume-banner").textContent).toContain("继续初始配置");
+    expect(screen.getByTestId("onboarding-resume-banner").textContent).toContain(
+      t("onboarding.bannerResume").replace(" →", ""),
+    );
     fireEvent.click(screen.getByTestId("onboarding-resume-open"));
     expect(onOpen).toHaveBeenCalledTimes(1);
   });
@@ -350,7 +356,9 @@ describe("预设清单单源回归（与设置页共用）", () => {
   it("向导预设 chips 来自 BUILTIN_PRESETS 同一清单（本地预设带「本地」标注）", () => {
     render(<OnboardingWizard initialStep={1} onClose={() => {}} />);
     for (const preset of BUILTIN_PRESETS) {
-      expect(screen.getByText(`${preset.name}${preset.local ? " · 本地" : ""}`)).toBeTruthy();
+      expect(
+        screen.getByText(`${preset.name}${preset.local ? t("onboarding.presetLocal") : ""}`),
+      ).toBeTruthy();
     }
   });
 });

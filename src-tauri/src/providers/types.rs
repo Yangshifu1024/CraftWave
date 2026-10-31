@@ -217,14 +217,26 @@ pub enum Theme {
 
 /// 界面语言。
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Language {
     /// 简体中文（缺省）。
+    #[default]
     #[serde(rename = "zh-CN")]
     ZhCn,
     /// 美式英语。
     #[serde(rename = "en-US")]
     EnUs,
+}
+
+impl Language {
+    /// 序列化值（"zh-CN" / "en-US"）——与 serde rename 一致；ai_language
+    /// 注入层（31 号票）按它选固定行。
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Language::ZhCn => "zh-CN",
+            Language::EnUs => "en-US",
+        }
+    }
 }
 
 /// 界面偏好设置。

@@ -2330,7 +2330,7 @@ pub async fn compact_session_core(
     }
     if runs.get(session_id).is_some() {
         return Err(IpcError::session_running(format!(
-            "会话已有活跃 run：{session_id}"
+            "session already has an active run: {session_id}"
         )));
     }
     let model = resolve_model(app, None)?;
@@ -2537,12 +2537,18 @@ pub async fn start_chat_core(
     // ② 系统级前缀与压缩策略（§6.2 注入次序：customPrompt → 压缩 summary →
     //    当前计划 → 技能清单）。save_config 即时生效于下次 run（config.load
     //    命中缓存热替换后的值，§7.6）。
-    let custom_prompt = app
-        .config
-        .load()?
+    let config_snapshot = app.config.load()?;
+    let custom_prompt = config_snapshot
         .agent
         .as_ref()
         .and_then(|a| a.custom_prompt.clone());
+    // ai_language 注入层（31 号票，§6.2 次序：customPrompt → 项目指令 →
+    // ai_language → 压缩 summary → 技能清单）：模型回复语言偏好，非空用
+    // 自定义值、空跟随界面语言
+    let ai_language_layer = crate::backend::wire::ai_language_layer(
+        config_snapshot.ui.ai_language.as_deref(),
+        config_snapshot.ui.language.as_str(),
+    );
     // 技能快照与渐进披露（09 号票，Q20：run 开始固定版本——重扫/启停只
     // 影响下一 run；未信任技能询问在本步同步完成，拒绝者不进清单）。
     let run_skills = crate::knowledge::commands::ensure_skills_snapshot(app, &session_id).await;
@@ -2575,7 +2581,7 @@ pub async fn start_chat_core(
     //    请求；compactDone 帧经枢纽入环，重载后 attach 可重放）
     if runs.get(&session_id).is_some() {
         return Err(IpcError::session_running(format!(
-            "会话已有活跃 run：{session_id}"
+            "session already has an active run: {session_id}"
         )));
     }
     let run_id = uuid::Uuid::new_v4().to_string();
@@ -2631,6 +2637,7 @@ pub async fn start_chat_core(
         [
             custom_prompt.as_deref(),
             instructions.as_deref(),
+            ai_language_layer.as_deref(),
             compaction_summary.as_deref(),
             disclosure.as_deref(),
         ],

@@ -19,6 +19,7 @@
 
 import { isRegistered, register, unregisterAll } from "@tauri-apps/plugin-global-shortcut";
 import { create } from "zustand";
+import { t } from "@/i18n/core";
 import { pushToast } from "@/stores/toast";
 
 /** 修饰符固定序（存储形态；与后端 HOTKEY_MODIFIER_ORDER 一致）。 */
@@ -173,8 +174,11 @@ export async function applyHotkey(config: {
     useHotkeyStore.getState().setError(message);
     pushToast(
       "error",
-      "快捷键被其他应用占用",
-      `${formatAccelerator(normalized)}（${message}）；可改用其他组合键或关闭开关`,
+      t("toasts.hotkeyOccupied"),
+      t("toasts.hotkeyOccupiedDetail", {
+        accelerator: formatAccelerator(normalized),
+        message,
+      }),
     );
   }
 }

@@ -56,6 +56,7 @@ import { ConfirmDialog } from "@/components/ui/confirm";
 import { ContextMenu, type ContextMenuEntry } from "@/components/ui/context-menu";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { t, useT } from "@/i18n/core";
 import {
   createSession,
   deleteProject,
@@ -97,6 +98,7 @@ export function clampWidth(w: number, min: number, max: number): number {
  *  背景一体化：左/右栏与窗口同底色，会话区承载在四角圆角卡上（四周留缝），
  *  卡头显示项目/标题。挂载时恢复会话列表，未就绪前显示加载占位。 */
 export function SessionWorkspace() {
+  const t = useT();
   useBackendEvents();
   const { exitDialog } = useHostEvents();
   const ready = useSessionsStore((s) => s.ready);
@@ -141,7 +143,7 @@ export function SessionWorkspace() {
   if (!ready) {
     return (
       <div className="flex h-dvh items-center justify-center bg-[var(--background)] text-ui-base text-[var(--muted-foreground)]">
-        正在恢复会话…
+        {t("workspace.restoring")}
       </div>
     );
   }
@@ -160,7 +162,7 @@ export function SessionWorkspace() {
       />
       {/* 手柄贴卡片边框，留缝留在手柄外侧（ml-2/mr-2） */}
       <ResizeHandle
-        label="左侧栏宽度"
+        label={t("workspace.leftSidebarWidth")}
         value={leftWidth}
         min={SIDEBAR_MIN_WIDTH}
         className="ml-2"
@@ -213,7 +215,7 @@ export function SessionWorkspace() {
         <>
           {inspectorOpen && (
             <ResizeHandle
-              label="右侧栏宽度"
+              label={t("workspace.rightSidebarWidth")}
               value={rightWidth}
               min={INSPECTOR_MIN_WIDTH}
               inverse
@@ -287,12 +289,13 @@ function useHostEvents(): { exitDialog: React.ReactNode } {
 
 /** 退出确认框（§9.6：存在活跃 run 的退出请求）。 */
 function ExitConfirmDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const t = useT();
   return (
     <ConfirmDialog
       open={open}
-      title="仍有运行中的任务"
-      description="现在退出将终止所有运行中的任务。确定退出吗？"
-      confirmLabel="退出"
+      title={t("workspace.exitTitle")}
+      description={t("workspace.exitDescription")}
+      confirmLabel={t("workspace.exitConfirm")}
       onCancel={onClose}
       onConfirm={() => {
         onClose();
@@ -535,6 +538,7 @@ function Sidebar({
   animate: boolean;
   onOpenSettings: () => void;
 }) {
+  const t = useT();
   const [confirm, setConfirm] = useState<
     { kind: "session"; session: SessionMeta } | { kind: "project"; project: ProjectMeta } | null
   >(null);
@@ -576,21 +580,23 @@ function Sidebar({
       ? []
       : menu.kind === "session"
         ? [
-            { label: "重命名", onSelect: () => setRenamingId(menu.id) },
+            { label: t("workspace.rename"), onSelect: () => setRenamingId(menu.id) },
             // 导出（27 号票，FR-01-12）：左栏会话行 context-menu 下载入口
             //（纯前端序列化）；成功/失败经顶部 Toast 反馈（29 号票收敛——
             // 失败不再只有 console）
             {
-              label: "导出 Markdown",
+              label: t("workspace.exportMarkdown"),
               onSelect: () => {
                 const meta = sessions.find((m) => m.id === menu.id);
                 if (meta) {
                   void exportSession(meta, "markdown")
-                    .then((filename) => pushToast("success", "已导出 Markdown", filename))
+                    .then((filename) =>
+                      pushToast("success", t("toasts.exportMarkdownDone"), filename),
+                    )
                     .catch((err) =>
                       pushToast(
                         "error",
-                        "导出 Markdown 失败",
+                        t("toasts.exportMarkdownFailed"),
                         err instanceof Error ? err.message : String(err),
                       ),
                     );
@@ -598,16 +604,16 @@ function Sidebar({
               },
             },
             {
-              label: "导出 JSONL",
+              label: t("workspace.exportJsonl"),
               onSelect: () => {
                 const meta = sessions.find((m) => m.id === menu.id);
                 if (meta) {
                   void exportSession(meta, "jsonl")
-                    .then((filename) => pushToast("success", "已导出 JSONL", filename))
+                    .then((filename) => pushToast("success", t("toasts.exportJsonlDone"), filename))
                     .catch((err) =>
                       pushToast(
                         "error",
-                        "导出 JSONL 失败",
+                        t("toasts.exportJsonlFailed"),
                         err instanceof Error ? err.message : String(err),
                       ),
                     );
@@ -616,7 +622,7 @@ function Sidebar({
             },
             { separator: true },
             {
-              label: "删除会话",
+              label: t("workspace.deleteSession"),
               danger: true,
               onSelect: () => {
                 const meta = sessions.find((m) => m.id === menu.id);
@@ -625,11 +631,11 @@ function Sidebar({
             },
           ]
         : [
-            { label: "新建会话", onSelect: () => void createAndOpen(menu.id) },
-            { label: "重命名", onSelect: () => setRenamingId(menu.id) },
+            { label: t("workspace.newSession"), onSelect: () => void createAndOpen(menu.id) },
+            { label: t("workspace.rename"), onSelect: () => setRenamingId(menu.id) },
             { separator: true },
             {
-              label: "删除项目",
+              label: t("workspace.deleteProject"),
               danger: true,
               onSelect: () => {
                 const project = projects.find((pr) => pr.id === menu.id);
@@ -664,7 +670,7 @@ function Sidebar({
               className="flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-ui-base text-[var(--foreground)] hover:bg-[var(--selected)]"
             >
               <CirclePlus size={16} className="shrink-0" />
-              新建会话
+              {t("workspace.newSession")}
             </button>
           </div>
           <div className="mx-3 shrink-0 border-t border-[var(--border)]/50" />
@@ -673,9 +679,11 @@ function Sidebar({
             className={`min-h-0 flex-1 overflow-y-auto px-2 pt-2 pb-2 ${FADE_MASK[list.fade]}`}
           >
             {temporaries.length === 0 && projects.length === 0 && (
-              <div className="px-8.5 py-2 text-ui-base text-[var(--cw-dim)]">暂无会话</div>
+              <div className="px-8.5 py-2 text-ui-base text-[var(--cw-dim)]">
+                {t("workspace.empty")}
+              </div>
             )}
-            <SectionHeader title="临时会话" />
+            <SectionHeader title={t("workspace.tempSection")} />
             <SectionBody>
               {temporaries.map((meta) => (
                 <SessionRow
@@ -692,11 +700,11 @@ function Sidebar({
             {/* 项目组标题：ZCode purpose section 同款——同字号仅 medium + subtlest
                 最淡档（styles.css --foreground-subtlest）；悬停露出「新建项目」 */}
             <div className="group mt-3 flex h-7 items-center px-2 text-ui-base font-medium text-[var(--foreground-subtlest)]">
-              <span>项目</span>
+              <span>{t("workspace.projects")}</span>
               <button
                 type="button"
                 data-testid="new-project"
-                aria-label="新建项目"
+                aria-label={t("workspace.newProject")}
                 onClick={() => setCreateOpen(true)}
                 className="ml-auto flex h-6 w-6 items-center justify-center rounded opacity-0 transition-opacity hover:bg-[var(--accent)] group-hover:opacity-100"
               >
@@ -750,7 +758,7 @@ function Sidebar({
               className="flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-ui-base text-[var(--foreground)] hover:bg-[var(--selected)]"
             >
               <Settings size={16} className="shrink-0" />
-              设置
+              {t("workspace.settings")}
             </button>
           </div>
         </div>
@@ -766,15 +774,17 @@ function Sidebar({
         open={confirm !== null}
         title={
           confirm?.kind === "session"
-            ? `删除会话「${confirm.session.title}」？`
-            : `删除项目「${confirm?.kind === "project" ? confirm.project.name : ""}」？`
+            ? t("workspace.deleteSessionTitle", { title: confirm.session.title })
+            : t("workspace.deleteProjectTitle", {
+                name: confirm?.kind === "project" ? confirm.project.name : "",
+              })
         }
         description={
           confirm?.kind === "session"
-            ? "会话历史与工具记录将一并删除，不可恢复。"
-            : "仅解除注册（项目目录不动），名下会话转为临时会话保留。"
+            ? t("workspace.deleteSessionDescription")
+            : t("workspace.deleteProjectDescription")
         }
-        confirmLabel="删除"
+        confirmLabel={t("workspace.delete")}
         onCancel={() => setConfirm(null)}
         onConfirm={() => {
           if (confirm === null) return;
@@ -828,6 +838,7 @@ async function createProject(name: string, homeDir: string): Promise<void> {
 /** 新建项目弹窗（参考 ZCode 创建项目弹窗）：项目名称 + 源文件夹虚线
  *  选择区；名称留空取文件夹名兜底，未选文件夹时创建禁用。 */
 function NewProjectDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const t = useT();
   const [name, setName] = useState("");
   const [homeDir, setHomeDir] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -855,13 +866,13 @@ function NewProjectDialog({ open, onClose }: { open: boolean; onClose: () => voi
   return (
     <Dialog
       open={open}
-      title="新建项目"
+      title={t("workspace.newProject")}
       onClose={onClose}
       width={480}
       actions={[
-        { label: "取消", variant: "ghost", onClick: onClose },
+        { label: t("workspace.cancel"), variant: "ghost", onClick: onClose },
         {
-          label: "创建项目",
+          label: t("workspace.createProject"),
           variant: "default",
           disabled: homeDir === null || busy,
           onClick: submit,
@@ -869,16 +880,20 @@ function NewProjectDialog({ open, onClose }: { open: boolean; onClose: () => voi
       ]}
     >
       <div className="mb-5">
-        <p className="mb-1.5 text-ui-base font-medium text-[var(--foreground)]">项目名称</p>
+        <p className="mb-1.5 text-ui-base font-medium text-[var(--foreground)]">
+          {t("workspace.projectName")}
+        </p>
         <Input
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="新项目"
+          placeholder={t("workspace.projectNamePlaceholder")}
           autoFocus
         />
       </div>
       <div>
-        <p className="mb-1.5 text-ui-base font-medium text-[var(--foreground)]">源文件夹</p>
+        <p className="mb-1.5 text-ui-base font-medium text-[var(--foreground)]">
+          {t("workspace.sourceFolder")}
+        </p>
         <button
           type="button"
           data-testid="pick-project-dir"
@@ -889,14 +904,16 @@ function NewProjectDialog({ open, onClose }: { open: boolean; onClose: () => voi
             <FolderPlus size={20} />
           </span>
           {homeDir === null ? (
-            <span className="text-ui-base font-medium text-[var(--foreground)]">选择文件夹</span>
+            <span className="text-ui-base font-medium text-[var(--foreground)]">
+              {t("workspace.chooseFolder")}
+            </span>
           ) : (
             <span className="max-w-full truncate font-mono text-ui-sm text-[var(--foreground)]">
               {homeDir}
             </span>
           )}
           <span className="text-ui-sm text-[var(--muted-foreground)]">
-            {homeDir === null ? "CraftWave 可读取和编辑此文件夹" : "点击重新选择"}
+            {homeDir === null ? t("workspace.folderHint") : t("workspace.chooseAgain")}
           </span>
         </button>
       </div>
@@ -966,6 +983,7 @@ export function ProjectRow({
   onAddSession: () => void;
   onContextMenu: (x: number, y: number) => void;
 }) {
+  const t = useT();
   const [name, setName] = useState(project.name);
   const commit = () => {
     onRenameEnd();
@@ -1048,8 +1066,8 @@ export function ProjectRow({
       <button
         type="button"
         data-testid={`project-add-session-${project.id}`}
-        aria-label={`在项目 ${project.name} 下新建会话`}
-        title="新建会话"
+        aria-label={t("workspace.newSessionInProject", { name: project.name })}
+        title={t("workspace.newSession")}
         onClick={(e) => {
           // 不冒泡给行：+ 钮只新建，不切换折叠
           e.stopPropagation();
@@ -1066,6 +1084,7 @@ export function ProjectRow({
 /** 分组体（A7 显示更多）：超过 5 条默认只显示前 5 条，点「显示更多 (N)」展开。 */
 const SECTION_PREVIEW_COUNT = 5;
 function SectionBody({ children }: { children: React.ReactNode }) {
+  const t = useT();
   const [expanded, setExpanded] = useState(false);
   const items = Array.isArray(children) ? children : [children];
   const hidden = items.length - SECTION_PREVIEW_COUNT;
@@ -1079,7 +1098,7 @@ function SectionBody({ children }: { children: React.ReactNode }) {
           className="mt-0.5 w-full rounded px-2 py-0.5 text-left text-ui-base text-[var(--cw-dim)] hover:bg-[var(--accent)]/60"
           onClick={() => setExpanded(true)}
         >
-          显示更多（{hidden}）
+          {t("workspace.showMore", { count: hidden })}
         </button>
       )}
     </div>
@@ -1178,16 +1197,17 @@ export function MarqueeTitle({ text }: { text: string }) {
   );
 }
 
-/** 相对时间（A6）：<1 分钟「刚刚」；当天「N 小时」；7 天内「N 天」；更早 MM-DD。 */
+/** 相对时间（A6）：<1 分钟「刚刚」；当天「N 小时」；7 天内「N 天」；更早 MM-DD。
+ *  非组件纯函数：经模块级 t() 查词（31 号票 i18n）。 */
 function relativeTime(updatedAt: number): string {
   const diffMs = Date.now() - updatedAt;
   const minutes = Math.floor(diffMs / 60000);
-  if (minutes < 1) return "刚刚";
-  if (minutes < 60) return `${minutes} 分钟`;
+  if (minutes < 1) return t("workspace.justNow");
+  if (minutes < 60) return t("workspace.minutesAgo", { n: minutes });
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} 小时`;
+  if (hours < 24) return t("workspace.hoursAgo", { n: hours });
   const days = Math.floor(hours / 24);
-  if (days < 7) return `${days} 天`;
+  if (days < 7) return t("workspace.daysAgo", { n: days });
   const d = new Date(updatedAt);
   return `${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
@@ -1282,7 +1302,8 @@ function SessionRow({
 
 /** 右栏折叠钮（卡头右端）：展开态高亮、收起态灰调，与右栏开合同步。 */
 function SidebarToggle({ open, onToggle }: { open: boolean; onToggle: () => void }) {
-  const label = open ? "折叠右侧栏" : "展开右侧栏";
+  const t = useT();
+  const label = open ? t("workspace.collapseInspector") : t("workspace.expandInspector");
   return (
     <button
       type="button"

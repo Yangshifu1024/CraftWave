@@ -31,6 +31,7 @@ import { useState } from "react";
 import { DiffView } from "@/chat/DiffView";
 import { HtmlPreview } from "@/chat/HtmlPreview";
 import { useSessionScope } from "@/chat/session-scope";
+import { useT } from "@/i18n/core";
 import { resolveAsk, toIpcError } from "@/ipc/client";
 import type { AskPayload } from "@/ipc/types";
 import { useAskStore } from "@/stores/ask";
@@ -107,6 +108,7 @@ export function AskPanel() {
  *  E_NOT_FOUND（询问已失效——重连期间已被解决/取消）例外：按 askId 关闭
  *  弹窗，不残留可操作面板（§5.6，05 号票）。 */
 function useSubmitError(sessionId: string): [string | null, (err: unknown) => void, () => void] {
+  const t = useT();
   const [error, setError] = useState<string | null>(null);
   const report = (err: unknown) => {
     const ipcErr = toIpcError(err);
@@ -117,7 +119,7 @@ function useSubmitError(sessionId: string): [string | null, (err: unknown) => vo
     }
     const message = err instanceof Error ? err.message : String(err);
     console.error("[ask] 应答提交失败", err);
-    setError(message || "应答提交失败");
+    setError(message || t("dialogs.submitFailedDefault"));
   };
   return [error, report, () => setError(null)];
 }
@@ -132,6 +134,7 @@ function QuestionForm({
   askId: string;
   payload: Extract<AskPayload, { kind: "question" }>;
 }) {
+  const t = useT();
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [error, reportError, clearError] = useSubmitError(sessionId);
   const complete = payload.questions.every(
@@ -168,7 +171,7 @@ function QuestionForm({
             {q.allowFreeText && (
               <input
                 type="text"
-                placeholder="自由输入…"
+                placeholder={t("dialogs.freeTextPlaceholder")}
                 value={answers[q.id] ?? ""}
                 onChange={(e) => setAnswers((prev) => ({ ...prev, [q.id]: e.target.value }))}
                 className="min-w-32 flex-1 rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1 text-ui-sm text-[var(--foreground)]"
@@ -183,14 +186,14 @@ function QuestionForm({
         onClick={submit}
         className="rounded-full bg-[var(--primary)] px-4 py-1.5 text-ui-sm text-[var(--primary-foreground)] disabled:opacity-40"
       >
-        提交回答
+        {t("dialogs.submitAnswer")}
       </button>
       {error !== null && (
         <p
           data-testid="ask-error"
           className="rounded border border-[var(--destructive)]/30 bg-[var(--destructive)]/5 px-2 py-1 text-ui-sm text-[var(--destructive)]"
         >
-          应答提交失败：{error}（可重试）
+          {t("dialogs.submitFailedRetry", { error })}
         </p>
       )}
     </div>
@@ -210,6 +213,7 @@ function ApprovalForm({
   askId: string;
   payload: Extract<AskPayload, { kind: "approval" }>;
 }) {
+  const t = useT();
   const [error, reportError, clearError] = useSubmitError(sessionId);
   // 「查看预览」展开态（FR-12-04，14 号票）：默认收起——展开才挂载沙箱
   // iframe（防闪烁、防未经查看的脚本执行，与 render_html 卡同口径）。
@@ -261,8 +265,8 @@ function ApprovalForm({
           }`}
         >
           {payload.audit.state === "manual"
-            ? `审计不可用，已转人工确认（${payload.audit.reason}）`
-            : `模型审计建议人工确认：${payload.audit.reason}`}
+            ? t("dialogs.auditManualNote", { reason: payload.audit.reason })
+            : t("dialogs.auditAskNote", { reason: payload.audit.reason })}
         </p>
       )}
       {/* 计划范围门（25 号票，§8.6）：载荷带 planScope = 范围卡——明示
@@ -274,7 +278,7 @@ function ApprovalForm({
           data-testid="ask-plan-scope"
           className="rounded bg-[var(--warning)]/10 px-2 py-1 font-mono text-ui-sm text-[var(--warning)]"
         >
-          计划外路径：{payload.planScope}
+          {t("dialogs.planScopeNote", { path: payload.planScope })}
         </p>
       )}
       {payload.diff && <DiffView diff={payload.diff} testId="ask-diff" />}
@@ -290,7 +294,7 @@ function ApprovalForm({
             aria-expanded={previewOpen}
           >
             <Eye size={14} aria-hidden className="shrink-0" />
-            {previewOpen ? "收起预览" : "查看预览"}
+            {previewOpen ? t("dialogs.collapsePreview") : t("dialogs.viewPreview")}
           </button>
           {previewOpen && (
             <div className="mt-2">
@@ -310,7 +314,7 @@ function ApprovalForm({
             onChange={(e) => setAddToList(e.target.checked)}
             className="accent-[var(--primary)]"
           />
-          把命令前缀加入白名单（此后同前缀命令全局免审批）
+          {t("dialogs.addToAllowlist")}
         </label>
       )}
       <div className="flex justify-end gap-2">
@@ -335,7 +339,7 @@ function ApprovalForm({
           data-testid="ask-error"
           className="rounded border border-[var(--destructive)]/30 bg-[var(--destructive)]/5 px-2 py-1 text-ui-sm text-[var(--destructive)]"
         >
-          应答提交失败：{error}（可重试；若反复失败请停止该任务）
+          {t("dialogs.submitFailedRetryStop", { error })}
         </p>
       )}
     </div>
@@ -355,6 +359,7 @@ function McpTrustForm({
   askId: string;
   payload: Extract<AskPayload, { kind: "mcpTrust" }>;
 }) {
+  const t = useT();
   const [error, reportError, clearError] = useSubmitError(sessionId);
   const submit = (optionId: string) => {
     clearError();
@@ -364,22 +369,23 @@ function McpTrustForm({
     <div className="space-y-3">
       <h3 className="flex items-center gap-2 text-ui-base font-medium text-[var(--foreground)]">
         <ShieldCheck size={16} aria-hidden className="shrink-0 text-[var(--warning)]" />
-        信任并连接 MCP 服务器 {payload.server}？
+        {t("dialogs.mcpTrustTitle", { server: payload.server })}
       </h3>
       <div className="space-y-1 rounded border border-[var(--border)] bg-[var(--background)] px-3 py-2">
         <p className="text-ui-sm text-[var(--foreground)]">
-          传输方式：
-          {payload.transport === "stdio" ? "stdio 子进程" : "streamable HTTP"}
+          {t("dialogs.mcpTransport")}
+          {payload.transport === "stdio"
+            ? t("dialogs.mcpTransportStdio")
+            : t("dialogs.mcpTransportHttp")}
         </p>
         <p className="min-w-0 font-mono text-ui-sm break-all text-[var(--foreground)]">
           {payload.commandOrUrl}
         </p>
         <p className="text-ui-sm text-[var(--muted-foreground)]">
-          配置指纹：<code data-testid="mcp-trust-fingerprint">{payload.fingerprint}</code>
+          {t("dialogs.fingerprint")}
+          <code data-testid="mcp-trust-fingerprint">{payload.fingerprint}</code>
         </p>
-        <p className="text-ui-sm text-[var(--muted-foreground)]">
-          首次连接需要确认服务器身份；「记住此版本」后同指纹不再询问，配置被改动会重新确认。
-        </p>
+        <p className="text-ui-sm text-[var(--muted-foreground)]">{t("dialogs.mcpTrustExplain")}</p>
       </div>
       <div className="flex justify-end gap-2">
         {payload.options.map((opt) => (
@@ -403,7 +409,7 @@ function McpTrustForm({
           data-testid="ask-error"
           className="rounded border border-[var(--destructive)]/30 bg-[var(--destructive)]/5 px-2 py-1 text-ui-sm text-[var(--destructive)]"
         >
-          应答提交失败：{error}（可重试）
+          {t("dialogs.submitFailedRetry", { error })}
         </p>
       )}
     </div>
@@ -423,6 +429,7 @@ function ProjectTrustForm({
   askId: string;
   payload: Extract<AskPayload, { kind: "projectTrust" }>;
 }) {
+  const t = useT();
   const [error, reportError, clearError] = useSubmitError(sessionId);
   const submit = (optionId: string) => {
     clearError();
@@ -432,17 +439,21 @@ function ProjectTrustForm({
     <div className="space-y-3">
       <h3 className="flex items-center gap-2 text-ui-base font-medium text-[var(--foreground)]">
         <ShieldCheck size={16} aria-hidden className="shrink-0 text-[var(--warning)]" />
-        信任技能 {payload.resourceName}？
+        {t("dialogs.skillTrustTitle", { name: payload.resourceName })}
       </h3>
       <div className="space-y-1 rounded border border-[var(--border)] bg-[var(--background)] px-3 py-2">
         <p className="text-ui-sm text-[var(--foreground)]">
-          来源：{payload.scope === "global" ? "全局技能目录" : "项目技能目录"}
+          {t("dialogs.skillSource")}
+          {payload.scope === "global"
+            ? t("dialogs.skillSourceGlobal")
+            : t("dialogs.skillSourceProject")}
         </p>
         <p className="text-ui-sm text-[var(--muted-foreground)]">
-          版本指纹：<code data-testid="skill-trust-fingerprint">{payload.fingerprint}</code>
+          {t("dialogs.versionFingerprint")}
+          <code data-testid="skill-trust-fingerprint">{payload.fingerprint}</code>
         </p>
         <p className="text-ui-sm text-[var(--muted-foreground)]">
-          技能包含说明与随附脚本、模板等全部文件；「记住此版本」后同版本不再询问，内容变更会重新确认。拒绝后本次运行不加载该技能。
+          {t("dialogs.skillTrustExplain")}
         </p>
       </div>
       <div className="flex justify-end gap-2">
@@ -467,7 +478,7 @@ function ProjectTrustForm({
           data-testid="ask-error"
           className="rounded border border-[var(--destructive)]/30 bg-[var(--destructive)]/5 px-2 py-1 text-ui-sm text-[var(--destructive)]"
         >
-          应答提交失败：{error}（可重试）
+          {t("dialogs.submitFailedRetry", { error })}
         </p>
       )}
     </div>
@@ -488,6 +499,7 @@ function ExternalDirForm({
   askId: string;
   payload: Extract<AskPayload, { kind: "externalDir" }>;
 }) {
+  const t = useT();
   const [error, reportError, clearError] = useSubmitError(sessionId);
   const submit = (optionId: string) => {
     clearError();
@@ -497,15 +509,14 @@ function ExternalDirForm({
     <div className="space-y-3">
       <h3 className="flex items-center gap-2 text-ui-base font-medium text-[var(--foreground)]">
         <FolderOpen size={16} aria-hidden className="shrink-0 text-[var(--warning)]" />
-        允许访问项目外的目录？
+        {t("dialogs.externalDirTitle")}
       </h3>
       <div className="space-y-1 rounded border border-[var(--border)] bg-[var(--background)] px-3 py-2">
         <p className="min-w-0 font-mono text-ui-sm break-all text-[var(--foreground)]">
           <code data-testid="external-dir-path">{payload.path}</code>
         </p>
         <p className="text-ui-sm text-[var(--muted-foreground)]">
-          授权粒度：该目录及子目录的读/写/列。授权仅本会话有效（可在
-          Inspector「授权」页移除）；项目内的目录不需要授权。
+          {t("dialogs.externalDirExplain")}
         </p>
       </div>
       <div className="flex justify-end gap-2">
@@ -530,7 +541,7 @@ function ExternalDirForm({
           data-testid="ask-error"
           className="rounded border border-[var(--destructive)]/30 bg-[var(--destructive)]/5 px-2 py-1 text-ui-sm text-[var(--destructive)]"
         >
-          应答提交失败：{error}（可重试）
+          {t("dialogs.submitFailedRetry", { error })}
         </p>
       )}
     </div>

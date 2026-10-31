@@ -27,6 +27,7 @@ import { cn } from "@/components/ui/cn";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { CheckableTag } from "@/components/ui/tag";
+import { setLang, useT } from "@/i18n/core";
 import { saveProject, selectDir } from "@/ipc/client";
 import type { Language, ProviderModel } from "@/ipc/types";
 import {
@@ -59,12 +60,12 @@ import { useSessionsStore } from "@/stores/sessions";
 import { useSettingsStore } from "@/stores/settings";
 import { pushToast } from "@/stores/toast";
 
-/** 四步定义（stepper 展示面；step 序号即数组下标）。 */
+/** 四步定义（stepper 展示面；step 序号即数组下标；label 为 i18n 键）。 */
 const STEP_DEFS: { key: string; label: string }[] = [
-  { key: "language", label: "语言" },
-  { key: "provider", label: "供应商与 Key" },
-  { key: "project", label: "项目" },
-  { key: "security", label: "安全简介" },
+  { key: "language", label: "onboarding.stepLanguage" },
+  { key: "provider", label: "onboarding.stepProvider" },
+  { key: "project", label: "onboarding.stepProject" },
+  { key: "security", label: "onboarding.stepSecurity" },
 ];
 
 /** 向导组件 props：open 是否显示；initialStep 续走步序（越界自动夹取）；
@@ -79,6 +80,7 @@ export interface OnboardingWizardProps {
  * 全新挂载，步序从 initialStep 起算），关闭即卸载——主界面在底层始终可用。
  */
 export function OnboardingWizard({ initialStep = 0, onClose }: OnboardingWizardProps) {
+  const t = useT();
   const [step, setStep] = useState(() => clampStep(initialStep));
 
   /** 前进一步并记账（skipped 区分右上「跳过」与正常前进）；末步之后整包收口并关闭。 */
@@ -115,7 +117,7 @@ export function OnboardingWizard({ initialStep = 0, onClose }: OnboardingWizardP
       className="fixed inset-0 z-50 overflow-y-auto bg-black/40"
       role="dialog"
       aria-modal="true"
-      aria-label="初始配置向导"
+      aria-label={t("onboarding.wizardAria")}
       data-testid="onboarding-wizard"
       onKeyDown={onKeyDown}
     >
@@ -144,7 +146,7 @@ export function OnboardingWizard({ initialStep = 0, onClose }: OnboardingWizardP
                       : "text-[var(--muted-foreground)]",
                   )}
                 >
-                  {def.label}
+                  {t(def.label)}
                 </span>
                 {index < STEP_DEFS.length - 1 && (
                   <span aria-hidden className="h-px w-4 shrink-0 bg-[var(--border)]" />
@@ -159,12 +161,12 @@ export function OnboardingWizard({ initialStep = 0, onClose }: OnboardingWizardP
               className="shrink-0 rounded px-2 py-1 text-ui-sm text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
               onClick={() => advance(true)}
             >
-              跳过
+              {t("onboarding.skip")}
             </button>
           )}
           <button
             type="button"
-            aria-label="关闭向导"
+            aria-label={t("onboarding.closeWizard")}
             data-testid="onboarding-close"
             className="flex size-6 shrink-0 items-center justify-center rounded text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
             onClick={closeAll}
@@ -257,9 +259,16 @@ function LanguageCard({
 /** 第 1 步：语言。zh-CN / en-US 单选 → save_config 写 config.ui.language。
  *  31 号票 i18n 落地前界面文案维持中文，本步只落配置值。 */
 function LanguageStep({ onNext }: { onNext: () => void }) {
+  const t = useT();
   const config = useSettingsStore((s) => s.config);
-  const [language, setLanguage] = useState<Language>(config?.ui.language ?? "zh-CN");
+  const [language, setLanguageState] = useState<Language>(config?.ui.language ?? "zh-CN");
   const [saving, setSaving] = useState(false);
+  // 31 号票联动（§10.7 注记）：选择即切 i18n 内存态——向导自身与底层主界面
+  // 立即换语言，落盘仍随「下一步」的 save_config 通道。
+  function chooseLanguage(lang: Language) {
+    setLanguageState(lang);
+    setLang(lang);
+  }
 
   async function saveAndNext() {
     setSaving(true);
@@ -268,15 +277,19 @@ function LanguageStep({ onNext }: { onNext: () => void }) {
       const store = useSettingsStore.getState();
       if (!store.config) await store.load();
       const current = useSettingsStore.getState().config;
-      if (!current) throw new Error("配置读取失败");
+      if (!current) throw new Error(t("onboarding.configReadFailed"));
       useSettingsStore.getState().patchConfig({ ui: { ...current.ui, language } });
       const ok = await useSettingsStore.getState().saveAll();
-      if (!ok) throw new Error(useSettingsStore.getState().error ?? "保存失败");
+      if (!ok) throw new Error(useSettingsStore.getState().error ?? t("onboarding.saveFailed"));
       onNext();
     } catch (err) {
       // 29 号票 Toast 已落地：失败直接轻提示（票面 console.warn 锚点收编）
       console.warn("[onboarding] 语言设置保存失败", err);
-      pushToast("error", "语言设置保存失败", err instanceof Error ? err.message : String(err));
+      pushToast(
+        "error",
+        t("toasts.languageSaveFailed"),
+        err instanceof Error ? err.message : String(err),
+      );
     } finally {
       setSaving(false);
     }
@@ -284,30 +297,30 @@ function LanguageStep({ onNext }: { onNext: () => void }) {
 
   return (
     <StepFrame
-      title="选择界面语言"
-      description="设置界面与提示文案的显示语言；后续可在设置中随时更改。"
+      title={t("onboarding.langTitle")}
+      description={t("onboarding.langDescription")}
       footerRight={
         <Button
           data-testid="onboarding-language-next"
           disabled={saving}
           onClick={() => void saveAndNext()}
         >
-          {saving ? "保存中…" : "下一步"}
+          {saving ? t("onboarding.saving") : t("onboarding.next")}
         </Button>
       }
     >
       <div className="flex flex-col gap-2 sm:flex-row">
         <LanguageCard
           active={language === "zh-CN"}
-          title="简体中文"
-          description="界面与提示使用中文。"
-          onClick={() => setLanguage("zh-CN")}
+          title={t("onboarding.langZhName")}
+          description={t("onboarding.langZhDesc")}
+          onClick={() => chooseLanguage("zh-CN")}
         />
         <LanguageCard
           active={language === "en-US"}
-          title="English"
-          description="Use English for the interface."
-          onClick={() => setLanguage("en-US")}
+          title={t("onboarding.langEnName")}
+          description={t("onboarding.langEnDesc")}
+          onClick={() => chooseLanguage("en-US")}
         />
       </div>
     </StepFrame>
@@ -327,6 +340,7 @@ type WizardModelEditorState = { value: ProviderModel; isNew: boolean; idError: b
  *    不阻塞向导（软依赖）。
  */
 function ProviderStep({ onForward, onSkip }: { onForward: () => void; onSkip: () => void }) {
+  const t = useT();
   const config = useSettingsStore((s) => s.config);
   const [form, setForm] = useState<ProviderForm>(blankProvider);
   const [newKey, setNewKey] = useState("");
@@ -396,9 +410,9 @@ function ProviderStep({ onForward, onSkip }: { onForward: () => void; onSkip: ()
       .upsertProvider(provider, form.local ? undefined : credential.newKey.trim() || undefined);
     if (!ok) {
       setSaving(false);
-      const message = useSettingsStore.getState().error ?? "未知错误";
+      const message = useSettingsStore.getState().error ?? t("onboarding.unknownError");
       console.warn("[onboarding] 供应商保存失败", message);
-      pushToast("error", "供应商保存失败", message);
+      pushToast("error", t("toasts.providerSaveFailed"), message);
       return;
     }
     // 探测失败以 ok=false 返回（写 error 槽）；reject（test_provider 未注册
@@ -415,12 +429,12 @@ function ProviderStep({ onForward, onSkip }: { onForward: () => void; onSkip: ()
 
   return (
     <StepFrame
-      title="配置 AI 供应商"
-      description="填一个模型端点与 API Key 即可开始对话；也可以先跳过，稍后在设置中配置。"
+      title={t("onboarding.providerTitle")}
+      description={t("onboarding.providerDescription")}
       footerLeft={
         tested ? undefined : (
           <span className="text-ui-sm text-[var(--muted-foreground)]">
-            保存时会用你填的 Key 实测一次连通性。
+            {t("onboarding.providerTestNote")}
           </span>
         )
       }
@@ -428,12 +442,12 @@ function ProviderStep({ onForward, onSkip }: { onForward: () => void; onSkip: ()
         <>
           {test.state === "error" && (
             <Button variant="outline" data-testid="onboarding-provider-keep" onClick={onSkip}>
-              跳过此步
+              {t("onboarding.providerSkipStep")}
             </Button>
           )}
           {test.state === "ok" || testUnavailable ? (
             <Button data-testid="onboarding-provider-next" onClick={onForward}>
-              下一步
+              {t("onboarding.next")}
             </Button>
           ) : (
             <Button
@@ -441,7 +455,11 @@ function ProviderStep({ onForward, onSkip }: { onForward: () => void; onSkip: ()
               disabled={saving}
               onClick={() => void saveAndTest()}
             >
-              {saving ? "保存中…" : test.state === "error" ? "仍要保存并重测" : "保存并测试"}
+              {saving
+                ? t("onboarding.saving")
+                : test.state === "error"
+                  ? t("onboarding.providerSaveRetest")
+                  : t("onboarding.providerSaveAndTest")}
             </Button>
           )}
         </>
@@ -452,12 +470,14 @@ function ProviderStep({ onForward, onSkip }: { onForward: () => void; onSkip: ()
           className="mb-3 text-ui-sm text-[var(--muted-foreground)]"
           data-testid="onboarding-provider-existing"
         >
-          已配置 {config?.providers.length} 个供应商，可直接跳过本步。
+          {t("onboarding.providerExisting", { count: config?.providers.length ?? 0 })}
         </p>
       )}
       {/* 预设快捷填充（19 号票同源清单）：本地三家标注「本地 / 离线可用」 */}
       <div className="mb-4 flex flex-wrap items-center gap-1.5">
-        <span className="text-ui-sm text-[var(--cw-text-2)]">从预设填充：</span>
+        <span className="text-ui-sm text-[var(--cw-text-2)]">
+          {t("onboarding.providerFromPreset")}
+        </span>
         {BUILTIN_PRESETS.map((preset) => (
           <CheckableTag
             key={preset.slug}
@@ -465,7 +485,7 @@ function ProviderStep({ onForward, onSkip }: { onForward: () => void; onSkip: ()
             onChange={() => applyPreset(preset.slug)}
           >
             {preset.name}
-            {preset.local ? " · 本地" : ""}
+            {preset.local ? t("onboarding.presetLocal") : ""}
           </CheckableTag>
         ))}
       </div>
@@ -514,7 +534,7 @@ function ProviderStep({ onForward, onSkip }: { onForward: () => void; onSkip: ()
             className="py-1 text-ui-sm text-[var(--muted-foreground)]"
             data-testid="onboarding-provider-unavailable"
           >
-            连接测试暂不可用，供应商已保存；可稍后在设置中测试。
+            {t("onboarding.providerTestUnavailable")}
           </p>
         )}
       </div>
@@ -522,12 +542,16 @@ function ProviderStep({ onForward, onSkip }: { onForward: () => void; onSkip: ()
       {/* 模型编辑器弹框（同设置页：同框两态切换） */}
       <Dialog
         open={modelEditor !== null}
-        title={modelEditor?.isNew ? "添加模型" : "编辑模型"}
+        title={modelEditor?.isNew ? t("onboarding.addModel") : t("onboarding.editModel")}
         onClose={() => setModelEditor(null)}
         width={640}
         actions={[
-          { label: "返回供应商", variant: "ghost", onClick: () => setModelEditor(null) },
-          { label: "保存模型", onClick: commitModel },
+          {
+            label: t("onboarding.backToProvider"),
+            variant: "ghost",
+            onClick: () => setModelEditor(null),
+          },
+          { label: t("onboarding.saveModel"), onClick: commitModel },
         ]}
       >
         {modelEditor && (
@@ -549,6 +573,7 @@ function ProviderStep({ onForward, onSkip }: { onForward: () => void; onSkip: ()
 /** 第 3 步：打开/创建项目。select_dir 原生选目录 + 项目名（留空取目录名
  *  兜底）→ save_project；跳过 = 先用临时会话（数据目录 workspace/）。 */
 function ProjectStep({ onNext }: { onNext: () => void }) {
+  const t = useT();
   const [name, setName] = useState("");
   const [homeDir, setHomeDir] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -586,8 +611,8 @@ function ProjectStep({ onNext }: { onNext: () => void }) {
 
   return (
     <StepFrame
-      title="打开或创建项目"
-      description="把一个文件夹注册为项目，AI 在其中读写文件；跳过则先用临时会话（数据目录内置工作区）。"
+      title={t("onboarding.projectTitle")}
+      description={t("onboarding.projectDescription")}
       footerLeft={
         error && (
           <span className="text-ui-sm text-[var(--cw-err)]" data-testid="onboarding-project-error">
@@ -601,16 +626,18 @@ function ProjectStep({ onNext }: { onNext: () => void }) {
           disabled={homeDir === null || saving}
           onClick={() => void saveAndNext()}
         >
-          {saving ? "保存中…" : "保存并继续"}
+          {saving ? t("onboarding.saving") : t("onboarding.projectSaveAndContinue")}
         </Button>
       }
     >
       <div className="mb-4">
-        <p className="mb-1.5 text-ui-base font-medium text-[var(--foreground)]">项目名称</p>
+        <p className="mb-1.5 text-ui-base font-medium text-[var(--foreground)]">
+          {t("onboarding.projectName")}
+        </p>
         <Input
           data-testid="onboarding-project-name"
           value={name}
-          placeholder="留空则取文件夹名"
+          placeholder={t("onboarding.projectNamePlaceholder")}
           onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.nativeEvent.isComposing) {
@@ -630,73 +657,79 @@ function ProjectStep({ onNext }: { onNext: () => void }) {
           <FolderPlus size={20} />
         </span>
         {homeDir === null ? (
-          <span className="text-ui-base font-medium text-[var(--foreground)]">选择文件夹</span>
+          <span className="text-ui-base font-medium text-[var(--foreground)]">
+            {t("onboarding.chooseFolder")}
+          </span>
         ) : (
           <span className="max-w-full truncate font-mono text-ui-sm text-[var(--foreground)]">
             {homeDir}
           </span>
         )}
         <span className="text-ui-sm text-[var(--muted-foreground)]">
-          {homeDir === null ? "CraftWave 可读取和编辑此文件夹" : "点击重新选择"}
+          {homeDir === null ? t("onboarding.folderHint") : t("onboarding.chooseAgain")}
         </span>
       </button>
     </StepFrame>
   );
 }
 
-/** 四档权限档一句话说明（§8.5 矩阵从严到宽；与 Composer Shift+Tab 循环一致）。 */
+/** 四档权限档一句话说明（§8.5 矩阵从严到宽；与 Composer Shift+Tab 循环一致）。
+ *  label/text 为 i18n 键（31 号票），渲染时查词。 */
 const TIER_INTRO: { label: string; text: string }[] = [
-  { label: "计划", text: "AI 只产出计划不动手，你批准后才执行。" },
-  { label: "逐项确认", text: "每个工具操作都先询问你，逐项放行。" },
-  { label: "自动编辑", text: "默认档：读写项目内文件自动执行，命令等敏感操作仍先询问。" },
-  { label: "完全信任", text: "全部操作自动执行，仅灾难级命令仍被硬拦。" },
+  { label: "onboarding.tierPlanLabel", text: "onboarding.tierPlanText" },
+  { label: "onboarding.tierConfirmEachLabel", text: "onboarding.tierConfirmEachText" },
+  { label: "onboarding.tierAutoEditLabel", text: "onboarding.tierAutoEditText" },
+  { label: "onboarding.tierFullAccessLabel", text: "onboarding.tierFullAccessText" },
 ];
 
 /** 第 4 步：权限档与安全模式简介（纯静态说明，仅一个「完成」钮，无写操作）。 */
 function SecurityStep({ onFinish }: { onFinish: () => void }) {
+  const t = useT();
   return (
     <StepFrame
-      title="权限与安全简介"
-      description="花 30 秒了解 CraftWave 如何守安全；全部设置稍后都可在设置页调整。"
+      title={t("onboarding.securityTitle")}
+      description={t("onboarding.securityDescription")}
       footerRight={
         <Button data-testid="onboarding-finish" onClick={onFinish}>
-          完成
+          {t("onboarding.finish")}
         </Button>
       }
     >
       <div className="flex flex-col gap-4 text-ui-base text-[var(--foreground)]">
         <section>
-          <h3 className="mb-1.5 text-ui-base font-medium">
-            权限档（输入框处按 Shift+Tab 循环切换）
-          </h3>
+          <h3 className="mb-1.5 text-ui-base font-medium">{t("onboarding.tierSectionTitle")}</h3>
           <ul className="flex flex-col gap-1">
             {TIER_INTRO.map((tier) => (
               <li key={tier.label} className="text-ui-sm text-[var(--muted-foreground)]">
-                <span className="font-medium text-[var(--foreground)]">{tier.label}</span>
+                <span className="font-medium text-[var(--foreground)]">{t(tier.label)}</span>
                 {" — "}
-                {tier.text}
+                {t(tier.text)}
               </li>
             ))}
           </ul>
         </section>
         <section>
-          <h3 className="mb-1.5 text-ui-base font-medium">审批弹窗</h3>
+          <h3 className="mb-1.5 text-ui-base font-medium">
+            {t("onboarding.approvalSectionTitle")}
+          </h3>
           <p className="text-ui-sm text-[var(--muted-foreground)]">
-            执行命令、写项目外文件等敏感操作会弹出审批卡：可以允许一次、本会话始终允许或拒绝；
-            常用只读命令可勾选「加入白名单」免审批。关闭应用前未决审批不会自动执行。
+            {t("onboarding.approvalSectionBody")}
           </p>
         </section>
         <section>
-          <h3 className="mb-1.5 text-ui-base font-medium">计划门</h3>
+          <h3 className="mb-1.5 text-ui-base font-medium">
+            {t("onboarding.planGateSectionTitle")}
+          </h3>
           <p className="text-ui-sm text-[var(--muted-foreground)]">
-            「计划」档位下 AI 先给出任务计划，你点击批准后它才动手；计划里声明的文件范围会被
-            记住，超出范围再写会重新询问。设置页可开启严格计划模式（无批准计划时拒绝写入）。
+            {t("onboarding.planGateSectionBody")}
           </p>
         </section>
         <section>
-          <h3 className="mb-1.5 text-ui-base font-medium">随时可调</h3>
+          <h3 className="mb-1.5 text-ui-base font-medium">
+            {t("onboarding.adjustableSectionTitle")}
+          </h3>
           <p className="text-ui-sm text-[var(--muted-foreground)]">
-            左栏底部「设置」可更改语言、供应商与 Key、网络代理、安全策略、MCP 与技能等全部配置。
+            {t("onboarding.adjustableSectionBody")}
           </p>
         </section>
       </div>
@@ -717,20 +750,21 @@ export function OnboardingResumeBanner({
   state: OnboardingState | null;
   onOpen: () => void;
 }) {
+  const t = useT();
   if (!shouldShowResumeBanner(state)) return null;
   return (
     <div
       data-testid="onboarding-resume-banner"
       className="flex shrink-0 items-center gap-2 border-b border-[var(--border)] bg-[var(--accent)]/50 px-4 py-1.5 text-ui-sm"
     >
-      <span className="text-[var(--muted-foreground)]">初始配置还没完成。</span>
+      <span className="text-[var(--muted-foreground)]">{t("onboarding.bannerPending")}</span>
       <button
         type="button"
         data-testid="onboarding-resume-open"
         className="font-medium text-[var(--foreground)] underline-offset-2 hover:underline"
         onClick={onOpen}
       >
-        继续初始配置 →
+        {t("onboarding.bannerResume")}
       </button>
     </div>
   );

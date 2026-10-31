@@ -1,7 +1,7 @@
 # 实现：i18n（zh-CN / en-US）
 
 Type: task
-Status: open
+Status: resolved
 
 ## 要做什么
 
@@ -61,9 +61,20 @@ FR-13-09 + FR-14-04 语言项（PRD 行 537/557，出处 §10.8/NFR-19）：
 
 ## 验收
 
-- [ ] 设置页切 en-US：全界面无中文残留（含托盘菜单与系统通知正文）；切回 zh-CN 同理。
-- [ ] zh/en 语言包 key 集合一致有测试钉住；故意删一个 en key → CI 红。
-- [ ] 新增硬编码中文字面量的文件被扫描测试拦下（NFR-19 门禁生效）。
-- [ ] ai_language 填「English」→ 模型回复英文；清空 → 跟随界面语言；注入行位置与排序按 §6.2 回写口径（测试断言）。
-- [ ] 前端可见错误提示按错误码本地化，未知错误回退原始 message 不空白。
-- [ ] §3.6 错误面口径、§6.2 ai_language 注入点、§10.7 引导联动注记回写完成。
+- [ ] 设置页切 en-US：全界面无中文残留（含托盘菜单与系统通知正文）；切回 zh-CN 同理。——**自动化面完成**（门禁扫描零白名单外 CJK 字面量 + Rust strings 表 en 无 CJK 单测 + 全组件抽词）；真实 GUI 走查（托盘菜单/系统通知实际显示、全界面人工目检）留用户验收（同 29/30 号票 GUI 真实运行面口径）。
+- [x] zh/en 语言包 key 集合一致有测试钉住；故意删一个 en key → CI 红。——`i18n/i18n.test.ts` 双向 diff 两测 + 每域 `Record<keyof typeof zh, string>` 编译期同构（删 en 键 typecheck 即红，双保险）。
+- [x] 新增硬编码中文字面量的文件被扫描测试拦下（NFR-19 门禁生效）。——TS AST 扫描测试落地且开发过程中真实拦截多轮（Markdown.tsx 流式组件文案、重连覆盖层详情面、供应商探测分类文案、$ 角色菜单等均为门禁抓出后补抽）。
+- [x] ai_language 填「English」→ 模型回复英文；清空 → 跟随界面语言；注入行位置与排序按 §6.2 回写口径（测试断言）。——`ai_language_layer` 三态单测（非空自定义/空跟随 zh/空跟随 en）+ 注入次序单测（customPrompt → 项目指令 → ai_language → summary → 技能清单）+ e2e 压缩链断言更新（ai_language 行在摘要前）；「模型真实回复英文」属真模型端到端面，注入行已保证模型收到指令，真实回复效果留用户走查。
+- [x] 前端可见错误提示按错误码本地化，未知错误回退原始 message 不空白。——errors 字典域对照 §3.6 注册表全码覆盖（36 码），tError 抽样映射 + 未知码回退单测。
+- [x] §3.6 错误面口径、§6.2 ai_language 注入点、§10.7 引导联动注记回写完成。——技术设计文档 v2.38（§3.6 错误面双语口径 / §6.2 注入次序增 ai_language 层 / §10.7 语言步联动已实装注记 / §10.8 i18n 实装口径全量定稿）。
+
+## 决议记录
+
+- **方案选型偏离票面点名（i18next → 轻量自研层）**：本项目仅 zh-CN/en-US 两种静态打包语言、字典全量进 bundle，票面边界已排除 ICU 复数等 i18next 核心增值语法，其异步加载/语言检测/插件生态无用武之地；遵守 AGENTS.md「不得擅自安装依赖」与主会话「不引重库」指令，收敛为 `ui/src/i18n/` 轻量层（模块级语言单例 + useSyncExternalStore 订阅 + `t(key, vars)` 查词，接口形状对齐 i18next 惯例——t(key, vars)/`{{var}}` 插值/zh 基准回退，后续升级迁移成本最小）。§10.8 已按「票面与设计文档冲突回写」规则定稿。
+- **字典组织偏离票面「zh-CN/en-US 目录按域拆 json」→「domains/ 按域拆 TS 文件、zh/en 相邻同构」**：en 段以 `Record<keyof typeof zh, string>` 标注，键集合一致性获得编译期强制（删键/改键 typecheck 即红），强于 json + 仅运行时测试；票面验收「key 集合一致有测试钉住」仍以运行时双向 diff 测试双保险兜底。
+- **语言项即时持久化语义**：设置页语言选择 onChange 即 `setLang`（全界面无刷新热切换）+ 整份 save_config 落盘（先例：白名单追加/供应商表单的即时持久化通道）；副作用是会顺带保存设置页其他未保存草稿——语言是全局即时项，与「显式保存」类字段语义不同，已记录。
+- **ai_language 注入排序定案（§6.2 回写）**：customPrompt → 项目指令 → ai_language → 压缩 summary → 技能清单（计划层随计划票）。ai_language 与 customPrompt 同为用户侧常驻指令，必须在 summary 之前（摘要文本不覆盖语言指令）；空偏好也恒注入（跟随界面语言的固定行）。e2e 压缩链断言随新次序更新（ai_language 行在摘要前，属行为变更非测试放松）。
+- **Rust 错误 message 英文化分层交付**：`util/errors.rs` io 映射默认文案（2 处）+ 会话域 8 处 + chat 域 2 处代表报错点已英文化（errors_test 断言无 CJK）；全仓约 71 个 `IpcError` 中文报错点为长尾，按「前端按错误码映射本地化 + 缺失回退」的闭环口径随后续票渐进——用户可见面已完整本地化（errors 域 36 码全覆盖），长尾中文技术串不再直接呈现给用户。
+- **NFR-19 门禁豁免清单（全部在 `i18n/i18n.test.ts` 内可评审）**：文件级 8 项——mirror 演示页与剧本（spike 调试入口）、scripted-backend（测试假后端）、export.ts（导出归档文档格式串）、runtime.ts（回声 adapter 开发兜底）、at-refs.ts（@ 引用合成段，发模型侧）、toolkit.ts 与 mirror/toolkit.ts（工具注册表 description，发模型侧）、ipc/generated/BuiltinPresets.ts（ts-rs 生成物，Rust 权威）、tree-persistence.ts（树同步内部诊断）、main.tsx（挂载点结构性异常）；精确字面量 4 项——语言自身名「简体中文」/「English」（i18n 惯例不翻译）与两处目录路径示例（数据面）；console.* 调用参数整体豁免（诊断串非用户可见，与 Rust 日志串同边界）。
+- **测试面**：前端 520 例（新增 i18n 门禁 9 例：key 双向 diff ×2、zh 无空文案、硬编码扫描、切换冒烟、插值、回退链、errors 映射 ×2）；Rust lib 814 例（新增 11：strings 4 + ai_language 4 + errors 3）+ e2e 46 例（压缩链断言更新）。
+- **留用户验收面**：en-US/zh-CN 真实 GUI 走查（全界面目检、托盘菜单右键两项、系统通知实际弹出）、ai_language 真模型回复语言效果——自动化覆盖面见验收逐项注记。

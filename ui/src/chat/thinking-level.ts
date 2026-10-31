@@ -12,30 +12,47 @@
  */
 
 import { create } from "zustand";
+
+import { t } from "@/i18n/core";
 import type { ThinkingLevel } from "@/ipc/types";
 import { persistSessionPrefs } from "./session-prefs";
 
 /** 档位循环/下拉顺序（票面定案：off → minimal → low → medium → high）。 */
 export const THINKING_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high"];
 
-/** 档位的用户可读名（Composer 快捷钮触发器与菜单行首）。 */
-export const THINKING_LABELS: Record<ThinkingLevel, string> = {
-  off: "关闭",
-  minimal: "最轻",
-  low: "低",
-  medium: "中",
-  high: "高",
-};
+/** 档位的用户可读名（Composer 快捷钮触发器与菜单行首）：经字典查词
+ *  （31 号票 i18n，模块级 t() 同 tierLabel 口径）。 */
+export function thinkingLabel(level: ThinkingLevel): string {
+  switch (level) {
+    case "off":
+      return t("workspace.thinkingOff");
+    case "minimal":
+      return t("workspace.thinkingMinimal");
+    case "low":
+      return t("workspace.thinkingLow");
+    case "medium":
+      return t("workspace.thinkingMedium");
+    case "high":
+      return t("workspace.thinkingHigh");
+  }
+}
 
 /** 档位说明（下拉菜单第二行）：OpenAI 系口径的 effort 词 + Anthropic 比例
- *  双注（§11.4 映射表的用户面摘要；「默认」行说明回落链）。 */
-export const THINKING_DESCRIPTIONS: Record<ThinkingLevel, string> = {
-  off: "不进行思考（reasoning_effort=none）。",
-  minimal: "最轻思考（约 20% 上下文预算）。",
-  low: "低档思考（约 40% 上下文预算）。",
-  medium: "中档思考（约 60% 上下文预算）。",
-  high: "高档思考（约 80% 上下文预算）。",
-};
+ *  预算（§11.4 对照表）；经字典查词（31 号票 i18n）。 */
+export function thinkingDescription(level: ThinkingLevel): string {
+  switch (level) {
+    case "off":
+      return t("workspace.thinkingOffDesc");
+    case "minimal":
+      return t("workspace.thinkingMinimalDesc");
+    case "low":
+      return t("workspace.thinkingLowDesc");
+    case "medium":
+      return t("workspace.thinkingMediumDesc");
+    case "high":
+      return t("workspace.thinkingHighDesc");
+  }
+}
 
 /** thinking store 的状态与方法面（bySession 分桶，多 Tab 互不影响）。 */
 export interface ThinkingStore {

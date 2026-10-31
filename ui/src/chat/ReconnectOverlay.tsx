@@ -14,9 +14,11 @@ import { LoaderCircle, Square } from "lucide-react";
 import type { SnapshotSegment, ToolCallState } from "@/chat/frames";
 import { Markdown } from "@/chat/Markdown";
 import { cancelObservedRun, useRunReconnectStore } from "@/chat/run-reconnect";
+import { useT } from "@/i18n/core";
 
 /** 重连观察态覆盖层：本会话处于观察态时渲染，否则不渲染任何内容。 */
 export function ReconnectOverlay({ sessionId }: { sessionId: string }) {
+  const t = useT();
   const phase = useRunReconnectStore((s) => s.scopes[sessionId]?.phase ?? "idle");
   const snapshot = useRunReconnectStore((s) => s.scopes[sessionId]?.snapshot ?? null);
   const cancel = () =>
@@ -52,7 +54,7 @@ export function ReconnectOverlay({ sessionId }: { sessionId: string }) {
         className="flex h-9 shrink-0 items-center gap-2 border-b border-[var(--border)] bg-[var(--card)] px-4 text-ui-sm text-[var(--muted-foreground)]"
       >
         <LoaderCircle size={12} aria-hidden className="shrink-0 animate-spin" />
-        <span>已重连到运行中的任务（实时只读）</span>
+        <span>{t("workspace.reconnectedBanner")}</span>
         <button
           type="button"
           data-testid="reconnect-cancel"
@@ -60,24 +62,28 @@ export function ReconnectOverlay({ sessionId }: { sessionId: string }) {
           className="ml-auto flex h-6 shrink-0 items-center gap-1 rounded-lg border border-[var(--border)] px-2 text-ui-sm text-[var(--foreground)] hover:border-[var(--destructive)] hover:text-[var(--destructive)]"
         >
           <Square size={10} aria-hidden fill="currentColor" />
-          取消任务
+          {t("workspace.cancelTask")}
         </button>
       </div>
       {/* 只读实时内容区：文本/工具卡照常增量呈现 */}
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-6">
         <div className="mx-auto w-full max-w-4xl space-y-4 2xl:max-w-6xl">
           {snapshot.run && (
-            <p className="text-ui-sm text-[var(--cw-dim)]">运行模型：{snapshot.run.model}</p>
+            <p className="text-ui-sm text-[var(--cw-dim)]">
+              {t("workspace.reconnectModel", { model: snapshot.run.model })}
+            </p>
           )}
           {rows}
           {!snapshot.ended && (
             <div className="flex items-center gap-2 px-1 py-1 text-ui-sm text-[var(--muted-foreground)]">
               <LoaderCircle size={12} aria-hidden className="shrink-0 animate-spin" />
-              处理中…
+              {t("workspace.reconnectProcessing")}
             </div>
           )}
           {snapshot.ended && (
-            <p className="px-1 py-1 text-ui-sm text-[var(--cw-dim)]">任务已结束，正在恢复会话…</p>
+            <p className="px-1 py-1 text-ui-sm text-[var(--cw-dim)]">
+              {t("workspace.reconnectEnded")}
+            </p>
           )}
         </div>
       </div>
@@ -87,6 +93,7 @@ export function ReconnectOverlay({ sessionId }: { sessionId: string }) {
 
 /** 快照段渲染：思考行 / Markdown 正文 / 工具行（观察态简化形态）。 */
 function SnapshotRow({ segment, tool }: { segment: SnapshotSegment; tool?: ToolCallState }) {
+  const t = useT();
   if (segment.kind === "reasoning") {
     return (
       <div
@@ -114,13 +121,17 @@ function SnapshotRow({ segment, tool }: { segment: SnapshotSegment; tool?: ToolC
         {tool?.name ?? "?"}
       </span>
       <span className="min-w-0 flex-1 truncate text-[var(--muted-foreground)]">
-        {tool === undefined ? "准备中…" : tool.result ? tool.result.uiSummary : "运行中…"}
+        {tool === undefined
+          ? t("workspace.reconnectPreparing")
+          : tool.result
+            ? tool.result.uiSummary
+            : t("workspace.reconnectRunning")}
       </span>
       {tool?.result && (
         <span
           className={`shrink-0 ${tool.result.ok ? "text-[var(--cw-dim)]" : "text-[var(--destructive)]"}`}
         >
-          {tool.result.ok ? "完成" : "失败"}
+          {tool.result.ok ? t("workspace.reconnectDone") : t("workspace.reconnectFailed")}
         </span>
       )}
     </div>

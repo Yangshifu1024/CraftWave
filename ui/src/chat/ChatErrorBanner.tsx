@@ -1,6 +1,7 @@
 import { ChevronRight, CircleAlert, Copy, Settings } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { useT } from "@/i18n/core";
 
 /** 保留完整错误可复制；模型或认证错误可直接进入供应商设置。 */
 export function ChatErrorBanner({
@@ -10,6 +11,7 @@ export function ChatErrorBanner({
   message: string;
   onOpenSettings?: () => void;
 }) {
+  const t = useT();
   const [copyState, setCopyState] = useState("");
   return (
     <div
@@ -18,12 +20,12 @@ export function ChatErrorBanner({
     >
       <details className="group/error min-w-0 flex-1 basis-48 text-ui-base">
         <summary
-          aria-label="查看错误详情"
+          aria-label={t("workspace.errorDetails")}
           className="flex min-h-7 cursor-pointer items-center gap-2 rounded-md"
         >
           <CircleAlert size={16} aria-hidden className="shrink-0 text-[var(--destructive)]" />
           <span className="min-w-0 truncate font-medium" title={message}>
-            {message.split(/\r?\n/, 1)[0] || "运行出错"}
+            {message.split(/\r?\n/, 1)[0] || t("workspace.runErrorShort")}
           </span>
           <ChevronRight
             size={14}
@@ -42,20 +44,20 @@ export function ChatErrorBanner({
           onClick={async () => {
             try {
               await navigator.clipboard.writeText(message);
-              setCopyState("已复制");
+              setCopyState(t("toolcards.copied"));
             } catch {
-              setCopyState("复制失败，请选择错误文本复制");
+              setCopyState(t("toolcards.copyFailed"));
             }
           }}
         >
           <Copy size={14} aria-hidden />
-          复制错误
+          {t("toolcards.copyError")}
         </Button>
         {onOpenSettings &&
           /模型|供应商|api.?key|认证|鉴权|401|403|E_MODEL|E_PROVIDER/i.test(message) && (
             <Button variant="outline" size="sm" onClick={onOpenSettings}>
               <Settings size={14} aria-hidden />
-              打开模型设置
+              {t("workspace.openModelSettings")}
             </Button>
           )}
         <span role="status" className="text-ui-sm text-[var(--muted-foreground)]">

@@ -107,8 +107,21 @@ pub fn toggle_main_window(app: &AppHandle) {
 ///   `show_menu_on_left_click` 在 Linux 不生效），点击只会弹菜单——这是
 ///   平台能力边界，唤起语义在 Linux 降级为菜单项「显示主窗口」。
 pub fn install_tray(app: &AppHandle) -> tauri::Result<()> {
-    let show_item = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
-    let quit_item = MenuItem::with_id(app, "quit", "退出 CraftWave", true, None::<&str>)?;
+    let lang = current_ui_language(app);
+    let show_item = MenuItem::with_id(
+        app,
+        "show",
+        crate::host::strings::t(crate::host::strings::Str::TrayShow, lang),
+        true,
+        None::<&str>,
+    )?;
+    let quit_item = MenuItem::with_id(
+        app,
+        "quit",
+        crate::host::strings::t(crate::host::strings::Str::TrayQuit, lang),
+        true,
+        None::<&str>,
+    )?;
     let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
     TrayIconBuilder::with_id("craftwave-tray")
         .icon(app.default_window_icon().expect("应用图标缺失").clone())
@@ -134,6 +147,43 @@ pub fn install_tray(app: &AppHandle) -> tauri::Result<()> {
         })
         .build(app)?;
     Ok(())
+}
+
+/// 当前界面语言（31 号票）：读配置缓存；读不出按 Language 缺省（中文）。
+/// 托盘装配与 save_config 钩子（[`apply_tray_language`]）共用。
+fn current_ui_language(app: &AppHandle) -> crate::providers::types::Language {
+    app.try_state::<crate::host::AppState>()
+        .and_then(|state| state.config.load().ok().map(|c| c.ui.language))
+        .unwrap_or_default()
+}
+
+/// 托盘菜单按当前界面语言重建（31 号票，save_config 钩子调用）：语言切换
+/// 后右键菜单两项即时换语言。托盘未装配（如无图标环境）时静默跳过。
+pub fn apply_tray_language(app: &AppHandle) {
+    let Some(tray) = app.tray_by_id("craftwave-tray") else {
+        return;
+    };
+    let lang = current_ui_language(app);
+    let show = MenuItem::with_id(
+        app,
+        "show",
+        crate::host::strings::t(crate::host::strings::Str::TrayShow, lang),
+        true,
+        None::<&str>,
+    );
+    let quit = MenuItem::with_id(
+        app,
+        "quit",
+        crate::host::strings::t(crate::host::strings::Str::TrayQuit, lang),
+        true,
+        None::<&str>,
+    );
+    let (Ok(show), Ok(quit)) = (show, quit) else {
+        return;
+    };
+    if let Ok(menu) = Menu::with_items(app, &[&show, &quit]) {
+        let _ = tray.set_menu(Some(menu));
+    }
 }
 
 /// 退出请求（§9.6）：无活跃 run 直接退出；有则挂起等待前端确认，并排定

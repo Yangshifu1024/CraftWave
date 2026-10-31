@@ -110,8 +110,13 @@ impl From<std::io::Error> for ToolError {
     /// 注册表（§3.6）无通用 IO 码，映射决策见 11 号票 Answer。
     fn from(e: std::io::Error) -> Self {
         match e.kind() {
-            std::io::ErrorKind::NotFound => Self::not_found(format!("文件或目录不存在：{e}")),
-            _ => Self::new("E_INTERNAL_STATE", format!("文件系统操作失败：{e}")),
+            std::io::ErrorKind::NotFound => {
+                Self::not_found(format!("file or directory not found: {e}"))
+            }
+            _ => Self::new(
+                "E_INTERNAL_STATE",
+                format!("filesystem operation failed: {e}"),
+            ),
         }
     }
 }
@@ -257,3 +262,7 @@ impl fmt::Display for IpcError {
 
 /// 空 impl：Display 已带出全部信息，这里只为让它能当标准错误类型传。
 impl std::error::Error for IpcError {}
+
+#[cfg(test)]
+#[path = "errors_test.rs"]
+mod errors_test;

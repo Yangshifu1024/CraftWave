@@ -27,6 +27,7 @@ pub async fn get_config(state: State<'_, AppState>) -> Result<AppConfig, IpcErro
 /// §3.3 #7：整份配置经协调器归一化原子落盘，返回归一化结果。
 #[tauri::command]
 pub async fn save_config(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     config: AppConfig,
 ) -> Result<AppConfig, IpcError> {
@@ -39,5 +40,8 @@ pub async fn save_config(
     // 代理热生效（19 号票 FR-02-10）：重建 HTTP 客户端工厂缓存——进行中
     // run 不切换（客户端按 run 构建，§11.1），下一次 start_chat 用新代理
     state.apply_proxy_config()?;
+    // 托盘菜单按新界面语言重建（31 号票 §10.8：语言切换后托盘两项即时
+    // 换语言；通知正文在下次触发时读最新缓存自然跟随，无钩子需要）
+    crate::host::shell::apply_tray_language(&app);
     Ok(normalized)
 }

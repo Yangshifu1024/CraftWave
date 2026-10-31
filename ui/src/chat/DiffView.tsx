@@ -7,6 +7,7 @@
  * lines: [{kind, text}]}] }（§3.3 #38 DiffPatch 同构复用 hunks 子结构）。
  */
 
+import { useT } from "@/i18n/core";
 import type { DiffLine } from "@/ipc/types";
 
 /** diff 行配色：新增绿底、删除红底、上下文行弱化。 */
@@ -30,6 +31,7 @@ export function DiffView({
   maxH?: string;
   testId?: string;
 }) {
+  const t = useT();
   return (
     <div data-testid={testId} className="rounded border border-[var(--border)]">
       <p className="flex items-center justify-between border-b border-[var(--border)] px-2 py-1 font-mono text-ui-sm text-[var(--foreground)]">
@@ -40,7 +42,9 @@ export function DiffView({
       </p>
       <div className={`${maxH} overflow-auto`}>
         {diff.hunks.length === 0 ? (
-          <p className="px-2 py-1 text-ui-sm text-[var(--muted-foreground)]">（无文本差异）</p>
+          <p className="px-2 py-1 text-ui-sm text-[var(--muted-foreground)]">
+            {t("inspector.noTextDiff")}
+          </p>
         ) : (
           diff.hunks.map((hunk) => (
             <div key={hunk.header}>

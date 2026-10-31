@@ -2226,12 +2226,19 @@ mod command_face {
             .collect();
         let last_stream = streaming.last().expect("应有流式请求");
         let messages = last_stream["messages"].as_array().unwrap();
+        // 31 号票 §6.2 新次序：ai_language 层在压缩 summary 之前——
+        // messages[0] = ai_language 注入行（空偏好跟随界面语言 zh-CN）、
+        // messages[1] = 压缩摘要
         assert_eq!(
             messages[0]["role"], "system",
-            "摘要应注入为 system 前缀：{messages:?}"
+            "ai_language 应注入为 system 前缀首位：{messages:?}"
         );
         assert_eq!(
-            messages[0]["content"][0]["text"], "试试让我总结配置要点。",
+            messages[0]["content"][0]["text"], "请始终使用 简体中文 回答。",
+            "ai_language 空 → 跟随界面语言 zh-CN 固定行"
+        );
+        assert_eq!(
+            messages[1]["content"][0]["text"], "试试让我总结配置要点。",
             "摘要文本 = mock 非流式答复（rig system content 数组形态）"
         );
         let joined = serde_json::to_string(&messages).unwrap();

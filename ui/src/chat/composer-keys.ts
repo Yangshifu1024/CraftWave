@@ -22,6 +22,7 @@ import { DEFAULT_RUN_CONFIG } from "@/chat/runtime";
 import { modelOf } from "@/chat/session-model";
 import { useSessionScope } from "@/chat/session-scope";
 import { thinkingOf } from "@/chat/thinking-level";
+import { t } from "@/i18n/core";
 import { cancelRun, searchWorkspacePaths, skillList } from "@/ipc/client";
 import type { SkillListEntry, WorkspacePathHit } from "@/ipc/types";
 import { matchGhost, useAskStore } from "@/stores/ask";
@@ -45,13 +46,13 @@ export interface SkillMenuState {
  *  agent/roles.rs 的 ROLES 同名单——7 角色由契约测试对照 subagent 工具
  *  description 双侧钉住）。 */
 export const SUBAGENT_ROLES: { name: string; summary: string }[] = [
-  { name: "explore", summary: "只读探索：大范围检索代码与文档，返回调研结论" },
-  { name: "planner", summary: "只读规划：分析现状并产出可执行的分步计划" },
-  { name: "implementer", summary: "实现者：在独立工作区修改代码完成指定任务" },
-  { name: "reviewer", summary: "只读评审：审查代码/改动质量并给出风险清单" },
-  { name: "tester", summary: "测试者：在独立工作区运行局部测试并回报证据" },
-  { name: "frontend-dev", summary: "前端实现者：在独立工作区修改界面层代码" },
-  { name: "backend-dev", summary: "后端实现者：在独立工作区修改服务端代码" },
+  { name: "explore", summary: "workspace.roleExplore" },
+  { name: "planner", summary: "workspace.rolePlanner" },
+  { name: "implementer", summary: "workspace.roleImplementer" },
+  { name: "reviewer", summary: "workspace.roleReviewer" },
+  { name: "tester", summary: "workspace.roleTester" },
+  { name: "frontend-dev", summary: "workspace.roleFrontendDev" },
+  { name: "backend-dev", summary: "workspace.roleBackendDev" },
 ];
 
 /** $ 菜单快照（FR-07-02，10 号票；浮层渲染面）。 */
@@ -210,7 +211,7 @@ export function insertSkillInvocation(
   name: string,
 ): string {
   const rest = text.slice(cursor).replace(/^\s+/, "");
-  return `${text.slice(0, at)}请用 skill 工具加载技能 ${name} 并按其指引行动 ${rest}`;
+  return `${text.slice(0, at)}${t("workspace.skillInvocation", { name })}${rest}`;
 }
 
 /** 技能清单的查询过滤（名称前缀优先、其次包含；大小写不敏感）。 */

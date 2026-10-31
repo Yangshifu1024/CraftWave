@@ -27,6 +27,7 @@ import {
   worstRemainingPercent,
 } from "@/chat/quota-store";
 import { useSessionModelStore } from "@/chat/session-model";
+import { t, useT } from "@/i18n/core";
 import { getConfig } from "@/ipc/client";
 import type { AppConfig, QuotaEntry, QuotaSnapshot, QuotaStatus } from "@/ipc/types";
 
@@ -36,14 +37,14 @@ const UNSUPPORTED_COLLAPSE_LIMIT = 3;
 /** 剩余百分比低于该值视为「余额不足前有感知」的警示档（进度条转红）。 */
 const LOW_REMAINING_PERCENT = 20;
 
-/** 六态行的人读标签。 */
-const STATE_LABELS: Record<QuotaStatus, string> = {
-  ok: "",
-  error: "查询出错",
-  invalid: "密钥不可用",
-  rejected: "查询被拒",
-  no_key: "未配置 Key",
-  unsupported: "暂不支持查询",
+/** 六态行的人读标签（i18n 键面，渲染时查词——31 号票）。 */
+const STATE_LABEL_KEYS: Record<QuotaStatus, string> = {
+  ok: "inspector.quotaStateOk",
+  error: "inspector.quotaStateError",
+  invalid: "inspector.quotaStateInvalid",
+  rejected: "inspector.quotaStateRejected",
+  no_key: "inspector.quotaStateNoKey",
+  unsupported: "inspector.quotaStateUnsupported",
 };
 
 /** 配额页本体（Inspector 第三 tab；visible 门控 = 条件渲染）。 */
@@ -54,6 +55,7 @@ export function QuotaPanel({
   sessionId: string;
   onOpenSettings: () => void;
 }) {
+  const t = useT();
   const rows = useQuotaStore((s) => s.rows);
   const loading = useQuotaStore((s) => s.loading);
   const load = useQuotaStore((s) => s.load);
@@ -111,12 +113,12 @@ export function QuotaPanel({
     >
       {/* 标题行 + 手动刷新（FR-02-15 刷新策略三入口之一） */}
       <div className="mb-2 flex items-center">
-        <h3 className="text-ui-sm text-[var(--cw-dim)]">配额</h3>
+        <h3 className="text-ui-sm text-[var(--cw-dim)]">{t("inspector.quotaTitle")}</h3>
         <button
           type="button"
           data-testid="quota-refresh"
-          aria-label="刷新配额"
-          title="刷新"
+          aria-label={t("inspector.quotaRefreshAria")}
+          title={t("inspector.refresh")}
           disabled={loading}
           onClick={() => void load()}
           className="ml-auto rounded p-1 text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-50"
@@ -126,7 +128,7 @@ export function QuotaPanel({
       </div>
       {rows === null ? (
         <p className="text-ui-sm" data-testid="quota-loading">
-          正在查询配额…
+          {t("inspector.quotaRefreshing")}
         </p>
       ) : (
         <>
@@ -135,7 +137,7 @@ export function QuotaPanel({
             <QuotaCard row={current} highlight onOpenSettings={onOpenSettings} detailOpenDefault />
           ) : (
             <p className="mb-2 text-ui-sm text-[var(--cw-dim)]" data-testid="quota-no-active">
-              当前会话没有使用可识别的供应商。
+              {t("inspector.quotaNoProvider")}
             </p>
           )}
           {/* 其余供应商折叠列表 */}
@@ -146,7 +148,7 @@ export function QuotaPanel({
               className="mb-1 w-full rounded-lg border border-transparent px-2 py-1.5 text-left text-ui-sm text-[var(--cw-dim)] hover:border-[var(--border)]"
               onClick={() => setUnsupportedExpanded(true)}
             >
-              暂不支持查询（{unsupported.length} 家）
+              {t("inspector.quotaUnsupportedCount", { count: unsupported.length })}
             </button>
           )}
           <ul className="space-y-1" data-testid="quota-list">
@@ -191,6 +193,7 @@ function QuotaRow({
   onOpenSettings: () => void;
   detailOpenDefault?: boolean;
 }) {
+  const t = useT();
   const [detailOpen, setDetailOpen] = useState(detailOpenDefault);
   const load = useQuotaStore((s) => s.load);
   const data = row.data;
@@ -252,7 +255,7 @@ function QuotaRow({
                 : "text-[var(--cw-dim)]"
             }`}
           >
-            {STATE_LABELS[row.state]}
+            {t(STATE_LABEL_KEYS[row.state])}
           </p>
         )}
         {/* no_key 行尾「去设置」（跳设置页供应商页） */}
@@ -267,7 +270,7 @@ function QuotaRow({
               onOpenSettings();
             }}
           >
-            去设置
+            {t("inspector.quotaGoSettings")}
           </button>
         )}
       </div>
@@ -286,7 +289,7 @@ function rowMainValue(row: QuotaSnapshot, remaining: number | null): string {
     if (text !== undefined) return text;
   }
   if ((row.state === "error" || row.state === "rejected") && row.lastOkAt) {
-    return `上次成功 ${shortTime(row.lastOkAt)}`;
+    return t("inspector.quotaLastOkAt", { time: shortTime(row.lastOkAt) });
   }
   return "";
 }
@@ -295,6 +298,7 @@ function rowMainValue(row: QuotaSnapshot, remaining: number | null): string {
  *  行 = 原因 + 重试按钮 + lastOkAt 时间行（entries 非空时一并显示——
  *  「数据获取时间」以 lastOkAt 标注，FR-02-15 离线兜底面）。 */
 function QuotaDetail({ row, onRetry }: { row: QuotaSnapshot; onRetry: () => void }) {
+  const t = useT();
   const data = row.data;
   if (data === undefined) return null;
   return (
@@ -312,13 +316,15 @@ function QuotaDetail({ row, onRetry }: { row: QuotaSnapshot; onRetry: () => void
             className="mt-1 rounded px-1.5 py-0.5 text-ui-sm text-[var(--foreground)] hover:bg-[var(--accent)]"
             onClick={onRetry}
           >
-            重试
+            {t("inspector.quotaRetry")}
           </button>
         </div>
       )}
       {/* unsupported 的原因码（no_adapter / empty_base_url） */}
       {data.reason !== undefined && (
-        <p className="text-ui-sm text-[var(--cw-dim)]">原因：{data.reason}</p>
+        <p className="text-ui-sm text-[var(--cw-dim)]">
+          {t("inspector.quotaReason", { reason: data.reason })}
+        </p>
       )}
       {/* 窗口明细行 */}
       {data.entries.length > 0 && (
@@ -332,7 +338,7 @@ function QuotaDetail({ row, onRetry }: { row: QuotaSnapshot; onRetry: () => void
           lastOkAt 说明「数据获取时间」；fetchedAt 为本次查询时刻 */}
       {(row.state === "error" || row.state === "rejected") && data.entries.length > 0 && (
         <p className="mt-1 text-ui-sm text-[var(--cw-dim)]">
-          以上为 {shortTime(row.lastOkAt ?? row.fetchedAt)} 获取的最近数据
+          {t("inspector.quotaDataAt", { time: shortTime(row.lastOkAt ?? row.fetchedAt) })}
         </p>
       )}
     </div>
@@ -341,14 +347,17 @@ function QuotaDetail({ row, onRetry }: { row: QuotaSnapshot; onRetry: () => void
 
 /** 单窗口明细行：百分比行 = 标签 + 已用/剩余 + 重置时间；数值行 = 原文。 */
 function QuotaEntryLine({ entry }: { entry: QuotaEntry }) {
+  const t = useT();
   const label = entry.label ?? entry.key;
   const value =
     entry.valueText !== undefined
       ? entry.valueText
       : [
-          entry.usedPercent !== undefined ? `已用 ${Math.round(entry.usedPercent)}%` : null,
+          entry.usedPercent !== undefined
+            ? t("workspace.quotaUsed", { percent: Math.round(entry.usedPercent) })
+            : null,
           entry.remainingPercent !== undefined
-            ? `剩余 ${Math.round(entry.remainingPercent)}%`
+            ? t("workspace.quotaRemaining", { percent: Math.round(entry.remainingPercent) })
             : null,
           entry.status !== undefined ? entry.status : null,
         ]

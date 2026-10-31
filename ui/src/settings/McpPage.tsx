@@ -31,6 +31,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/components/ui/cn";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { useT } from "@/i18n/core";
 import {
   EVENT_KEYS,
   listenEvent,
@@ -52,22 +53,25 @@ import type {
 } from "@/ipc/types";
 
 /** 作用域的中文徽标文案。 */
-const SCOPE_LABEL: Record<McpScope, string> = { global: "全局", project: "项目" };
+const SCOPE_LABEL_KEYS: Record<McpScope, string> = {
+  global: "settings.scopeGlobal",
+  project: "settings.scopeProject",
+};
 
 /** 连接状态徽标（§3.5 四态 + idle=池无条目）的文案与配色。 */
 const STATE_LABEL: Record<string, string> = {
-  idle: "未连接",
-  starting: "启动中",
-  ready: "已连接",
-  stopped: "已停止",
-  error: "错误",
+  idle: "settings.connIdle",
+  starting: "settings.connStarting",
+  ready: "settings.connReady",
+  stopped: "settings.connStopped",
+  error: "settings.connError",
 };
 
 /** 信任状态列（mcp_snapshot 补充面）的文案。 */
 const TRUST_LABEL: Record<string, string> = {
-  trusted: "已记住",
-  pending: "待决策",
-  revoked: "已撤销",
+  trusted: "settings.trustTrusted",
+  pending: "settings.trustPending",
+  revoked: "settings.trustRevoked",
 };
 
 /** 快照行的页面形状（mcp_snapshot 行 + 事件驱动的实时状态覆盖）。 */
@@ -114,6 +118,7 @@ function configToText(config: McpConfigFile): string {
  * MCP 管理页（设置页 mcp 分节的内容体）。
  */
 export function McpPage() {
+  const t = useT();
   // 数据面：双作用域配置 + 快照行
   const [listing, setListing] = useState<McpListConfigResult | null>(null);
   const [snapshot, setSnapshot] = useState<McpSnapshotResult | null>(null);
@@ -245,12 +250,16 @@ export function McpPage() {
     try {
       parsed = JSON.parse(text) as McpConfigFile;
     } catch (err) {
-      setSaveError(`JSON 解析失败：${err instanceof Error ? err.message : String(err)}`);
+      setSaveError(
+        t("settings.mcpSaveFailedParse", {
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      );
       return;
     }
     try {
       await mcpSaveConfig({ scope: editScope, config: parsed });
-      setSaveNotice("已保存");
+      setSaveNotice(t("settings.mcpSaved"));
       // 保存后未知字段可能被归一（flatten round-trip 保序不丢）——清掉
       // 本作用域草稿并重拉，编辑框回到新基线，用户可核对未知字段仍在
       setDrafts((prev) => ({ ...prev, [editScope]: undefined }));
@@ -284,15 +293,25 @@ export function McpPage() {
   return (
     <div>
       {loadError && (
-        <Alert variant="error" title={`MCP 配置加载失败：${loadError}`} className="mb-3" />
+        <Alert
+          variant="error"
+          title={t("settings.mcpLoadFailed", { error: loadError })}
+          className="mb-3"
+        />
       )}
-      {actionError && <Alert variant="error" title={`操作失败：${actionError}`} className="mb-3" />}
+      {actionError && (
+        <Alert
+          variant="error"
+          title={t("settings.mcpActionFailed", { error: actionError })}
+          className="mb-3"
+        />
+      )}
       <section className="settings-section" data-testid="mcp-servers-section">
-        <h3 className="settings-section-title">服务器</h3>
+        <h3 className="settings-section-title">{t("settings.mcpServersSection")}</h3>
         <div className="settings-section-card">
           {rows.length === 0 ? (
             <p className="py-10 text-center text-ui-base text-[var(--muted-foreground)]">
-              还没有配置 MCP 服务器；在下方「配置编辑」里添加后即可连接。
+              {t("settings.mcpEmptyHint")}
             </p>
           ) : (
             <div className="py-2">
@@ -309,13 +328,19 @@ export function McpPage() {
                     <span className="min-w-0 flex-1 truncate font-mono text-ui-sm text-[var(--foreground)]">
                       {row.name}
                     </span>
-                    <Badge variant="outline">{SCOPE_LABEL[row.scope]}</Badge>
+                    <Badge variant="outline">{t(SCOPE_LABEL_KEYS[row.scope])}</Badge>
                     <span
                       data-testid={`mcp-trust-${row.name}`}
-                      title={row.fingerprint ? `指纹 ${row.fingerprint}…` : undefined}
+                      title={
+                        row.fingerprint
+                          ? t("settings.fingerprintTitle", { fingerprint: row.fingerprint })
+                          : undefined
+                      }
                       className="shrink-0 text-ui-sm text-[var(--muted-foreground)]"
                     >
-                      {TRUST_LABEL[row.trustStatus] ?? row.trustStatus}
+                      {TRUST_LABEL[row.trustStatus]
+                        ? t(TRUST_LABEL[row.trustStatus])
+                        : row.trustStatus}
                     </span>
                     <span
                       data-testid={`mcp-state-${row.name}`}
@@ -333,8 +358,9 @@ export function McpPage() {
                       {row.state === "error" && (
                         <CircleAlert size={12} aria-hidden className="shrink-0" />
                       )}
-                      {STATE_LABEL[row.state] ?? row.state}
-                      {row.state === "ready" && ` · ${row.toolCount} 工具`}
+                      {STATE_LABEL[row.state] ? t(STATE_LABEL[row.state]) : row.state}
+                      {row.state === "ready" &&
+                        t("settings.toolCountSuffix", { count: row.toolCount })}
                     </span>
                     <Button
                       variant="outline"
@@ -343,7 +369,11 @@ export function McpPage() {
                       disabled={busy}
                       onClick={() => void toggle(row)}
                     >
-                      {busy ? "处理中…" : connected ? "停止" : "连接"}
+                      {busy
+                        ? t("settings.processing")
+                        : connected
+                          ? t("settings.stop")
+                          : t("settings.connect")}
                     </Button>
                     {row.state === "error" && row.detail && (
                       <span
@@ -362,12 +392,12 @@ export function McpPage() {
       </section>
 
       <section className="settings-section" data-testid="mcp-config-section">
-        <h3 className="settings-section-title">配置编辑</h3>
+        <h3 className="settings-section-title">{t("settings.mcpConfigSection")}</h3>
         <div className="settings-section-card">
           <div className="flex items-center gap-3 py-3">
             <Select
               width="narrow"
-              aria-label="配置作用域"
+              aria-label={t("settings.configScopeAria")}
               value={editScope}
               onChange={(e) => {
                 setEditScope(e.target.value as McpScope);
@@ -375,19 +405,19 @@ export function McpPage() {
                 setSaveNotice(null);
               }}
             >
-              <option value="global">全局（~/.craftwave/mcp.json）</option>
+              <option value="global">{t("settings.scopeGlobalOption")}</option>
               <option value="project" disabled={!listing?.projectAvailable}>
-                项目（&lt;项目&gt;/.craftwave/mcp.json）
+                {t("settings.scopeProjectOption")}
               </option>
             </Select>
             {editDisabled && (
               <span className="text-ui-sm text-[var(--muted-foreground)]">
-                当前无项目会话，项目作用域不可用
+                {t("settings.scopeProjectUnavailable")}
               </span>
             )}
           </div>
           <textarea
-            aria-label="mcp.json 编辑器"
+            aria-label={t("settings.mcpEditorAria")}
             data-testid="mcp-config-editor"
             disabled={editDisabled}
             spellCheck={false}
@@ -412,29 +442,29 @@ export function McpPage() {
               disabled={editDisabled || drafts[editScope] === undefined}
               onClick={() => void saveDraft()}
             >
-              保存配置
+              {t("settings.saveConfig")}
             </Button>
           </div>
         </div>
       </section>
 
       <section className="settings-section" data-testid="mcp-test-section">
-        <h3 className="settings-section-title">测试连接</h3>
+        <h3 className="settings-section-title">{t("settings.mcpTestSection")}</h3>
         <div className="settings-section-card">
           <div className="flex flex-wrap items-center gap-3 py-3">
             <Input
-              aria-label="服务器名称"
+              aria-label={t("settings.serverNameAria")}
               data-testid="mcp-test-name"
               className="w-40"
-              placeholder="名称"
+              placeholder={t("settings.mcpNamePlaceholder")}
               value={testName}
               onChange={(e) => setTestName(e.target.value)}
             />
             <Input
-              aria-label="启动命令"
+              aria-label={t("settings.launchCommandAria")}
               data-testid="mcp-test-command"
               className="min-w-64 flex-1 font-mono"
-              placeholder="stdio 命令，如 npx -y @modelcontextprotocol/server-filesystem /tmp"
+              placeholder={t("settings.launchCommandPlaceholder")}
               value={testCommand}
               onChange={(e) => setTestCommand(e.target.value)}
             />
@@ -445,19 +475,21 @@ export function McpPage() {
               disabled={testing || testCommand.trim() === ""}
               onClick={() => void runTest()}
             >
-              {testing ? "测试中…" : "测试连接"}
+              {testing ? t("settings.testing") : t("settings.testConnectionShort")}
             </Button>
           </div>
           {testResult && (
             <div data-testid="mcp-test-result" className="border-t border-[var(--border)] py-3">
               {testResult.ok ? (
                 <p className="text-ui-sm text-[var(--success)]">
-                  连接成功，发现 {testResult.tools.length} 个工具
-                  {testName.trim() && `（${testName.trim()}）`}；保存配置并连接后可用。
+                  {t("settings.mcpTestOk", { count: testResult.tools.length })}
+                  {testName.trim() && t("settings.mcpTestOkSuffix", { name: testName.trim() })}
                 </p>
               ) : (
                 <p className="text-ui-sm text-[var(--destructive)]">
-                  连接失败：{testResult.error ?? "未知错误"}
+                  {t("settings.mcpTestFailed", {
+                    error: testResult.error ?? t("settings.unknownError"),
+                  })}
                 </p>
               )}
               {testResult.ok && testResult.tools.length > 0 && (

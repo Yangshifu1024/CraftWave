@@ -29,6 +29,7 @@ import {
   useUsageStats,
   useUsageStatsStore,
 } from "@/chat/usage-stats";
+import { useT } from "@/i18n/core";
 import { approvePlan, getConfig, gitStatus, loadSubagentHistory, sessionUsage } from "@/ipc/client";
 import type { MessageEntry, ProviderConfig } from "@/ipc/types";
 import {
@@ -89,6 +90,7 @@ export function Inspector({
   /** 「去设置」跳转（21 号票配额卡 no_key 行）：打开设置页供应商页。 */
   onOpenSettings: () => void;
 }) {
+  const t = useT();
   const sessionId = useSessionScope();
   // tab 态（内存态：重载回「用量」缺省页）；「变更」tab（26 号票）= 打开
   // 宽弹窗的入口（§10.7 变更面板为 Dialog 形态，tab 只承载入口按钮）；
@@ -133,7 +135,7 @@ export function Inspector({
             }`}
             onClick={() => setTab("usage")}
           >
-            用量
+            {t("inspector.tabUsage")}
           </button>
           <button
             type="button"
@@ -145,7 +147,7 @@ export function Inspector({
             }`}
             onClick={() => setTab("artifacts")}
           >
-            产物
+            {t("inspector.tabArtifacts")}
           </button>
           <button
             type="button"
@@ -157,7 +159,7 @@ export function Inspector({
             }`}
             onClick={() => setTab("quota")}
           >
-            配额
+            {t("inspector.tabQuota")}
           </button>
           <button
             type="button"
@@ -169,7 +171,8 @@ export function Inspector({
             }`}
             onClick={() => setTab("subagents")}
           >
-            子代理{runningCount > 0 ? `（${runningCount} 运行中）` : ""}
+            {t("inspector.tabSubagents")}
+            {runningCount > 0 && t("inspector.tabSubagentsRunning", { count: runningCount })}
           </button>
           <button
             type="button"
@@ -181,7 +184,7 @@ export function Inspector({
             }`}
             onClick={() => setTab("grants")}
           >
-            授权
+            {t("inspector.tabGrants")}
           </button>
           <button
             type="button"
@@ -193,7 +196,7 @@ export function Inspector({
             }`}
             onClick={() => setTab("changes")}
           >
-            变更
+            {t("inspector.tabChanges")}
           </button>
         </div>
         {tab === "usage" ? (
@@ -220,6 +223,7 @@ export function Inspector({
 /** 「变更」tab 内容（26 号票）：打开宽弹窗的入口按钮 + 当前变更文件数
  *  摘要（轻量拉取 #37 一次，不随 tab 切换轮询）。 */
 function ChangesEntryPanel({ sessionId }: { sessionId: string }) {
+  const t = useT();
   const openPanel = useChangesStore((s) => s.openPanel);
   const open = useChangesStore((s) => s.open);
   const [fileCount, setFileCount] = useState<number | null>(null);
@@ -242,15 +246,15 @@ function ChangesEntryPanel({ sessionId }: { sessionId: string }) {
   return (
     <div className="p-3 text-ui-sm text-[var(--muted-foreground)]">
       {!isRepo ? (
-        <p data-testid="changes-entry-empty">当前项目不是 git 仓库。</p>
+        <p data-testid="changes-entry-empty">{t("inspector.changesNotRepo")}</p>
       ) : (
         <div className="space-y-2">
           <p>
             {fileCount === null
-              ? "正在读取 git 状态…"
+              ? t("inspector.changesLoading")
               : fileCount === 0
-                ? "工作区干净，没有未提交的变更。"
-                : `工作区有 ${fileCount} 个未提交变更。`}
+                ? t("inspector.changesClean")
+                : t("inspector.changesCount", { count: fileCount })}
           </p>
           <button
             type="button"
@@ -259,7 +263,7 @@ function ChangesEntryPanel({ sessionId }: { sessionId: string }) {
             disabled={open}
             className="rounded-full border border-[var(--border)] px-3 py-1 text-ui-sm text-[var(--foreground)] hover:border-[var(--primary)] disabled:opacity-40"
           >
-            打开变更面板
+            {t("inspector.changesOpenPanel")}
           </button>
         </div>
       )}
@@ -271,14 +275,15 @@ function ChangesEntryPanel({ sessionId }: { sessionId: string }) {
  *  + 按日柱状图（近 30 天）+ 按模型排行（四口径/占比条）；数据源
  *  stats_token，tokens:update 到达时本地增量修正今日（event-bridge 接线）。
  *  范围缓存命中率 = cacheRead/(input+cacheRead)（§10.5 公式）。 */
-const RANGE_LABELS: { key: StatsRangeKey; label: string }[] = [
-  { key: "today", label: "今天" },
-  { key: "7d", label: "近 7 天" },
-  { key: "30d", label: "近 30 天" },
-  { key: "all", label: "全部" },
+const RANGE_LABELS: { key: StatsRangeKey; labelKey: string }[] = [
+  { key: "today", labelKey: "inspector.rangeToday" },
+  { key: "7d", labelKey: "inspector.range7d" },
+  { key: "30d", labelKey: "inspector.range30d" },
+  { key: "all", labelKey: "inspector.rangeAll" },
 ];
 
 function UsageStatsSection() {
+  const t = useT();
   const stats = useUsageStats();
   const range = useUsageStatsStore((s) => s.range);
   const setRange = useUsageStatsStore((s) => s.setRange);
@@ -292,10 +297,10 @@ function UsageStatsSection() {
   const hit = cacheHitRate(stats.total);
   return (
     <section data-testid="inspector-stats">
-      <h3 className="mb-1 text-ui-sm text-[var(--cw-dim)]">统计</h3>
+      <h3 className="mb-1 text-ui-sm text-[var(--cw-dim)]">{t("inspector.statsTitle")}</h3>
       {/* 范围切换：四档联动重拉 */}
-      <div className="mb-2 flex gap-1" role="tablist" aria-label="统计范围">
-        {RANGE_LABELS.map(({ key, label }) => (
+      <div className="mb-2 flex gap-1" role="tablist" aria-label={t("inspector.statsRangeAria")}>
+        {RANGE_LABELS.map(({ key, labelKey }) => (
           <button
             key={key}
             type="button"
@@ -307,13 +312,13 @@ function UsageStatsSection() {
             }`}
             onClick={() => setRange(key)}
           >
-            {label}
+            {t(labelKey)}
           </button>
         ))}
       </div>
       {error !== null ? (
         <p className="text-ui-sm text-red-600 dark:text-red-400" data-testid="stats-error">
-          统计加载失败：{error}
+          {t("inspector.statsLoadFailed", { error })}
         </p>
       ) : (
         <>
@@ -321,7 +326,9 @@ function UsageStatsSection() {
           <div className="mt-1 mb-2 flex justify-between">
             <span data-testid="stats-range-total">{compactTokens(stats.total.total)} tok</span>
             <span data-testid="stats-range-hit">
-              缓存命中率 {hit === null ? "—" : `${Math.round(hit * 100)}%`}
+              {t("inspector.cacheHitRate", {
+                rate: hit === null ? "—" : `${Math.round(hit * 100)}%`,
+              })}
             </span>
           </div>
           <ModelBars models={byModel} />
@@ -334,6 +341,7 @@ function UsageStatsSection() {
 /** 用量 tab（原 Inspector 主体，17 号票形态保留；20 号票增统计区块与
  *  Q37 恢复回落显示）。 */
 function UsagePanel({ sessionId }: { sessionId: string }) {
+  const t = useT();
   const { rate, turnUsage, sessionUsage, lastRun } = useSessionMetrics(sessionId);
   const contextWindow = useContextWindow();
   const plan = usePlanStateStore((s) => s.bySession[sessionId] ?? EMPTY_PLAN_STATE);
@@ -359,14 +367,17 @@ function UsagePanel({ sessionId }: { sessionId: string }) {
         <section>
           <h3 className="mb-1 flex items-center gap-2 text-ui-sm text-[var(--cw-dim)]">
             <span>
-              计划（{planItems.filter((i) => i.status === "completed").length}/{planItems.length}）
+              {t("inspector.planTitle", {
+                done: planItems.filter((i) => i.status === "completed").length,
+                total: planItems.length,
+              })}
             </span>
             {plan.approved ? (
               <span
                 data-testid="inspector-plan-baseline"
                 className="rounded bg-[var(--primary)]/10 px-1.5 py-0.5 text-[10px] text-[var(--primary)]"
               >
-                已批准 · 基线 {plan.baselinePaths.length} 条
+                {t("inspector.planApprovedBadge", { count: plan.baselinePaths.length })}
               </span>
             ) : (
               <button
@@ -375,13 +386,13 @@ function UsagePanel({ sessionId }: { sessionId: string }) {
                 onClick={() => void approvePlan(sessionId).catch(() => {})}
                 className="cursor-pointer rounded border border-[var(--border)] px-1.5 py-0.5 text-[10px] text-[var(--foreground)] hover:border-[var(--primary)]"
               >
-                批准计划
+                {t("inspector.approvePlan")}
               </button>
             )}
           </h3>
           {plan.paths.length > 0 && (
             <p data-testid="inspector-plan-paths" className="mb-1 break-all font-mono text-[10px]">
-              范围：{plan.paths.join("、")}
+              {t("inspector.planScope", { paths: plan.paths.join("、") })}
             </p>
           )}
           <ul className="space-y-0.5" data-testid="inspector-plan">
@@ -405,40 +416,40 @@ function UsagePanel({ sessionId }: { sessionId: string }) {
         </section>
       )}
       <section>
-        <h3 className="mb-1 text-ui-sm text-[var(--cw-dim)]">实时</h3>
+        <h3 className="mb-1 text-ui-sm text-[var(--cw-dim)]">{t("inspector.sectionLive")}</h3>
         <div className="flex justify-between">
-          <span>输出速率</span>
+          <span>{t("inspector.outputRate")}</span>
           <span data-testid="inspector-rate">
             {rate === null ? "—" : `${rate.toFixed(0)} tok/s`}
           </span>
         </div>
       </section>
       <section>
-        <h3 className="mb-1 text-ui-sm text-[var(--cw-dim)]">本轮用量</h3>
-        <MetricRow label="输入" value={turnUsage.input} />
-        <MetricRow label="输出" value={turnUsage.output} />
-        <MetricRow label="缓存读" value={turnUsage.cacheRead} />
-        <MetricRow label="缓存写" value={turnUsage.cacheWrite} />
+        <h3 className="mb-1 text-ui-sm text-[var(--cw-dim)]">{t("inspector.sectionTurn")}</h3>
+        <MetricRow label={t("inspector.metricInput")} value={turnUsage.input} />
+        <MetricRow label={t("inspector.metricOutput")} value={turnUsage.output} />
+        <MetricRow label={t("inspector.metricCacheRead")} value={turnUsage.cacheRead} />
+        <MetricRow label={t("inspector.metricCacheWrite")} value={turnUsage.cacheWrite} />
         <div className="mt-1 flex justify-between text-[var(--foreground)]">
-          <span>合计</span>
+          <span>{t("inspector.total")}</span>
           <span data-testid="inspector-turn-total">{total(turnUsage)} tok</span>
         </div>
       </section>
       <section>
-        <h3 className="mb-1 text-ui-sm text-[var(--cw-dim)]">会话累计</h3>
-        <MetricRow label="输入" value={sessionUsage.input} />
-        <MetricRow label="输出" value={sessionUsage.output} />
+        <h3 className="mb-1 text-ui-sm text-[var(--cw-dim)]">{t("inspector.sectionSession")}</h3>
+        <MetricRow label={t("inspector.metricInput")} value={sessionUsage.input} />
+        <MetricRow label={t("inspector.metricOutput")} value={sessionUsage.output} />
         <div className="flex justify-between">
-          <span>缓存命中率</span>
+          <span>{t("inspector.cacheHitRateLabel")}</span>
           <span data-testid="inspector-cache">
             {hitRate === null ? "—" : `${(hitRate * 100).toFixed(0)}%`}
           </span>
         </div>
         <div className="mt-1 flex justify-between text-[var(--foreground)]">
-          <span>合计</span>
+          <span>{t("inspector.total")}</span>
           <span data-testid="inspector-session-total">
             {legacyTotal !== null
-              ? `${legacyTotal} tok（旧版明细不可拆分）`
+              ? t("inspector.legacyTotalNote", { total: legacyTotal })
               : `${total(sessionUsage)} tok`}
           </span>
         </div>
@@ -446,7 +457,7 @@ function UsagePanel({ sessionId }: { sessionId: string }) {
       <UsageStatsSection />
       <section>
         <h3 className="mb-1 flex items-center text-ui-sm text-[var(--cw-dim)]">
-          上下文进度
+          {t("inspector.sectionContext")}
           {/* §10.5 落点：进度条旁的手动压缩（FR-03-05，04 号票）；
               运行中/压缩中禁用（后端 E_SESSION_RUNNING 兜底） */}
           <CompactButton />
@@ -464,21 +475,23 @@ function UsagePanel({ sessionId }: { sessionId: string }) {
         </div>
         <div className="mt-1 flex justify-between">
           <span>{contextUsed} tok</span>
-          <span>{contextWindow} 窗口</span>
+          <span>{t("inspector.contextWindow", { count: contextWindow })}</span>
         </div>
       </section>
       {lastRun && (
         <section>
-          <h3 className="mb-1 text-ui-sm text-[var(--cw-dim)]">最近运行</h3>
+          <h3 className="mb-1 text-ui-sm text-[var(--cw-dim)]">{t("inspector.sectionLastRun")}</h3>
           <div className="flex justify-between">
-            <span>终态</span>
+            <span>{t("inspector.lastRunState")}</span>
             <span data-testid="inspector-last-run">
               {lastRun.reason === "done"
-                ? `完成 · ${(lastRun.durationMs / 1000).toFixed(1)}s`
+                ? t("inspector.runDone", { duration: (lastRun.durationMs / 1000).toFixed(1) })
                 : lastRun.reason === "cancelled"
-                  ? "已取消"
-                  : "出错"}
-              {lastRun.reason === "done" ? ` · ${lastRun.toolCount} 次工具` : ""}
+                  ? t("inspector.runCancelled")
+                  : t("inspector.runError")}
+              {lastRun.reason === "done"
+                ? t("inspector.runToolCount", { count: lastRun.toolCount })
+                : ""}
             </span>
           </div>
         </section>
@@ -507,14 +520,15 @@ function outcomeColor(state: SubagentItem["state"]): string {
  *  列表按 spawn 顺序（时间线序）；运行中项高亮；点击行开抽屉拉全量历史
  *  只读渲染。 */
 function SubagentsPanel({ sessionId }: { sessionId: string }) {
+  const t = useT();
   const subs = useSubagentsStore((s) => s.bySession[sessionId] ?? EMPTY_SUBS);
   const openSubId = useSubagentsStore((s) => s.openSubId);
   if (subs.length === 0) {
     return (
       <div className="p-3 text-ui-sm text-[var(--muted-foreground)]" data-testid="subagents-empty">
-        本会话还没有子代理。主代理可用 subagent 工具委派，或在输入框输入
+        {t("inspector.subagentsEmptyBefore")}
         <span className="mx-1 rounded bg-[var(--muted)] px-1">$</span>
-        点名角色。
+        {t("inspector.subagentsEmptyAfter")}
       </div>
     );
   }
@@ -543,7 +557,7 @@ function SubagentsPanel({ sessionId }: { sessionId: string }) {
               </span>
               <span className="flex items-center gap-2 tabular-nums">
                 <span className="truncate text-ui-sm">{sub.subId.slice(0, 8)}</span>
-                <span className="ml-auto">第 {sub.turn} 轮</span>
+                <span className="ml-auto">{t("inspector.subagentTurnN", { turn: sub.turn })}</span>
                 <span>{sub.usage.input + sub.usage.output} tok</span>
               </span>
             </button>
@@ -558,6 +572,7 @@ function SubagentsPanel({ sessionId }: { sessionId: string }) {
 /** 抽屉回看（FR-07-06）：load_subagent_history 拉全量只读渲染（角色运行
  *  中的轮次输出 + 汇报）；失败给行内错误。 */
 function SubDrawer({ sub }: { sub: SubagentItem }) {
+  const t = useT();
   const history = useSubagentsStore((s) => s.historyBySub[sub.subId]);
   useEffect(() => {
     if (history !== undefined) return;
@@ -578,17 +593,17 @@ function SubDrawer({ sub }: { sub: SubagentItem }) {
       data-testid={`subagent-drawer-${sub.subId}`}
     >
       <div className="flex items-center gap-2 pb-1 text-ui-sm text-[var(--cw-dim)]">
-        <span>历史回看</span>
+        <span>{t("inspector.subDrawerTitle")}</span>
         <button
           type="button"
           className="ml-auto text-ui-sm text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
           onClick={() => setOpenSub(null)}
         >
-          收起
+          {t("inspector.subDrawerCollapse")}
         </button>
       </div>
       {history === undefined || history.loading ? (
-        <p className="text-ui-sm">加载中…</p>
+        <p className="text-ui-sm">{t("inspector.subDrawerLoading")}</p>
       ) : history.error !== null ? (
         <p className="text-ui-sm text-red-600 dark:text-red-400">{history.error}</p>
       ) : (
@@ -596,7 +611,7 @@ function SubDrawer({ sub }: { sub: SubagentItem }) {
       )}
       {sub.report.length > 0 && (
         <div className="mt-2 border-t border-[var(--border)] pt-2">
-          <p className="mb-1 text-ui-sm text-[var(--cw-dim)]">&lt;report&gt; 汇报</p>
+          <p className="mb-1 text-ui-sm text-[var(--cw-dim)]">{t("inspector.subReportTitle")}</p>
           <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap text-ui-sm text-[var(--foreground)]">
             {sub.report}
           </pre>
@@ -608,8 +623,9 @@ function SubDrawer({ sub }: { sub: SubagentItem }) {
 
 /** 抽屉消息的只读渲染（WireMessage 最小子集：assistant 文本/工具行）。 */
 function SubHistoryMessages({ messages }: { messages: MessageEntry[] }) {
+  const t = useT();
   if (messages.length === 0) {
-    return <p className="text-ui-sm">（无历史记录）</p>;
+    return <p className="text-ui-sm">{t("inspector.subHistoryEmpty")}</p>;
   }
   return (
     <ul className="space-y-2">
@@ -617,8 +633,8 @@ function SubHistoryMessages({ messages }: { messages: MessageEntry[] }) {
         <li key={message.id} className="rounded bg-[var(--card)] p-2">
           <p className="mb-1 text-ui-sm text-[var(--cw-dim)]">
             {message.id.endsWith(":report")
-              ? "最终汇报"
-              : `轮次 ${message.id.split(":a")[1] ?? ""}`}
+              ? t("inspector.subFinalReport")
+              : t("inspector.subTurnN", { turn: message.id.split(":a")[1] ?? "" })}
           </p>
           {message.parts.map((part) => {
             // part 无独立 id：以 message.id + part 判别类型 + 内容哈希作 key

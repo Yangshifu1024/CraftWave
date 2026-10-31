@@ -13,6 +13,7 @@ import { GitBranch, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useChangesStore } from "@/chat/changes-store";
 import { DiffView } from "@/chat/DiffView";
+import { t, useT } from "@/i18n/core";
 import { gitDiff, gitRecentLog, gitStatus } from "@/ipc/client";
 import type { DiffPatch, GitStatusFile, GitStatusResult } from "@/ipc/types";
 
@@ -76,6 +77,7 @@ function ChangesPanelBody({
   focusPath: string | null;
   onClose: () => void;
 }) {
+  const t = useT();
   const [status, setStatus] = useState<GitStatusResult | null>(null);
   const [patches, setPatches] = useState<DiffPatch[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
@@ -148,31 +150,33 @@ function ChangesPanelBody({
         style={{ maxWidth: 920, width: "92vw" }}
         role="dialog"
         aria-modal="true"
-        aria-label="变更面板"
+        aria-label={t("inspector.changesPanelAria")}
         data-testid="changes-panel"
       >
         {/* 标题行：标题 + 刷新 + 关闭 */}
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-ui-lg font-semibold text-[var(--foreground)]">变更</h2>
+          <h2 className="text-ui-lg font-semibold text-[var(--foreground)]">
+            {t("inspector.changesTitle")}
+          </h2>
           <div className="flex items-center gap-2">
             <button
               type="button"
               data-testid="changes-refresh"
-              aria-label="刷新变更"
-              title="重新拉取 git 状态"
+              aria-label={t("inspector.refresh")}
+              title={t("inspector.refreshChangesTitle")}
               onClick={() => setReloadTick((t) => t + 1)}
               className="flex items-center gap-1 rounded px-2 py-1 text-ui-sm text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
             >
               <RefreshCw size={13} aria-hidden />
-              刷新
+              {t("inspector.refresh")}
             </button>
             <button
               type="button"
-              aria-label="关闭"
+              aria-label={t("inspector.close")}
               onClick={onClose}
               className="rounded px-2 py-1 text-ui-sm text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
             >
-              关闭
+              {t("inspector.close")}
             </button>
           </div>
         </div>
@@ -182,14 +186,14 @@ function ChangesPanelBody({
             data-testid="changes-error"
             className="py-8 text-center text-ui-sm text-[var(--destructive)]"
           >
-            git 状态读取失败：{loadError}
+            {t("inspector.changesLoadFailed", { error: loadError })}
           </p>
         ) : status === null ? (
           <p
             data-testid="changes-loading"
             className="py-8 text-center text-ui-sm text-[var(--muted-foreground)]"
           >
-            正在读取 git 状态…
+            {t("inspector.changesLoading")}
           </p>
         ) : !status.isRepo ? (
           // 非 git 仓库空态（FR-11-02 验收第三条：不报错）
@@ -197,14 +201,14 @@ function ChangesPanelBody({
             data-testid="changes-empty"
             className="py-10 text-center text-ui-base text-[var(--muted-foreground)]"
           >
-            当前项目不是 git 仓库
+            {t("inspector.changesNotRepo")}
           </p>
         ) : rows.length === 0 ? (
           <p
             data-testid="changes-clean"
             className="py-10 text-center text-ui-base text-[var(--muted-foreground)]"
           >
-            工作区干净，没有未提交的变更。
+            {t("inspector.changesClean")}
           </p>
         ) : (
           <div className="flex flex-col gap-3">
@@ -260,15 +264,15 @@ function ChangesPanelBody({
                 {selectedPatch !== null ? (
                   <DiffView
                     diff={{ path: selectedPatch.path, hunks: selectedPatch.hunks }}
-                    header={`${selectedPatch.binary ? "二进制 " : ""}+${selectedPatch.addLines} −${selectedPatch.delLines}${
-                      selectedPatch.truncated ? "（已截断）" : ""
+                    header={`${selectedPatch.binary ? t("inspector.binaryMark") : ""}+${selectedPatch.addLines} −${selectedPatch.delLines}${
+                      selectedPatch.truncated ? t("inspector.truncatedMark") : ""
                     }`}
                     maxH="max-h-full"
                     testId="changes-diff"
                   />
                 ) : selected !== null ? (
                   <p className="py-8 text-center text-ui-sm text-[var(--muted-foreground)]">
-                    该文件暂无文本差异。
+                    {t("inspector.noTextDiffFile")}
                   </p>
                 ) : null}
               </div>
@@ -279,7 +283,7 @@ function ChangesPanelBody({
               data-testid="changes-user"
             >
               <GitBranch size={12} aria-hidden />
-              {status.user?.name ?? "未配置 git 用户"}
+              {status.user?.name ?? t("inspector.noGitUser")}
               {status.user?.email ? ` <${status.user.email}>` : ""}
             </p>
           </div>
@@ -292,6 +296,7 @@ function ChangesPanelBody({
 /** recent log 折叠条（#39）：原生 details 折叠 + 提交列表（sha 前 7 位 /
  *  summary / 相对时间）。随面板刷新联动重拉。 */
 function RecentLogSection({ sessionId, reloadTick }: { sessionId: string; reloadTick: number }) {
+  const t = useT();
   const [commits, setCommits] = useState<{ sha: string; summary: string; time: number }[]>([]);
   // reloadTick 刻意作为触发依赖（面板手动刷新联动重拉），effect 内不读值。
   // biome-ignore lint/correctness/useExhaustiveDependencies: reloadTick 为手动刷新触发依赖，effect 内不读值
@@ -311,7 +316,7 @@ function RecentLogSection({ sessionId, reloadTick }: { sessionId: string; reload
   return (
     <details data-testid="changes-log" className="rounded border border-[var(--border)] px-2 py-1">
       <summary className="cursor-pointer text-ui-sm text-[var(--muted-foreground)] select-none">
-        最近提交（{commits.length}）
+        {t("inspector.recentCommits", { count: commits.length })}
       </summary>
       <ul className="space-y-0.5 py-1">
         {commits.map((c) => (
@@ -324,7 +329,9 @@ function RecentLogSection({ sessionId, reloadTick }: { sessionId: string; reload
           </li>
         ))}
         {commits.length === 0 && (
-          <li className="py-1 text-ui-sm text-[var(--muted-foreground)]">（还没有提交）</li>
+          <li className="py-1 text-ui-sm text-[var(--muted-foreground)]">
+            {t("inspector.noCommits")}
+          </li>
         )}
       </ul>
     </details>
@@ -335,11 +342,11 @@ function RecentLogSection({ sessionId, reloadTick }: { sessionId: string; reload
 function formatTime(unixSecs: number): string {
   const diffMs = Date.now() - unixSecs * 1000;
   const minutes = Math.floor(diffMs / 60000);
-  if (minutes < 1) return "刚刚";
-  if (minutes < 60) return `${minutes} 分钟前`;
+  if (minutes < 1) return t("workspace.justNow");
+  if (minutes < 60) return t("workspace.minutesAgo", { n: minutes });
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} 小时前`;
+  if (hours < 24) return t("workspace.hoursAgo", { n: hours });
   const days = Math.floor(hours / 24);
-  if (days < 30) return `${days} 天前`;
+  if (days < 30) return t("workspace.daysAgo", { n: days });
   return new Date(unixSecs * 1000).toLocaleDateString();
 }

@@ -15,6 +15,8 @@ pub mod followup;
 pub mod notify;
 pub mod run_persistence;
 pub mod shell;
+// Rust 侧用户可见文案表（31 号票，§10.8：托盘菜单 + 系统通知正文）
+pub mod strings;
 // 窗口几何记忆（29 号票，§10.7）
 pub mod usage;
 pub mod window_state;

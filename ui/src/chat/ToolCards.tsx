@@ -39,6 +39,7 @@ import { Markdown } from "@/chat/Markdown";
 import { EMPTY_PLAN_STATE, usePlanStateStore } from "@/chat/plan-state";
 import { useSessionScope } from "@/chat/session-scope";
 import { Button } from "@/components/ui/button";
+import { t, useT } from "@/i18n/core";
 import * as client from "@/ipc/client";
 import type { ToolOutcome } from "@/ipc/types";
 import { auditOf, type ToolAuditInfo, useAuditsStore } from "@/stores/audits";
@@ -112,6 +113,7 @@ function ToolCardShell({
   children,
   ...props
 }: CardProps & { children?: React.ReactNode }) {
+  const t = useT();
   const { toolCallId, result, isError, argsText } = props;
   const { status, argsStatus } = useToolArgsStatus();
   const argsDone = argsStatus === "complete";
@@ -175,7 +177,7 @@ function ToolCardShell({
         </span>
         {summaryNode ?? (
           <span className="min-w-0 truncate text-[var(--foreground-subtlest)]">
-            {summary || "（等待参数…）"}
+            {summary || t("toolcards.awaitingArgs")}
           </span>
         )}
         {badges}
@@ -185,10 +187,14 @@ function ToolCardShell({
         )}
         {phase === "preparing" && <span className="shrink-0 text-[var(--cw-dim)]">…</span>}
         {phase === "cancelled" && (
-          <span className="shrink-0 text-ui-sm text-[var(--foreground-subtlest)]">已中断</span>
+          <span className="shrink-0 text-ui-sm text-[var(--foreground-subtlest)]">
+            {t("toolcards.interrupted")}
+          </span>
         )}
         {phase === "awaiting" && (
-          <span className="shrink-0 text-ui-sm text-[var(--foreground-subtlest)]">等待确认</span>
+          <span className="shrink-0 text-ui-sm text-[var(--foreground-subtlest)]">
+            {t("toolcards.awaitingConfirm")}
+          </span>
         )}
         {phase === "error" && (
           <span
@@ -196,7 +202,7 @@ function ToolCardShell({
             className="flex shrink-0 cursor-help items-center gap-1 font-medium text-[var(--destructive)] underline decoration-dotted underline-offset-4"
           >
             <CircleAlert size={12} aria-hidden className="shrink-0" />
-            失败
+            {t("toolcards.failed")}
           </span>
         )}
         <ChevronRight
@@ -211,10 +217,10 @@ function ToolCardShell({
           {children}
           <details open={phase === "preparing"}>
             <summary className="cursor-pointer text-ui-sm text-[var(--muted-foreground)]">
-              调用参数
+              {t("toolcards.argsTitle")}
             </summary>
             <pre className="mt-1 max-h-60 overflow-auto whitespace-pre-wrap font-mono text-ui-sm text-[var(--muted-foreground)]">
-              {argsText || "（等待参数…）"}
+              {argsText || t("toolcards.awaitingArgs")}
             </pre>
           </details>
           {hasResult && (
@@ -232,13 +238,13 @@ function ToolCardShell({
                 onClick={async () => {
                   try {
                     await navigator.clipboard.writeText(resultSummary);
-                    setCopyState("已复制");
+                    setCopyState(t("toolcards.copied"));
                   } catch {
-                    setCopyState("复制失败，请选择错误文本复制");
+                    setCopyState(t("toolcards.copyFailed"));
                   }
                 }}
               >
-                复制错误
+                {t("toolcards.copyError")}
               </Button>
               <span role="status" className="text-[var(--muted-foreground)]">
                 {copyState}
@@ -248,10 +254,10 @@ function ToolCardShell({
           {detailJson !== null && detailJson !== "null" && (
             <details>
               <summary className="cursor-default select-none text-[var(--muted-foreground)]">
-                详细数据
+                {t("toolcards.detailTitle")}
               </summary>
               <pre className="mt-1 max-h-60 overflow-auto whitespace-pre-wrap font-mono text-ui-sm text-[var(--muted-foreground)]">
-                {outcome?.truncated ? "（结果超过 5MB，已截断——全量见 spill 文件）" : detailJson}
+                {outcome?.truncated ? t("toolcards.detailTruncated5mb") : detailJson}
               </pre>
             </details>
           )}
@@ -354,8 +360,8 @@ function ReadImageOrTextCard({
       <ToolCardShell
         {...props}
         icon={<Search size={16} />}
-        label="读取"
-        runningLabel="正在读取"
+        label={t("toolcards.read")}
+        runningLabel={t("toolcards.reading")}
         summary={str(args, "path")}
         summaryNode={<FileChip path={str(args, "path")} />}
       >
@@ -363,12 +369,12 @@ function ReadImageOrTextCard({
           <img
             data-testid="read-image-thumb"
             src={`data:${mediaType};base64,${base64}`}
-            alt={outcome?.uiSummary ?? "读取的图片"}
+            alt={outcome?.uiSummary ?? t("toolcards.readImageAlt")}
             className="max-h-64 max-w-full rounded-lg border border-[var(--border)] object-contain"
           />
         ) : (
           <p className="text-ui-sm text-[var(--muted-foreground)]">
-            图片已读取（缩略图数据不在本机边车）
+            {t("toolcards.readImageNoThumb")}
           </p>
         )}
         {outcome?.uiSummary && (
@@ -381,14 +387,17 @@ function ReadImageOrTextCard({
   const limit = num(args, "limit");
   const range =
     offset !== undefined || limit !== undefined
-      ? `（${offset ?? 1} 起${limit !== undefined ? ` · ${limit} 行` : ""}）`
+      ? t("toolcards.readRange", {
+          offset: offset ?? 1,
+          limit: limit !== undefined ? t("toolcards.readLimitLines", { limit }) : "",
+        })
       : "";
   return (
     <ToolCardShell
       {...props}
       icon={<Search size={16} />}
-      label="读取"
-      runningLabel="正在读取"
+      label={t("toolcards.read")}
+      runningLabel={t("toolcards.reading")}
       summary={str(args, "path")}
       summaryNode={<FileChip path={str(args, "path")} />}
     >
@@ -439,6 +448,7 @@ function DocReadCard({
   ext,
   ...props
 }: ToolCallMessagePartProps<CardArgs, unknown> & { ext: string }) {
+  const t = useT();
   const args = (props.args ?? {}) as CardArgs;
   const { result, isError } = props;
   // 结构化输出在边车 data（帧面 result 是模型通道压缩文本），失败不拉取。
@@ -467,16 +477,18 @@ function DocReadCard({
   const preview =
     content !== null
       ? content.split("\n").slice(0, 80).join("\n") +
-        (content.split("\n").length > 80 ? "\n…（预览前 80 行，全量见详细数据）" : "")
+        (content.split("\n").length > 80 ? t("toolcards.previewCut", { n: 80 }) : "")
       : null;
   // 参数区说明：pdf 页码 / xlsx sheet。
   const page = num(args, "page");
   const pages = Array.isArray(args.pages) ? (args.pages as number[]) : null;
   const sheet = str(args, "sheet");
   const rangeText = [
-    page !== undefined ? `第 ${page} 页` : undefined,
-    pages !== null && pages.length === 2 ? `第 ${pages[0]}–${pages[1]} 页` : undefined,
-    sheet ? `sheet：${sheet}` : undefined,
+    page !== undefined ? t("toolcards.docPage", { page }) : undefined,
+    pages !== null && pages.length === 2
+      ? t("toolcards.docPageRange", { from: pages[0], to: pages[1] })
+      : undefined,
+    sheet ? t("toolcards.docSheet", { name: sheet }) : undefined,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -484,8 +496,8 @@ function DocReadCard({
     <ToolCardShell
       {...props}
       icon={<Search size={16} />}
-      label="读取"
-      runningLabel="正在读取"
+      label={t("toolcards.read")}
+      runningLabel={t("toolcards.reading")}
       summary={str(args, "path")}
       summaryNode={<FileChip path={str(args, "path")} />}
       badges={
@@ -501,10 +513,11 @@ function DocReadCard({
       {/* 页数 / sheet 数 / 段落表格摘要（终态后可见） */}
       {(pageCount !== undefined || sheets.length > 0 || paragraphCount !== undefined) && (
         <p data-testid="doc-summary" className="text-ui-sm text-[var(--muted-foreground)]">
-          {pageCount !== undefined && `共 ${pageCount} 页`}
-          {sheets.length > 0 && `${pageCount !== undefined ? " · " : ""}${sheets.length} 个 sheet`}
+          {pageCount !== undefined && t("toolcards.docPageCount", { count: pageCount })}
+          {sheets.length > 0 &&
+            `${pageCount !== undefined ? " · " : ""}${t("toolcards.docSheetCount", { count: sheets.length })}`}
           {paragraphCount !== undefined &&
-            `${pageCount !== undefined || sheets.length > 0 ? " · " : ""}${paragraphCount} 段${tableCount !== undefined ? ` · ${tableCount} 个表格` : ""}`}
+            `${pageCount !== undefined || sheets.length > 0 ? " · " : ""}${t("toolcards.docParaCount", { count: paragraphCount })}${tableCount !== undefined ? ` · ${t("toolcards.docTableCount", { count: tableCount })}` : ""}`}
         </p>
       )}
       {/* warnings 黄条（降级解析等，§8.2 仅 UI 不进模型文本） */}
@@ -521,12 +534,15 @@ function DocReadCard({
       {/* truncated 续读提示：给模型看的信息行（非按钮），帮助用户理解下一步 */}
       {truncated && (
         <p data-testid="doc-resume-hint" className="text-ui-sm text-[var(--muted-foreground)]">
-          {resumeHint ?? "内容超限已截断"}（可在对话中让模型按提示继续读取）
+          {resumeHint ?? t("toolcards.docTruncatedDefault")}
+          {t("toolcards.docTruncatedHint")}
         </p>
       )}
       {preview !== null && (
         <details>
-          <summary className="cursor-pointer text-[var(--muted-foreground)]">内容预览</summary>
+          <summary className="cursor-pointer text-[var(--muted-foreground)]">
+            {t("toolcards.docPreview")}
+          </summary>
           <div className="mt-1 max-h-60 overflow-auto rounded border border-[var(--border)] p-2">
             <Markdown>{preview}</Markdown>
           </div>
@@ -538,14 +554,15 @@ function DocReadCard({
 
 /** write：新文件 + +N 徽标（content 行数）。 */
 export function WriteCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
+  const t = useT();
   const args = (props.args ?? {}) as CardArgs;
   const added = lineCount(str(args, "content"));
   return (
     <ToolCardShell
       {...props}
       icon={<FilePenLine size={16} />}
-      label="写入"
-      runningLabel="正在写入"
+      label={t("toolcards.write")}
+      runningLabel={t("toolcards.writing")}
       summary={str(args, "path")}
       summaryNode={<FileChip path={str(args, "path")} />}
       badges={<DiffCount added={added} removed={0} />}
@@ -555,6 +572,7 @@ export function WriteCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
 
 /** edit：路径 + +N/−N 统计（newText/oldText 行数）。 */
 export function EditCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
+  const t = useT();
   const args = (props.args ?? {}) as CardArgs;
   const added = lineCount(str(args, "newText"));
   const removed = lineCount(str(args, "oldText"));
@@ -562,8 +580,8 @@ export function EditCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
     <ToolCardShell
       {...props}
       icon={<FilePenLine size={16} />}
-      label="编辑"
-      runningLabel="正在编辑"
+      label={t("toolcards.edit")}
+      runningLabel={t("toolcards.editing")}
       summary={str(args, "path")}
       summaryNode={<FileChip path={str(args, "path")} />}
       badges={<DiffCount added={added} removed={removed} />}
@@ -573,14 +591,15 @@ export function EditCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
 
 /** list_files：目录树（摘要 = 目标目录）。 */
 export function ListFilesCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
+  const t = useT();
   const args = (props.args ?? {}) as CardArgs;
-  const target = str(args, "path") || "（项目根）";
+  const target = str(args, "path") || t("toolcards.projectRoot");
   return (
     <ToolCardShell
       {...props}
       icon={<FolderTree size={16} />}
-      label="列出文件"
-      runningLabel="正在列出文件"
+      label={t("toolcards.listFiles")}
+      runningLabel={t("toolcards.listingFiles")}
       summary={target}
     />
   );
@@ -588,6 +607,7 @@ export function ListFilesCard(props: ToolCallMessagePartProps<CardArgs, unknown>
 
 /** grep：正则模式 + glob 过滤 + 搜索起点。 */
 export function GrepCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
+  const t = useT();
   const args = (props.args ?? {}) as CardArgs;
   const pattern = str(args, "pattern");
   const suffix = [str(args, "glob"), str(args, "path") ? `@ ${str(args, "path")}` : ""]
@@ -597,11 +617,13 @@ export function GrepCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
     <ToolCardShell
       {...props}
       icon={<Search size={16} />}
-      label="搜索"
-      runningLabel="正在搜索"
+      label={t("toolcards.grep")}
+      runningLabel={t("toolcards.grepping")}
       summary={`/${pattern}/ ${suffix}`.trim()}
     >
-      {suffix === "" && <p className="text-[var(--muted-foreground)]">（全项目搜索）</p>}
+      {suffix === "" && (
+        <p className="text-[var(--muted-foreground)]">{t("toolcards.grepFullProject")}</p>
+      )}
     </ToolCardShell>
   );
 }
@@ -612,6 +634,7 @@ export function GrepCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
  *  关联——running 徽标「审计中」+ 终态徽标（放行/拒绝/转人工），展开详情
  *  区显示简短理由/失败原因（结论与审批卡载荷 audit 字段同源）。 */
 export function CommandCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
+  const t = useT();
   const args = (props.args ?? {}) as CardArgs;
   const sessionId = useSessionScope();
   const audits = useAuditsStore((s) => s.bySession);
@@ -620,8 +643,8 @@ export function CommandCard(props: ToolCallMessagePartProps<CardArgs, unknown>) 
     <ToolCardShell
       {...props}
       icon={<SquareTerminal size={16} />}
-      label="终端"
-      runningLabel="正在执行"
+      label={t("toolcards.terminal")}
+      runningLabel={t("toolcards.executing")}
       summary={str(args, "command")}
       badges={audit ? <CommandAuditBadge audit={audit} /> : undefined}
     >
@@ -630,7 +653,7 @@ export function CommandCard(props: ToolCallMessagePartProps<CardArgs, unknown>) 
           data-testid="command-audit-note"
           className="mb-1 text-ui-sm text-[var(--muted-foreground)]"
         >
-          审计结论：{audit.reason}
+          {t("toolcards.auditNote", { reason: audit.reason })}
         </p>
       )}
     </ToolCardShell>
@@ -641,15 +664,15 @@ export function CommandCard(props: ToolCallMessagePartProps<CardArgs, unknown>) 
 function auditBadgeText(audit: ToolAuditInfo): string {
   switch (audit.state) {
     case "running":
-      return "审计中";
+      return t("toolcards.auditRunning");
     case "allow":
-      return "审计放行";
+      return t("toolcards.auditAllow");
     case "block":
-      return "审计拒绝";
+      return t("toolcards.auditBlock");
     case "ask":
-      return "审计建议确认";
+      return t("toolcards.auditAsk");
     case "manual":
-      return "审计不可用";
+      return t("toolcards.auditManual");
   }
 }
 
@@ -688,6 +711,7 @@ interface PlanItemArg {
  * 驱动，内存态——卡片渲染与 Inspector 计划区块同源）。
  */
 export function PlanCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
+  const t = useT();
   const args = (props.args ?? {}) as CardArgs;
   const items = Array.isArray(args.items) ? (args.items as PlanItemArg[]) : [];
   const done = items.filter((i) => i.status === "completed").length;
@@ -695,28 +719,28 @@ export function PlanCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
   const sessionId = useSessionScope();
   const planState = usePlanStateStore((s) => s.bySession[sessionId] ?? EMPTY_PLAN_STATE);
   const statusLabel: Record<string, string> = {
-    pending: "待办",
-    in_progress: "进行中",
-    completed: "已完成",
+    pending: t("toolcards.planPending"),
+    in_progress: t("toolcards.planInProgress"),
+    completed: t("toolcards.planCompleted"),
   };
   return (
     <ToolCardShell
       {...props}
       icon={<ClipboardList size={16} />}
-      label="计划"
-      summary={`任务计划（${done}/${items.length}）`}
+      label={t("toolcards.plan")}
+      summary={t("toolcards.planSummary", { done, total: items.length })}
     >
       {planState.approved && (
         <p data-testid="plan-card-baseline" className="mb-1 text-ui-sm text-[var(--primary)]">
-          已批准
+          {t("toolcards.planApproved")}
           {planState.baselinePaths.length > 0
-            ? ` · 基线 ${planState.baselinePaths.length} 条`
-            : "（未声明范围，首次写入会请求确认）"}
+            ? t("toolcards.planBaseline", { count: planState.baselinePaths.length })
+            : t("toolcards.planNoBaseline")}
         </p>
       )}
       {paths.length > 0 && (
         <p className="mb-1 break-all font-mono text-ui-sm text-[var(--muted-foreground)]">
-          范围：{paths.join("、")}
+          {t("toolcards.planScope", { paths: paths.join("、") })}
         </p>
       )}
       <ul className="space-y-0.5">
@@ -746,15 +770,16 @@ export function PlanCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
 
 /** ask：极简状态卡（问题本体在 AskPanel 呈现，§10.3 的 M1 落地形态）。 */
 export function AskCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
+  const t = useT();
   const args = (props.args ?? {}) as CardArgs;
   return (
     <ToolCardShell
       {...props}
       icon={<MessageCircleQuestion size={16} />}
-      label="询问"
+      label={t("toolcards.ask")}
       summary={str(args, "title")}
     >
-      <p className="text-[var(--muted-foreground)]">回答在下方询问面板中进行</p>
+      <p className="text-[var(--muted-foreground)]">{t("toolcards.askHint")}</p>
     </ToolCardShell>
   );
 }
@@ -765,6 +790,7 @@ export function AskCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
  * 扫光）。失败态（未信任/未知技能）沿 Shell 的错误展开展示 uiSummary。
  */
 export function SkillCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
+  const t = useT();
   const args = (props.args ?? {}) as CardArgs;
   const { toolCallId, result, isError } = props;
   // 正文来源：边车 data.body（帧面 result 是模型通道压缩文本，不含结构化
@@ -779,13 +805,15 @@ export function SkillCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
     <ToolCardShell
       {...props}
       icon={<Zap size={16} />}
-      label="技能"
-      runningLabel="正在加载技能"
-      summary={str(args, "name") + (optional ? "（带参数）" : "")}
+      label={t("toolcards.skill")}
+      runningLabel={t("toolcards.skillLoading")}
+      summary={str(args, "name") + (optional ? t("toolcards.skillWithArgs") : "")}
     >
       {body !== null && (
         <details>
-          <summary className="cursor-pointer text-[var(--muted-foreground)]">正文预览</summary>
+          <summary className="cursor-pointer text-[var(--muted-foreground)]">
+            {t("toolcards.bodyPreview")}
+          </summary>
           <div className="mt-1 max-h-60 overflow-auto rounded border border-[var(--border)] p-2">
             <Markdown>{body}</Markdown>
           </div>
@@ -803,7 +831,8 @@ export function SkillCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
 export function SubagentCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
   const args = (props.args ?? {}) as CardArgs;
   const { toolCallId, result, isError } = props;
-  const role = str(args, "role") || "子代理";
+  const t = useT();
+  const role = str(args, "role") || t("toolcards.subagentDefaultRole");
   const task = str(args, "task");
   // 按 callId 关联 store 记录（subStarted.callId = 委派工具调用的帧面 id）
   const item = useSubagentsStore((s) =>
@@ -821,7 +850,7 @@ export function SubagentCard(props: ToolCallMessagePartProps<CardArgs, unknown>)
       {...props}
       icon={<Bot size={16} />}
       label={role}
-      runningLabel={`子代理 ${role} 执行中（第 ${turn} 轮）`}
+      runningLabel={t("toolcards.subagentRunning", { role, turn })}
       summary={task.length > 60 ? `${task.slice(0, 60)}…` : task || role}
       badges={
         item !== undefined ? (
@@ -830,21 +859,21 @@ export function SubagentCard(props: ToolCallMessagePartProps<CardArgs, unknown>)
               running ? "text-blue-600 dark:text-blue-400" : outcomeColorOf(item.state)
             }`}
           >
-            {running ? `第 ${turn} 轮` : outcome}
+            {running ? t("toolcards.subagentTurn", { turn }) : outcome}
           </span>
         ) : undefined
       }
     >
       {task.length > 0 && (
         <div className="mb-1">
-          <p className="text-ui-sm text-[var(--muted-foreground)]">任务</p>
+          <p className="text-ui-sm text-[var(--muted-foreground)]">{t("toolcards.subagentTask")}</p>
           <p className="whitespace-pre-wrap text-ui-sm">{task}</p>
         </div>
       )}
       {item !== undefined && item.report.length > 0 && (
         <details>
           <summary className="cursor-pointer text-[var(--muted-foreground)]">
-            &lt;report&gt; 汇报
+            {t("toolcards.subagentReport")}
           </summary>
           <pre className="mt-1 max-h-60 overflow-auto whitespace-pre-wrap rounded border border-[var(--border)] p-2 text-ui-sm">
             {item.report}
@@ -853,7 +882,7 @@ export function SubagentCard(props: ToolCallMessagePartProps<CardArgs, unknown>)
       )}
       {isError && result !== undefined && (
         <p className="text-ui-sm text-red-600 dark:text-red-400">
-          {typeof result === "string" ? result : "子代理异常结束"}
+          {typeof result === "string" ? result : t("toolcards.subagentAbnormal")}
         </p>
       )}
     </ToolCardShell>
@@ -884,12 +913,13 @@ function outcomeColorOf(state: string): string {
  * （单行摘要 + 点击展开详情，边车 detail/data 全量）。
  */
 export function McpFallbackCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
+  const t = useT();
   return (
     <ToolCardShell
       {...props}
       icon={<Plug size={16} />}
-      label="MCP 工具"
-      runningLabel="正在调用 MCP 工具"
+      label={t("toolcards.mcpTool")}
+      runningLabel={t("toolcards.callingMcpTool")}
       summary={props.toolName}
     />
   );
@@ -909,6 +939,7 @@ interface WebFetchOutcome {
  * 失败态（SSRF 拒绝/超限）沿 Shell 的错误展开展示 uiSummary。
  */
 export function WebFetchCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
+  const t = useT();
   const args = (props.args ?? {}) as CardArgs;
   const { toolCallId, result, isError } = props;
   // 正文来源：边车 data（帧面 result 是模型通道压缩文本，不含结构化 data）。
@@ -924,25 +955,28 @@ export function WebFetchCard(props: ToolCallMessagePartProps<CardArgs, unknown>)
   const preview =
     content !== null
       ? content.split("\n").slice(0, 50).join("\n") +
-        (content.split("\n").length > 50 ? "\n…（预览前 50 行，全量见详细数据）" : "")
+        (content.split("\n").length > 50 ? t("toolcards.previewCut", { n: 50 }) : "")
       : null;
   return (
     <ToolCardShell
       {...props}
       icon={<Globe size={16} />}
-      label="抓取网页"
-      runningLabel="正在抓取网页"
+      label={t("toolcards.fetch")}
+      runningLabel={t("toolcards.fetching")}
       summary={str(args, "url")}
     >
       {title !== null && <p className="text-ui-sm font-medium text-[var(--foreground)]">{title}</p>}
       {length !== undefined && (
         <p className="text-ui-sm text-[var(--muted-foreground)]">
-          正文 {length} 字符{truncated ? "（超长已截断）" : ""}
+          {t("toolcards.fetchBodyChars", { length })}
+          {truncated ? t("toolcards.fetchBodyTruncated") : ""}
         </p>
       )}
       {preview !== null && (
         <details>
-          <summary className="cursor-pointer text-[var(--muted-foreground)]">正文预览</summary>
+          <summary className="cursor-pointer text-[var(--muted-foreground)]">
+            {t("toolcards.bodyPreview")}
+          </summary>
           <div className="mt-1 max-h-60 overflow-auto rounded border border-[var(--border)] p-2">
             <Markdown>{preview}</Markdown>
           </div>
@@ -967,6 +1001,7 @@ interface HttpRequestOutcome {
  * （对齐 CommandCard 形态：单行摘要 + 点击展开详情）。
  */
 export function HttpRequestCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
+  const t = useT();
   const args = (props.args ?? {}) as CardArgs;
   const { toolCallId, result, isError } = props;
   const method = str(args, "method").toUpperCase() || "GET";
@@ -994,8 +1029,8 @@ export function HttpRequestCard(props: ToolCallMessagePartProps<CardArgs, unknow
     <ToolCardShell
       {...props}
       icon={<SquareTerminal size={16} />}
-      label="HTTP 请求"
-      runningLabel="正在发送请求"
+      label={t("toolcards.http")}
+      runningLabel={t("toolcards.sendingRequest")}
       summary={str(args, "url")}
       badges={
         status !== undefined ? (
@@ -1015,7 +1050,9 @@ export function HttpRequestCard(props: ToolCallMessagePartProps<CardArgs, unknow
       </p>
       {headersJson !== null && (
         <details>
-          <summary className="cursor-pointer text-[var(--muted-foreground)]">响应头</summary>
+          <summary className="cursor-pointer text-[var(--muted-foreground)]">
+            {t("toolcards.responseHeaders")}
+          </summary>
           <pre className="mt-1 max-h-60 overflow-auto whitespace-pre-wrap rounded border border-[var(--border)] p-2 font-mono text-ui-sm text-[var(--muted-foreground)]">
             {headersJson}
           </pre>
@@ -1024,7 +1061,8 @@ export function HttpRequestCard(props: ToolCallMessagePartProps<CardArgs, unknow
       {body !== null && (
         <details>
           <summary className="cursor-pointer text-[var(--muted-foreground)]">
-            响应体{bodyTruncated ? "（尾部，全量已落盘）" : ""}
+            {t("toolcards.responseBody")}
+            {bodyTruncated ? t("toolcards.responseBodyTail") : ""}
           </summary>
           <pre className="mt-1 max-h-60 overflow-auto whitespace-pre-wrap rounded border border-[var(--border)] p-2 font-mono text-ui-sm text-[var(--muted-foreground)]">
             {body}
@@ -1032,7 +1070,9 @@ export function HttpRequestCard(props: ToolCallMessagePartProps<CardArgs, unknow
         </details>
       )}
       {spillPath !== null && (
-        <p className="text-ui-sm text-[var(--muted-foreground)]">全量响应体：{spillPath}</p>
+        <p className="text-ui-sm text-[var(--muted-foreground)]">
+          {t("toolcards.fullBodyAt", { path: spillPath })}
+        </p>
       )}
     </ToolCardShell>
   );
@@ -1054,21 +1094,29 @@ interface SearchAttempt {
   error?: unknown;
 }
 
-/** 来源通道徽标文案与配色（票面：标注来源通道——本地/抓取/云）。 */
-const CHANNEL_BADGE: Record<string, { label: string; className: string }> = {
-  searxng: {
-    label: "本地",
-    className: "bg-emerald-600/10 text-emerald-600 dark:text-emerald-400",
-  },
-  ddg: {
-    label: "抓取",
-    className: "bg-sky-600/10 text-sky-600 dark:text-sky-400",
-  },
-  tavily: {
-    label: "云",
-    className: "bg-violet-600/10 text-violet-600 dark:text-violet-400",
-  },
-};
+/** 来源通道徽标文案与配色（票面：标注来源通道——本地/抓取/云）；文案经
+ *  查词（模块级 t，31 号票 i18n）。 */
+function channelBadge(channel: string): { label: string; className: string } | undefined {
+  switch (channel) {
+    case "searxng":
+      return {
+        label: t("toolcards.channelLocal"),
+        className: "bg-emerald-600/10 text-emerald-600 dark:text-emerald-400",
+      };
+    case "ddg":
+      return {
+        label: t("toolcards.channelFetch"),
+        className: "bg-sky-600/10 text-sky-600 dark:text-sky-400",
+      };
+    case "tavily":
+      return {
+        label: t("toolcards.channelCloud"),
+        className: "bg-violet-600/10 text-violet-600 dark:text-violet-400",
+      };
+    default:
+      return undefined;
+  }
+}
 
 /**
  * web_search 工具卡（13 号票，§8.3 M2 表 Network 行）：查询词摘要 + 来源
@@ -1076,6 +1124,7 @@ const CHANNEL_BADGE: Record<string, { label: string; className: string }> = {
  * Shell 错误展开之上附逐层通道尝试记录（detail.attempts）。
  */
 export function WebSearchCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
+  const t = useT();
   const args = (props.args ?? {}) as CardArgs;
   const { toolCallId, result } = props;
   const query = str(args, "query");
@@ -1087,7 +1136,7 @@ export function WebSearchCard(props: ToolCallMessagePartProps<CardArgs, unknown>
   const outcome = useToolOutcomeDetail(toolCallId, settled);
   const data = (outcome?.data ?? null) as WebSearchOutcome | null;
   const channel = typeof data?.channel === "string" ? data.channel : null;
-  const badge = channel !== null ? CHANNEL_BADGE[channel] : undefined;
+  const badge = channel !== null ? channelBadge(channel) : undefined;
   const count = typeof data?.count === "number" ? data.count : undefined;
   // 结果列表（宽松取字段：title/url/snippet 任一类型不符按空串处理）
   const results = Array.isArray(data?.results)
@@ -1105,8 +1154,8 @@ export function WebSearchCard(props: ToolCallMessagePartProps<CardArgs, unknown>
     <ToolCardShell
       {...props}
       icon={<Search size={16} />}
-      label="联网搜索"
-      runningLabel="正在联网搜索"
+      label={t("toolcards.webSearch")}
+      runningLabel={t("toolcards.searching")}
       summary={query}
       badges={
         badge !== undefined ? (
@@ -1121,14 +1170,15 @@ export function WebSearchCard(props: ToolCallMessagePartProps<CardArgs, unknown>
     >
       {count !== undefined && (
         <p className="text-ui-sm text-[var(--muted-foreground)]">
-          {count === 0 ? "无结果" : `${count} 条结果`}
-          {channel !== null && `（来源：${badge?.label ?? channel}通道）`}
+          {count === 0 ? t("toolcards.noResults") : t("toolcards.resultCount", { count })}
+          {channel !== null &&
+            `（${t("toolcards.viaChannel", { channel: badge?.label ?? channel })}）`}
         </p>
       )}
       {results.length > 0 && (
         <ul className="mt-1 space-y-2" data-testid="web-search-results">
           {results.map((hit, index) => {
-            const title = typeof hit.title === "string" ? hit.title : "(无标题)";
+            const title = typeof hit.title === "string" ? hit.title : t("toolcards.untitled");
             const url = typeof hit.url === "string" ? hit.url : "";
             const snippet = typeof hit.snippet === "string" ? hit.snippet : "";
             return (
@@ -1164,7 +1214,9 @@ export function WebSearchCard(props: ToolCallMessagePartProps<CardArgs, unknown>
       {/* 逐层通道尝试（全败结构化错误的可读化；成功回落时同理展示过程） */}
       {attempts.length > 0 && (
         <details>
-          <summary className="cursor-pointer text-[var(--muted-foreground)]">通道尝试记录</summary>
+          <summary className="cursor-pointer text-[var(--muted-foreground)]">
+            {t("toolcards.channelAttempts")}
+          </summary>
           <ul className="mt-1 space-y-1">
             {attempts.map((attempt, index) => {
               // key 用通道标识（每通道在尝试记录中至多一次）；缺标识时退化序号
@@ -1177,9 +1229,9 @@ export function WebSearchCard(props: ToolCallMessagePartProps<CardArgs, unknown>
                   </span>
                   {attempt.tried === true
                     ? typeof attempt.error === "string"
-                      ? `：${attempt.error}`
-                      : "：成功"
-                    : "：未启用/未配置"}
+                      ? t("toolcards.attemptError", { error: attempt.error })
+                      : t("toolcards.attemptOk")
+                    : t("toolcards.attemptSkipped")}
                 </li>
               );
             })}
@@ -1207,6 +1259,7 @@ interface BatchReadFileEntry {
  * 内容默认折叠（details，限高滚动），截断文件标注续读 nextOffset。
  */
 export function BatchReadCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
+  const t = useT();
   const args = (props.args ?? {}) as CardArgs;
   const { toolCallId, result } = props;
   const paths = Array.isArray(args.paths)
@@ -1224,13 +1277,15 @@ export function BatchReadCard(props: ToolCallMessagePartProps<CardArgs, unknown>
     <ToolCardShell
       {...props}
       icon={<FileStack size={16} />}
-      label="批量读取"
-      runningLabel="正在批量读取"
+      label={t("toolcards.batchRead")}
+      runningLabel={t("toolcards.batchReading")}
       summary={paths[0] ?? ""}
       summaryNode={
         paths.length > 0 ? (
           <span className="min-w-0 truncate text-[var(--foreground-subtlest)]">
-            {paths.length === 1 ? paths[0] : `${paths[0]} 等 ${paths.length} 个文件`}
+            {paths.length === 1
+              ? paths[0]
+              : t("toolcards.moreFiles", { first: paths[0], count: paths.length })}
           </span>
         ) : undefined
       }
@@ -1265,9 +1320,9 @@ export function BatchReadCard(props: ToolCallMessagePartProps<CardArgs, unknown>
                 <span className="font-mono text-ui-sm text-[var(--foreground)]">{path}</span>
                 {file.truncated === true && (
                   <span className="ml-1 text-ui-sm text-[var(--warning)]">
-                    截断
+                    {t("toolcards.truncated")}
                     {typeof file.nextOffset === "number"
-                      ? `（续读 offset ${file.nextOffset}）`
+                      ? t("toolcards.resumeOffset", { offset: file.nextOffset })
                       : ""}
                   </span>
                 )}
@@ -1277,7 +1332,7 @@ export function BatchReadCard(props: ToolCallMessagePartProps<CardArgs, unknown>
                 {!failed && typeof file.content === "string" && file.content !== "" && (
                   <details className="mt-0.5">
                     <summary className="cursor-pointer text-ui-sm text-[var(--muted-foreground)]">
-                      内容
+                      {t("toolcards.content")}
                     </summary>
                     <pre className="mt-1 max-h-60 overflow-auto whitespace-pre-wrap font-mono text-ui-sm text-[var(--muted-foreground)]">
                       {file.content}
@@ -1291,7 +1346,7 @@ export function BatchReadCard(props: ToolCallMessagePartProps<CardArgs, unknown>
       )}
       {truncatedCount > 0 && (
         <p className="text-ui-sm text-[var(--muted-foreground)]">
-          {truncatedCount} 个文件内容截断，按续读 offset 用 read 或再调 batch_read 继续。
+          {t("toolcards.truncatedFilesNote", { count: truncatedCount })}
         </p>
       )}
     </ToolCardShell>
@@ -1307,10 +1362,11 @@ interface GlobPathEntry {
 /** glob 工具卡：模式 + 起点摘要；详情 = 命中计数 + 路径列表（上限展示 100
  *  条，对齐 grep 卡的结果量级）。 */
 export function GlobCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
+  const t = useT();
   const args = (props.args ?? {}) as CardArgs;
   const { toolCallId, result } = props;
   const pattern = str(args, "pattern");
-  const scope = str(args, "path") || "（项目根）";
+  const scope = str(args, "path") || t("toolcards.projectRoot");
   // 命中清单来自边车 data（帧面 result 是压缩文本）。
   const settled = result !== undefined;
   const outcome = useToolOutcomeDetail(toolCallId, settled);
@@ -1323,14 +1379,14 @@ export function GlobCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
     <ToolCardShell
       {...props}
       icon={<FolderSearch size={16} />}
-      label="模式找文件"
-      runningLabel="正在按模式找文件"
+      label={t("toolcards.glob")}
+      runningLabel={t("toolcards.globbing")}
       summary={`${pattern} @ ${scope}`}
     >
       {count !== undefined && (
         <p className="text-ui-sm text-[var(--muted-foreground)]">
-          {count === 0 ? "无命中" : `${count} 项命中`}
-          {truncated && "（已达上限 500 截断）"}
+          {count === 0 ? t("toolcards.noMatch") : t("toolcards.matchCount", { count })}
+          {truncated && t("toolcards.truncatedAtLimit")}
         </p>
       )}
       {shown.length > 0 && (
@@ -1349,7 +1405,7 @@ export function GlobCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
           ))}
           {paths.length > shown.length && (
             <li className="text-[var(--muted-foreground)]">
-              …其余 {paths.length - shown.length} 项见「详细数据」
+              {t("toolcards.moreInDetail", { count: paths.length - shown.length })}
             </li>
           )}
         </ul>
@@ -1361,6 +1417,7 @@ export function GlobCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
 /** calculate 工具卡：表达式摘要（monospace）+ 结果 monospace 单行（保真
  *  显示取自边车 data.formatted——与 Python repr 同口径的最短往返）。 */
 export function CalculateCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
+  const t = useT();
   const args = (props.args ?? {}) as CardArgs;
   const { toolCallId, result } = props;
   const expression = str(args, "expression");
@@ -1372,8 +1429,8 @@ export function CalculateCard(props: ToolCallMessagePartProps<CardArgs, unknown>
     <ToolCardShell
       {...props}
       icon={<Calculator size={16} />}
-      label="计算"
-      runningLabel="正在计算"
+      label={t("toolcards.calculate")}
+      runningLabel={t("toolcards.calculating")}
       summary={expression}
     >
       {formatted !== null && (
@@ -1388,6 +1445,7 @@ export function CalculateCard(props: ToolCallMessagePartProps<CardArgs, unknown>
 /** render_html 工具卡：字符数徽标 + 默认折叠的沙箱预览（手动展开才挂
  *  iframe——防闪烁、防未经查看的脚本执行，票面要求）。 */
 export function RenderHtmlCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
+  const t = useT();
   const args = (props.args ?? {}) as CardArgs;
   const html = str(args, "html");
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -1396,16 +1454,16 @@ export function RenderHtmlCard(props: ToolCallMessagePartProps<CardArgs, unknown
     <ToolCardShell
       {...props}
       icon={<Eye size={16} />}
-      label="HTML 预览"
-      runningLabel="正在准备 HTML 预览"
-      summary="沙箱预览卡"
+      label={t("toolcards.htmlPreview")}
+      runningLabel={t("toolcards.preparingHtmlPreview")}
+      summary={t("toolcards.sandboxPreviewCard")}
       badges={
         charCount > 0 ? (
           <span
             data-testid="render-html-chars"
             className="shrink-0 rounded bg-[var(--muted)] px-1.5 py-0.5 text-ui-sm font-medium text-[var(--muted-foreground)]"
           >
-            {charCount} 字符
+            {t("toolcards.charCount", { count: charCount })}
           </span>
         ) : undefined
       }
@@ -1419,7 +1477,7 @@ export function RenderHtmlCard(props: ToolCallMessagePartProps<CardArgs, unknown
             className="cursor-pointer text-ui-sm text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
             aria-expanded={previewOpen}
           >
-            {previewOpen ? "收起预览" : "查看沙箱预览"}
+            {previewOpen ? t("toolcards.collapsePreview") : t("toolcards.expandPreview")}
           </button>
           {/* 展开才挂载 iframe：未经查看不执行预览页脚本 */}
           {previewOpen && (
@@ -1429,9 +1487,7 @@ export function RenderHtmlCard(props: ToolCallMessagePartProps<CardArgs, unknown
           )}
         </div>
       )}
-      <p className="text-[var(--muted-foreground)]">
-        预览在无网络权限的沙箱中渲染（无法访问文件、存储与网络）。
-      </p>
+      <p className="text-[var(--muted-foreground)]">{t("toolcards.sandboxNote")}</p>
     </ToolCardShell>
   );
 }

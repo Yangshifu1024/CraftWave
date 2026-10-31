@@ -12,6 +12,7 @@
  *   只带引用。
  */
 
+import { t } from "@/i18n/core";
 import { attachImage as clientAttachImage } from "@/ipc/client";
 import { isSupportedImageMime, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS } from "./image-ref";
 
@@ -67,11 +68,11 @@ export function checkAttachment(
 export function rejectMessage(reject: AttachmentReject): string {
   switch (reject.kind) {
     case "too-many":
-      return `一次最多附 ${reject.limit} 张图片`;
+      return t("workspace.attachLimit", { limit: reject.limit });
     case "too-large":
-      return `图片 ${reject.name} 超过 5MiB 上限`;
+      return t("workspace.attachTooLarge", { name: reject.name });
     case "unsupported-type":
-      return `不支持的图片格式：${reject.name}（仅 png/jpeg/gif/webp）`;
+      return t("workspace.attachUnsupported", { name: reject.name });
   }
 }
 
@@ -80,7 +81,7 @@ export function readFileDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(reader.error ?? new Error("读取文件失败"));
+    reader.onerror = () => reject(reader.error ?? new Error(t("workspace.attachReadFailed")));
     reader.readAsDataURL(file);
   });
 }
@@ -89,7 +90,7 @@ export function readFileDataUrl(file: File): Promise<string> {
 export function readFileBase64(file: File): Promise<string> {
   return readFileDataUrl(file).then((dataUrl) => {
     const comma = dataUrl.indexOf(",");
-    if (comma < 0) throw new Error("data URL 形态异常");
+    if (comma < 0) throw new Error(t("workspace.dataUrlMalformed"));
     return dataUrl.slice(comma + 1);
   });
 }
@@ -163,7 +164,7 @@ export function classifyDrop(
         }
       ).webkitGetAsEntry?.();
       if (entry?.isDirectory === true) {
-        return { kind: "directory", path: entry.name ?? "未命名目录" };
+        return { kind: "directory", path: entry.name ?? t("workspace.unnamedDirectory") };
       }
     }
   }

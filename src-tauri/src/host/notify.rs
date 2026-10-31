@@ -54,13 +54,11 @@ impl NotifyGate {
     }
 
     /// run 终态通知（§9.6 触发点①）。`reason` 为 done / error / cancelled。
+    /// 正文语言随 `config.ui.language`（31 号票——每次触发读最新配置缓存，
+    /// 语言切换后下一条通知即新语言）。
     pub fn run_ended(&self, session_id: &str, run_id: &str, reason: &str, duration_ms: u64) {
-        let verb = match reason {
-            "done" => "运行完成",
-            "error" => "运行出错",
-            _ => "运行已取消",
-        };
-        let body = format!("{verb}（耗时 {:.1} 秒）", duration_ms as f64 / 1000.0);
+        let lang = self.ui_language();
+        let body = crate::host::strings::run_ended_body(reason, duration_ms as f64 / 1000.0, lang);
         self.send(
             session_id,
             &body,
@@ -76,7 +74,10 @@ impl NotifyGate {
     pub fn ask_opened(&self, session_id: &str, ask_id: &str) {
         self.send(
             session_id,
-            "等待你的回应（询问/审批）",
+            crate::host::strings::t(
+                crate::host::strings::Str::NotifyAskOpened,
+                self.ui_language(),
+            ),
             json!({
                 "sessionId": session_id,
                 "anchor": { "kind": "ask", "ref": ask_id },
@@ -102,6 +103,15 @@ impl NotifyGate {
             // anchor 载荷随通知存储；点击时经 on_action 回读路由
             .extra("anchor", anchor)
             .show();
+    }
+
+    /// 界面语言（31 号票）：读最新配置缓存；读不出（配置损坏等）按缺省
+    /// 中文——宁可退回基准语言也不阻塞通知。
+    fn ui_language(&self) -> crate::providers::types::Language {
+        self.config
+            .load()
+            .map(|c| c.ui.language)
+            .unwrap_or_default()
     }
 
     /// 防打扰判定（FR-13-06）：总开关关 / 前台正看该会话 → 抑制。

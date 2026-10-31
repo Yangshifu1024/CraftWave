@@ -15,7 +15,9 @@
  *    接收帧流，经 FrameBuffer 累积后按 64 毫秒节流产出快照（打字机效果）。
  * 本文件还包含 toWire：把 assistant-ui 的消息转成与 Rust 约定的中立格式。
  */
+
 import type { ChatModelAdapter, ChatModelRunResult, ThreadMessage } from "@assistant-ui/react";
+import { t } from "@/i18n/core";
 import * as client from "@/ipc/client";
 import type { MessageEntry, RunConfig, SequencedFrame } from "@/ipc/types";
 import { applyAuditFrame } from "@/stores/audits";
@@ -365,7 +367,7 @@ export function createTauriChatAdapter(deps: TauriAdapterDeps): ChatModelAdapter
             // 流里可能被折叠，发送失败需要即时可见）
             console.error("[start_chat] 命令失败：", err);
             const frameError = toFrameError(err);
-            pushToast("error", "发送失败", `${frameError.code}: ${frameError.message}`);
+            pushToast("error", t("toasts.sendFailed"), `${frameError.code}: ${frameError.message}`);
             buffer.push({
               seq: maxSeq + 1,
               type: "runEnded",

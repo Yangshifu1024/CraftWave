@@ -10,18 +10,27 @@
  */
 
 import { create } from "zustand";
+
+import { t } from "@/i18n/core";
 import type { PermissionTier } from "@/ipc/types";
 
 /** 循环顺序（§8.5 矩阵从严到宽）。 */
 const TIERS: PermissionTier[] = ["plan", "confirmEach", "autoEdit", "fullAccess"];
 
-/** 档位的用户可读名（Composer 档位指示）。 */
-export const TIER_LABELS: Record<PermissionTier, string> = {
-  plan: "计划",
-  confirmEach: "逐项确认",
-  autoEdit: "自动编辑",
-  fullAccess: "完全信任",
-};
+/** 档位的用户可读名（Composer 档位指示）：经字典查词（31 号票 i18n——
+ *  模块级 t() 每次调用查当前语言，组件重渲染时取到切换后文案）。 */
+export function tierLabel(tier: PermissionTier): string {
+  switch (tier) {
+    case "plan":
+      return t("workspace.tierPlan");
+    case "confirmEach":
+      return t("workspace.tierConfirmEach");
+    case "autoEdit":
+      return t("workspace.tierAutoEdit");
+    case "fullAccess":
+      return t("workspace.tierFullAccess");
+  }
+}
 
 /** 权限档 store 的状态与方法面。 */
 export interface PermissionTierStore {

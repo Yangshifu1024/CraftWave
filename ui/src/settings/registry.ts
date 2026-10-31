@@ -34,25 +34,26 @@ export const PAGE_ORDER: PageKey[] = [
 /** 默认页：设置页打开时的落点 */
 export const DEFAULT_PAGE: PageKey = "appearance";
 
-/** 页名（导航项与操作条标题共用） */
+/** 页名（导航项与操作条标题共用）：值为 i18n 键（31 号票——消费点经 t()
+ *  查词渲染，双语随界面语言切换）。 */
 export const PAGE_LABEL: Record<PageKey, string> = {
-  appearance: "界面",
-  providers: "模型与供应商",
-  network: "网络与连接",
-  security: "安全与审批",
-  mcp: "MCP",
-  skills: "技能",
-  tools: "写入后检查与校验",
-  agent: "工作区与智能体",
-  logs: "日志",
-  about: "关于",
+  appearance: "settings.pageAppearance",
+  providers: "settings.pageProviders",
+  network: "settings.pageNetwork",
+  security: "settings.pageSecurity",
+  mcp: "settings.pageMcp",
+  skills: "settings.pageSkills",
+  tools: "settings.pageTools",
+  agent: "settings.pageAgent",
+  logs: "settings.pageLogs",
+  about: "settings.pageAbout",
 };
 
-/** 左导航三组（组内页序 = PAGE_ORDER 中的相对序） */
+/** 左导航三组（组内页序 = PAGE_ORDER 中的相对序）；组名同为 i18n 键。 */
 export const PAGE_GROUPS: { title: string; pages: PageKey[] }[] = [
-  { title: "外观与模型", pages: ["appearance", "providers", "network"] },
-  { title: "安全与能力", pages: ["security", "mcp", "skills", "tools", "agent"] },
-  { title: "诊断与其他", pages: ["logs", "about"] },
+  { title: "settings.groupAppearance", pages: ["appearance", "providers", "network"] },
+  { title: "settings.groupSecurity", pages: ["security", "mcp", "skills", "tools", "agent"] },
+  { title: "settings.groupDiagnosis", pages: ["logs", "about"] },
 ];
 
 /** 未知页 key 回退默认页 */

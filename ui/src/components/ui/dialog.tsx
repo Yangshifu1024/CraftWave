@@ -3,8 +3,10 @@
  * 手写实现（不依赖 radix 组件库）：遮罩点击与 Esc 都触发 onClose，
  * 不拦截按钮区冒泡。模态（modal）指打开时挡住背后页面、同一时刻只操作弹框。
  */
+
 import { X } from "lucide-react";
 import { type ReactNode, useEffect } from "react";
+import { t } from "@/i18n/core";
 import { Button } from "./button";
 
 /** 底部动作区的一个按钮描述：label 文案；variant 按钮变体（默认 outline）；
@@ -65,7 +67,7 @@ export function Dialog({ open, title, onClose, children, actions, width = 440 }:
           <h2 className="text-ui-lg font-semibold text-[var(--foreground)]">{title}</h2>
           <button
             type="button"
-            aria-label="关闭"
+            aria-label={t("inspector.close")}
             onClick={onClose}
             className="flex size-6 items-center justify-center rounded text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
           >

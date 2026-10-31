@@ -16,6 +16,7 @@
  */
 
 import { useEffect, useState } from "react";
+import { useT } from "@/i18n/core";
 import { registerPreview } from "@/ipc/client";
 
 /** 沙箱 token 清单（逃逸防线的契约面，测试逐字断言）：
@@ -39,6 +40,7 @@ export function HtmlPreview({
   /** 测试锚点。 */
   testId?: string;
 }) {
+  const t = useT();
   const [src, setSrc] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -59,15 +61,19 @@ export function HtmlPreview({
   return (
     <div data-testid={testId} className="min-w-0 space-y-1">
       {error !== null ? (
-        <p className="text-ui-sm text-[var(--destructive)]">预览注册失败：{error}</p>
+        <p className="text-ui-sm text-[var(--destructive)]">
+          {t("workspace.previewRegisterFailed", { error })}
+        </p>
       ) : src === null ? (
-        <p className="text-ui-sm text-[var(--muted-foreground)]">正在准备沙箱预览…</p>
+        <p className="text-ui-sm text-[var(--muted-foreground)]">
+          {t("workspace.preparingPreview")}
+        </p>
       ) : (
         /* 沙箱属性即逃逸防线：只有 allow-scripts 一个 token（见
            PREVIEW_SANDBOX_TOKENS 注释）；referrerPolicy 收紧不泄露来源。 */
         <iframe
           data-testid={`${testId}-frame`}
-          title="HTML 沙箱预览"
+          title={t("workspace.htmlPreviewTitle")}
           sandbox={PREVIEW_SANDBOX_TOKENS.join(" ")}
           src={src}
           referrerPolicy="no-referrer"

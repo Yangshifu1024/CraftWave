@@ -254,6 +254,28 @@ fn rebuild_message_stream_impl(
     Ok(out)
 }
 
+/// ai_language 注入层（31 号票，§6.2 注入次序回写）：模型回复语言的常驻
+/// 指引行。`config.ui.aiLanguage` 非空 → 「请始终使用 <ai_language> 回答」；
+/// 空/未配置 → 跟随界面语言（zh-CN/en-US 各一行固定文案）；返回 None =
+/// 不应注入（不会发生——空值也回退界面语言，仅参数异常防御）。
+/// 纯函数无 IO，三态单测见 wire_test。
+pub fn ai_language_layer(ai_language: Option<&str>, ui_language: &str) -> Option<String> {
+    let target = match ai_language.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(custom) => custom.to_owned(),
+        None => match ui_language {
+            "en-US" => "English".to_owned(),
+            _ => "简体中文".to_owned(),
+        },
+    };
+    // 模板按界面语言选（发给模型的指令行——与 32 号票错误面口径同为
+    // 「英文技术串/中文模板」双轨的模型侧文本）
+    if ui_language == "en-US" {
+        Some(format!("Always respond in {target}."))
+    } else {
+        Some(format!("请始终使用 {target} 回答。"))
+    }
+}
+
 /// 系统级前缀注入（§6.2 注入次序，03 号票定稿）：`agent.customPrompt`
 /// （FR-09-06）非空白时作为 history 首条 system 消息插入；空/未配置零注入
 /// （原样返回）。注入不进消息史册，只在模型请求面生效。

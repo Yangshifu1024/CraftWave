@@ -18,6 +18,7 @@ import { X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { t, useT } from "@/i18n/core";
 import { attachImage, saveProject } from "@/ipc/client";
 import { useSessionsStore } from "@/stores/sessions";
 import {
@@ -97,7 +98,7 @@ export function useComposerAttachments(sessionId: string): {
   const addFromPath = useCallback(
     async (path: string, mime: string) => {
       if (!isSupportedImageMime(mime)) {
-        showHint(`不支持的图片格式：${path.split("/").at(-1) ?? path}`);
+        showHint(t("workspace.attachUnsupportedPath", { name: path.split("/").at(-1) ?? path }));
         return;
       }
       try {
@@ -154,18 +155,18 @@ export function AttachmentBar({
             />
           ) : (
             <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-[var(--accent)] text-ui-sm text-[var(--muted-foreground)]">
-              图
+              {t("workspace.attachThumbAlt")}
             </span>
           )}
           <span className="flex min-w-0 max-w-40 flex-col">
             <span className="truncate text-[var(--foreground)]">{a.name}</span>
             <span className="text-ui-sm text-[var(--muted-foreground)]">
-              {a.size > 0 ? formatBytes(a.size) : "已上传"}
+              {a.size > 0 ? formatBytes(a.size) : t("workspace.attachUploaded")}
             </span>
           </span>
           <button
             type="button"
-            aria-label={`移除图片 ${a.name}`}
+            aria-label={t("workspace.attachRemoveAria", { name: a.name })}
             onClick={() => onRemove(a.id)}
             className="flex size-5 shrink-0 items-center justify-center rounded text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
           >
@@ -258,6 +259,7 @@ export function DropDirectoryDialog({
   drop: DropDirectory | null;
   onClose: () => void;
 }) {
+  const t = useT();
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -286,13 +288,13 @@ export function DropDirectoryDialog({
   return (
     <Dialog
       open={drop !== null}
-      title="添加为项目"
+      title={t("workspace.dropDirTitle")}
       onClose={onClose}
       width={480}
       actions={[
-        { label: "取消", variant: "ghost", onClick: onClose },
+        { label: t("workspace.cancel"), variant: "ghost", onClick: onClose },
         {
-          label: "添加项目",
+          label: t("workspace.dropDirConfirm"),
           variant: "default",
           disabled: busy,
           onClick: submit,
@@ -300,12 +302,12 @@ export function DropDirectoryDialog({
       ]}
     >
       <p className="mb-4 text-ui-sm text-[var(--muted-foreground)]">
-        把拖入的目录注册为项目：{drop?.path}
+        {t("workspace.dropDirBody", { path: drop?.path ?? "" })}
       </p>
       <Input
         value={name}
         onChange={(e) => setName(e.target.value)}
-        placeholder="项目名称"
+        placeholder={t("workspace.dropDirNamePlaceholder")}
         data-testid="drop-dir-name"
       />
       {error !== null && <p className="mt-3 text-ui-sm text-[var(--destructive)]">{error}</p>}

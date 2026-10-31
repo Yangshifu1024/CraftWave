@@ -5,7 +5,10 @@
 use rig::completion::Message;
 use rig::message::{ToolResultContent, UserContent};
 
-use crate::backend::wire::{WireError, rebuild_message_stream, split_prompt, with_system_prefix};
+use crate::backend::wire::{
+    WireError, ai_language_layer, rebuild_message_stream, split_prompt, with_system_prefix,
+    with_system_prefix_layers,
+};
 use crate::storage::{MessageEntry, MessageRole, WirePart};
 
 /// 造一条 user 文本消息。
@@ -258,9 +261,7 @@ fn custom_prompt_is_trimmed_before_injection() {
 
 // ---- 压缩边界重建（§6.2【M2】，04 号票）----
 
-use crate::backend::wire::{
-    CompactionBoundary, split_prompt_with_boundary, with_system_prefix_layers,
-};
+use crate::backend::wire::{CompactionBoundary, split_prompt_with_boundary};
 
 /// 历史序列：u1 → a1（含工具回合）→ u2（本次输入 prompt）。
 fn compact_sample() -> Vec<MessageEntry> {
@@ -524,4 +525,72 @@ fn assistant_image_part_skipped_in_stream() {
         turn.content[0],
         rig::message::AssistantContent::Text(_)
     ));
+}
+
+// ---- ai_language 注入层（31 号票，§6.2 注入次序回写）----
+
+/// 三态：ai_language 非空 → 注入自定义语言（中文界面模板）。
+#[test]
+fn ai_language_custom_takes_precedence() {
+    let layer =
+        ai_language_layer(Some("English"), "zh-CN").expect("ai_language 非空必须产生注入层");
+    assert_eq!(layer, "请始终使用 English 回答。");
+}
+
+/// 三态：ai_language 空 → 跟随界面语言（zh-CN → 中文固定行）。
+#[test]
+fn ai_language_empty_follows_ui_lang_zh() {
+    let layer = ai_language_layer(None, "zh-CN").expect("空值回退界面语言也产生注入层");
+    assert_eq!(layer, "请始终使用 简体中文 回答。");
+    // 空白串与 None 同语义
+    let blank = ai_language_layer(Some("   "), "zh-CN").expect("空白同 None");
+    assert_eq!(blank, "请始终使用 简体中文 回答。");
+}
+
+/// 三态：ai_language 空 + en-US 界面 → 英文固定行（en 文案无 CJK）。
+#[test]
+fn ai_language_empty_follows_ui_lang_en() {
+    let layer = ai_language_layer(None, "en-US").expect("en 界面同样产生注入层");
+    assert_eq!(layer, "Always respond in English.");
+    assert!(
+        !layer
+            .chars()
+            .any(|c| ('\u{4E00}'..='\u{9FFF}').contains(&c))
+    );
+}
+
+/// 注入排序（§6.2 回写口径）：customPrompt → 项目指令 → ai_language →
+/// 压缩 summary → 技能清单——layers 按传入序层叠，本测断言 ai_language
+/// 层位于 customPrompt/项目指令之后、压缩 summary 之前。
+#[test]
+fn ai_language_layer_order_in_system_prefix() {
+    let ai = ai_language_layer(Some("English"), "zh-CN").unwrap();
+    let history: Vec<_> = Vec::new();
+    let out = with_system_prefix_layers(
+        history,
+        [
+            Some("CUSTOM"),
+            Some("INSTRUCTIONS"),
+            Some(ai.as_str()),
+            Some("SUMMARY"),
+            Some("SKILLS"),
+        ],
+    );
+    let texts: Vec<_> = out
+        .iter()
+        .map(|m| match m.as_ref() {
+            Message::System { content } => content.clone(),
+            _ => String::new(),
+        })
+        .collect();
+    assert_eq!(
+        texts,
+        vec![
+            "CUSTOM",
+            "INSTRUCTIONS",
+            "请始终使用 English 回答。",
+            "SUMMARY",
+            "SKILLS"
+        ]
+    );
 }

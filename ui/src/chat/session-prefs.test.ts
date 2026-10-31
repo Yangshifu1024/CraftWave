@@ -14,8 +14,8 @@ import { setModelPersisted, useSessionModelStore } from "./session-model";
 import { flushSessionPrefs, resetPendingPrefs, restoreSessionPrefs } from "./session-prefs";
 import {
   setLevelPersisted,
-  THINKING_LABELS,
   THINKING_LEVELS,
+  thinkingLabel,
   thinkingOf,
   useThinkingStore,
 } from "./thinking-level";
@@ -49,7 +49,7 @@ describe("thinking store（FR-02-08 五档）", () => {
 
   it("五档均有用户可读名（Composer 钮显示面不缺行）", () => {
     for (const level of THINKING_LEVELS) {
-      expect(THINKING_LABELS[level].length).toBeGreaterThan(0);
+      expect(thinkingLabel(level).length).toBeGreaterThan(0);
     }
   });
 

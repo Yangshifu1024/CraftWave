@@ -19,6 +19,7 @@ import { FileText, FolderOpen, GitCompareArrows } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { openChangesPanel } from "@/chat/changes-store";
 import { Dialog } from "@/components/ui/dialog";
+import { useT } from "@/i18n/core";
 import { listArtifacts, listenEvent, openInEditor, readWorkspaceFile } from "@/ipc/client";
 import type { ArtifactRow } from "@/ipc/types";
 
@@ -41,6 +42,7 @@ function displayPath(path: string): string {
 
 /** 产物面板主体：清单 + 行操作 + 预览 Dialog。 */
 export function ArtifactsPanel({ sessionId }: { sessionId: string }) {
+  const t = useT();
   const [rows, setRows] = useState<ArtifactRow[] | null>(null);
   const [note, setNote] = useState<LineNote | null>(null);
   const [preview, setPreview] = useState<{
@@ -97,31 +99,32 @@ export function ArtifactsPanel({ sessionId }: { sessionId: string }) {
             typeof err === "object" && err !== null && "message" in err
               ? String((err as { message: unknown }).message)
               : String(err);
-          setNote({ path, text: `预览失败：${message}` });
+          setNote({ path, text: t("inspector.artifactsPreviewFailed", { error: message }) });
         });
     },
-    [sessionId],
+    [sessionId, t],
   );
 
   /** 打开编辑器（#36）：探测不到编辑器等失败给行内提示。 */
-  const openEditor = useCallback((path: string) => {
-    void openInEditor(path)
-      .then(() => setNote(null))
-      .catch((err: unknown) => {
-        const message =
-          typeof err === "object" && err !== null && "message" in err
-            ? String((err as { message: unknown }).message)
-            : String(err);
-        setNote({ path, text: `打开失败：${message}` });
-      });
-  }, []);
+  const openEditor = useCallback(
+    (path: string) => {
+      void openInEditor(path)
+        .then(() => setNote(null))
+        .catch((err: unknown) => {
+          const message =
+            typeof err === "object" && err !== null && "message" in err
+              ? String((err as { message: unknown }).message)
+              : String(err);
+          setNote({ path, text: t("inspector.artifactsOpenFailed", { error: message }) });
+        });
+    },
+    [t],
+  );
 
   if (rows === null || rows.length === 0) {
     return (
       <div className="p-3 text-ui-sm text-[var(--muted-foreground)]" data-testid="artifacts-empty">
-        {rows === null
-          ? "正在读取产物…"
-          : "本会话还没有产物。AI 写入或编辑的文件会自动登记在这里。"}
+        {rows === null ? t("inspector.artifactsLoading") : t("inspector.artifactsEmpty")}
       </div>
     );
   }
@@ -165,7 +168,7 @@ export function ArtifactsPanel({ sessionId }: { sessionId: string }) {
                 </span>
                 {missing && (
                   <span className="text-[10px]" data-testid="artifact-missing">
-                    文件已删除
+                    {t("inspector.artifactsDeleted")}
                   </span>
                 )}
                 {!missing && (
@@ -176,7 +179,7 @@ export function ArtifactsPanel({ sessionId }: { sessionId: string }) {
                       className="rounded border border-[var(--border)] px-1.5 py-0.5 text-[10px] text-[var(--foreground)] hover:border-[var(--primary)]"
                       onClick={() => openPreview(row.path)}
                     >
-                      预览
+                      {t("inspector.artifactsPreview")}
                     </button>
                     <button
                       type="button"
@@ -185,7 +188,7 @@ export function ArtifactsPanel({ sessionId }: { sessionId: string }) {
                       onClick={() => openEditor(row.path)}
                     >
                       <FolderOpen size={10} aria-hidden />
-                      打开
+                      {t("inspector.artifactsOpen")}
                     </button>
                     {/* 变更面板联动接缝（26 号票 openChangesPanel 约定接口） */}
                     <button
@@ -195,7 +198,7 @@ export function ArtifactsPanel({ sessionId }: { sessionId: string }) {
                       onClick={() => openChangesPanel(sessionId, row.path)}
                     >
                       <GitCompareArrows size={10} aria-hidden />
-                      变更
+                      {t("inspector.artifactsChanges")}
                     </button>
                   </span>
                 )}
@@ -245,20 +248,21 @@ function ArtifactPreviewDialog({
   truncated: boolean;
   onClose: () => void;
 }) {
+  const t = useT();
   return (
     <Dialog
       open
       title={baseName(path)}
       onClose={onClose}
       width={720}
-      actions={[{ label: "关闭", variant: "ghost", onClick: onClose }]}
+      actions={[{ label: t("inspector.close"), variant: "ghost", onClick: onClose }]}
     >
       {truncated && (
         <p
           className="mb-2 rounded bg-[var(--muted)] px-2 py-1 text-ui-sm text-[var(--cw-dim)]"
           data-testid="artifact-preview-truncated"
         >
-          内容较长，仅显示前 512KB；完整内容可在编辑器中查看。
+          {t("inspector.previewTruncatedNote")}
         </p>
       )}
       <pre

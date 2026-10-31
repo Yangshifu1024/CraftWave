@@ -18,6 +18,7 @@ import { Input } from "@/components/ui/input";
 import { NumberInput } from "@/components/ui/number-input";
 import { Select } from "@/components/ui/select";
 import { CheckableTag, Tag } from "@/components/ui/tag";
+import { t } from "@/i18n/core";
 import { testProvider } from "@/ipc/client";
 import type { ApiFormat, ProbeError, ProviderConfig, ProviderModel } from "@/ipc/types";
 import { EyeIcon, LockIcon, PencilIcon, PlusIcon, TrashIcon } from "@/settings/icons";
@@ -56,15 +57,15 @@ export type ConnectionTestState =
 /** 探测错误分类（§3.6 E_PROVIDER_* 七类）→ 人话文案映射表。 */
 export function probeErrorLabel(code: string): string {
   const labels: Record<string, string> = {
-    E_PROVIDER_AUTH: "认证失败：API Key 无效或无权限",
-    E_PROVIDER_BILLING: "余额或配额不足",
-    E_PROVIDER_RATE_LIMITED: "请求过于频繁（限流），稍后重试",
-    E_PROVIDER_BAD_REQUEST: "请求被拒绝：地址可能不完整（确认含 /v1 前缀）",
-    E_PROVIDER_SERVER: "服务端错误（5xx），稍后重试",
-    E_PROVIDER_PROTOCOL: "响应不符合协议：地址可能不是 OpenAI 兼容端点",
-    E_PROVIDER_NETWORK: "无法连接：地址不可达（本地服务未启动？）或网络不通",
+    E_PROVIDER_AUTH: "settings.probeAuth",
+    E_PROVIDER_BILLING: "settings.probeBilling",
+    E_PROVIDER_RATE_LIMITED: "settings.probeRateLimited",
+    E_PROVIDER_BAD_REQUEST: "settings.probeBadRequest",
+    E_PROVIDER_SERVER: "settings.probeServer",
+    E_PROVIDER_PROTOCOL: "settings.probeProtocol",
+    E_PROVIDER_NETWORK: "settings.probeNetwork",
   };
-  return labels[code] ?? `连接失败（${code}）`;
+  return labels[code] ? t(labels[code]) : t("settings.probeUnknown", { code });
 }
 
 /** 表单内的供应商表示（baseUrl 必填语义、headers 行式） */
@@ -117,11 +118,11 @@ export function fieldIssue(
   key: FieldKey,
   credential: CredentialState,
 ): string | undefined {
-  if (key === "name" && form.name.trim() === "") return "必填";
+  if (key === "name" && form.name.trim() === "") return t("settings.required");
   if (key === "baseUrl") {
     const url = form.baseUrl.trim();
-    if (url === "") return "必填";
-    if (!/^https?:\/\/[^\s/]+/i.test(url)) return "必须是合法 http(s) 地址";
+    if (url === "") return t("settings.required");
+    if (!/^https?:\/\/[^\s/]+/i.test(url)) return t("settings.invalidUrl");
   }
   if (key === "keys") {
     // 本地供应商（FR-02-04，19 号票）：免 API Key（本地服务不校验凭据）
@@ -131,11 +132,11 @@ export function fieldIssue(
       : credential.mode === "replace"
         ? credential.newKey.trim() !== ""
         : !!form.apiKey;
-    if (!hasKey) return "必填（供应商调用需要 API Key）";
+    if (!hasKey) return t("settings.requiredWithKey");
   }
-  if (key === "models" && form.models.length === 0) return "至少配置一个模型";
+  if (key === "models" && form.models.length === 0) return t("settings.atLeastOneModel");
   if (key === "headers" && !headersValid(form.headerRows)) {
-    return "头名非法、保留、重名，或值含不可见字符";
+    return t("settings.headerInvalid");
   }
   return undefined;
 }
@@ -237,7 +238,10 @@ export async function runConnectionTest(
     } else {
       slot({
         state: "error",
-        error: { code: "E_PROVIDER_PROTOCOL", message: "探测结果缺少错误详情" },
+        error: {
+          code: "E_PROVIDER_PROTOCOL",
+          message: "probe result missing error details",
+        },
       });
     }
   } catch (err) {
@@ -314,7 +318,7 @@ export function ProviderFields({
         <div className="settings-row">
           <div className="settings-row-copy">
             <span className="settings-row-title">
-              名称 <span className="text-[var(--cw-err)]">*</span>
+              {t("settings.fieldName")} <span className="text-[var(--cw-err)]">*</span>
             </span>
           </div>
           <div className="settings-row-control">
@@ -322,7 +326,7 @@ export function ProviderFields({
               <Input
                 className={cn(errors.name && "settings-field-error-input")}
                 value={form.name}
-                placeholder="如 智谱 GLM Coding Plan"
+                placeholder={t("settings.namePlaceholder")}
                 onChange={(e) => onPatch({ name: e.target.value })}
               />
             </FieldControl>
@@ -332,7 +336,7 @@ export function ProviderFields({
         <div className="settings-row">
           <div className="settings-row-copy">
             <span className="settings-row-title">
-              API 格式 <span className="text-[var(--cw-err)]">*</span>
+              {t("settings.fieldApiFormat")} <span className="text-[var(--cw-err)]">*</span>
             </span>
           </div>
           <div className="settings-row-control">
@@ -340,7 +344,7 @@ export function ProviderFields({
               <Select
                 className="w-full"
                 value={form.apiFormat}
-                aria-label="API 格式"
+                aria-label={t("settings.fieldApiFormat")}
                 onChange={(e) => {
                   const next = e.target.value as ApiFormat;
                   // 切协议同步默认端点：仅当前值为空或已知官方默认时替换；自定义 URL 不受影响
@@ -367,9 +371,7 @@ export function ProviderFields({
             <span className="settings-row-title">
               Base URL <span className="text-[var(--cw-err)]">*</span>
             </span>
-            <span className="settings-row-description">
-              编辑态可先测草稿地址再保存（不落库）；新增供应商保存后从卡片测试。
-            </span>
+            <span className="settings-row-description">{t("settings.draftTestNote")}</span>
           </div>
           <div className="settings-row-control">
             <FieldControl error={errors.baseUrl} wide>
@@ -394,7 +396,9 @@ export function ProviderFields({
                     }
                     onClick={onTestDraft}
                   >
-                    {draftTest?.state === "testing" ? "测试中…" : "测试连接"}
+                    {draftTest?.state === "testing"
+                      ? t("settings.testing")
+                      : t("settings.testConnectionShort")}
                   </Button>
                 )}
               </div>
@@ -420,10 +424,10 @@ export function ProviderFields({
             </span>
             <span className="settings-row-description">
               {form.local
-                ? "本地服务不校验凭据，免 API Key；离线可用。"
+                ? t("settings.localNoKeyNote")
                 : credential.isNew || credential.mode === "replace"
-                  ? "明文存于 config.json（文件权限 0600）。"
-                  : "现有 Key 保持在 config.json，不在界面回显。"}
+                  ? t("settings.keyPlainNote")
+                  : t("settings.keyKeepNote")}
             </span>
           </div>
           <div className="settings-row-control">
@@ -431,8 +435,8 @@ export function ProviderFields({
               {form.local ? (
                 // 本地预设（FR-02-04，19 号票）：免 Key——Key 输入隐藏
                 <div className="flex w-full items-center gap-2 text-ui-sm text-[var(--cw-text-2)]">
-                  <Tag>本地 / 离线可用</Tag>
-                  <span>无需 API Key</span>
+                  <Tag>{t("settings.localTag")}</Tag>
+                  <span>{t("settings.noApiKeyNeeded")}</span>
                 </div>
               ) : credential.isNew ? (
                 <Input
@@ -448,7 +452,7 @@ export function ProviderFields({
               ) : (
                 <div className="settings-credential-options">
                   <span className="text-ui-sm text-[var(--cw-text-2)]">
-                    {form.apiKey ? "已配置 API Key" : "尚未配置 API Key"}
+                    {form.apiKey ? t("settings.keyConfigured") : t("settings.keyNotConfigured")}
                   </span>
                   <label>
                     <input
@@ -457,7 +461,7 @@ export function ProviderFields({
                       checked={credential.mode === "keep"}
                       onChange={() => onCredentialMode?.("keep")}
                     />
-                    保留现有 Key
+                    {t("settings.keepExistingKey")}
                   </label>
                   <label>
                     <input
@@ -466,7 +470,7 @@ export function ProviderFields({
                       checked={credential.mode === "replace"}
                       onChange={() => onCredentialMode?.("replace")}
                     />
-                    替换为新 Key
+                    {t("settings.replaceWithNewKey")}
                   </label>
                   {credential.mode === "replace" && (
                     <Input
@@ -488,10 +492,8 @@ export function ProviderFields({
 
         <div className="settings-row">
           <div className="settings-row-copy">
-            <span className="settings-row-title">自定义请求头</span>
-            <span className="settings-row-description">
-              追加到每次模型请求；保留名（Authorization 等）不可覆盖。
-            </span>
+            <span className="settings-row-title">{t("settings.headersTitle")}</span>
+            <span className="settings-row-description">{t("settings.headersNote")}</span>
           </div>
           <div className="settings-row-control">
             <FieldControl error={errors.headers} wide>
@@ -512,7 +514,7 @@ export function ProviderFields({
                     <Button
                       variant="outline"
                       size="sm"
-                      aria-label="删除请求头"
+                      aria-label={t("settings.deleteHeader")}
                       onClick={() =>
                         onPatch({ headerRows: form.headerRows.filter((_, i) => i !== index) })
                       }
@@ -529,7 +531,7 @@ export function ProviderFields({
                   }
                 >
                   <PlusIcon className="h-3.5 w-3.5" />
-                  添加请求头
+                  {t("settings.addHeader")}
                 </button>
               </div>
             </FieldControl>
@@ -537,7 +539,7 @@ export function ProviderFields({
         </div>
       </div>
 
-      <div className="settings-divider">模型列表</div>
+      <div className="settings-divider">{t("settings.modelList")}</div>
       {errors.models && <div className="mb-2 text-ui-sm text-[var(--cw-err)]">{errors.models}</div>}
       {children}
     </>
@@ -563,10 +565,10 @@ export function ModelListSection({
   if (models.length === 0) {
     return (
       <div className="settings-models-empty">
-        <span className="text-ui-sm text-[var(--cw-text-2)]">暂无模型</span>
+        <span className="text-ui-sm text-[var(--cw-text-2)]">{t("settings.noModelsHint")}</span>
         <button type="button" className="settings-dashed-button" onClick={onAdd}>
           <PlusIcon className="h-3.5 w-3.5" />
-          添加模型
+          {t("settings.addModel")}
         </button>
       </div>
     );
@@ -578,19 +580,19 @@ export function ModelListSection({
           <div className="settings-collection-row" key={model.id}>
             <span className="settings-collection-row-info">
               <code>{model.model}</code>
-              {model.vision && <Tag>图像</Tag>}
+              {model.vision && <Tag>{t("settings.modelVisionTag")}</Tag>}
               <span className="text-ui-sm text-[var(--muted-foreground)]">
                 {Math.round(model.contextWindow / 1000)}k · {Math.round(model.maxTokens / 1000)}k
-                输出
+                {t("settings.maxOutput")}
               </span>
               {activeModelId === model.id && (
-                <Tag className="settings-provider-active-tag">当前</Tag>
+                <Tag className="settings-provider-active-tag">{t("settings.modelActiveTag")}</Tag>
               )}
             </span>
             <span className="flex items-center gap-1">
               <Button variant="ghost" size="sm" onClick={() => onEdit(model)}>
                 <PencilIcon className="h-3.5 w-3.5" />
-                编辑模型
+                {t("settings.editModel")}
               </Button>
               <Button
                 variant="ghost"
@@ -599,7 +601,7 @@ export function ModelListSection({
                 onClick={() => onRemove(model)}
               >
                 <TrashIcon className="h-3.5 w-3.5" />
-                删除
+                {t("settings.delete")}
               </Button>
             </span>
           </div>
@@ -607,7 +609,7 @@ export function ModelListSection({
       </div>
       <button type="button" className="settings-dashed-button mt-2 w-full" onClick={onAdd}>
         <PlusIcon className="h-3.5 w-3.5" />
-        添加模型
+        {t("settings.addModel")}
       </button>
     </>
   );
@@ -630,12 +632,12 @@ export function ModelEditor({
       <div className="settings-row settings-provider-model-field-wide">
         <div className="settings-row-copy">
           <span className="settings-row-title">
-            模型 ID <span className="text-[var(--cw-err)]">*</span>
+            {t("settings.modelId")} <span className="text-[var(--cw-err)]">*</span>
           </span>
-          <span className="settings-row-description">服务商文档中的 wire id。</span>
+          <span className="settings-row-description">{t("settings.modelIdNote")}</span>
         </div>
         <div className="settings-row-control">
-          <FieldControl error={idError && idEmpty ? "必填" : undefined}>
+          <FieldControl error={idError && idEmpty ? t("settings.required") : undefined}>
             <Input
               className={cn(idError && idEmpty && "settings-field-error-input")}
               value={value.model}
@@ -648,12 +650,12 @@ export function ModelEditor({
 
       <div className="settings-row">
         <div className="settings-row-copy">
-          <span className="settings-row-title">上下文窗口</span>
-          <span className="settings-row-description">超过后触发历史压缩。</span>
+          <span className="settings-row-title">{t("settings.contextWindow")}</span>
+          <span className="settings-row-description">{t("settings.contextWindowNote")}</span>
         </div>
         <div className="settings-row-control">
           <NumberInput
-            aria-label="上下文窗口"
+            aria-label={t("settings.contextWindow")}
             min={1000}
             step={1000}
             fallback={128000}
@@ -665,12 +667,12 @@ export function ModelEditor({
 
       <div className="settings-row">
         <div className="settings-row-copy">
-          <span className="settings-row-title">最大输出</span>
-          <span className="settings-row-description">单次回复的输出上限。</span>
+          <span className="settings-row-title">{t("settings.maxOutput")}</span>
+          <span className="settings-row-description">{t("settings.maxOutputNote")}</span>
         </div>
         <div className="settings-row-control">
           <NumberInput
-            aria-label="最大输出"
+            aria-label={t("settings.maxOutput")}
             min={256}
             step={256}
             fallback={32768}
@@ -682,20 +684,20 @@ export function ModelEditor({
 
       <div className="settings-row">
         <div className="settings-row-copy">
-          <span className="settings-row-title">输入类型</span>
+          <span className="settings-row-title">{t("settings.inputType")}</span>
         </div>
         <div className="settings-row-control">
           <div className="flex flex-wrap items-center gap-2">
             <CheckableTag checked locked>
               <LockIcon className="h-3 w-3" />
-              文本
+              {t("settings.typeText")}
             </CheckableTag>
             <CheckableTag
               checked={value.vision ?? false}
               onChange={(checked) => onChange({ vision: checked })}
             >
               <EyeIcon className="h-3 w-3" />
-              图像
+              {t("settings.typeVision")}
             </CheckableTag>
           </div>
         </div>
@@ -703,13 +705,13 @@ export function ModelEditor({
 
       <div className="settings-row">
         <div className="settings-row-copy">
-          <span className="settings-row-title">输出类型</span>
+          <span className="settings-row-title">{t("settings.outputType")}</span>
         </div>
         <div className="settings-row-control">
           <div className="flex flex-wrap items-center gap-2">
             <CheckableTag checked locked>
               <LockIcon className="h-3 w-3" />
-              文本
+              {t("settings.typeText")}
             </CheckableTag>
           </div>
         </div>
@@ -717,21 +719,21 @@ export function ModelEditor({
 
       <div className="settings-row settings-provider-model-field-wide">
         <div className="settings-row-copy">
-          <span className="settings-row-title">推理力度</span>
-          <span className="settings-row-description">按模型支持情况生效；未设置用服务端默认。</span>
+          <span className="settings-row-title">{t("settings.reasoningEffort")}</span>
+          <span className="settings-row-description">{t("settings.reasoningEffortNote")}</span>
         </div>
         <div className="settings-row-control">
           <Select
             width="narrow"
             value={value.reasoningEffort ?? ""}
-            aria-label="推理力度"
+            aria-label={t("settings.reasoningEffort")}
             onChange={(e) =>
               onChange({
                 reasoningEffort: (e.target.value || undefined) as ProviderModel["reasoningEffort"],
               })
             }
           >
-            <option value="">未设置</option>
+            <option value="">{t("settings.effortUnset")}</option>
             {(["low", "medium", "high", "max"] as const).map((level) => (
               <option key={level} value={level}>
                 {level}
@@ -752,13 +754,13 @@ export function ModelEditor({
 export function ConnectionTestResult({ test }: { test: ConnectionTestState }) {
   if (test.state === "idle") return null;
   if (test.state === "testing") {
-    return <div className="py-1 text-ui-sm text-[var(--cw-text-2)]">测试中…</div>;
+    return <div className="py-1 text-ui-sm text-[var(--cw-text-2)]">{t("settings.testing")}</div>;
   }
   if (test.state === "ok") {
     return (
       <div className="py-1 text-ui-sm" data-testid="connection-test-ok">
-        已连通 · {test.latencyMs}ms
-        {test.modelCount > 0 ? ` · ${test.modelCount} 个模型` : ""}
+        {t("settings.testOkLatency", { latency: test.latencyMs })}
+        {test.modelCount > 0 ? t("settings.testOkModels", { count: test.modelCount }) : ""}
       </div>
     );
   }

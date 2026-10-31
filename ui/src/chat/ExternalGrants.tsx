@@ -11,11 +11,13 @@
 
 import { FolderOpen, X } from "lucide-react";
 import { useSessionScope } from "@/chat/session-scope";
+import { useT } from "@/i18n/core";
 import { revokeExternalDir } from "@/ipc/client";
 import { useSessionsStore } from "@/stores/sessions";
 
 /** 「授权」页面板本体。 */
 export function ExternalGrantsPanel() {
+  const t = useT();
   const sessionId = useSessionScope();
   const sessions = useSessionsStore((s) => s.sessions);
   const refresh = useSessionsStore((s) => s.refresh);
@@ -37,16 +39,13 @@ export function ExternalGrantsPanel() {
       className="flex min-h-0 flex-1 flex-col gap-2 overflow-auto px-4 py-3"
       data-testid="external-grants"
     >
-      <p className="text-ui-sm text-[var(--muted-foreground)]">
-        本会话已授权 AI 访问的项目外目录（「始终允许」授予，粒度 =
-        该目录及子目录的读/写/列）。授权仅本会话有效；移除后下次访问会重新询问。
-      </p>
+      <p className="text-ui-sm text-[var(--muted-foreground)]">{t("inspector.grantsIntro")}</p>
       {dirs.length === 0 ? (
         <p
           className="settings-section-card px-5 py-8 text-center text-ui-base text-[var(--muted-foreground)]"
           data-testid="external-grants-empty"
         >
-          还没有已授权的外部目录。AI 访问项目外的目录时会先请求授权。
+          {t("inspector.grantsEmpty")}
         </p>
       ) : (
         <div className="settings-section-card py-1">
@@ -66,7 +65,7 @@ export function ExternalGrantsPanel() {
               <button
                 type="button"
                 data-testid={`external-grant-revoke-${dir}`}
-                title="移除授权"
+                title={t("inspector.grantsRemoveTitle")}
                 onClick={() => revoke(dir)}
                 className="shrink-0 rounded-full border border-[var(--border)] p-1 text-[var(--muted-foreground)] hover:border-[var(--destructive)] hover:text-[var(--destructive)]"
               >

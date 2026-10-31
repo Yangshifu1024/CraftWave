@@ -18,14 +18,15 @@ import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
+import { useT } from "@/i18n/core";
 import { skillInspect, skillList, skillReload, skillRevokeTrust, skillToggle } from "@/ipc/client";
 import type { SkillListEntry } from "@/ipc/types";
 
 /** 来源徽标（§7.7 覆盖优先级 内置 < 全局 < 项目；合并视图只显示胜出来源）。 */
 const SOURCE_LABEL: Record<SkillListEntry["source"], string> = {
-  builtin: "内置",
-  global: "全局",
-  project: "项目",
+  builtin: "settings.skillSourceBuiltin",
+  global: "settings.skillSourceGlobal",
+  project: "settings.skillSourceProject",
 };
 
 /** 来源徽标配色（内置=中性、全局=蓝、项目=绿；与 McpPage 徽标同视觉档）。 */
@@ -39,6 +40,7 @@ const SOURCE_CLASS: Record<SkillListEntry["source"], string> = {
  * 技能管理页（设置页 skills 分节的内容体）。
  */
 export function SkillsPage() {
+  const t = useT();
   const [skills, setSkills] = useState<SkillListEntry[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reloading, setReloading] = useState(false);
@@ -81,7 +83,10 @@ export function SkillsPage() {
       .then(refresh)
       .catch((err: unknown) => {
         setLoadError(
-          `技能 ${name} 信任撤销失败：${err instanceof Error ? err.message : String(err)}`,
+          t("settings.skillRevokeFailed", {
+            name,
+            error: err instanceof Error ? err.message : String(err),
+          }),
         );
       });
   };
@@ -105,7 +110,10 @@ export function SkillsPage() {
       .then((result) => setPreview({ name, markdown: result.markdown }))
       .catch((err: unknown) => {
         setPreviewError(
-          `技能 ${name} 预览失败：${err instanceof Error ? err.message : String(err)}`,
+          t("settings.skillPreviewFailed", {
+            name,
+            error: err instanceof Error ? err.message : String(err),
+          }),
         );
       })
       .finally(() => setPreviewLoading(null));
@@ -115,10 +123,7 @@ export function SkillsPage() {
     <div>
       <section className="settings-section">
         <div className="flex items-center justify-between px-1 pb-2">
-          <p className="text-ui-sm text-[var(--muted-foreground)]">
-            技能教 AI 干专项活：模型平时只看到一句话简介，用到才加载正文。目录格式兼容 Claude
-            技能（一个技能一个目录一份 SKILL.md）；同名技能按 内置 &lt; 全局 &lt; 项目 覆盖。
-          </p>
+          <p className="text-ui-sm text-[var(--muted-foreground)]">{t("settings.skillsIntro")}</p>
           <Button
             variant="outline"
             size="sm"
@@ -128,19 +133,23 @@ export function SkillsPage() {
             className="ml-3 shrink-0"
           >
             {reloading && <LoaderCircle size={12} aria-hidden className="mr-1 animate-spin" />}
-            重新扫描
+            {t("settings.rescan")}
           </Button>
         </div>
-        {loadError && <Alert variant="error" title={`技能清单加载失败：${loadError}`} />}
+        {loadError && (
+          <Alert variant="error" title={t("settings.skillsLoadFailed", { error: loadError })} />
+        )}
         {skills === null ? (
           <div className="settings-section-card px-5 py-10 text-center text-ui-base text-[var(--muted-foreground)]">
-            加载中…
+            {t("settings.loading")}
           </div>
         ) : skills.length === 0 ? (
           <div className="settings-section-card px-5 py-10 text-center text-ui-base text-[var(--muted-foreground)]">
-            还没有安装任何技能。把技能目录放到 <code>~/.craftwave/skills/</code>
-            （全局）或项目 <code>&lt;项目主目录&gt;/.craftwave/skills/</code>
-            （本项目），点「重新扫描」即可识别。
+            {t("settings.skillsEmptyBefore")}
+            <code>~/.craftwave/skills/</code>
+            {t("settings.skillsEmptyMid")}
+            <code>{"<项目主目录>/.craftwave/skills/"}</code>
+            {t("settings.skillsEmptyAfter")}
           </div>
         ) : (
           <div className="settings-section-card py-1" data-testid="skill-list">
@@ -158,7 +167,7 @@ export function SkillsPage() {
                       data-testid={`skill-name-${skill.name}`}
                       className="truncate text-ui-base font-medium text-[var(--foreground)] hover:underline"
                       onClick={() => inspect(skill.name)}
-                      title="预览 SKILL.md 正文"
+                      title={t("settings.previewSkillBody")}
                     >
                       {skill.name}
                     </button>
@@ -166,7 +175,7 @@ export function SkillsPage() {
                       data-testid={`skill-source-${skill.name}`}
                       className={`shrink-0 rounded-full border px-1.5 text-ui-sm leading-4 ${SOURCE_CLASS[skill.source]}`}
                     >
-                      {SOURCE_LABEL[skill.source]}
+                      {t(SOURCE_LABEL[skill.source])}
                     </span>
                     {previewLoading === skill.name && (
                       <LoaderCircle size={12} aria-hidden className="shrink-0 animate-spin" />
@@ -180,17 +189,17 @@ export function SkillsPage() {
                   <button
                     type="button"
                     data-testid={`skill-revoke-trust-${skill.name}`}
-                    title="撤销信任（下次运行重新询问）"
-                    aria-label={`撤销技能 ${skill.name} 的信任`}
+                    title={t("settings.revokeTrustTitle")}
+                    aria-label={t("settings.revokeTrustAria", { name: skill.name })}
                     onClick={() => revokeTrust(skill.name)}
                     className="flex shrink-0 items-center gap-1 rounded-full border border-[var(--border)] px-2 py-0.5 text-ui-sm text-[var(--muted-foreground)] hover:border-[var(--destructive)] hover:text-[var(--destructive)]"
                   >
                     <ShieldOff size={12} aria-hidden />
-                    撤销信任
+                    {t("settings.revokeTrust")}
                   </button>
                 )}
                 <Switch
-                  aria-label={`启用技能 ${skill.name}`}
+                  aria-label={t("settings.enableSkillAria", { name: skill.name })}
                   data-testid={`skill-toggle-${skill.name}`}
                   checked={skill.enabled}
                   onCheckedChange={(v) => toggle(skill.name, v)}
@@ -205,9 +214,9 @@ export function SkillsPage() {
       {/* 正文预览弹窗（SKILL.md，frontmatter 已由后端剥离） */}
       <Dialog
         open={preview !== null}
-        title={`技能 ${preview?.name ?? ""} · SKILL.md`}
+        title={t("settings.skillPreviewTitle", { name: preview?.name ?? "" })}
         onClose={() => setPreview(null)}
-        actions={[{ label: "关闭", onClick: () => setPreview(null) }]}
+        actions={[{ label: t("inspector.close"), onClick: () => setPreview(null) }]}
       >
         <div
           data-testid="skill-preview"

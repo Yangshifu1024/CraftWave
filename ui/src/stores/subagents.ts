@@ -15,6 +15,8 @@
  */
 
 import { create } from "zustand";
+
+import { t } from "@/i18n/core";
 import type { ChatFrame } from "@/ipc/generated/ChatFrame";
 import type { SubOutcome } from "@/ipc/generated/SubOutcome";
 import type { UsageTotal } from "@/ipc/generated/UsageTotal";
@@ -228,18 +230,19 @@ export function setHistoryLoaded(subId: string, messages: unknown[], error: stri
   });
 }
 
-/** 终态徽标的展示文案（四象限着色语义，Inspector/工具卡共用）。 */
+/** 终态徽标的展示文案（四象限着色语义，Inspector/工具卡共用）：经字典
+ *  查词（31 号票 i18n，模块级 t()）。 */
 export function outcomeLabel(state: SubagentItem["state"]): string {
   switch (state) {
     case "report":
-      return "已完成";
+      return t("inspector.outcomeCompleted");
     case "partial":
-      return "预算耗尽";
+      return t("inspector.outcomeBudgetExhausted");
     case "cancelled":
-      return "已取消";
+      return t("inspector.outcomeCancelled");
     case "no_report":
-      return "无汇报";
+      return t("inspector.outcomeNoReport");
     default:
-      return "运行中";
+      return t("inspector.outcomeRunning");
   }
 }

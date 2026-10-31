@@ -62,7 +62,7 @@ import {
 } from "@/chat/followup-store";
 import { cwImageUrl, parseCwImageUrl } from "@/chat/image-ref";
 import { Markdown } from "@/chat/Markdown";
-import { TIER_LABELS, tierOf, usePermissionTierStore } from "@/chat/permission-tier";
+import { tierLabel, tierOf, usePermissionTierStore } from "@/chat/permission-tier";
 import { ReasoningPart } from "@/chat/ReasoningPart";
 import { useSessionMetrics } from "@/chat/run-metrics";
 import { DEFAULT_RUN_CONFIG } from "@/chat/runtime";
@@ -71,13 +71,14 @@ import { useRunSummaries, useSessionScope } from "@/chat/session-scope";
 import { McpFallbackCard } from "@/chat/ToolCards";
 import {
   setLevelPersisted,
-  THINKING_DESCRIPTIONS,
-  THINKING_LABELS,
   THINKING_LEVELS,
+  thinkingDescription,
+  thinkingLabel,
   thinkingOf,
   useThinkingStore,
 } from "@/chat/thinking-level";
 import { useVisionStore, visionOf } from "@/chat/vision-state";
+import { t, useT } from "@/i18n/core";
 import { getConfig, pathKind, readImageBlob } from "@/ipc/client";
 import type { PermissionTier, ThinkingLevel } from "@/ipc/types";
 import { matchGhost, useAskStore } from "@/stores/ask";
@@ -92,6 +93,7 @@ const NO_NODES: never[] = [];
  *  暂停」；不在底部时显示回底按钮，17 号票）。内容列限宽居中（参考样式
  *  A1：工作流风格平铺，不占满整屏宽）。 */
 export function ChatThread({ onOpenSettings }: { onOpenSettings?: () => void }) {
+  const t = useT();
   return (
     // 透明背景：透出承载它的大圆角卡（bg-card），自身不再铺底色
     <div className="flex h-full min-h-0 flex-1 flex-col text-[var(--foreground)]">
@@ -129,7 +131,7 @@ export function ChatThread({ onOpenSettings }: { onOpenSettings?: () => void }) 
                   aria-hidden
                   className="inline-block shrink-0 animate-spin"
                 />
-                处理中…
+                {t("workspace.processing")}
               </div>
             </AuiIf>
           </div>
@@ -168,29 +170,32 @@ function TierMenuIcon({ tier }: { tier: PermissionTier }) {
   return <Icon size={18} aria-hidden className="mt-0.5 shrink-0 text-[var(--muted-foreground)]" />;
 }
 
-/** 时段问候（B1 空状态，六档边界 5/9/12/14/18/23 与 ZCode 同口径）。 */
+/** 时段问候（B1 空状态，六档边界 5/9/12/14/18/23 与 ZCode 同口径）。
+ *  非组件纯函数：经模块级 t() 查词（语言切换后新渲染即新语言）。 */
 function greeting(date: Date): string {
   const hour = date.getHours();
-  if (hour < 5) return "夜深了";
-  if (hour < 9) return "早上好";
-  if (hour < 12) return "上午好";
-  if (hour < 14) return "中午好";
-  if (hour < 18) return "下午好";
-  if (hour < 23) return "晚上好";
-  return "夜深了";
+  if (hour < 5) return t("workspace.greetingNight");
+  if (hour < 9) return t("workspace.greetingMorning");
+  if (hour < 12) return t("workspace.greetingForenoon");
+  if (hour < 14) return t("workspace.greetingNoon");
+  if (hour < 18) return t("workspace.greetingAfternoon");
+  if (hour < 23) return t("workspace.greetingEvening");
+  return t("workspace.greetingNight");
 }
 
-/** 空状态建议词（编码代理场景，点击整句填入 composer 不发送）。 */
+/** 空状态建议词 key（编码代理场景，点击整句填入 composer 不发送）；
+ *  文案经字典查词（31 号票 i18n）。 */
 const EMPTY_STATE_SUGGESTIONS = [
-  "梳理当前项目的目录结构与关键模块",
-  "审查最近的改动并给出改进建议",
-  "为某个模块补齐单元测试",
-  "解释一段看不懂的代码",
-];
+  "workspace.suggestion1",
+  "workspace.suggestion2",
+  "workspace.suggestion3",
+  "workspace.suggestion4",
+] as const;
 
 /** 新会话首屏（B1，ZCode 同款）：时段问候 + 建议提示词 chips；
  *  chips 逐个下落入场（cw-rise，delay 内联 ×65ms，reduced-motion 关闭）。 */
 function ThreadEmptyState() {
+  const t = useT();
   const aui = useAui();
   const [now, setNow] = useState(() => new Date());
   // 跨小时保持问候准确，不要求用户重新打开空会话。
@@ -205,19 +210,19 @@ function ThreadEmptyState() {
       <div className="flex flex-col items-center gap-1.5">
         <p className="cw-greeting font-medium text-[var(--foreground)]">{greeting(now)}</p>
         <p className="text-ui-base text-[var(--muted-foreground)]">
-          开始新对话，或从下面的建议开始
+          {t("workspace.emptySubtitle")}
         </p>
       </div>
       <div className="flex flex-wrap items-center justify-center gap-2">
-        {EMPTY_STATE_SUGGESTIONS.map((text, index) => (
+        {EMPTY_STATE_SUGGESTIONS.map((key, index) => (
           <button
-            key={text}
+            key={key}
             type="button"
             className="cw-rise min-h-8 max-w-full rounded-lg py-1.5 border border-[var(--border)] px-3 text-ui-sm text-[var(--muted-foreground)] transition-colors hover:border-[var(--ring)] hover:text-[var(--foreground)]"
             style={{ animationDelay: `${index * 65}ms` }}
-            onClick={() => aui.composer.setText(text, { origin: "user" })}
+            onClick={() => aui.composer.setText(t(key), { origin: "user" })}
           >
-            {text}
+            {t(key)}
           </button>
         ))}
       </div>
@@ -231,6 +236,7 @@ function ThreadEmptyState() {
  *  显示横幅与「继续」入口。后端 queue.json 为投递权威，本地队列条以事件
  *  （run:queue）与本地操作共同驱动（stores/sessions.ts queues 桶）。 */
 function FollowUpQueueBar() {
+  const t = useT();
   const sessionId = useSessionScope();
   const entries = useSessionsStore((s) => s.queues[sessionId] ?? NO_ENTRIES);
   const paused = useSessionsStore((s) => s.queuePaused[sessionId] === true);
@@ -256,7 +262,7 @@ function FollowUpQueueBar() {
           className="flex items-center gap-2 rounded-xl border border-[var(--warning)]/50 bg-[var(--muted)]/60 px-2.5 py-1 text-ui-sm text-[var(--warning)]"
         >
           <span className="min-w-0 flex-1 truncate">
-            上一次运行失败，待发队列已暂停（{entries.length} 条待发）
+            {t("workspace.queuePaused", { count: entries.length })}
           </span>
           <button
             type="button"
@@ -264,7 +270,7 @@ function FollowUpQueueBar() {
             onClick={resume}
             className="shrink-0 rounded-lg border border-[var(--border)] px-2 py-0.5 text-ui-sm text-[var(--foreground)] hover:border-[var(--ring)]"
           >
-            继续
+            {t("workspace.resume")}
           </button>
         </div>
       )}
@@ -275,13 +281,13 @@ function FollowUpQueueBar() {
           className="flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--muted)]/60 px-2.5 py-1 text-ui-sm text-[var(--muted-foreground)]"
         >
           <span className="shrink-0 rounded-full border border-[var(--border)] px-1.5 text-ui-sm leading-4">
-            排队
+            {t("workspace.queuedBadge")}
           </span>
           <span className="min-w-0 flex-1 truncate text-[var(--foreground)]">{entry.text}</span>
           <button
             type="button"
-            aria-label="编辑排队消息"
-            title="取出编辑（改完 Alt+Enter 重新排队）"
+            aria-label={t("workspace.editQueuedAria")}
+            title={t("workspace.editQueuedTitle")}
             onClick={() => edit(entry)}
             className="shrink-0 rounded px-1 hover:text-[var(--foreground)]"
           >
@@ -289,7 +295,7 @@ function FollowUpQueueBar() {
           </button>
           <button
             type="button"
-            aria-label="移除排队消息"
+            aria-label={t("workspace.removeQueuedAria")}
             onClick={() => remove(entry.id)}
             className="shrink-0 rounded px-1 hover:text-[var(--destructive)]"
           >
@@ -306,6 +312,7 @@ function FollowUpQueueBar() {
  *  按 entryId 剔除 store 节点（树内已有同 id 的普通 user 消息），此处不做
  *  消息列表订阅（assistant-ui messages selector 引用不稳定，防无限重渲染）。 */
 function SteerNodes() {
+  const t = useT();
   const sessionId = useSessionScope();
   const nodes = useFollowUpStore((s) => s.steerNodes[sessionId] ?? NO_NODES);
   if (nodes.length === 0) return null;
@@ -315,7 +322,7 @@ function SteerNodes() {
         <div key={node.entryId} data-testid="steer-node" className="flex flex-col items-end py-2">
           <div className="flex max-w-full items-start gap-2">
             <span className="mt-3 shrink-0 rounded-full border border-[var(--border)] px-1.5 text-ui-sm leading-4 text-[var(--muted-foreground)]">
-              插话
+              {t("workspace.steerBadge")}
             </span>
             <div className="min-w-0 max-w-full rounded-xl rounded-tr-xs border border-[var(--border)] bg-[var(--muted)] px-4 py-3 text-ui-base leading-6 text-[var(--foreground)] sm:max-w-xl">
               <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">{node.text}</p>
@@ -334,6 +341,7 @@ function SteerNodes() {
  *  分流经 interceptEnter 先行（空闲 thread.append 携 image part、运行中/
  *  Alt+Enter 转 followUp 队列——§5.5 带图不入 steer）。 */
 function ComposerBar() {
+  const t = useT();
   const sessionId = useSessionScope();
   const aui = useAui();
   const isRunning = useAuiState((s) => s.thread.isRunning);
@@ -363,7 +371,7 @@ function ComposerBar() {
     (mode: "auto" | "queue") => {
       if (!hasAttachments) return;
       if (!vision) {
-        showHint("当前模型不支持图片输入：请切换视觉模型或移除图片后发送", "info");
+        showHint(t("workspace.visionNotSupportedSend"), "info");
         return;
       }
       const text = composerText.trim();
@@ -403,7 +411,18 @@ function ComposerBar() {
         startRun: true,
       });
     },
-    [hasAttachments, vision, composerText, attachments, aui, isRunning, sessionId, showHint, clear],
+    [
+      hasAttachments,
+      vision,
+      composerText,
+      attachments,
+      aui,
+      isRunning,
+      sessionId,
+      showHint,
+      clear,
+      t,
+    ],
   );
 
   // Enter 拦截（composer-keys 5a）：带附件时消费 Enter——Alt=排队、其余按
@@ -444,12 +463,12 @@ function ComposerBar() {
       if (files.length === 0) return;
       e.preventDefault();
       if (!vision) {
-        showHint("当前模型不支持图片输入：请切换视觉模型后再粘贴图片", "info");
+        showHint(t("workspace.visionNotSupportedPaste"), "info");
         return;
       }
       void addFiles(files);
     },
-    [vision, showHint, addFiles],
+    [vision, showHint, addFiles, t],
   );
 
   // 拖拽路由（FR-13-16，17 号票）：Tauri webview 原生接管文件拖拽（HTML5
@@ -472,7 +491,7 @@ function ComposerBar() {
           setDropDir({ path: p, name: p.split("/").filter(Boolean).at(-1) ?? p });
         } else if (kind.kind === "file" && kind.imageMime !== undefined) {
           if (!vision) {
-            showHint("当前模型不支持图片输入：请切换视觉模型后再拖入图片", "info");
+            showHint(t("workspace.visionNotSupportedDrop"), "info");
             continue;
           }
           await addFromPath(p, kind.imageMime);
@@ -483,7 +502,7 @@ function ComposerBar() {
         }
       }
     },
-    [vision, showHint, addFromPath, aui],
+    [vision, showHint, addFromPath, aui, t],
   );
   useEffect(() => {
     let cancelled = false;
@@ -600,7 +619,7 @@ function ComposerBar() {
                 <span className="flex min-w-0 flex-col">
                   <span className="truncate text-[var(--foreground)]">${role.name}</span>
                   <span className="truncate text-ui-sm text-[var(--muted-foreground)]">
-                    {role.summary}
+                    {t(role.summary)}
                   </span>
                 </span>
               </button>
@@ -622,7 +641,7 @@ function ComposerBar() {
         <div className="relative" ref={composerInputShellRef}>
           <ComposerPrimitive.Input
             minRows={2}
-            placeholder="发一条消息，Alt+Enter 排队待发…"
+            placeholder={t("workspace.composerPlaceholder")}
             className="max-h-40 w-full resize-none bg-transparent py-0.5 text-ui-base leading-5 placeholder:text-[var(--muted-foreground)] focus:outline-none"
             onKeyDown={onKeyDown}
             onKeyUp={(e) => onCursor(e.currentTarget.selectionStart ?? 0)}
@@ -655,8 +674,8 @@ function ComposerBar() {
             <button
               type="button"
               data-testid="attachment-button"
-              aria-label="添加图片"
-              title="添加图片（≤4 张，单张 ≤5MiB；也可拖拽或粘贴）"
+              aria-label={t("workspace.attachImage")}
+              title={t("workspace.attachImageTitle")}
               onClick={() => fileInputRef.current?.click()}
               className="flex size-7 shrink-0 items-center justify-center rounded-lg text-[var(--muted-foreground)] hover:bg-[var(--accent)]"
             >
@@ -666,9 +685,9 @@ function ComposerBar() {
             <button
               type="button"
               data-testid="attachment-button-disabled"
-              aria-label="当前模型不支持图片"
+              aria-label={t("workspace.attachImageDisabled")}
               disabled
-              title="当前模型不支持图片输入（切换视觉模型后可用）"
+              title={t("workspace.attachImageDisabledTitle")}
               className="flex size-7 shrink-0 items-center justify-center rounded-lg text-[var(--muted-foreground)] hover:bg-[var(--accent)] disabled:opacity-40"
             >
               <ImagePlus size={16} aria-hidden className="shrink-0" />
@@ -684,8 +703,8 @@ function ComposerBar() {
                 17 号票：带附件时发送钮走附件路径（空闲 thread.append / 运行中入队）。 */}
             <AuiIf condition={(s) => s.thread.isRunning}>
               <ComposerPrimitive.Cancel
-                aria-label="停止"
-                title="停止（Esc）"
+                aria-label={t("workspace.stop")}
+                title={t("workspace.stopTitle")}
                 className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90"
               >
                 <Square size={14} aria-hidden fill="currentColor" className="shrink-0" />
@@ -693,7 +712,7 @@ function ComposerBar() {
             </AuiIf>
             <AuiIf condition={(s) => !s.thread.isRunning && !hasAttachments}>
               <ComposerPrimitive.Send
-                aria-label="发送"
+                aria-label={t("workspace.send")}
                 className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90"
               >
                 <ArrowUp size={16} aria-hidden className="shrink-0" />
@@ -703,7 +722,7 @@ function ComposerBar() {
               <button
                 type="button"
                 data-testid="send-with-attachments"
-                aria-label="发送图片消息"
+                aria-label={t("workspace.sendImageMessage")}
                 onClick={() => submitWithAttachments("auto")}
                 className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90"
               >
@@ -714,8 +733,8 @@ function ComposerBar() {
               <button
                 type="button"
                 data-testid="queue-with-attachments"
-                aria-label="排队待发（带图消息不入插话，随队列自动投递）"
-                title="带图消息运行中不入插话，转入待发队列（run 完成后自动投递）"
+                aria-label={t("workspace.queueWithAttachments")}
+                title={t("workspace.queueWithAttachmentsTitle")}
                 onClick={() => submitWithAttachments("queue")}
                 className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90"
               >
@@ -801,20 +820,26 @@ export function AtHighlightOverlay({
   );
 }
 
-/** 权限档描述（双行菜单第二行，文案直接取自 ZCode zh-CN 语言包
- *  mode.description.glm.*，按档位映射：plan→plan / confirmEach→build /
- *  autoEdit→edit / fullAccess→yolo）。 */
-const TIER_DESCRIPTIONS: Record<PermissionTier, string> = {
-  plan: "编辑前先出计划。",
-  confirmEach: "改文件前先问我。",
-  autoEdit: "自动编辑文件。",
-  fullAccess: "减少确认次数。",
-};
+/** 权限档描述（双行菜单第二行，按档位查字典：plan→plan / confirmEach→build /
+ *  autoEdit→edit / fullAccess→yolo，31 号票 i18n）。 */
+function tierDescription(tier: PermissionTier): string {
+  switch (tier) {
+    case "plan":
+      return t("workspace.tierPlanDesc");
+    case "confirmEach":
+      return t("workspace.tierConfirmEachDesc");
+    case "autoEdit":
+      return t("workspace.tierAutoEditDesc");
+    case "fullAccess":
+      return t("workspace.tierFullAccessDesc");
+  }
+}
 
 /** 权限档下拉（FR-13-02）：双行菜单（图标 + 档名 + 描述，行尾勾标记当前
  *  档，ZCode 模式菜单同款）；fullAccess 触发器警示橙。Shift+Tab 循环仍可用，
  *  §10.6 内存态——本次会话有效。 */
 function TierMenu() {
+  const t = useT();
   const sessionId = useSessionScope();
   const tier = usePermissionTierStore((s) => s.bySession[sessionId] ?? "autoEdit");
   const setTier = usePermissionTierStore((s) => s.setTier);
@@ -827,24 +852,24 @@ function TierMenu() {
           data-testid="tier-menu"
           className="cw-pop-in absolute bottom-full left-0 z-20 mb-1 w-64 rounded-lg border border-[var(--border)] bg-[var(--card)] p-1 shadow"
         >
-          {TIERS.map((t) => (
-            <li key={t}>
+          {TIERS.map((option) => (
+            <li key={option}>
               <button
                 type="button"
                 className="relative flex min-h-13 w-full items-start gap-3 rounded-md py-2 pr-8 pl-2 text-left hover:bg-[var(--accent)]"
                 onClick={() => {
-                  setTier(sessionId, t);
+                  setTier(sessionId, option);
                   setOpen(false);
                 }}
               >
-                <TierMenuIcon tier={t} />
+                <TierMenuIcon tier={option} />
                 <span className="flex min-w-0 flex-col gap-0.5">
-                  <span className="text-ui-base text-[var(--foreground)]">{TIER_LABELS[t]}</span>
+                  <span className="text-ui-base text-[var(--foreground)]">{tierLabel(option)}</span>
                   <span className="text-ui-sm text-[var(--muted-foreground)]">
-                    {TIER_DESCRIPTIONS[t]}
+                    {tierDescription(option)}
                   </span>
                 </span>
-                {t === tier && (
+                {option === tier && (
                   <Check
                     size={16}
                     aria-hidden
@@ -867,10 +892,10 @@ function TierMenu() {
             ? "text-[var(--warning)] hover:text-[var(--warning)]"
             : "text-[var(--muted-foreground)]"
         }`}
-        title="权限档（本次会话有效，Shift+Tab 循环切换）"
+        title={t("workspace.tierMenuTitle")}
       >
         <Shield size={16} aria-hidden className="inline-block shrink-0 align-[-1px]" />
-        {TIER_LABELS[tier]}
+        {tierLabel(tier)}
         <ChevronDown size={14} aria-hidden className="shrink-0 opacity-60" />
       </button>
     </div>
@@ -880,7 +905,7 @@ function TierMenu() {
 /** thinking 档触发器文案：未显式设置显示「默认」（per-model reasoningEffort
  *  回落，§11.4 优先级链），显式档显示档位名。 */
 function thinkingTriggerLabel(level: ThinkingLevel | undefined): string {
-  return level === undefined ? "默认" : THINKING_LABELS[level];
+  return level === undefined ? t("workspace.thinkingDefault") : thinkingLabel(level);
 }
 
 /**
@@ -892,6 +917,7 @@ function thinkingTriggerLabel(level: ThinkingLevel | undefined): string {
  * 运行中切换由后端每拍请求前重读 prefs 生效（§11.1 FR-02-07 修正案）。
  */
 function ThinkingMenu() {
+  const t = useT();
   const sessionId = useSessionScope();
   const level = useThinkingStore((s) => s.bySession[sessionId]);
   const [open, setOpen] = useState(false);
@@ -912,9 +938,11 @@ function ThinkingMenu() {
               }}
             >
               <span className="flex min-w-0 flex-col">
-                <span className="text-ui-base text-[var(--foreground)]">跟随默认</span>
+                <span className="text-ui-base text-[var(--foreground)]">
+                  {t("workspace.thinkingFollowDefault")}
+                </span>
                 <span className="text-ui-sm text-[var(--muted-foreground)]">
-                  按模型配置的 reasoningEffort 回落
+                  {t("workspace.thinkingFollowDefaultDesc")}
                 </span>
               </span>
               {level === undefined && (
@@ -938,11 +966,9 @@ function ThinkingMenu() {
               >
                 <Brain size={16} aria-hidden className="mt-0.5 shrink-0 text-[var(--cw-dim)]" />
                 <span className="flex min-w-0 flex-col gap-0.5">
-                  <span className="text-ui-base text-[var(--foreground)]">
-                    {THINKING_LABELS[lv]}
-                  </span>
+                  <span className="text-ui-base text-[var(--foreground)]">{thinkingLabel(lv)}</span>
                   <span className="text-ui-sm text-[var(--muted-foreground)]">
-                    {THINKING_DESCRIPTIONS[lv]}
+                    {thinkingDescription(lv)}
                   </span>
                 </span>
                 {level === lv && (
@@ -964,7 +990,7 @@ function ThinkingMenu() {
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
         className="flex h-7 items-center gap-1 rounded-lg px-2 text-ui-sm text-[var(--muted-foreground)] hover:bg-[var(--accent)]"
-        title="思考力度（本会话持久保存；运行中切换在下一请求生效）"
+        title={t("workspace.thinkingMenuTitle")}
       >
         <Brain size={16} aria-hidden className="inline-block shrink-0 align-[-1px]" />
         {thinkingTriggerLabel(level)}
@@ -982,6 +1008,7 @@ function ThinkingMenu() {
  * openRequest store 唤起（SessionTab 监听派发，18 号票）。
  */
 function ModelPicker() {
+  const t = useT();
   const sessionId = useSessionScope();
   const selected = useSessionModelStore((s) => s.bySession[sessionId]);
   const [open, setOpen] = useState(false);
@@ -1026,7 +1053,7 @@ function ModelPicker() {
   const currentName =
     groups.flatMap((g) => g.models).find((m) => m.id === (selected ?? activeId))?.name ??
     selected ??
-    "默认模型";
+    t("workspace.defaultModel");
 
   return (
     <div className="relative shrink-0">
@@ -1044,7 +1071,7 @@ function ModelPicker() {
                 setOpen(false);
               }}
             >
-              跟随默认
+              {t("workspace.modelFollowDefault")}
               {selected === undefined && (
                 <Check
                   size={16}
@@ -1094,7 +1121,7 @@ function ModelPicker() {
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
         className="flex h-7 max-w-40 min-w-0 items-center gap-1 rounded-lg px-2 text-ui-sm text-[var(--muted-foreground)] hover:bg-[var(--accent)]"
-        title="选择本会话使用的模型"
+        title={t("workspace.modelPickerTitle")}
       >
         <span className="truncate">{currentName}</span>
         <ChevronDown size={14} aria-hidden className="shrink-0 opacity-60" />
@@ -1107,6 +1134,7 @@ function ModelPicker() {
  *  悬停才显（opacity-0 → group-hover 显），常显操作栏会把每条消息下方
  *  都钉一行按钮。 */
 function UserMessage() {
+  const t = useT();
   const sessionId = useSessionScope();
   const parts = useAuiState((s) => s.message.parts);
   // 带历史图 + 当前模型非 vision：气泡尾部提示「模型看不到」（Q30 定稿：
@@ -1141,7 +1169,7 @@ function UserMessage() {
             data-testid="image-vision-hint"
             className="mt-2 border-t border-[var(--border)]/50 pt-2 text-ui-sm text-[var(--muted-foreground)]"
           >
-            当前模型无法查看此图片（历史图片仅以文字占位发送；切换视觉模型后可查看）
+            {t("workspace.imageNotVisible")}
           </p>
         )}
       </div>
@@ -1159,6 +1187,7 @@ function UserMessage() {
  * 外来形态（非 cwimg 引用）按文本占位降级，不渲染未知来源。
  */
 function MessageImagePart({ sessionId, image }: { sessionId: string; image: string }) {
+  const t = useT();
   const blobHash = parseCwImageUrl(image)?.blobHash ?? null;
   const [url, setUrl] = useState<string | null>(null);
   const [missing, setMissing] = useState(false);
@@ -1187,7 +1216,7 @@ function MessageImagePart({ sessionId, image }: { sessionId: string; image: stri
         data-testid="image-missing"
         className="my-1 flex max-w-xs items-center justify-center rounded-lg border border-dashed border-[var(--border)] px-3 py-4 text-ui-sm text-[var(--muted-foreground)]"
       >
-        图片不可用（数据已清理）
+        {t("workspace.imageUnavailable")}
       </span>
     );
   }
@@ -1203,7 +1232,7 @@ function MessageImagePart({ sessionId, image }: { sessionId: string; image: stri
     <img
       data-testid="message-image"
       src={url}
-      alt="消息图片"
+      alt={t("workspace.imageAlt")}
       className="my-1 max-h-72 max-w-full rounded-lg border border-[var(--border)] object-contain"
     />
   );
@@ -1256,13 +1285,15 @@ function useRunCollapse(
 }
 
 /** 时长格式化（ZCode formatConversationWorkDuration 口径）：秒取整最少 1 秒，
- *  中文单位，跨分钟带分。 */
+ *  单位经字典查词（31 号票 i18n），跨分钟带分。 */
 function formatDuration(ms: number): string {
   const totalSeconds = Math.max(1, Math.round(ms / 1000));
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
-  if (minutes <= 0) return `${totalSeconds} 秒`;
-  return seconds > 0 ? `${minutes} 分 ${seconds} 秒` : `${minutes} 分钟`;
+  if (minutes <= 0) return t("workspace.durationSeconds", { n: totalSeconds });
+  return seconds > 0
+    ? t("workspace.durationMinSec", { m: minutes, s: seconds })
+    : t("workspace.durationMinutes", { m: minutes });
 }
 
 /**
@@ -1276,9 +1307,10 @@ function formatDuration(ms: number): string {
  * （轮尾最终答复）常显——否则完成态仍散落着「现在深入」「：」这类碎片。
  */
 function AssistantMessage({ onOpenSettings }: { onOpenSettings?: () => void }) {
+  const t = useT();
   const error = useAuiState((s) =>
     s.message.status?.type === "incomplete" && s.message.status.reason === "error"
-      ? String(s.message.status.error ?? "运行失败，请重试")
+      ? String(s.message.status.error ?? t("workspace.runFailedDefault"))
       : "",
   );
   const parts = useAuiState((s) => s.message.parts);
@@ -1342,10 +1374,14 @@ function AssistantMessage({ onOpenSettings }: { onOpenSettings?: () => void }) {
         >
           {streaming && <LoaderCircle size={12} aria-hidden className="shrink-0 animate-spin" />}
           <span className="min-w-0 truncate">
-            {streaming ? "工作中" : "已工作"}
+            {streaming ? t("workspace.summaryWorking") : t("workspace.summaryWorked")}
             {durationMs !== undefined ? ` ${formatDuration(durationMs)}` : ""}
           </span>
-          {interrupted && <span className="shrink-0 text-[var(--destructive)]">已中断</span>}
+          {interrupted && (
+            <span className="shrink-0 text-[var(--destructive)]">
+              {t("workspace.summaryInterrupted")}
+            </span>
+          )}
           <ChevronRight
             size={16}
             aria-hidden
@@ -1404,6 +1440,7 @@ function AssistantMessage({ onOpenSettings }: { onOpenSettings?: () => void }) {
 
 /** 保留历史分支切换、用户编辑重发和助手回复复制。 */
 function BranchBar({ editOnly, noTopGap }: { editOnly: boolean; noTopGap?: boolean }) {
+  const t = useT();
   const btn =
     "flex size-7 items-center justify-center rounded-md text-ui-sm text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-30";
   return (
@@ -1412,23 +1449,27 @@ function BranchBar({ editOnly, noTopGap }: { editOnly: boolean; noTopGap?: boole
       data-testid="branch-bar"
     >
       <BranchPickerPrimitive.Root hideWhenSingleBranch className="flex items-center gap-0.5">
-        <BranchPickerPrimitive.Previous className={btn} aria-label="上一个分支">
+        <BranchPickerPrimitive.Previous className={btn} aria-label={t("workspace.prevBranch")}>
           <ChevronLeft size={14} aria-hidden />
         </BranchPickerPrimitive.Previous>
         <span className="text-ui-sm text-[var(--cw-dim)]">
           <BranchPickerPrimitive.Count />
         </span>
-        <BranchPickerPrimitive.Next className={btn} aria-label="下一个分支">
+        <BranchPickerPrimitive.Next className={btn} aria-label={t("workspace.nextBranch")}>
           <ChevronRight size={14} aria-hidden />
         </BranchPickerPrimitive.Next>
       </BranchPickerPrimitive.Root>
       <ActionBarPrimitive.Root className="flex items-center gap-0.5">
         {editOnly ? (
-          <ActionBarPrimitive.Edit className={btn} aria-label="编辑重发">
+          <ActionBarPrimitive.Edit className={btn} aria-label={t("workspace.editResend")}>
             <Pencil size={14} aria-hidden />
           </ActionBarPrimitive.Edit>
         ) : (
-          <ActionBarPrimitive.Copy className={btn} aria-label="复制" title="复制回复">
+          <ActionBarPrimitive.Copy
+            className={btn}
+            aria-label={t("workspace.copy")}
+            title={t("workspace.copyReply")}
+          >
             <AuiIf condition={(s) => s.message.isCopied}>
               <Check size={14} aria-hidden />
             </AuiIf>
@@ -1445,6 +1486,7 @@ function BranchBar({ editOnly, noTopGap }: { editOnly: boolean; noTopGap?: boole
 /** Composer 状态栏（A5，§10.5 三数 + 思考计时 + 工具次数）：常驻输入卡片
  *  底部一行；思考计时由 reasoning/text 帧驱动（run-metrics thinkingSince）。 */
 function ComposerStatusBar() {
+  const t = useT();
   const sessionId = useSessionScope();
   const { rate, turnUsage, sessionUsage, lastRun, thinkingSince } = useSessionMetrics(sessionId);
   // 思考中秒表：thinkingSince 有值即每秒重算（组件级刷新，无需全局定时器）
@@ -1464,20 +1506,25 @@ function ComposerStatusBar() {
     >
       {thinkingSince !== null && (
         <span data-testid="metric-thinking" className="text-[var(--muted-foreground)]">
-          <Lightbulb size={12} aria-hidden className="inline-block shrink-0 align-[-1px]" /> 思考中{" "}
-          {thinkingSeconds}s
+          <Lightbulb size={12} aria-hidden className="inline-block shrink-0 align-[-1px]" />{" "}
+          {t("workspace.statusThinking")} {thinkingSeconds}s
         </span>
       )}
       <span data-testid="metric-rate">{rate === null ? "—" : `${rate.toFixed(0)} tok/s`}</span>
-      <span data-testid="metric-turn">本轮 {tokens(turnUsage)} tok</span>
-      <span data-testid="metric-session">会话 {tokens(sessionUsage)} tok</span>
+      <span data-testid="metric-turn">{t("workspace.statusTurn", { n: tokens(turnUsage) })}</span>
+      <span data-testid="metric-session">
+        {t("workspace.statusSession", { n: tokens(sessionUsage) })}
+      </span>
       {lastRun && (
         <span data-testid="metric-run">
           {lastRun.reason === "done"
-            ? `完成 · ${(lastRun.durationMs / 1000).toFixed(1)}s · ${lastRun.toolCount} 次工具`
+            ? t("workspace.statusDone", {
+                duration: (lastRun.durationMs / 1000).toFixed(1),
+                count: lastRun.toolCount,
+              })
             : lastRun.reason === "cancelled"
-              ? "已取消"
-              : "出错"}
+              ? t("workspace.statusCancelled")
+              : t("workspace.statusError")}
         </span>
       )}
     </div>
@@ -1503,6 +1550,7 @@ function useGhostFill(): (() => void) | null {
 /** 建议提示词 ghost（§10.4：空输入整句 / 前缀匹配补尾；接受 = 填入不发送；
  * hint 取本会话桶，16 号票）。 */
 function ComposerGhost() {
+  const t = useT();
   const sessionId = useSessionScope();
   const hint = useAskStore((s) => s.hints[sessionId]) ?? null;
   const input = useAuiState((s) => s.composer.text);
@@ -1523,7 +1571,7 @@ function ComposerGhost() {
         onClick={fill}
         className="rounded border border-[var(--border)] px-1.5 py-0.5 text-[var(--muted-foreground)] hover:border-[var(--ring)]"
       >
-        Tab 填入
+        {t("workspace.ghostTabFill")}
       </button>
     </div>
   );

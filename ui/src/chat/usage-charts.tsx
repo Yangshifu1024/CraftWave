@@ -9,6 +9,7 @@
  *   按 total 降序，最长条 = 占比基准 100%）。
  */
 
+import { useT } from "@/i18n/core";
 import type { DayUsage, ModelUsage } from "@/ipc/types";
 
 /** 数值的紧凑显示（1.2k / 34k / 1.2M——面板窄栏友好）。 */
@@ -21,12 +22,13 @@ export function compactTokens(n: number): string {
 /** 按日柱状图：≤30 根柱，等宽排布，柱高按 max 归一（min 高度 2px 保证
  *  零值日可见）。SVG viewBox 固定逻辑坐标，CSS 宽度自适应。 */
 export function DailyBars({ days, maxBars = 30 }: { days: DayUsage[]; maxBars?: number }) {
+  const t = useT();
   // 只画最近 maxBars 天（按 day 升序进、尾部为最新）
   const window = days.slice(-maxBars);
   if (window.length === 0) {
     return (
       <p className="text-ui-sm" data-testid="stats-daily-empty">
-        （范围内暂无数据）
+        {t("inspector.chartNoData")}
       </p>
     );
   }
@@ -39,12 +41,18 @@ export function DailyBars({ days, maxBars = 30 }: { days: DayUsage[]; maxBars?: 
       preserveAspectRatio="none"
       className="h-20 w-full"
       role="img"
-      aria-label="按日 token 用量柱状图"
+      aria-label={t("inspector.dailyBarsAria")}
     >
       {/* 柱体：x 等分，高度按当日合计/max 归一（基线 y=32，顶部留日期层） */}
       {window.map((d) => {
         const h = Math.max((d.total / max) * 30, d.total > 0 ? 2 : 0.5);
-        const label = `${d.day}：${compactTokens(d.total)} tok（入 ${compactTokens(d.input)} / 出 ${compactTokens(d.output)} / 缓存读 ${compactTokens(d.cacheRead)}）`;
+        const label = t("inspector.dayTooltip", {
+          day: d.day,
+          total: compactTokens(d.total),
+          input: compactTokens(d.input),
+          output: compactTokens(d.output),
+          cacheRead: compactTokens(d.cacheRead),
+        });
         return (
           <rect
             key={d.day}
@@ -66,10 +74,11 @@ export function DailyBars({ days, maxBars = 30 }: { days: DayUsage[]; maxBars?: 
 
 /** 按模型排行条形：total 降序（调用方保证），占比 = 该模型 total / 最大值。 */
 export function ModelBars({ models }: { models: ModelUsage[] }) {
+  const t = useT();
   if (models.length === 0) {
     return (
       <p className="text-ui-sm" data-testid="stats-models-empty">
-        （范围内暂无模型数据）
+        {t("inspector.chartNoModelData")}
       </p>
     );
   }
@@ -83,15 +92,18 @@ export function ModelBars({ models }: { models: ModelUsage[] }) {
             ? Math.round((m.cacheRead / (m.input + m.cacheRead)) * 100)
             : null;
         return (
-          <li key={m.modelId} title={`${m.modelId}（显示名 ${m.modelName}）`}>
+          <li
+            key={m.modelId}
+            title={t("inspector.modelTooltip", { id: m.modelId, name: m.modelName })}
+          >
             <div className="flex items-baseline justify-between gap-2">
               <span className="truncate text-[var(--foreground)]" title={m.modelName}>
                 {m.modelName || m.modelId}
               </span>
               <span className="shrink-0 tabular-nums">
                 {compactTokens(m.total)} tok
-                {m.runs > 0 ? ` · ${m.runs} 次` : ""}
-                {hit !== null ? ` · 缓存 ${hit}%` : ""}
+                {m.runs > 0 ? t("inspector.modelRuns", { count: m.runs }) : ""}
+                {hit !== null ? t("inspector.modelCache", { rate: hit }) : ""}
               </span>
             </div>
             {/* 占比条：CSS 宽度即可（票面允许柱状/条形各自选型），色带同柱状图 */}

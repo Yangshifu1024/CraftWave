@@ -62,7 +62,7 @@ pub(crate) async fn create_session(
     app.store
         .index()
         .upsert(meta.clone())
-        .map_err(|e| IpcError::internal(format!("会话索引写入失败：{e:?}")))?;
+        .map_err(|e| IpcError::internal(format!("session index write failed: {e:?}")))?;
     Ok(meta)
 }
 
@@ -83,15 +83,17 @@ pub fn delete_session_core(
     if runs.get(session_id).is_some() {
         return Err(IpcError::new(
             crate::util::errors::E_SESSION_RUNNING,
-            format!("会话运行中，先取消运行再删除：{session_id}"),
+            format!("session is running; cancel it before deleting: {session_id}"),
         ));
     }
     let existed = app
         .store
         .delete_session(session_id)
-        .map_err(|e| IpcError::internal(format!("会话删除失败：{e:?}")))?;
+        .map_err(|e| IpcError::internal(format!("session deletion failed: {e:?}")))?;
     if !existed {
-        return Err(IpcError::not_found(format!("会话不存在：{session_id}")));
+        return Err(IpcError::not_found(format!(
+            "session not found: {session_id}"
+        )));
     }
     // 用量明细与内存累计摘除（Q43：删除后明细不可查询；stats_cache 与
     // 聚合同构无会话身份，不需清理）
@@ -142,7 +144,7 @@ pub(crate) async fn rename_session(
     let args = RenameSessionArgs { session_id, title };
     let trimmed = args.title.trim();
     if trimmed.is_empty() {
-        return Err(IpcError::invalid_arg("会话标题不能为空"));
+        return Err(IpcError::invalid_arg("session title must not be empty"));
     }
     app.store
         .index()
@@ -151,7 +153,7 @@ pub(crate) async fn rename_session(
             m.updated_at = now_ms();
         })
         .map_err(|e| IpcError::internal(format!("会话索引写入失败：{e:?}")))?
-        .ok_or_else(|| IpcError::not_found(format!("会话不存在：{}", args.session_id)))
+        .ok_or_else(|| IpcError::not_found(format!("session not found: {}", args.session_id)))
 }
 
 // ---- 会话偏好（§3.3 #24/#25，FR-14-05/FR-02-08，18 号票） ----
@@ -171,7 +173,9 @@ fn ensure_session_exists(app: &AppState, session_id: &str) -> Result<(), IpcErro
     if known {
         Ok(())
     } else {
-        Err(IpcError::not_found(format!("会话不存在：{session_id}")))
+        Err(IpcError::not_found(format!(
+            "session not found: {session_id}"
+        )))
     }
 }
 
@@ -252,7 +256,7 @@ pub(crate) fn set_session_prefs_core(
         current.thinking = thinking;
     }
     crate::storage::prefs::save_prefs(app.store.root(), session_id, &current)
-        .map_err(|e| IpcError::internal(format!("会话偏好写入失败：{e}")))
+        .map_err(|e| IpcError::internal(format!("session prefs write failed: {e}")))
 }
 
 /// 读取会话偏好（§3.3 #24）：文件缺失/损坏 → 空偏好（不阻塞会话加载，
