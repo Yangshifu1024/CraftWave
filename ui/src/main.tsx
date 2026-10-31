@@ -33,10 +33,20 @@ document.documentElement.classList.toggle(
   !userAgent.includes("Mac") && !userAgent.includes("Windows"),
 );
 
-// StrictMode 是 React 的开发期检查模式：会故意重复执行一次渲染与副作用，
-// 用来暴露缺清理的订阅、定时器等隐患；生产构建下不会带来额外开销
-createRoot(container).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-);
+// NFR-03 长会话压测 harness（34 号票，dev-only）：dev 构建 + URL 带 ?stress=1
+// 时进入，驱动真实渲染管线跑 2000 条合成会话的滚动/发送负载（跑法与指标见
+// chat/perf/StressHarness.tsx）。生产构建 import.meta.env.DEV 常量折叠为
+// false，本分支与动态 import 一并被剔除——压测代码不进产物。
+if (import.meta.env.DEV && new URLSearchParams(window.location.search).has("stress")) {
+  void import("./chat/perf/StressHarness").then(({ StressHarness }) => {
+    createRoot(container).render(<StressHarness />);
+  });
+} else {
+  // StrictMode 是 React 的开发期检查模式：会故意重复执行一次渲染与副作用，
+  // 用来暴露缺清理的订阅、定时器等隐患；生产构建下不会带来额外开销
+  createRoot(container).render(
+    <StrictMode>
+      <App />
+    </StrictMode>,
+  );
+}

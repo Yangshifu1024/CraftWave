@@ -115,6 +115,10 @@ const ALLOWLIST: Record<string, string> = {
   "chat/tree-persistence.ts": "树同步内部诊断串（非界面 chrome）",
   // 应用入口的结构性异常（挂载点缺失 = 页面未渲染，开发者诊断面）
   "main.tsx": "挂载点缺失的结构性异常（开发者诊断）",
+  // NFR-03 压测 harness（34 号票，dev-only：?stress=1 且仅 dev 构建可达，
+  // 生产构建整体剔除）——开发者诊断面，用户永不可见，抽词进字典是负资产
+  "chat/perf/StressHarness.tsx": "压测 harness 页（dev-only 诊断面，生产剔除）",
+  "chat/perf/stress-source.ts": "压测合成数据文案（dev-only，生产剔除）",
 };
 
 /** 精确字面量豁免：`<文件>: [允许的字符串原文]`——i18n 惯例与数据面例外，
