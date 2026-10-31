@@ -1,38 +1,29 @@
-# 实现：macOS 签名公证与自动更新器
+# 实现：存储格式升级备份保护与自动更新器（原 macOS 签名公证与自动更新器）
 
 Type: task
-Status: open
+Status: open（范围已按 2026-10-31 用户决策收窄：无签名公证）
+
+> **范围变更（2026-10-31 用户决策）：macOS Developer ID 签名与公证移除不做。** FR-16-02（macOS 半）出 M2 范围，未签名引导口径（M1 acceptance.md §1）继续有效。本票剩余范围：存储格式升级备份保护（Q34/Q36/Q41/Q43，04/06/23/24 号票接线点）+ 更新器骨架（FR-16-03，发布面验证留 HITL）。
 
 ## 要做什么
 
-FR-16-02（macOS 半）+ FR-16-03（PRD 行 580/581，出处 §12.4/§10.7）：
+FR-16-03（PRD 行 580/581，出处 §12.4/§10.7）+ Q34/Q36/Q41/Q43 存储安全：
 
-- tag 构建的 macOS 安装包带 Developer ID 签名与 notarization——用户下载后**直接双击可开**，不再右键放行/xattr（M1 acceptance.md §1 的未签名引导口径就此对 macOS 作废）。
-- 应用内「检查更新 → 下载 → 安装 → 重启」走 tauri updater + GitHub Releases latest.json，检查可开关可调频率。
-- **用户已注册 Apple Developer 账号（2026-10-29 决策）；Windows 维持未签名**（无证书，map Out of scope；引导文案维持 M1 acceptance.md §1 口径）。
-- 证书/密钥属 HITL 要素——代理先把 CI 骨架与守卫写好，secrets 配齐即自动生效。
+- 应用内「检查更新 → 下载 → 安装 → 重启」走 tauri updater + GitHub Releases latest.json，检查可开关可调频率；updater 的 minisign 签名与 OS 代码签名正交（Windows/Linux 未签名不影响应用内更新），macOS 未签名包应用内更新可装机内自替换（首装引导维持 M1 口径）。
+- **签名与公证：移除**（无 APPLE_* secrets、无 notarytool/stapler 步骤；下游若重启签名另立新票）。
+- **存储格式升级保护**：首次升级到新存储格式前创建可恢复备份，失败暂停升级；恢复后信任/授权/审批记忆重核、队列暂停（Q34/Q36/Q41/Q43 全口径，04 号票 compaction 守卫同源扩展）。
+- HITL 剩余要素：tauri updater 密钥对（`pnpm tauri signer generate`，公钥进配置、私钥+密码进 secrets）与 GitHub secrets `TAURI_SIGNING_PRIVATE_KEY(_PASSWORD)`；未配时更新入口以配置开关禁用兜底。
 
-## HITL：需用户操作并提供（票内精确清单）
+## HITL：需用户操作并提供（砍签名后剩余清单）
 
-1. Apple Developer 后台创建 **Developer ID Application** 证书（含私钥导出 `.p12`）+ 导出密码 + 证书身份全名（如 `Developer ID Application: <姓名> (<TeamID>)`）。
-2. 公证凭据（二选一，推荐 A）：
-   - A. **App Store Connect API Key**：`.p8` 文件 + Key ID + Issuer ID（notarytool 原生支持，CI 免交互）；
-   - B. Apple ID + **App 专用密码**（appleid.apple.com 生成）+ Team ID。
-3. tauri updater 签名密钥对：本机 `pnpm tauri signer generate -w ~/.tauri/craftwave.key`（自设密码）→ **公钥**交代理进 tauri.conf.json，**私钥 + 密码**进 secrets。
-4. GitHub secrets 名单（代理按此名接线，本票 Answer 记配置完成日）：
-   - `APPLE_CERTIFICATE_P12`（base64）、`APPLE_CERTIFICATE_PASSWORD`、`APPLE_SIGNING_IDENTITY`；
-   - `APPLE_API_ISSUER`、`APPLE_API_KEY_ID`、`APPLE_API_KEY`（.p8 内容 base64；选 B 路线则改 `APPLE_ID`/`APPLE_PASSWORD`/`APPLE_TEAM_ID`）；
-   - `TAURI_SIGNING_PRIVATE_KEY`、`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`。
+1. tauri updater 签名密钥对：本机 `pnpm tauri signer generate -w ~/.tauri/craftwave.key`（自设密码）→ **公钥**交代理进 tauri.conf.json，**私钥 + 密码**进 secrets（仅发布 updater 产物时需要；代码骨架与单测先行不阻塞）。
+2. GitHub secrets：`TAURI_SIGNING_PRIVATE_KEY`、`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`。
 
 ## 具体做什么
 
 ### CI 与发布（.github/workflows/build.yml 增量，基于现行文件：tag/dispatch 触发 → release 草稿 job → 三平台 build job → 收集安装包 → gh release upload）
 
-- **macOS 签名公证步骤**（macOS build job 内，每段套 `if: env.APPLE_CERTIFICATE_P12 != ''` 式守卫——**secrets 未配时整段跳过，退化为 M1 未签名构建，不失败**）：
-  1. 解码 `.p12` → 创建临时 keychain（`security create-keychain` → `import-keychain` → `set-key-partition-list -S apple-tool:,apple:` 免交互授权）；
-  2. tauri build 带 `APPLE_SIGNING_IDENTITY` env → bundler 对 .app/dmg 自动 codesign；
-  3. 公证：`xcrun notarytool submit <dmg> --wait`（A 路线 env `APPLE_API_ISSUER/APPLE_API_KEY_ID` + .p8 落盘为 key-path；B 路线先 `xcrun notarytool store-credentials` 预存 profile 再 `--keychain-profile`）；
-  4. `xcrun stapler staple` 订书 → 产物挂 Release 草稿（既有「收集安装包」步骤自动命中，产物名不变：`CraftWave_<ver>_aarch64.dmg`）。
+- **签名公证：无**（2026-10-31 用户决策移除；CI 不含任何 APPLE_* 步骤）。
 - **updater 产物**：
   - `tauri.conf.json` `bundle.createUpdaterArtifacts: true` → 各平台 updater 产物 + `.sig`；
   - build job 设 `TAURI_SIGNING_PRIVATE_KEY(_PASSWORD)` env（tauri CLI 用其签 updater 产物）；
@@ -85,7 +76,7 @@ FR-16-02（macOS 半）+ FR-16-03（PRD 行 580/581，出处 §12.4/§10.7）：
 
 ## 边界（不在本票）
 
-- Windows 签名（无证书，map Out of scope；SmartScreen「更多信息→仍要运行」引导维持 acceptance.md §1）；Linux 打包形态变更；增量/差分更新（tauri v2 全量包）；版本降级；更新源镜像/自建服务器；macOS 原生菜单栏与 About 菜单（FR-13-04 另票）。
+- macOS Developer ID 签名与公证（2026-10-31 用户决策移除，下游另票复议）；Windows 签名（无证书，map Out of scope；SmartScreen「更多信息→仍要运行」引导维持 acceptance.md §1）；Linux 打包形态变更；增量/差分更新（tauri v2 全量包）；版本降级；更新源镜像/自建服务器；macOS 原生菜单栏与 About 菜单（FR-13-04 另票）。
 
 ## 验收
 
@@ -95,9 +86,9 @@ FR-16-02（macOS 半）+ FR-16-03（PRD 行 580/581，出处 §12.4/§10.7）：
 - [ ] 首次格式升级前完成可恢复备份，失败则暂停升级；更新说明含旧版不可读提示，手动安装路径同样受保护。
 - [ ] 活跃任务/待审批请求阻止安装和重启；待发队列须用户明确暂停并保留后才可更新，更新后保持暂停。
 
-- [ ] secrets 配齐后 tag 构建：macOS dmg 下载后**双击直开**（无右键放行/xattr），`codesign -vv` 与 `spctl -a -vv` 通过。
-- [ ] 应用内「检查更新」→ 下载 → 安装 → 重启后版本号更新（两连 tag 实测）；无新版时提示已最新。
+- [x] ~~secrets 配齐后 tag 构建：macOS dmg 双击直开~~（2026-10-31 用户决策移除，不做）。
+- [ ] 应用内「检查更新」→ 下载 → 安装 → 重启后版本号更新（两连 tag 实测，HITL 配齐密钥后）；无新版时提示已最新。
 - [ ] `update.enabled=false` 或未到间隔：启动不发起更新请求（NFR-11 核对：更新外联仅 GitHub Releases，列入 34 号票隐私清单）。
-- [ ] 清空全部 APPLE_/TAURI_ secrets 手动 dispatch：三平台未签名构建照常绿、无 updater 产物步骤失败。
+- [x] ~~清空全部 APPLE_/TAURI_ secrets 手动 dispatch~~（签名步骤已移除，APPLE_ 项不存在；TAURI_ 项随 updater 骨架以「secrets 未配时更新入口禁用」替代）。
 - [ ] latest.json 三平台条目 URL 逐一可下载，signature 与对应 .sig 内容一致。
 - [ ] §3.2 update 配置域、§12.4 updater 实测结论回写完成。

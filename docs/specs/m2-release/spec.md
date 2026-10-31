@@ -157,7 +157,7 @@ M1 MVP 已可日常自用（多会话、八个工具、审批四档、流式输�
 - **网络搜索**：沿用 C-12 本地优先三通道 SearXNG → DuckDuckGo HTML 直接抓取 → Tavily BYOK；SearXNG 独立配置并探活，本地回环不经代理；直抓走应用代理，Tavily 仅已配置 Key 时参与。全败结构化错误，Brave 留位不实现；凭据沿用现有存储协议。见 [13](tasks/13-impl-web-search.md)。
 - **图片与日志**：含历史图的会话切非 vision 后可纯文字继续，历史图仅在模型请求中占位并提示，界面原图保留；新附图与主动读图拒绝。日志只记图片实际路径/哈希/格式/大小，不含本体；无源路径附件记 blob 路径。删会话同步删专属日志与轮转副本，应用日志仅运行元数据、不留会话正文或图片。见 [17](tasks/17-impl-image-input.md)、[32](tasks/32-impl-session-logs.md)。
 - **git**：git2 只读状态/差异/历史与变更面板；stage/commit 默认禁，开关开启后可经审批执行，merge/rebase 仍禁，push 恒确认、force push 恒禁。应用受控 worktree 管理与模型 git 命令分开授权。见 [26](tasks/26-impl-git-integration.md)。
-- **签名与更新**：macOS 签名公证、tauri updater 与 GitHub Releases；开发构建缺 secrets 可退化，但不能代替签名正式包验收。运行时可检查下载，安装/重启前须无活跃任务或待审批请求；待发队列须用户明确暂停并保留，更新后保持暂停。Windows/Linux 维持未签名。见 [33](tasks/33-impl-signing-updater.md)。
+- **签名与更新**：~~macOS 签名公证~~（2026-10-31 用户决策移除）+ tauri updater 与 GitHub Releases；开发构建缺 secrets 可退化。运行时可检查下载，安装/重启前须无活跃任务或待审批请求；待发队列须用户明确暂停并保留，更新后保持暂停。Windows/Linux 维持未签名。存储格式升级备份保护（Q34/Q36/Q41/Q43）随 33 号票交付。见 [33](tasks/33-impl-signing-updater.md)。
 - **范围与文档纪律**：多 Key 池砍单，i18n 收尾，虚拟滚动本体留 M3；Brave/成本统计/斜杠命令面板等 P2 仍不做。字段级缺失或过时处先回写技术设计再实现；本文记录的命令审计与 worktree 是本轮明确加入 M2 的范围，不因旧里程碑标注排除。
 
 ## Testing Decisions
@@ -174,6 +174,7 @@ M1 MVP 已可日常自用（多会话、八个工具、审批四档、流式输�
 - **浏览器工具**（C-11）、**Brave 云搜索**：留 M3 / trait 位。
 - **PRD P2 全量**：成本统计、自定义请求头、斜杠命令面板、跨会话搜索 FTS5、保留期清理、运行总览、定时任务、后台服务管理、跨进程写协调、OAuth、本地 RAG、质量门、导出 HTML 分享页等。
 - **Windows 签名**：无证书，维持未签名引导口径。
+- **macOS Developer ID 签名与公证**（FR-16-02 macOS 半）：用户砍单（2026-10-31），未签名引导口径维持；33 号票收窄为备份保护 + 更新器骨架。
 
 ## Further Notes
 
