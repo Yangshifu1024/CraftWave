@@ -6,7 +6,7 @@ import type { Plugin } from "vite";
 import { defineConfig } from "vite";
 
 /**
- * NFR-03 压测报告回传（34 号票，dev-only）：压测页跑完后把帧采样报告
+ * 压测报告回传（dev-only）：压测页跑完后把帧采样报告
  * POST 到 /__stress_report，写入 src-tauri/target/stress-report.json
  * （target/ 已 gitignore，属测试产物）。`apply: "serve"` 让插件只在
  * dev server 生效——生产构建完全不包含此中间件。
