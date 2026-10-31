@@ -8,6 +8,7 @@
 //! 命令壳（#[tauri::command]）剥离留在壳侧，`*_core` 与类型随引擎走。
 
 pub mod agent;
+pub mod api;
 pub mod error;
 pub mod app_state;
 pub mod backend;
@@ -22,6 +23,7 @@ pub mod session_roots;
 pub mod storage;
 pub mod run_persistence;
 pub mod session_log;
+pub mod snapshot;
 pub mod usage;
 pub mod tools;
 pub mod util;
