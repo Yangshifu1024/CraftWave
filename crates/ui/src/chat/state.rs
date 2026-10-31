@@ -48,6 +48,10 @@ pub const READER_MAX_WIDTH: f32 = 720.0;
 /// User 气泡最大宽度（rendering.md 钉值 540px）。
 pub const USER_BUBBLE_MAX_WIDTH: f32 = 540.0;
 
+/// 虚拟列表 overscan（rendering.md「数据层」钉值 512px，白名单②：惰性
+/// 测量的预渲染窗口；不等高行上下各预渲染 512px）。
+pub const LIST_OVERSCAN: f32 = 512.0;
+
 /// 会话状态：消息源 + 展开状态 + ListState + Composer。Entity 承载，
 /// `cx.notify` 驱动重渲染；行内容由 [`Self::render_row`] 按角色分发
 /// （实现见 row.rs）。本类型同时是中栏视图（Render 实现在 mod.rs）——
@@ -78,12 +82,18 @@ pub struct ConversationState {
     pub(crate) splice_retest_count: usize,
     /// remeasure_items 执行次数（流式行内容增长的重测对账计数）。
     pub(crate) remeasure_count: usize,
+    /// view 寿命订阅的保活句柄（composer 输入事件 → 发送/补全分流，
+    /// install 时挂上）。Subscription 一旦 drop 会取消订阅——必须存进
+    /// owner 而不是 detach（detach 后回调挂在 emitter 上，owner 重建时
+    /// 会累积旧回调，编码指南 §1）。
+    #[allow(dead_code)] // 保活语义：持有即订阅在，从不读取
+    pub(crate) _subscriptions: Vec<gpui_kit::Subscription>,
 }
 
 impl ConversationState {
     /// 空会话：列表 0 行，开启 Tail 跟随（新消息到达即贴底）。
     pub fn new() -> Self {
-        let list = ListState::new(0, ListAlignment::Bottom, px(512.0));
+        let list = ListState::new(0, ListAlignment::Bottom, px(LIST_OVERSCAN));
         list.set_follow_mode(FollowMode::Tail);
         Self {
             messages: Rc::new(Vec::new()),
@@ -97,6 +107,7 @@ impl ConversationState {
             zoom_seen: 0.0,
             splice_retest_count: 0,
             remeasure_count: 0,
+            _subscriptions: Vec::new(),
         }
     }
 

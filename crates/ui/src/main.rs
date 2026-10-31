@@ -28,8 +28,17 @@ mod prefs;
 // 接入；bin crate 里暂无消费方的 pub 项也报 dead_code，故模块级放行
 #[allow(dead_code)]
 mod theme;
+// 文本工具四件套（clip_display/one_line/smart_time/tilde_path）：smart_time
+// 与 tilde_path 的消费方在阶段 3.1 侧栏（会话时间/路径列）——与 theme 同理
+// 模块级放行 dead_code，函数本体已由 text_util_test 钉住
+#[allow(dead_code)]
+mod text_util;
 mod ui_zoom;
 mod window_state;
+
+#[cfg(test)]
+#[path = "text_util_test.rs"]
+mod text_util_test;
 
 #[cfg(test)]
 #[path = "ui_test.rs"]
@@ -44,6 +53,13 @@ use gpui_kit::component::input::{Copy, Cut, Paste, Redo, SelectAll, Undo};
 use gpui_kit::*;
 use i18n::t;
 use theme::ActiveCraftwave as _;
+
+// 三栏骨架的两个占位宽度（阶段 3.1 侧栏 / 3.5 面板族接入前只立骨架，
+// 接入时连同真布局一起重订；token 派生口径见编码指南 §3）。
+/// 左栏（会话侧栏）占位宽度。
+const SIDEBAR_PLACEHOLDER_WIDTH: f32 = 260.0;
+/// 右栏（面板区折叠态）占位宽度。
+const PANEL_PLACEHOLDER_WIDTH: f32 = 4.0;
 
 actions!(
     craftwave,
@@ -125,7 +141,7 @@ impl gpui_kit::Render for MainWindowView {
                     // 左栏：侧栏占位（spec 3.1 多会话侧栏接入前只立骨架）
                     .child(
                         div()
-                            .w(px(260.0))
+                            .w(px(SIDEBAR_PLACEHOLDER_WIDTH))
                             .h_full()
                             .flex_shrink_0()
                             .bg(sidebar)
@@ -153,7 +169,7 @@ impl gpui_kit::Render for MainWindowView {
                     // 右栏：折叠为占位条（阶段 3.5 面板族接入前只立骨架）
                     .child(
                         div()
-                            .w(px(4.0))
+                            .w(px(PANEL_PLACEHOLDER_WIDTH))
                             .h_full()
                             .flex_shrink_0()
                             .bg(sidebar)

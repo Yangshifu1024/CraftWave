@@ -64,6 +64,10 @@ const ZH_CN: &[(&str, &str)] = &[
     ("Attach image", "添加图片附件"),
     // 对话流（阶段 2.C-2b：运行中停止钮）
     ("Stop", "停止"),
+    // 文本工具（阶段 2.C-3：smart_time 的时间档标签）
+    ("Just now", "刚刚"),
+    ("min ago", "分钟前"),
+    ("Yesterday", "昨天"),
 ];
 
 /// 查表结构：`OnceLock` 首次访问构建，之后零开销哈希查词。

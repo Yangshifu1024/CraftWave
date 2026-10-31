@@ -8,10 +8,13 @@
 //!    ScrollEvent 钉住列表对该事件通路的响应）；
 //! 4. 流式行：出现 / 内容增长重测 / 带工具渲染 / 收口；
 //! 5. apply_snapshot 指针对账：同历史快照不 reset（滚动状态不炸），
-//!    新历史整体替换（展开表清空）。
+//!    新历史整体替换（展开表清空）；
+//! 6. 正文换装 `TextView::markdown`（2.C-3）后：跨消息（跨 TextView）的
+//!    文本选择自然生效（2.C-1 钉住的选择通路的收口验证）。
 
 use gpui_kit::{
-    Context, Entity, ScrollDelta, ScrollEvent, TestAppContext, VisualTestContext, point, px,
+    Context, Entity, Modifiers, MouseButton, ScrollDelta, ScrollEvent, TestAppContext,
+    VisualTestContext, point, px,
 };
 
 use craftwave_engine::snapshot::StreamPart;
@@ -53,6 +56,8 @@ fn at_bottom(chat: &ConversationState) -> bool {
 
 /// 测试装配：与 main() 的启动序一致（init → mount → apply），再开一个
 /// 中栏挂真 chat 装置的主窗。install 默认装演示历史，测试按需 set_history。
+/// 根视图包 base `Root`（与生产 open_window 同款包装：窗口文本选择的
+/// 全局协议、tooltip/浮层挂载点都在 Root 上——跨 TextView 选择测试依赖）。
 fn chat_window(
     cx: &mut TestAppContext,
 ) -> (Entity<ConversationState>, &mut VisualTestContext) {
@@ -61,11 +66,22 @@ fn chat_window(
         CraftwaveTheme::mount(cx);
         theme::apply(cx);
     });
-    let (view, visual) = cx.add_window_view(|window, cx| MainWindowView {
-        zoom_seen: 0.0,
-        chat: crate::chat::install(window, cx),
+    // install 的返回值经 Rc<RefCell> 带出闭包（闭包只调用一次）
+    let holder: std::rc::Rc<std::cell::RefCell<Option<Entity<ConversationState>>>> =
+        std::rc::Rc::new(std::cell::RefCell::new(None));
+    let slot = holder.clone();
+    let (_root, visual) = cx.add_window_view(|window, cx| {
+        use gpui_kit::AppContext as _;
+        let chat = crate::chat::install(window, cx, None);
+        *slot.borrow_mut() = Some(chat.clone());
+        // Root::new 收 Entity<AnyView>：先建内层视图实体再包 Root
+        let inner = cx.new(|_| MainWindowView {
+            zoom_seen: 0.0,
+            chat,
+        });
+        gpui_kit::base::Root::new(inner, window, cx)
     });
-    let chat = visual.update(|_window, cx| view.read(cx).chat.clone());
+    let chat = holder.borrow().clone().expect("install 在开窗闭包内执行");
     (chat, visual)
 }
 
@@ -368,4 +384,60 @@ fn fixture_history_roles_match_dispatch(_cx: &mut TestAppContext) {
     assert_eq!(history[3].role, MessageRole::System);
     assert_eq!(history[4].role, MessageRole::Assistant);
     assert_eq!(history[5].role, MessageRole::User);
+}
+
+// ======================================================================
+// 6. 正文 Markdown 换装后的选择通路（2.C-3 收口）
+// ======================================================================
+
+/// 正文换成 `TextView::markdown + .selectable(true)` 后，跨消息（跨两个
+/// TextView）的拖拽选择自然生效——2.C-1 钉住的选择/滚动通路在本批换装下
+/// 的收口验证（rendering.md「选择与滚动」：全文可选、跨消息选择）。
+#[gpui_kit::test]
+fn markdown_bodies_support_cross_view_selection(cx: &mut TestAppContext) {
+    use gpui_kit::base::TextSelection;
+
+    let (chat, visual) = chat_window(cx);
+    // 两条纯正文 Assistant：正文 TextView 直接可见、不折不滤
+    mutate(&chat, visual, |chat, cx| {
+        chat.set_history(
+            std::rc::Rc::new(vec![
+                fixture::assistant_msg("第一条正文阿尔法"),
+                fixture::assistant_msg("第二条正文贝塔"),
+            ]),
+            cx,
+        );
+    });
+    visual.run_until_parked();
+    // 两条正文的像素位置（debug_selector 钩子，窗口绝对坐标）
+    let first = visual
+        .debug_bounds("body-0")
+        .expect("第一条正文已渲染且在视口内");
+    let second = visual
+        .debug_bounds("body-1")
+        .expect("第二条正文已渲染且在视口内");
+    // 从第一条正文左缘行盒中部拖到第二条正文中心：选区跨过两个 TextView
+    let start = point(first.left() + px(2.), first.center().y);
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::default());
+    visual.update(|window, cx| {
+        let _ = window.draw(cx);
+    });
+    let end = second.center();
+    visual.simulate_mouse_move(end, Some(MouseButton::Left), Modifiers::default());
+    visual.update(|window, cx| {
+        let _ = window.draw(cx);
+    });
+    visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::default());
+    visual.update(|window, cx| {
+        let _ = window.draw(cx);
+    });
+    let selected = visual.update(TextSelection::selected_text);
+    assert!(
+        selected.contains("第一条"),
+        "选区应覆盖第一条正文：{selected:?}"
+    );
+    assert!(
+        selected.contains("第二条"),
+        "选区应跨到第二条正文（跨 TextView 选择）：{selected:?}"
+    );
 }

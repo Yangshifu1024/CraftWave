@@ -53,6 +53,11 @@ use crate::theme::{self, ActiveCraftwave as _};
 
 use super::service::SessionService;
 
+/// @ 补全弹层宽度（基准像素，随缩放档缩放）：路径列 + 类型徽标的定稿宽度。
+/// 编码指南 §3：非白名单 px 字面量迁移为 token 派生（模块常量 × zoom，
+/// 与 theme::rounded_* 同构）。
+const COMPLETION_WIDTH: f32 = 360.0;
+
 /// @ 补全数据源接口：查询词 → 命中条目任务（engine `WorkspacePathHit`）。
 /// 真实现（engine 搜索）跑后台线程池，假实现（fixture）同步快返回——
 /// composer 只消费 Task，两种来源同一条回写路径。
@@ -395,7 +400,7 @@ impl ComposerState {
             .absolute()
             .bottom_full()
             .left_0()
-            .w(px(360.0))
+            .w(px(COMPLETION_WIDTH * zoom))
             .rounded(px(theme::rounded_lg(zoom)))
             .border_1()
             .border_color(theme.border)

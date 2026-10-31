@@ -21,6 +21,7 @@
 
 mod composer;
 mod fixture;
+mod markdown_links;
 mod row;
 mod service;
 mod state;
@@ -28,6 +29,10 @@ mod state;
 #[cfg(test)]
 #[path = "conversation_test.rs"]
 mod conversation_test;
+
+#[cfg(test)]
+#[path = "markdown_links_test.rs"]
+mod markdown_links_test;
 
 #[cfg(test)]
 #[path = "composer_test.rs"]
@@ -120,7 +125,7 @@ pub fn install(
     conversation.update(cx, |conversation, cx| {
         conversation.composer = Some(composer);
         // 五参闭包（spike 模式）：回调里拿得到 window，set_value 才能清空输入
-        cx.subscribe_in(
+        let subscription = cx.subscribe_in(
             &input,
             window,
             |conversation: &mut ConversationState,
@@ -173,8 +178,10 @@ pub fn install(
                     });
                 }
             },
-        )
-        .detach();
+        );
+        // 订阅随 owner（本实体）存活：存进 _subscriptions 保活，不用
+        // detach（窗口重开重建实体时旧回调随旧实体一起释放，不累积）
+        conversation._subscriptions.push(subscription);
     });
     conversation
 }

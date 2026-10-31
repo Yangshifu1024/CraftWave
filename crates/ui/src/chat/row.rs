@@ -1,36 +1,51 @@
-//! 行分发四形态的元素构建（gpui-rewrite 2.4，rendering.md「行分发」逐条）。
+//! 行分发四形态的元素构建（gpui-rewrite 2.4 / 2.C-3，rendering.md「行分发」
+//! 「Markdown 正文」逐条）。
 //!
 //! 判定与路由在 state.rs（`render_row` 入口），本模块只产元素：
 //!
-//! - **User**：右对齐气泡，`max_w(540px)`、muted 底、行高 1.85、内容段直挂
-//!   气泡不加包装层（max-content 探测问题的 Wake 结论）；B5 右上折角 + 1px
-//!   边框（折角本批为占位形制——方形翻角 chip，gpui 无 div 级 rotate，
-//!   三角折角待有 svg/路径面后精修）；
-//! - **Assistant**：全宽列 = thinking 面板槽位 → 正文槽位 → 工具簇槽位平铺；
-//!   正文本批普通文本占位（行高 1.9），下一批换 `TextView::markdown`；
-//! - **System / CompactSummary**：居中小胶囊（本批 `.truncate()` 单行截断，
-//!   下一批换 one_line + clip_display 的显示单元宽度截断）；
+//! - **User**：右对齐气泡，`max_w(540px)`、muted 底、行高 1.85、内容段
+//!   （`TextView::markdown`，段间距 0.5rem）直挂气泡不加包装层（max-content
+//!   探测问题的 Wake 结论）；B5 右上折角 + 1px 边框（折角本批为占位形制——
+//!   方形翻角 chip，gpui 无 div 级 rotate，三角折角待有 svg/路径面后精修）；
+//! - **Assistant**：全宽列 = thinking 面板槽位 → 正文槽位（`TextView::markdown`
+//!   四定制点，段间距 0.6rem）→ 工具簇槽位，平铺；
+//! - **System / CompactSummary**：居中小胶囊（one_line 压行 + `.truncate()`
+//!   宽度兜底）；
 //! - **过滤器**：运行日志型 → state.rs 已拦截为零高空行，不会进到本模块。
 //!
 //! 纪律对照：折叠不嵌套（只有 thinking / 工具簇两个槽位可折）；截断只发生在
 //! 元数据（胶囊文本、thinking 摘要、工具参数摘要），正文槽位永不截断。
 
-use gpui_kit::component::ActiveTheme as _;
+use gpui_kit::component::highlighter::HighlightTheme;
+use gpui_kit::component::text::{TextView, TextViewStyle};
+use gpui_kit::component::{ActiveTheme as _, h_flex};
 use gpui_kit::prelude::*;
-use gpui_kit::{AnyElement, App, Context, div, px, relative};
+use gpui_kit::{
+    AnyElement, App, ClipboardItem, Context, SharedString, StyleRefinement, div, px, relative,
+    rems,
+};
 
 use crate::i18n::t;
+use crate::text_util::{clip_display, one_line};
 use crate::theme::{self, ActiveCraftwave as _};
 
-use super::state::{
-    CallLite, ConversationState, READER_MAX_WIDTH, Slot, USER_BUBBLE_MAX_WIDTH,
-};
+use super::markdown_links;
+use super::state::{CallLite, ConversationState, READER_MAX_WIDTH, Slot, USER_BUBBLE_MAX_WIDTH};
 
 // 本批占位形制的两个长度（折角 chip、缩进导线），均有注释说明去向。
 /// thinking 展开区的左缩进（rendering.md「thinking 面板」钉值 30px）。
 const THINKING_INDENT: f32 = 30.0;
-/// thinking 摘要行的字符预算（下一批换 one_line(400) + clip_display 精确宽）。
-const THINKING_SUMMARY_CHARS: usize = 48;
+/// B5 折角 chip 的角距与边长（占位形制钉值：方形翻角贴右上角；gpui 无
+/// div 级 rotate，三角折角随 svg/路径能力接入后连同这两个值一起重订）。
+const FOLD_CHIP_INSET: f32 = 6.0;
+/// B5 折角 chip 边长（见 [`FOLD_CHIP_INSET`] 注释）。
+const FOLD_CHIP_SIZE: f32 = 8.0;
+/// thinking 摘要的显示单元宽度预算（rendering.md 钉值 88 格；先 one_line(400)
+/// 压行再按宽截断）。
+const THINKING_SUMMARY_WIDTH: usize = 88;
+/// 胶囊文本的字符预算（纪律二 one_line 单行截断；只压行数不精确控宽——
+/// 宽度由 `.truncate()` 按容器兜底，预算大到几乎不影响实际展示）。
+const PILL_MAX_CHARS: usize = 200;
 /// 图片缩略占位边长（rendering.md「图片」钉值 104px；按宽高比分流下一批）。
 const IMAGE_THUMB: f32 = 104.0;
 
@@ -53,7 +68,7 @@ pub(crate) fn render_row(
     } else {
         let entry = &state.messages()[ix];
         match entry.role {
-            craftwave_engine::storage::MessageRole::User => render_user(entry, cx),
+            craftwave_engine::storage::MessageRole::User => render_user(entry, ix, cx),
             craftwave_engine::storage::MessageRole::Assistant => {
                 render_assistant(state, ix, super::state::slots_from_wire(&entry.parts), cx)
             }
@@ -83,7 +98,11 @@ pub(crate) fn render_row(
 // User：右对齐气泡（B5 右上折角 + 1px 边框）
 // ======================================================================
 
-fn render_user(entry: &craftwave_engine::storage::MessageEntry, cx: &mut App) -> AnyElement {
+fn render_user(
+    entry: &craftwave_engine::storage::MessageEntry,
+    ix: usize,
+    cx: &mut App,
+) -> AnyElement {
     // owned 拷贝（ThemeColor/CraftwaveColors 都是 Copy）：不留对 cx 的借用
     let theme = cx.theme().colors;
     let zoom = cx.craftwave().zoom;
@@ -104,15 +123,24 @@ fn render_user(entry: &craftwave_engine::storage::MessageEntry, cx: &mut App) ->
         .text_size(px(theme::font_size(theme::FONT_UI_BASE, zoom)))
         .line_height(relative(theme::LEADING_USER))
         .text_color(theme.foreground)
-        
+
         .relative()
         .overflow_hidden();
-    // 内容段直挂气泡：Text part 直接作为文本子节点（无包装层），
-    // Image part 是块级占位（缩略图三态是 2.9 的事，本批只占位）
-    for part in &entry.parts {
+    // 内容段直挂气泡（无包装层——Wake 教训见模块注释）：Text part 是
+    // markdown 段（段间距 0.5rem），Image part 是块级占位（缩略图三态是
+    // 2.9 的事，本批只占位）
+    for (part_ix, part) in entry.parts.iter().enumerate() {
         match part {
             craftwave_engine::storage::WirePart::Text { text } => {
-                bubble = bubble.child(text.clone());
+                bubble = bubble.child(
+                    markdown_body(
+                        SharedString::from(format!("user-{ix}-{part_ix}")),
+                        text,
+                        rems(0.5),
+                        cx,
+                    )
+                    .into_any_element(),
+                );
             }
             craftwave_engine::storage::WirePart::Image { mime_type, .. } => {
                 bubble = bubble.child(
@@ -141,9 +169,9 @@ fn render_user(entry: &craftwave_engine::storage::MessageEntry, cx: &mut App) ->
     bubble = bubble.child(
         div()
             .absolute()
-            .top(px(6.0))
-            .right(px(6.0))
-            .size(px(8.0))
+            .top(px(FOLD_CHIP_INSET))
+            .right(px(FOLD_CHIP_INSET))
+            .size(px(FOLD_CHIP_SIZE))
             .bg(background)
             .border_1()
             .border_color(border)
@@ -163,7 +191,6 @@ fn render_assistant(
     slots: Vec<Slot>,
     cx: &mut Context<ConversationState>,
 ) -> AnyElement {
-    let zoom = cx.craftwave().zoom;
     let mut col = div()
         .w_full()
         .flex()
@@ -176,20 +203,121 @@ fn render_assistant(
             Slot::Thinking { text } => {
                 col = col.child(render_thinking_panel(state, ix, &text, cx))
             }
-            Slot::Body { text } => col = col.child(render_body(&text)),
+            Slot::Body { text } => col = col.child(render_body(ix, &text, cx)),
             Slot::Tools { calls } => {
                 col = col.child(render_tool_cluster(state, ix, &calls, cx))
             }
         }
     }
-    let _ = zoom;
     col.into_any_element()
 }
 
-/// 正文槽位（本批普通文本占位，下一批换 TextView::markdown 四定制点——
-/// 标题系数/段间距/代码块样式/selectable；**永不截断**，纪律三）。
-fn render_body(text: &str) -> AnyElement {
-    div().w_full().child(text.to_owned()).into_any_element()
+/// 正文槽位：`TextView::markdown` 四定制点（段间距 0.6rem）+ `.selectable(true)`
+/// + 链接分流（见 [`markdown_body`]）。**永不截断**（纪律三）。
+///
+/// 外层 `w_full` div 只承载测试定位钩子（debug_selector）——Assistant 是
+/// 全宽定宽列，不走 max-content 探测，加包装层安全（Wake 结论只约束靠
+/// 内容撑宽的 User 气泡，那里的 markdown 段保持直挂）。
+fn render_body(ix: usize, text: &str, cx: &mut Context<ConversationState>) -> AnyElement {
+    let view = markdown_body(
+        SharedString::from(format!("body-{ix}")),
+        text,
+        rems(0.6),
+        cx,
+    );
+    div()
+        .w_full()
+        .debug_selector(move || format!("body-{ix}"))
+        .child(view)
+        .into_any_element()
+}
+
+/// 对话正文共用的 Markdown 视图构造（Wake `markdown_body` 行为照搬）：
+/// 表格、引用块与分隔线由组件原生解析，本函数覆写四个定制点——
+///
+/// 1. **标题字号 = 基准 × 系数**（theme.rs §2 乘法体系：h1 1.45×/h2 1.28×/
+///    h3 1.14×/h4 1.05×/h5+ 基准），基准随全局缩放档走（zoom）——标题克制、
+///    天然支持全局缩放；
+/// 2. 段间距参数化（user 0.5rem / assistant 0.6rem，调用方传）；
+/// 3. 代码块一个 StyleRefinement（muted 底 + 1px border + 圆角）+
+///    `code_block_actions`（语言名 + 复制钮，**复制走 gpui clipboard 写
+///    完整原文**——600 字符契约的代码块版）；
+/// 4. `.selectable(true)` 全文可选。
+///
+/// 主题细节：**主题写进元素 id**（`{id}-dark/-light`）——TextView 的语法
+/// 高亮色在解析期固化，id 带主题让亮暗切换走同步重解析，代码块不闪色。
+/// 链接点击走 [`markdown_links::with_session_links`] 分流（项目根接线随
+/// 阶段 3.3 会话树接入，本批传空 = 相对路径不解析，绝对路径 / file: URI /
+/// `~` 路径照常工作）。
+fn markdown_body(id: SharedString, text: &str, paragraph_gap: gpui_kit::Rems, cx: &App) -> TextView {
+    let theme = cx.theme().colors;
+    let dark = cx.theme().is_dark();
+    let zoom = cx.craftwave().zoom;
+    let code_radius = px(theme::rounded_lg(zoom));
+    // 语法高亮色解析期固化：主题进 id（见函数注释）
+    let themed_id: SharedString = format!("{id}-{}", if dark { "dark" } else { "light" }).into();
+    let view = TextView::markdown(themed_id, text.to_owned())
+        .style(
+            TextViewStyle {
+                // 标题基准 = 全局字号基准（rem 源头），系数在 heading_font_size 闭包
+                heading_base_font_size: px(theme::base_font_size(zoom)),
+                paragraph_gap,
+                is_dark: dark,
+                highlight_theme: if dark {
+                    HighlightTheme::default_dark()
+                } else {
+                    HighlightTheme::default_light()
+                },
+                ..Default::default()
+            }
+            .heading_font_size(move |level, _base| match level {
+                1 => px(theme::markdown_heading(theme::MD_H1, zoom)),
+                2 => px(theme::markdown_heading(theme::MD_H2, zoom)),
+                3 => px(theme::markdown_heading(theme::MD_H3, zoom)),
+                4 => px(theme::markdown_heading(theme::MD_H4, zoom)),
+                // h5+ 回到正文基准（rendering.md 系数表）
+                _ => px(theme::base_font_size(zoom)),
+            })
+            // 代码块容器：muted 底 + 1px 边框 + 圆角（色从主题取，切主题随窗刷新重取）
+            .code_block(
+                StyleRefinement::default()
+                    .bg(theme.muted)
+                    .border_1()
+                    .border_color(theme.border)
+                    .rounded(code_radius),
+            ),
+        )
+        // 代码块角落的操作区：语言名 + 复制完整原文（ClipboardItem 走 gpui
+        // clipboard，不经系统命令）
+        .code_block_actions(move |block, _window, cx| {
+            let theme = cx.theme().colors;
+            let zoom = cx.craftwave().zoom;
+            let code = block.code();
+            h_flex()
+                .items_center()
+                .gap(px(theme::SPACE_2))
+                .text_size(px(theme::font_size(theme::FONT_UI_2XS, zoom)))
+                .text_color(theme.muted_foreground)
+                .when_some(block.lang(), |actions, lang| actions.child(lang))
+                .child(
+                    div()
+                        .id("code-copy")
+                        .px(px(theme::SPACE_1))
+                        .rounded(px(theme::rounded_sm(zoom)))
+                        .cursor_pointer()
+                        .hover(|style| style.bg(theme.list_hover))
+                        .tooltip(|window, cx| {
+                            gpui_kit::component::tooltip::Tooltip::new(t("Copy code"))
+                                .build(window, cx)
+                        })
+                        .on_click(move |_, _, cx| {
+                            cx.write_to_clipboard(ClipboardItem::new_string(code.to_string()));
+                        })
+                        .child(t("Copy")),
+                )
+        })
+        .selectable(true);
+    markdown_links::with_session_links(view, "")
 }
 
 // ---------------------------------------------------------------------
@@ -207,7 +335,9 @@ fn render_thinking_panel(
     let theme = cx.theme().colors;
     let zoom = cx.craftwave().zoom;
     let expanded = state.thinking_expanded(ix);
-    let summary = one_line_simple(text, THINKING_SUMMARY_CHARS);
+    // 摘要两级截断（rendering.md 钉值）：one_line(400) 压成一行再按显示
+    // 单元宽度截到 88 格（CJK 记 2，字素簇不劈半）
+    let summary = clip_display(&one_line(text, 400), THINKING_SUMMARY_WIDTH);
     let muted_foreground = theme.muted_foreground;
     // 折叠行：chevron（▸/▾ 表达旋转 90° 语义；图标面接入后换 Icon+rotate）
     let head = div()
@@ -337,7 +467,7 @@ fn render_tool_cluster(
                         .text_size(px(theme::font_size(theme::FONT_UI_SM, zoom)))
                         .text_color(theme.muted_foreground)
                         .overflow_hidden()
-                        .child(one_line_simple(&call.args_json, 120)),
+                        .child(one_line(&call.args_json, 120)),
                 )
                 .child(
                     div()
@@ -351,7 +481,7 @@ fn render_tool_cluster(
                         .child(if call.summary.is_empty() {
                             t("Running…").to_owned()
                         } else {
-                            one_line_simple(&call.summary, 120)
+                            one_line(&call.summary, 120)
                         }),
                 ),
         );
@@ -395,28 +525,12 @@ fn render_system(entry: &craftwave_engine::storage::MessageEntry, cx: &mut App) 
                 .py(px(theme::SPACE_1))
                 .text_size(px(theme::font_size(theme::FONT_UI_CAPTION, zoom)))
                 .text_color(cx.craftwave().colors.foreground_subtlest)
-                // 简单单行截断（clip_display 精确截断下一批换上）
+                // 纪律二：one_line 压成单行（多段摘要折成一行），宽度截断由
+                // .truncate() 按容器兜底
                 .whitespace_nowrap()
                 .truncate()
                 .overflow_hidden()
-                .child(text),
+                .child(one_line(&text, PILL_MAX_CHARS)),
         )
         .into_any_element()
-}
-
-// ======================================================================
-// 文本小工具（one_line 的本批简化版）
-// ======================================================================
-
-/// 压成一行 + 按字符数截断加 `…`（wake-core one_line 的简化口径：同为
-/// 「先压行再截断」，截断粒度是 char 而非显示单元宽度——CJK 精确截断等
-/// clip_display 平移后替换，调用点只改这一处）。
-pub(crate) fn one_line_simple(text: &str, max_chars: usize) -> String {
-    let joined = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    if joined.chars().count() <= max_chars {
-        return joined;
-    }
-    let mut out: String = joined.chars().take(max_chars).collect();
-    out.push('…');
-    out
 }

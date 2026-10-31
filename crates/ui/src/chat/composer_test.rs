@@ -83,7 +83,7 @@ fn composer_window(
     });
     let (view, visual) = cx.add_window_view(|window, cx| MainWindowView {
         zoom_seen: 0.0,
-        chat: crate::chat::install(window, cx),
+        chat: crate::chat::install(window, cx, None),
     });
     let chat = visual.update(|_window, cx| view.read(cx).chat.clone());
     (chat, visual)

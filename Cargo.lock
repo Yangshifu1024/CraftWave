@@ -2203,14 +2203,19 @@ dependencies = [
 name = "craftwave-ui"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "craftwave-engine",
  "gpui-fps",
  "gpui-kit",
+ "percent-encoding",
  "rig",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
+ "unicode-segmentation",
+ "unicode-width",
+ "url",
 ]
 
 [[package]]

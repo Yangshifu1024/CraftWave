@@ -38,6 +38,21 @@ tokio = { version = "1", default-features = false, features = [
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 
+# 文本工具（text_util）与链接分流（chat/markdown_links），版本全部与锁内
+# gpui-base / engine 已有依赖同源，零新增下载：
+# - unicode-width 0.2：CJK 宽度 + 「ZWJ/肤色 emoji 序列计 2」（0.2 起的规则），
+#   gpui-base 文本 shaping 同款依赖（锁面 0.2.3）；
+# - unicode-segmentation 1.13：UAX #29 字素簇（截断不劈半的最小单位），
+#   gpui-base 同款（锁面 1.13.3）；
+# - chrono 0.4：smart_time 的时间换算（锁面 0.4.45，clock 特性含本地时区）；
+# - percent-encoding 2.3 / url 2.5：file: URI 严格解析与单次百分号解码
+#   （Wake markdown_links 同款口径，锁面 2.3.2 / 2.5.8）。
+unicode-width = "0.2"
+unicode-segmentation = "1.13"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+percent-encoding = "2.3"
+url = "2.5"
+
 # UI 行为测试装置：#[gpui_kit::test]（GPUI 测试调度器 + 无头窗口渲染）。
 # feature unification 会把本次构建的 gpui-kit 统一到 test-support——那只是
 # 给 gpui 加测试钩子，不影响运行时行为（Wake 同款做法）。
