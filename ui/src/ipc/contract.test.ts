@@ -253,11 +253,12 @@ describe("§12.3 manifest 双向扫描", () => {
     expect(offenders, `未知 invoke 命令：\n${offenders.join("\n")}`).toEqual([]);
   });
 
-  it("manifest.frames 覆盖 §3.4 P0 全集 9 帧 + M2 压缩帧/摘要帧/子代理 4 帧", () => {
+  it("manifest.frames 覆盖 §3.4 P0 全集 9 帧 + M2 压缩帧/摘要帧/子代理 4 帧 + 审计帧", () => {
     // 帧清单必须恰好是 P0 全集 9 帧 + 04 号票 compactDone + 05 号票
     // runSnapshot + 10 号票子代理 4 帧（subStarted/subFrame/subReport/
-    // subDone）：一个不能少（且不允许混入未知帧）
-    expect(manifest.frames).toHaveLength(15);
+    // subDone）+ 36 号票 toolAudit（灰区命令审计五态）：一个不能少
+    //（且不允许混入未知帧）
+    expect(manifest.frames).toHaveLength(16);
     for (const frame of [
       "runStarted",
       "stepStarted",
@@ -274,6 +275,7 @@ describe("§12.3 manifest 双向扫描", () => {
       "subFrame",
       "subReport",
       "subDone",
+      "toolAudit",
     ]) {
       expect(manifest.frames).toContain(frame);
     }
@@ -701,6 +703,41 @@ describe("§12.3 manifest 双向扫描", () => {
       "utf8",
     );
     expect(approvalConfig).toContain("gitAllowStageCommit");
+  });
+
+  it("灰区命令审计（36 号票，§3.4/§3.2/§3.2 agent 组）在帧/载荷/配置三面接线且字段级一致", () => {
+    // toolAudit 帧（§3.4 五态）在 ChatFrame 生成物（type 判别 + state/reason）
+    const chatFrame = readFileSync(
+      resolve(import.meta.dirname, "./generated/ChatFrame.ts"),
+      "utf8",
+    );
+    expect(chatFrame).toContain('"toolAudit"');
+    expect(chatFrame).toContain("AuditState");
+    // 审计五态生成物（running/allow/block/ask/manual）
+    const auditState = readFileSync(
+      resolve(import.meta.dirname, "./generated/AuditState.ts"),
+      "utf8",
+    );
+    for (const state of ["running", "allow", "block", "ask", "manual"]) {
+      expect(auditState).toContain(`"${state}"`);
+    }
+    // AskPayload 生成物带 audit 注记（ask/manual 两态 + reason）
+    const askPayload = readFileSync(
+      resolve(import.meta.dirname, "./generated/AskPayload.ts"),
+      "utf8",
+    );
+    expect(askPayload).toContain("audit?: AuditNote");
+    // 审计专用模型配置（§3.2 agent.commandAudit.modelId）
+    const agentConfig = readFileSync(
+      resolve(import.meta.dirname, "./generated/AgentConfig.ts"),
+      "utf8",
+    );
+    expect(agentConfig).toContain("commandAudit");
+    const auditConfig = readFileSync(
+      resolve(import.meta.dirname, "./generated/CommandAuditConfig.ts"),
+      "utf8",
+    );
+    expect(auditConfig).toContain("modelId");
   });
 
   it("产物面板与编辑器打开（28 号票，§3.3 #59l/#35/#36）在两侧接线且契约字段级一致", () => {

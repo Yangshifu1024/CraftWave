@@ -34,6 +34,7 @@ fn write_payload_new_file_all_add() {
         ),
         true,
         None,
+        None,
     );
     let AskPayload::Approval {
         title,
@@ -71,6 +72,7 @@ fn edit_payload_replacement_hunk_del_add() {
         ),
         true,
         None,
+        None,
     );
     let AskPayload::Approval { diff, .. } = payload else {
         panic!("应为 Approval")
@@ -103,7 +105,7 @@ fn command_payload_with_fence_reason() {
         fence_reason,
         options,
         ..
-    } = build_approval_payload(&p, true, None)
+    } = build_approval_payload(&p, true, None, None)
     else {
         panic!("应为 Approval")
     };
@@ -117,7 +119,7 @@ fn command_payload_with_fence_reason() {
     assert_eq!(options[1].mode, Some(AskMode::AlwaysSession));
     assert_eq!(options[1].recommended, None, "非推荐项不参与自动确认");
     // ③ 关：不出该选项（M1 两项口径不变）
-    let AskPayload::Approval { options, .. } = build_approval_payload(&p, false, None) else {
+    let AskPayload::Approval { options, .. } = build_approval_payload(&p, false, None, None) else {
         panic!("应为 Approval")
     };
     assert_eq!(options.len(), 2, "③ 关闭时保持允许/拒绝两项");
@@ -170,7 +172,7 @@ fn plan_scope_payload_three_options_without_recommended() {
         fence_reason,
         options,
         ..
-    } = build_approval_payload(&p, true, Some("src/a.rs、tests/"))
+    } = build_approval_payload(&p, true, Some("src/a.rs、tests/"), None)
     else {
         panic!("范围门应为 Approval 形态")
     };
@@ -192,7 +194,8 @@ fn plan_scope_payload_three_options_without_recommended() {
         "无推荐项（不参与 autoConfirm）"
     );
     // 无对照基线（空范围批准后的首写询问）时 fenceReason 说明首写须确认
-    let AskPayload::Approval { fence_reason, .. } = build_approval_payload(&p, false, None) else {
+    let AskPayload::Approval { fence_reason, .. } = build_approval_payload(&p, false, None, None)
+    else {
         panic!("应为 Approval 形态")
     };
     let reason = fence_reason.expect("仍带说明");
@@ -210,7 +213,7 @@ fn plan_scope_payload_carries_command_line() {
         fence_reason,
         plan_scope,
         ..
-    } = build_approval_payload(&p, true, None)
+    } = build_approval_payload(&p, true, None, None)
     else {
         panic!("应为 Approval 形态")
     };

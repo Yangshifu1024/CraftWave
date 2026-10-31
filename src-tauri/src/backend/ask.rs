@@ -66,6 +66,14 @@ pub enum AskPayload {
         #[serde(skip_serializing_if = "Option::is_none")]
         #[cfg_attr(test, ts(optional))]
         plan_scope: Option<String>,
+        /// 灰区命令审计结论（§3.2/§8.7，36 号票）：审计已出结论但须人工
+        /// 确认时随审批卡展示——ask = 模型审计建议询问用户；manual = 审计
+        /// 失败/超时/输出无效转人工（reason = 失败原因）。allow/block 不
+        /// 产生审批卡（直接放行/拒绝收场，结论经 toolAudit 帧展示）；范围
+        /// 门/外部目录/MCP 等非灰区审批卡不带本字段。
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(optional))]
+        audit: Option<AuditNote>,
         /// 用户可选的操作列表（如仅本次允许/拒绝）。
         options: Vec<AskOption>,
     },
@@ -206,6 +214,30 @@ pub enum AskMode {
     AlwaysSession,
     /// 拒绝。
     Deny,
+}
+
+/// 灰区命令审计结论（§3.2 approval.audit，36 号票，§8.7）：审计已出结论
+/// 但须人工确认时随审批卡展示的注记。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct AuditNote {
+    /// 结论形态（"ask" = 模型审计建议询问用户；"manual" = 审计失败/超时/
+    /// 输出无效转人工）。allow/block 不产生审批卡，不经本结构承载。
+    pub state: AuditNoteState,
+    /// 模型给出的简短依据（ask）或失败原因（manual）。
+    pub reason: String,
+}
+
+/// 审计注记的结论形态（§3.2 approval.audit.state）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "snake_case")]
+pub enum AuditNoteState {
+    /// 模型审计建议人工确认。
+    Ask,
+    /// 审计失败/超时/输出无效，转人工确认。
+    Manual,
 }
 
 /// 改动预览（§3.2 approval.diff；write = 新文件全部为新增行，edit = 单段替换）。

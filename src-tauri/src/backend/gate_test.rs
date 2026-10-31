@@ -1665,3 +1665,154 @@ fn git_policy_block_not_revived_by_session_signature() {
         "开关开时会话签名放行"
     );
 }
+
+// ---- 灰区命令审计（36 号票，§8.7）：资格判定 + 审计放行单槽 ----
+
+/// 审计资格表驱动：围栏 Confirm 灰区命中；git 策略确认/plan 档/矩阵人批/
+/// 范围门/外部目录不命中；硬拒不进挂起面天然不判。灰区命令样例用重定向
+/// 写目标（touch 不在 AST 写目标清单——词法越界语义用 echo > 承载）。
+#[test]
+fn audit_class_gray_area_table() {
+    // full_access 档：写目标越界（词法不在 roots）→ 围栏 Confirm = 灰区。
+    // 未装配 workspace 时退化语义「有写目标即 Confirm」，同属灰区。
+    let gate = ApprovalGate::new(PermissionTier::FullAccess, Arc::new(Mutex::new(None)));
+    assert!(
+        gate.audit_class("command", &command_args("echo hi > /tmp/outside-audit.txt")),
+        "围栏 Confirm（词法越界写目标）= 灰区"
+    );
+    // 安装类信号（词法信号保留）→ Confirm = 灰区。
+    assert!(
+        gate.audit_class("command", &command_args("npm install left-pad")),
+        "安装类信号 = 灰区"
+    );
+    // Opaque 写目标（字面量掩码）→ Confirm = 灰区。
+    assert!(
+        gate.audit_class("command", &command_args("echo hi > \"$OUT/file\"")),
+        "Opaque 写目标 = 灰区"
+    );
+    // 无写信号命令（围栏 Allow）→ 不挂起 → 非灰区（full_access 直接执行）。
+    assert!(
+        !gate.audit_class("command", &command_args("echo hello")),
+        "无灰区待决 = 非审计对象"
+    );
+    // 非 command 工具不在审计范围（M2 仅覆盖 command）。
+    assert!(
+        !gate.audit_class(
+            "write",
+            r#"{"path":"/tmp/x","content":"y"}"#.to_owned().as_str(),
+        ),
+        "write 在 full_access 直写且非 command"
+    );
+    // git 策略确认类（明确人批）不进审计。
+    let gate_git = ApprovalGate::new(PermissionTier::FullAccess, Arc::new(Mutex::new(None)));
+    assert!(
+        !gate_git.audit_class("command", &command_args("git push origin main")),
+        "git push 恒确认 = 明确人批，不审计"
+    );
+    assert!(
+        !gate_git.audit_class("command", &command_args("git commit -m x")),
+        "git add/commit 策略确认 = 明确人批，不审计"
+    );
+    // plan 档：围栏 Confirm 属档位语义（白名单外只读命令），审计不豁免。
+    let gate_plan = ApprovalGate::new(PermissionTier::Plan, Arc::new(Mutex::new(None)));
+    assert!(
+        !gate_plan.audit_class("command", &command_args("node --eval '1'")),
+        "plan 档围栏 Confirm = 档位语义，不审计"
+    );
+    // 矩阵 NeedsApproval（confirm_each 档无写信号命令）= 权限档人批，不审计。
+    let gate_confirm = ApprovalGate::new(PermissionTier::ConfirmEach, Arc::new(Mutex::new(None)));
+    assert!(
+        !gate_confirm.audit_class("command", &command_args("npm test")),
+        "矩阵人批挂起（无围栏原因）= 权限档，不审计"
+    );
+}
+
+/// 审计放行单槽的判定序位置与消费语义：硬拒不豁免、恢复重放消费一次、
+/// 同签名新调用不继承。
+#[test]
+fn audit_grant_single_slot_consume_once() {
+    let gate = ApprovalGate::new(PermissionTier::FullAccess, Arc::new(Mutex::new(None)));
+    let gray = command_args("echo hi > /tmp/outside-audit.txt");
+    // 未放行：围栏灰区挂起。
+    assert!(matches!(
+        gate.judge("command", &gray),
+        GateVerdict::Suspend {
+            fence_reason: Some(_),
+            ..
+        }
+    ));
+    // 审计放行（单槽置位）→ 重放判定命中放行。
+    gate.grant_audit("command", &gray);
+    assert!(
+        matches!(gate.judge("command", &gray), GateVerdict::Allow),
+        "审计放行槽命中应放行"
+    );
+    // 消费即清：同签名新调用不继承旧结论，重新走灰区挂起。
+    assert!(
+        matches!(
+            gate.judge("command", &gray),
+            GateVerdict::Suspend {
+                fence_reason: Some(_),
+                ..
+            }
+        ),
+        "槽已消费，同签名新调用应重新挂起（不继承旧结论）"
+    );
+    // 单槽覆盖：新签名置位后旧签名不再命中。
+    let gray2 = command_args("echo hi > /tmp/outside-audit-2.txt");
+    gate.grant_audit("command", &gray);
+    gate.grant_audit("command", &gray2);
+    assert!(
+        !matches!(gate.judge("command", &gray), GateVerdict::Allow),
+        "单槽被覆盖后旧签名不命中"
+    );
+    assert!(
+        matches!(gate.judge("command", &gray2), GateVerdict::Allow),
+        "新签名命中"
+    );
+    // 签名不同（参数变化）不命中：结论绑定实际输入。
+    gate.grant_audit("command", &gray);
+    assert!(
+        !matches!(
+            gate.judge(
+                "command",
+                &command_args("echo hi > /tmp/outside-audit-3.txt")
+            ),
+            GateVerdict::Allow
+        ),
+        "参数不同不命中（签名全等比较）"
+    );
+}
+
+/// 审计放行不豁免硬拒面：置位后命中内部状态禁区（不装配 guard 时退化——
+/// 这里以 git 策略 Block 为不可豁免代表，0.6 先于审计放行检查点）。
+#[test]
+fn audit_grant_cannot_bypass_hard_blocks() {
+    let gate = ApprovalGate::new(PermissionTier::FullAccess, Arc::new(Mutex::new(None)));
+    // git merge 恒禁（策略 Block）。
+    let banned = command_args("git merge main");
+    gate.grant_audit("command", &banned);
+    assert!(
+        matches!(
+            gate.judge("command", &banned),
+            GateVerdict::Blocked {
+                code: "E_FENCE_BLOCKED",
+                ..
+            }
+        ),
+        "策略硬拒先于审计放行检查点，不可豁免"
+    );
+    // 黑名单灾难级（rm -rf）同样先于检查点。
+    let disaster = command_args("rm -rf /tmp/x");
+    gate.grant_audit("command", &disaster);
+    assert!(
+        matches!(
+            gate.judge("command", &disaster),
+            GateVerdict::Blocked {
+                code: "E_FENCE_BLOCKED",
+                ..
+            }
+        ),
+        "黑名单 Block 先于审计放行检查点"
+    );
+}

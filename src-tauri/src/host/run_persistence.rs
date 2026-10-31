@@ -191,6 +191,10 @@ impl RunRecorder {
             ChatFrame::SubFrame { .. } => {}
             ChatFrame::SubReport { .. } => {}
             ChatFrame::SubDone { .. } => {}
+            // 审计状态帧（36 号票，§3.4）：通知面透传（前端工具卡审计行），
+            // 无 canonical 产物——审计不是工具执行，命令条目仍由其 toolResult
+            // 收口
+            ChatFrame::ToolAudit { .. } => {}
             ChatFrame::RunEnded {
                 duration_ms,
                 tool_count,

@@ -865,11 +865,14 @@ fn emit_queue_state(
 /// （本会话）」（mode=always_session）——选中后同签名命令本会话跨 run 免批
 /// （记忆在会话级审批记忆桶，不持久化）。`plan_scope_note`（25 号票，§8.6）
 /// 为已批准计划基线的人话摘要，范围门挂起（pending.plan_scope）时随范围卡
-/// 展示对照；其他形态传 None。
+/// 展示对照；其他形态传 None。`audit_note`（36 号票，§8.7）为灰区命令审计
+/// 结论注记（ask/manual），随普通审批卡展示（范围门/外部目录/MCP 等非灰区
+/// 卡不带）；allow/block 不产生审批卡，不经本参数承载。
 pub(crate) fn build_approval_payload(
     pending: &PendingCall,
     session_memory_enabled: bool,
     plan_scope_note: Option<&str>,
+    audit_note: Option<&crate::backend::ask::AuditNote>,
 ) -> AskPayload {
     // 计划范围卡（25 号票，FR-06-03/§8.6）：计划外写路径 + 批准基线对照 +
     // 三选项（允许一次 / 本会话始终允许（父目录入基线）/ 拒绝）。无推荐项
@@ -899,6 +902,7 @@ pub(crate) fn build_approval_payload(
             fence_reason: Some(reason),
             preview_html: None,
             plan_scope: Some(path.clone()),
+            audit: None,
             options: vec![
                 AskOption {
                     id: "allow_once".to_owned(),
@@ -960,6 +964,7 @@ pub(crate) fn build_approval_payload(
             fence_reason: pending.fence_reason.clone(),
             preview_html: None,
             plan_scope: None,
+            audit: None,
             options: vec![
                 AskOption {
                     id: "allow_once".to_owned(),
@@ -1124,6 +1129,7 @@ pub(crate) fn build_approval_payload(
         fence_reason: pending.fence_reason.clone(),
         preview_html,
         plan_scope: None,
+        audit: audit_note.cloned(),
         options,
     }
 }
@@ -1146,6 +1152,8 @@ pub(crate) enum ApprovalResolution {
 /// `session_memory_enabled`（23 号票 ③）：true 时命令类审批载荷增
 /// 「始终允许（本会话）」选项。`plan_scope_note`（25 号票，§8.6）：范围门
 /// 挂起时随载荷展示的批准基线对照摘要（宿主从共享计划状态拼装）。
+/// `audit_note`（36 号票，§8.7）：灰区命令审计结论注记（ask/manual），
+/// 随普通审批卡展示；None = 未经审计或审计已放行/拒绝（不产生审批卡）。
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn wait_approval_with(
     events: &Arc<dyn EventSink>,
@@ -1157,10 +1165,12 @@ pub(crate) async fn wait_approval_with(
     auto_confirm: bool,
     session_memory_enabled: bool,
     plan_scope_note: Option<&str>,
+    audit_note: Option<&crate::backend::ask::AuditNote>,
 ) -> ApprovalResolution {
     let (tx, rx) = tokio::sync::oneshot::channel::<AskAnswer>();
     let ask_id = uuid::Uuid::new_v4().to_string();
-    let payload = build_approval_payload(pending, session_memory_enabled, plan_scope_note);
+    let payload =
+        build_approval_payload(pending, session_memory_enabled, plan_scope_note, audit_note);
     {
         let mut slot = ask_slot
             .lock()
@@ -1280,6 +1290,272 @@ pub(crate) fn denied_finish(sink: &mut dyn FrameSink, pending: &PendingCall, sta
     });
 }
 
+/// 审计总等待上限（§8.7/ADR-0002，36 号票）：含证据收集与模型请求，固定
+/// 15 秒，不可配置。
+pub(crate) const AUDIT_TOTAL_TIMEOUT: Duration = Duration::from_secs(15);
+/// 审计回复上限：一句简短中文依据足够（§8.7），防模型失控长输出烧钱。
+pub(crate) const AUDIT_MAX_TOKENS: u64 = 256;
+
+/// 一次审计尝试的产物（用量记账面）：已获得的用量与执行审计的模型。
+/// `usage` = None 表示模型请求未返回（超时/请求失败），不伪造未知用量。
+struct AuditAttempt {
+    usage: Option<UsageTotal>,
+    model: (String, String),
+}
+
+/// 审计流程的退出形态（36 号票，§8.7）。
+enum AuditFlow {
+    /// 模型给出合法三态结论。
+    Verdict(crate::backend::audit::AuditVerdict, AuditAttempt),
+    /// 审计失败/超时/输出无效——转人工（reason = 失败原因，审批卡展示）。
+    Failed(String, AuditAttempt),
+    /// 用户取消（run 令牌触发），审计终止。
+    Cancelled,
+}
+
+/// 灰区命令审计编排（36 号票，§8.7 字段级）：模型解析 → 证据收集（会话
+/// roots 内只读）→ 提示词构建 → 单次无工具调用（与 15 秒总超时、run 取消
+/// 令牌 select! 竞争，超时丢弃在飞请求不留后台消耗）。调用前提：宿主已用
+/// `ApprovalGate::audit_class` 判定挂起项属灰区。审计执行（本函数）不判断
+/// 结论去向——放行/拒绝/转人工由宿主恢复循环分流（§5.4 执行绑定）。
+///
+/// `session_model_id` = 会话当前模型槽的配置 id（`commandAudit.modelId`
+/// 未配置时跟随）；`plan_baseline` = 已批准计划基线路径（批准范围证据）；
+/// `total_timeout` 传入 [`AUDIT_TOTAL_TIMEOUT`]（测试可传短超时）。
+#[allow(clippy::too_many_arguments)]
+async fn run_command_audit(
+    app: &AppState,
+    session_id: &str,
+    pending: &PendingCall,
+    session_model_id: Option<&str>,
+    user_goal: &str,
+    plan_baseline: &[String],
+    cancel: &CancellationToken,
+    total_timeout: Duration,
+) -> AuditFlow {
+    // ① 模型解析（§8.7）：专用审计模型优先；未配置跟随会话当前模型。
+    //    指定模型解析失败按审计失败转人工并显示原因，不静默换供应商。
+    let audit_model_id = app.config.load().ok().and_then(|c| {
+        c.agent
+            .as_ref()
+            .and_then(|a| a.command_audit.as_ref())
+            .and_then(|cmd| cmd.model_id.clone())
+    });
+    let model_id = audit_model_id.or_else(|| session_model_id.map(str::to_owned));
+    let resolved = match model_id.as_deref() {
+        Some(id) => match resolve_model(app, Some(id)) {
+            Ok(m) => m,
+            Err(e) => {
+                return AuditFlow::Failed(
+                    format!("审计模型不可用（未静默换供应商）：{e}"),
+                    AuditAttempt {
+                        usage: None,
+                        model: (String::new(), String::new()),
+                    },
+                );
+            }
+        },
+        None => {
+            return AuditFlow::Failed(
+                "审计模型不可用：未配置审计模型且会话无当前模型".to_owned(),
+                AuditAttempt {
+                    usage: None,
+                    model: (String::new(), String::new()),
+                },
+            );
+        }
+    };
+    let attempt_model = (resolved.id.clone(), resolved.name.clone());
+
+    // ② 证据收集（§8.7：授权目录内只读——AST 路径目标片段 + 命令定义 +
+    //    批准范围；cwd 基准与审批门 judge_base 同款）。
+    let args: serde_json::Value = serde_json::from_str(&pending.args_json).unwrap_or_default();
+    let command = args
+        .get("command")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_owned();
+    let roots = crate::host::commands::workspace::resolve_session_roots(app, session_id);
+    // cwd 基准先解析（项目主目录为缺省基准，与审批门 judge_base 同款），
+    // 再把根集合收进归一列表（roots 字段被移动前的克隆面）。
+    let project_root = roots.project_root.clone();
+    let cwd_raw = args.get("cwd").and_then(|v| v.as_str());
+    let base = match cwd_raw {
+        Some(c) if !c.is_empty() => {
+            let p = std::path::Path::new(c);
+            if p.is_absolute() {
+                p.to_path_buf()
+            } else {
+                project_root.join(p)
+            }
+        }
+        _ => project_root.clone(),
+    };
+    let root_paths: Vec<std::path::PathBuf> = [project_root, roots.workspace_root]
+        .into_iter()
+        .chain(roots.extra_dirs)
+        .collect();
+    // 判定同域归一（审批门装配同款）：canonicalize 失败的根跳过。
+    let canonical_roots: Vec<std::path::PathBuf> = root_paths
+        .iter()
+        .filter_map(|p| crate::safety::safe_join::canonicalize_best_effort(p).ok())
+        .collect();
+    let collector = crate::backend::audit::EvidenceCollector {
+        roots: &canonical_roots,
+        base: &base,
+    };
+    let evidence = collector.collect(&command);
+    let root_list = canonical_roots
+        .iter()
+        .map(|r| r.display().to_string())
+        .collect::<Vec<_>>()
+        .join("、");
+    let scope_text = if plan_baseline.is_empty() {
+        format!("已授权目录：{root_list}")
+    } else {
+        format!(
+            "已批准计划范围：{}\n已授权目录：{root_list}",
+            plan_baseline.join("、")
+        )
+    };
+    let prompt =
+        crate::backend::audit::build_audit_prompt(&crate::backend::audit::AuditPromptInput {
+            command: &command,
+            cwd: &base.display().to_string(),
+            evidence: &evidence,
+            user_goal: Some(user_goal),
+            scope: Some(&scope_text),
+        });
+
+    // ③ 单次无工具调用：与总超时、取消令牌竞争（select 丢弃 future 即关闭
+    //    在飞 HTTP 请求——超时不留后台审计继续消耗，取消传播终止模型请求）。
+    let driver = Arc::new(TurnDriver::new(resolved.driver, RunSpec::new(), Vec::new()));
+    let work = driver.complete_once_capped(&prompt, AUDIT_MAX_TOKENS);
+    tokio::select! {
+        biased;
+        _ = cancel.cancelled() => AuditFlow::Cancelled,
+        _ = tokio::time::sleep(total_timeout) => AuditFlow::Failed(
+            format!(
+                "审计超时：{} 秒总预算（含证据收集与模型请求）已到，转人工确认",
+                total_timeout.as_secs().max(1)
+            ),
+            AuditAttempt { usage: None, model: attempt_model },
+        ),
+        result = work => match result {
+            Ok((text, usage)) => {
+                let attempt = AuditAttempt {
+                    usage: Some(crate::backend::turn::usage_total(&usage)),
+                    model: attempt_model,
+                };
+                match crate::backend::audit::parse_verdict(&text) {
+                    Some(verdict) => AuditFlow::Verdict(verdict, attempt),
+                    None => AuditFlow::Failed(
+                        crate::backend::audit::bad_output_reason(&text),
+                        attempt,
+                    ),
+                }
+            }
+            Err(e) => AuditFlow::Failed(
+                format!("审计模型请求失败：{e}"),
+                AuditAttempt { usage: None, model: attempt_model },
+            ),
+        },
+    }
+}
+
+/// 辅助小调用的会话记账（C-9 suggest 与 36 号票审计共用）：已知实际用量
+/// 落账（日/模型聚合 + 明细 kind=aux + 缓存写穿；runs 计数不增，Q40）+
+/// tokens:update 全量校正事件。零计量不落账（未知用量不伪造，Q39）。
+fn record_aux_usage(
+    events: &Arc<dyn EventSink>,
+    session_usage: &Arc<Mutex<HashMap<String, UsageTotal>>>,
+    ledger: &crate::host::usage::UsageLedger,
+    session_id: &str,
+    aux_run_id: &str,
+    model: &(String, String),
+    delta: &UsageTotal,
+) {
+    if *delta == UsageTotal::default() {
+        return;
+    }
+    ledger.record(
+        session_id,
+        aux_run_id,
+        crate::host::usage::run_kind::AUX,
+        &model.0,
+        &model.1,
+        *delta,
+        false,
+    );
+    let total = {
+        let mut map = session_usage
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let total = map.entry(session_id.to_owned()).or_default();
+        total.accumulate(delta);
+        *total
+    };
+    let mut payload = serde_json::json!({ "sessionId": session_id, "usage": total });
+    if !model.0.is_empty() {
+        payload["modelId"] = serde_json::json!(model.0);
+    }
+    events.emit(keys::TOKENS_UPDATE, payload);
+}
+
+/// 审计拒绝的收场（36 号票，§8.7）：E_AUDIT_BLOCKED 工具结果帧（附模型
+/// 简短依据）+ runEnded(error)——followUp 队列按失败暂停（宿主侧由调用方
+/// 记录 errored 与 RunExit::Failed）。
+fn audit_block_finish(
+    sink: &mut dyn FrameSink,
+    frame_call_id: &str,
+    state: &DriveState,
+    reason: &str,
+) {
+    sink.send(ChatFrame::ToolResult {
+        call_id: frame_call_id.to_owned(),
+        ok: false,
+        ui_summary: format!("审计拒绝：{reason}"),
+        error: Some(FrameError::new(
+            crate::util::errors::E_AUDIT_BLOCKED,
+            format!("命令审计模型判断高风险，已拒绝执行：{reason}"),
+        )),
+    });
+    sink.send(ChatFrame::RunEnded {
+        reason: EndReason::Error,
+        duration_ms: state
+            .started_at
+            .map(|t| t.elapsed().as_millis() as u64)
+            .unwrap_or(0),
+        tool_count: state.tool_count,
+        turn: state.last_turn,
+        error: Some(FrameError::new(
+            crate::util::errors::E_AUDIT_BLOCKED,
+            format!("命令审计模型判断高风险，已拒绝执行：{reason}"),
+        )),
+    });
+}
+
+/// 审计期间用户取消的收场（36 号票，§8.7 取消传播）：E_CANCELLED 工具结果
+/// 帧 + runEnded(cancelled)（与用户拒绝同收场形态，摘要区分审计场景）。
+fn audit_cancelled_finish(sink: &mut dyn FrameSink, frame_call_id: &str, state: &DriveState) {
+    sink.send(ChatFrame::ToolResult {
+        call_id: frame_call_id.to_owned(),
+        ok: false,
+        ui_summary: "已取消（审计终止）".to_owned(),
+        error: Some(FrameError::new(E_CANCELLED, "用户取消了此操作（审计终止）")),
+    });
+    sink.send(ChatFrame::RunEnded {
+        reason: EndReason::Cancelled,
+        duration_ms: state
+            .started_at
+            .map(|t| t.elapsed().as_millis() as u64)
+            .unwrap_or(0),
+        tool_count: state.tool_count,
+        turn: state.last_turn,
+        error: None,
+    });
+}
+
 /// suggest 后台小调用（C-9）：一次非流式补全 → run:suggestions；失败静默、
 /// 空文本静默；用量计入会话累计（tokens:update，不计 turnUsage——run 已终态）。
 /// 驱动经共享句柄传入（18 号票：run 任务收尾时把 Arc 交给本任务，suggest
@@ -1316,33 +1592,18 @@ fn spawn_suggest<W, T>(
         if trimmed.is_empty() {
             return;
         }
-        // 用量计入会话累计（帧通道已收，走事件通道补计）
+        // 用量计入会话累计（帧通道已收，走事件通道补计；辅助调用落账 Q39：
+        // 已返回 usage 必记账，runs 计数不增——记账面与审计共用 record_aux_usage）
         let delta = crate::backend::turn::usage_total(&usage);
-        if delta != UsageTotal::default() {
-            // 辅助调用落账（Q39：已返回 usage 必记账；runs 计数不增）
-            ledger.record(
-                &session_id,
-                &format!("{run_id}:suggest"),
-                crate::host::usage::run_kind::AUX,
-                &final_model.0,
-                &final_model.1,
-                delta,
-                false,
-            );
-        }
-        let total = {
-            let mut map = session_usage
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let total = map.entry(session_id.clone()).or_default();
-            total.accumulate(&delta);
-            *total
-        };
-        let mut payload = serde_json::json!({ "sessionId": session_id, "usage": total });
-        if !final_model.0.is_empty() {
-            payload["modelId"] = serde_json::json!(final_model.0);
-        }
-        events.emit(keys::TOKENS_UPDATE, payload);
+        record_aux_usage(
+            &events,
+            &session_usage,
+            &ledger,
+            &session_id,
+            &format!("{run_id}:suggest"),
+            &final_model,
+            &delta,
+        );
         events.emit(
             keys::RUN_SUGGESTIONS,
             serde_json::json!({ "sessionId": session_id, "runId": run_id, "text": trimmed }),
@@ -2627,6 +2888,10 @@ pub async fn start_chat_core(
     }
     let runs_for_task = runs.clone();
     let suggest_tail = context_tail(&messages);
+    // 审计的用户目标（36 号票，§8.7）：本次 run 的首条 user 输入文本（27 号
+    // 票同款函数），随 run 任务进闭包——审计提示词只带本 run 输入摘要，不带
+    // 整段聊天历史。
+    let audit_goal = first_user_text(&messages);
     // 模型停滞看门狗超时（§3.2 watchdog 组/§5.7，37 号票）：按 run 装配驱动时
     // 读取生效（save_config 后下一次 start_chat 应用）。
     let stall_timeout =
@@ -2670,6 +2935,10 @@ pub async fn start_chat_core(
     let ledger_for_finalize = app.ledger.clone();
     let current_model_for_sink = current_model.clone();
     let model_slot_for_suggest = current_model.clone();
+    // 审计的依赖面（36 号票，§8.7）：审计模型未配时跟随会话当前模型（槽快照
+    // id）+ 用户目标 + 用量账本/会话累计共享句柄。
+    let model_slot_for_audit = current_model.clone();
+    let audit_goal_for_task = audit_goal;
     tokio::spawn(async move {
         // 帧出口 = 事件层（usage → tokens:update + RunState 同步 + 统计落账）
         // 包 canonical 落盘器（§7.3）包帧枢纽（§5.8：seq 递增 → 入环 → 下发）
@@ -2748,6 +3017,169 @@ pub async fn start_chat_core(
                     // 范围卡基线对照摘要（25 号票，§8.6）：从共享计划状态读
                     // 已批准冻结基线（挂起恢复时读最新值）。
                     let plan_scope_note = plan_scope_note_of(&handle);
+                    // —— 灰区命令审计（36 号票，§8.7/§5.4 执行绑定）——
+                    // 挂起项属围栏灰区 command（audit_class：围栏 Confirm 且
+                    // 非 git 策略确认/范围门/外部目录/plan 档）时先审计再决定
+                    // 是否弹审批卡；审计帧经 sink 入环（attach 重放可恢复
+                    // 展示）。allow 经审计放行单槽直接恢复（不重复审计）；block
+                    // 按拒绝收场（E_AUDIT_BLOCKED）；ask/失败转人工（载荷带
+                    // 结论）；取消传播终止审计并按取消收场。
+                    let mut audit_note: Option<crate::backend::ask::AuditNote> = None;
+                    if pending.name == "command"
+                        && gate.audit_class(&pending.name, &pending.args_json)
+                    {
+                        let frame_call_id = state
+                            .model_call_ids
+                            .get(&pending.model_call_id)
+                            .cloned()
+                            .unwrap_or_else(|| pending.model_call_id.clone());
+                        sink.send(ChatFrame::ToolAudit {
+                            call_id: frame_call_id.clone(),
+                            state: crate::backend::frames::AuditState::Running,
+                            reason: None,
+                        });
+                        let plan_baseline: Vec<String> = handle
+                            .plan
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .as_ref()
+                            .map(|p| p.baseline_paths.clone())
+                            .unwrap_or_default();
+                        let session_model_id = model_slot_for_audit
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .clone()
+                            .map(|(id, _)| id);
+                        let flow = run_command_audit(
+                            &app_for_delivery,
+                            &session_id,
+                            &pending,
+                            session_model_id.as_deref(),
+                            &audit_goal_for_task,
+                            &plan_baseline,
+                            &handle.cancel,
+                            AUDIT_TOTAL_TIMEOUT,
+                        )
+                        .await;
+                        match flow {
+                            AuditFlow::Verdict(verdict, attempt) => {
+                                // 已获得的用量计入会话（kind=aux 不增主轮次，
+                                // runs 计数不增——Q39/Q40）。
+                                if let Some(delta) = attempt.usage {
+                                    record_aux_usage(
+                                        &events,
+                                        &session_usage,
+                                        &ledger_for_compaction,
+                                        &session_id,
+                                        &format!("{run_id}:audit"),
+                                        &attempt.model,
+                                        &delta,
+                                    );
+                                }
+                                let reason = if verdict.reason.is_empty() {
+                                    "（模型未给出理由）".to_owned()
+                                } else {
+                                    verdict.reason.clone()
+                                };
+                                match verdict.decision {
+                                    crate::backend::audit::AuditDecision::Allow => {
+                                        sink.send(ChatFrame::ToolAudit {
+                                            call_id: frame_call_id,
+                                            state: crate::backend::frames::AuditState::Allow,
+                                            reason: Some(reason),
+                                        });
+                                        // 审计放行单槽（消费即清）：恢复重放的
+                                        // 判定在签名放行同位命中放行；同签名
+                                        // 后续新调用不继承旧结论。不经既有
+                                        // 人批签名缓存承载模型结论（票面硬约束）。
+                                        gate.grant_audit(&pending.name, &pending.args_json);
+                                        match resume_run(&run_json) {
+                                            Ok(resumed) => {
+                                                run = resumed;
+                                                resume_state = Some(state);
+                                                continue;
+                                            }
+                                            Err(e) => {
+                                                let message = format!("审计放行恢复失败：{e}");
+                                                errored = Some(RunFailure {
+                                                    code: E_INTERNAL.to_owned(),
+                                                    message: message.clone(),
+                                                });
+                                                send_error_ended(&mut sink, message);
+                                                break RunExit::Cancelled;
+                                            }
+                                        }
+                                    }
+                                    crate::backend::audit::AuditDecision::Block => {
+                                        sink.send(ChatFrame::ToolAudit {
+                                            call_id: frame_call_id.clone(),
+                                            state: crate::backend::frames::AuditState::Block,
+                                            reason: Some(reason.clone()),
+                                        });
+                                        audit_block_finish(
+                                            &mut sink,
+                                            &frame_call_id,
+                                            &state,
+                                            &reason,
+                                        );
+                                        errored = Some(RunFailure {
+                                            code: crate::util::errors::E_AUDIT_BLOCKED.to_owned(),
+                                            message: format!(
+                                                "命令审计模型判断高风险，已拒绝执行：{reason}"
+                                            ),
+                                        });
+                                        break RunExit::Failed {
+                                            code: crate::util::errors::E_AUDIT_BLOCKED.to_owned(),
+                                            message: format!(
+                                                "命令审计模型判断高风险，已拒绝执行：{reason}"
+                                            ),
+                                        };
+                                    }
+                                    crate::backend::audit::AuditDecision::Ask => {
+                                        sink.send(ChatFrame::ToolAudit {
+                                            call_id: frame_call_id,
+                                            state: crate::backend::frames::AuditState::Ask,
+                                            reason: Some(reason.clone()),
+                                        });
+                                        audit_note = Some(crate::backend::ask::AuditNote {
+                                            state: crate::backend::ask::AuditNoteState::Ask,
+                                            reason,
+                                        });
+                                    }
+                                }
+                            }
+                            AuditFlow::Failed(reason, attempt) => {
+                                // 超时/请求失败/输出无效转人工；已返回的 usage
+                                // 同样记账（不伪造未返回的用量）。
+                                if let Some(delta) = attempt.usage {
+                                    record_aux_usage(
+                                        &events,
+                                        &session_usage,
+                                        &ledger_for_compaction,
+                                        &session_id,
+                                        &format!("{run_id}:audit"),
+                                        &attempt.model,
+                                        &delta,
+                                    );
+                                }
+                                sink.send(ChatFrame::ToolAudit {
+                                    call_id: frame_call_id,
+                                    state: crate::backend::frames::AuditState::Manual,
+                                    reason: Some(reason.clone()),
+                                });
+                                audit_note = Some(crate::backend::ask::AuditNote {
+                                    state: crate::backend::ask::AuditNoteState::Manual,
+                                    reason,
+                                });
+                            }
+                            AuditFlow::Cancelled => {
+                                // 用户取消传播终止审计（证据读取与模型请求一并
+                                // 丢弃），run 按取消收场。
+                                audit_cancelled_finish(&mut sink, &frame_call_id, &state);
+                                break RunExit::Cancelled;
+                            }
+                        }
+                    }
                     match wait_approval_with(
                         &events,
                         &session_id,
@@ -2758,6 +3190,7 @@ pub async fn start_chat_core(
                         auto_confirm,
                         session_memory_enabled,
                         plan_scope_note.as_deref(),
+                        audit_note.as_ref(),
                     )
                     .await
                     {

@@ -142,6 +142,10 @@ pub const E_PLAN_STALE: &str = "E_PLAN_STALE";
 pub const E_PLAN_REQUIRED: &str = "E_PLAN_REQUIRED";
 /// 命令围栏拦截（Block 档）。
 pub const E_FENCE_BLOCKED: &str = "E_FENCE_BLOCKED";
+/// 灰区命令模型审计拒绝（§8.7/ADR-0002，36 号票实装）：审计模型判断高风险，
+/// 操作不执行，run 以 error 终态收场——区别于 E_FENCE_BLOCKED 确定性硬拒，
+/// 本结论来自单次模型审计（灰区风险定性），message 附简短依据。
+pub const E_AUDIT_BLOCKED: &str = "E_AUDIT_BLOCKED";
 /// 试图写宿主内部状态（FR-05-08，§9.3；23 号票实装禁区硬拒——write/edit
 /// 路径与 command 写目标命中 config/凭据/MCP 配置/索引/锁面等禁区，
 /// 任何权限档与白名单不豁免）。

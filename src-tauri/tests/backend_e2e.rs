@@ -971,7 +971,7 @@ mod command_face {
 
     use craftwave_lib::providers::types::{ApiFormat, ProviderConfig, ProviderModel};
 
-    fn provider_fixture(base_url: &str) -> ProviderConfig {
+    pub(super) fn provider_fixture(base_url: &str) -> ProviderConfig {
         ProviderConfig {
             id: "prov-1".to_owned(),
             name: "Mock 供应商".to_owned(),
@@ -995,7 +995,9 @@ mod command_face {
         app_fixture_with_events(mock).0
     }
 
-    fn app_fixture_with_events(mock: &MockOpenAI) -> (AppState, Arc<RecordingEventSink>) {
+    pub(super) fn app_fixture_with_events(
+        mock: &MockOpenAI,
+    ) -> (AppState, Arc<RecordingEventSink>) {
         let dir = tempfile::tempdir().expect("tempdir");
         let events = Arc::new(RecordingEventSink::new());
         let app = AppState::new_in(dir.path().to_path_buf(), events.clone());
@@ -1010,7 +1012,7 @@ mod command_face {
         (app, events)
     }
 
-    fn user_entry(text: &str) -> craftwave_lib::storage::MessageEntry {
+    pub(super) fn user_entry(text: &str) -> craftwave_lib::storage::MessageEntry {
         craftwave_lib::storage::MessageEntry {
             id: format!("u-{}", text.len()),
             parent_id: None,
@@ -1024,7 +1026,7 @@ mod command_face {
         }
     }
 
-    fn run_config() -> craftwave_lib::host::commands::chat::RunConfig {
+    pub(super) fn run_config() -> craftwave_lib::host::commands::chat::RunConfig {
         run_config_tier(craftwave_lib::safety::tier::PermissionTier::FullAccess)
     }
 
@@ -1041,7 +1043,7 @@ mod command_face {
     }
 
     /// 等待 runEnded 帧出现（命令面任务异步产帧；tokio sleep 不阻塞 worker）。
-    async fn wait_ended(sink: &SharedSink, timeout: Duration) -> ChatFrame {
+    pub(super) async fn wait_ended(sink: &SharedSink, timeout: Duration) -> ChatFrame {
         let deadline = Instant::now() + timeout;
         loop {
             let frames = sink.frames();
@@ -1203,7 +1205,7 @@ mod command_face {
     use craftwave_lib::util::events::RecordingEventSink;
 
     /// 等待某事件键的首个载荷。
-    async fn wait_event(
+    pub(super) async fn wait_event(
         events: &Arc<RecordingEventSink>,
         key: &str,
         timeout: Duration,
@@ -1219,7 +1221,11 @@ mod command_face {
     }
 
     /// turn1 脚本：文本 + 单工具调用（name/args 由调用方给）。
-    fn tool_turn1(text: &str, tool: &str, args_json: &str) -> Vec<(&'static str, String)> {
+    pub(super) fn tool_turn1(
+        text: &str,
+        tool: &str,
+        args_json: &str,
+    ) -> Vec<(&'static str, String)> {
         vec![
             content_delta(text),
             tool_open(0, "call_1", tool),
@@ -3377,6 +3383,456 @@ async fn parallel_batch_cancel_joins_both_commands_then_run_ended() {
     );
 }
 
+// —— 8b. 灰区命令审计（36 号票，§8.7）：三态 + 失败转人工 + 恢复不重复审计 ——
+
+mod command_audit {
+    use super::command_face::{
+        app_fixture_with_events, provider_fixture, run_config, tool_turn1, user_entry, wait_ended,
+        wait_event,
+    };
+    use super::*;
+    use craftwave_lib::backend::ask::AskAnswer;
+    use serde_json::Value;
+
+    /// 审计灰区命令样例：重定向写目标在授权目录外（词法越界）→ full_access
+    /// 档围栏 Confirm 挂起（唯一灰区待决）→ 进审计。
+    const AUDIT_GRAY_COMMAND: &str = "echo hi > /tmp/craftwave-audit-e2e.txt";
+
+    /// turn1 脚本：文本 + 灰区命令调用。
+    fn audit_turn1() -> Vec<(&'static str, String)> {
+        tool_turn1(
+            "需要在授权目录外写一个文件。",
+            TOOL_COMMAND,
+            &format!(r#"{{"command":"{AUDIT_GRAY_COMMAND}"}}"#),
+        )
+    }
+
+    /// 等待首个指定状态的 toolAudit 帧。
+    async fn wait_audit_frame(sink: &SharedSink, state: &str, timeout: Duration) -> ChatFrame {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let hit = sink
+                .frames()
+                .into_iter()
+                .find_map(|t| match &t.frame.frame {
+                    ChatFrame::ToolAudit { state: s, .. } if audit_state_key(s) == state => {
+                        Some(t.frame.frame.clone())
+                    }
+                    _ => None,
+                });
+            if let Some(frame) = hit {
+                return frame;
+            }
+            assert!(Instant::now() < deadline, "等待 toolAudit({state}) 超时");
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }
+
+    /// AuditState → 线上键（snake_case）。
+    fn audit_state_key(state: &craftwave_lib::backend::frames::AuditState) -> &'static str {
+        use craftwave_lib::backend::frames::AuditState as S;
+        match state {
+            S::Running => "running",
+            S::Allow => "allow",
+            S::Block => "block",
+            S::Ask => "ask",
+            S::Manual => "manual",
+        }
+    }
+
+    /// 非流式（审计）请求体清单。
+    async fn nonstream_bodies(mock: &MockOpenAI) -> Vec<Value> {
+        mock.request_bodies()
+            .await
+            .into_iter()
+            .filter(|b| b["stream"] != Value::Bool(true))
+            .collect()
+    }
+
+    /// 场景 1：审计 allow —— 低风险灰区自动放行（不弹审批卡），恢复重放
+    /// 不重复审计，usage 计入会话（kind=aux）。
+    #[tokio::test]
+    async fn audit_allow_resumes_without_ask_and_records_usage() {
+        let mock = MockOpenAI::start_with_turn1(audit_turn1()).await;
+        mock.set_nonstream_text(Some(
+            r#"{"decision":"allow","reason":"常规文件创建，风险低"}"#,
+        ));
+        let (app, events) = app_fixture_with_events(&mock);
+        let runs = RunManager::new();
+        let sink = SharedSink::default();
+
+        craftwave_lib::host::commands::chat::start_chat_core(
+            &app,
+            &runs,
+            "sess-audit-allow".to_owned(),
+            vec![user_entry("在临时目录建个文件")],
+            run_config(), // full_access：无矩阵待决，围栏 Confirm = 唯一灰区
+            Box::new(sink.clone()),
+            false,
+        )
+        .await
+        .expect("启动成功");
+
+        // 审计帧序：running → allow（含简短理由），随后无审批卡直接恢复执行。
+        let running = wait_audit_frame(&sink, "running", Duration::from_secs(10)).await;
+        let ChatFrame::ToolAudit { call_id, .. } = &running else {
+            unreachable!()
+        };
+        let allow = wait_audit_frame(&sink, "allow", Duration::from_secs(10)).await;
+        let ChatFrame::ToolAudit { reason, .. } = &allow else {
+            unreachable!()
+        };
+        assert_eq!(
+            reason.as_deref(),
+            Some("常规文件创建，风险低"),
+            "结论带简短理由"
+        );
+        assert!(
+            events.payloads_of("ask:opened").is_empty(),
+            "审计放行不弹审批卡"
+        );
+
+        // 审计模型请求断言：无工具表、单条 user 消息（提示词含待审命令，
+        // 不带 turn1 的 assistant 文本——独立提示词不带全历史）。
+        let bodies = nonstream_bodies(&mock).await;
+        assert_eq!(bodies.len(), 1, "审计只调用一次（恢复重放不重复审计）");
+        let body = &bodies[0];
+        let tools_empty =
+            body.get("tools").is_none() || body["tools"].as_array().is_some_and(|t| t.is_empty());
+        assert!(tools_empty, "审计请求不带工具表：{body}");
+        let messages = body["messages"].as_array().expect("messages");
+        assert_eq!(messages.len(), 1, "审计请求单条消息（不带聊天历史）");
+        assert_eq!(messages[0]["role"], "user");
+        let prompt = messages[0]["content"].as_str().unwrap_or_default();
+        assert!(prompt.contains(AUDIT_GRAY_COMMAND), "提示词含待审命令");
+        assert!(
+            !prompt.contains("需要在授权目录外写"),
+            "提示词不带 assistant 历史"
+        );
+        assert!(prompt.contains("在临时目录建个文件"), "提示词带用户目标");
+        assert_eq!(body["model"], "gpt-4o-mock", "未配审计模型跟随会话模型");
+
+        // run 正常完成（恢复后命令真执行 → turn2 答复）。
+        let ended = wait_ended(&sink, Duration::from_secs(10)).await;
+        let ChatFrame::RunEnded { reason, .. } = &ended else {
+            panic!("应为 runEnded");
+        };
+        assert_eq!(*reason, EndReason::Done, "审计放行后 run 正常完成");
+        let results: Vec<ChatFrame> = sink
+            .frames()
+            .iter()
+            .map(|t| t.frame.frame.clone())
+            .filter(|f| matches!(f, ChatFrame::ToolResult { .. }))
+            .collect();
+        assert_eq!(results.len(), 1);
+        let ChatFrame::ToolResult { ok, .. } = &results[0] else {
+            unreachable!()
+        };
+        assert!(ok, "放行后命令执行成功");
+
+        // usage 计入会话（审计 120/48 与主 run 叠加）且不增主轮次：
+        // tokens:update 事件 ≥2 次（turn1 usage 帧 + 审计补计），末次 modelId
+        // = 会话模型；审计帧在 turn1 的 usage 帧之后。
+        let updates = events.payloads_of("tokens:update");
+        assert!(
+            updates.len() >= 2,
+            "审计用量应补发 tokens:update：{}",
+            updates.len()
+        );
+        let last = updates.last().expect("有事件");
+        assert_eq!(last["modelId"], "model-1", "审计用量按实际执行模型归属");
+        let _ = call_id;
+    }
+
+    /// 场景 2：审计 ask —— 模型建议人工确认，审批卡带审计结论；用户批准后
+    /// 恢复执行；恢复重放不再审计。
+    #[tokio::test]
+    async fn audit_ask_goes_to_human_with_note() {
+        let mock = MockOpenAI::start_with_turn1(audit_turn1()).await;
+        mock.set_nonstream_text(Some(
+            r#"{"decision":"ask","reason":"写入位置在授权目录外"}"#,
+        ));
+        let (app, events) = app_fixture_with_events(&mock);
+        let runs = RunManager::new();
+        let sink = SharedSink::default();
+
+        craftwave_lib::host::commands::chat::start_chat_core(
+            &app,
+            &runs,
+            "sess-audit-ask".to_owned(),
+            vec![user_entry("写到临时目录")],
+            run_config(),
+            Box::new(sink.clone()),
+            false,
+        )
+        .await
+        .expect("启动成功");
+
+        wait_audit_frame(&sink, "ask", Duration::from_secs(10)).await;
+        // 审批卡带审计结论（audit.state=ask + 理由）。
+        let opened = wait_event(&events, "ask:opened", Duration::from_secs(5)).await;
+        assert_eq!(opened["payload"]["kind"], "approval");
+        assert_eq!(opened["payload"]["audit"]["state"], "ask");
+        assert_eq!(opened["payload"]["audit"]["reason"], "写入位置在授权目录外");
+        let ask_id = opened["askId"].as_str().unwrap().to_owned();
+
+        craftwave_lib::host::commands::chat::resolve_ask_core(
+            &runs,
+            &ask_id,
+            AskAnswer::Approval {
+                option_id: "allow_once".to_owned(),
+                edited_command: None,
+            },
+        )
+        .await
+        .expect("resolve 应命中");
+        let ended = wait_ended(&sink, Duration::from_secs(10)).await;
+        assert!(matches!(
+            ended,
+            ChatFrame::RunEnded {
+                reason: EndReason::Done,
+                ..
+            }
+        ));
+        // 恢复重放不重复审计（非流式请求数仍为 1）。
+        let bodies = nonstream_bodies(&mock).await;
+        assert_eq!(bodies.len(), 1, "人工批准恢复后不重复审计");
+        // 审计 ask 也不把结论写进人批缓存之外的面：同 run 内同签名新调用
+        // 重新走灰区（由 gate 单测覆盖，e2e 只锚定无重复审计）。
+    }
+
+    /// 场景 3：审计失败转人工 —— 模型请求失败（mock 500）→ manual 注记 +
+    /// 审批卡展示失败原因；用户批准后恢复（失败不默认为放行）。
+    #[tokio::test]
+    async fn audit_failure_falls_back_to_human() {
+        let mock = MockOpenAI::start_with_turn1(audit_turn1()).await;
+        mock.set_fail_nonstream(true);
+        let (app, events) = app_fixture_with_events(&mock);
+        let runs = RunManager::new();
+        let sink = SharedSink::default();
+
+        craftwave_lib::host::commands::chat::start_chat_core(
+            &app,
+            &runs,
+            "sess-audit-fail".to_owned(),
+            vec![user_entry("审计失败场景")],
+            run_config(),
+            Box::new(sink.clone()),
+            false,
+        )
+        .await
+        .expect("启动成功");
+
+        wait_audit_frame(&sink, "manual", Duration::from_secs(10)).await;
+        let opened = wait_event(&events, "ask:opened", Duration::from_secs(5)).await;
+        assert_eq!(opened["payload"]["audit"]["state"], "manual");
+        let reason = opened["payload"]["audit"]["reason"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(
+            reason.contains("审计模型请求失败"),
+            "失败原因可见：{reason}"
+        );
+        let ask_id = opened["askId"].as_str().unwrap().to_owned();
+
+        craftwave_lib::host::commands::chat::resolve_ask_core(
+            &runs,
+            &ask_id,
+            AskAnswer::Approval {
+                option_id: "allow_once".to_owned(),
+                edited_command: None,
+            },
+        )
+        .await
+        .expect("resolve 应命中");
+        let ended = wait_ended(&sink, Duration::from_secs(10)).await;
+        assert!(matches!(
+            ended,
+            ChatFrame::RunEnded {
+                reason: EndReason::Done,
+                ..
+            }
+        ));
+    }
+
+    /// 场景 4：指定审计模型失效转人工 —— commandAudit.modelId 指向不存在
+    /// 的模型 → 审计请求不发出（不静默换供应商），转人工并显示原因。
+    #[tokio::test]
+    async fn audit_model_unavailable_falls_back_to_human() {
+        let mock = MockOpenAI::start_with_turn1(audit_turn1()).await;
+        let (app, events) = app_fixture_with_events(&mock);
+        let mut config = (*app.config.load().unwrap()).clone();
+        config.agent = Some(craftwave_lib::providers::types::AgentConfig {
+            command_audit: Some(craftwave_lib::providers::types::CommandAuditConfig {
+                model_id: Some("missing-audit-model".to_owned()),
+            }),
+            ..craftwave_lib::providers::types::AgentConfig::default()
+        });
+        app.config.save(config).expect("保存配置");
+        let runs = RunManager::new();
+        let sink = SharedSink::default();
+
+        craftwave_lib::host::commands::chat::start_chat_core(
+            &app,
+            &runs,
+            "sess-audit-model".to_owned(),
+            vec![user_entry("指定审计模型失效")],
+            run_config(),
+            Box::new(sink.clone()),
+            false,
+        )
+        .await
+        .expect("启动成功");
+
+        wait_audit_frame(&sink, "manual", Duration::from_secs(10)).await;
+        let opened = wait_event(&events, "ask:opened", Duration::from_secs(5)).await;
+        assert_eq!(opened["payload"]["audit"]["state"], "manual");
+        let reason = opened["payload"]["audit"]["reason"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(
+            reason.contains("审计模型不可用"),
+            "模型失效原因可见（不静默换供应商）：{reason}"
+        );
+        // 审计请求未发出（无供应商切换的隐性请求）。
+        let bodies = nonstream_bodies(&mock).await;
+        assert!(bodies.is_empty(), "失效模型不应发出审计请求");
+        let ask_id = opened["askId"].as_str().unwrap().to_owned();
+        craftwave_lib::host::commands::chat::resolve_ask_core(
+            &runs,
+            &ask_id,
+            AskAnswer::Approval {
+                option_id: "allow_once".to_owned(),
+                edited_command: None,
+            },
+        )
+        .await
+        .expect("resolve 应命中");
+        let ended = wait_ended(&sink, Duration::from_secs(10)).await;
+        assert!(matches!(
+            ended,
+            ChatFrame::RunEnded {
+                reason: EndReason::Done,
+                ..
+            }
+        ));
+    }
+
+    /// 场景 5：审计 Block —— 模型判断高风险 → E_AUDIT_BLOCKED 拒绝收场
+    /// （runEnded(error) + run:error 事件带 code），命令不执行。
+    #[tokio::test]
+    async fn audit_block_rejects_run_ends_error() {
+        let mock = MockOpenAI::start_with_turn1(audit_turn1()).await;
+        mock.set_nonstream_text(Some(r#"{"decision":"block","reason":"疑似数据外传"}"#));
+        let (app, events) = app_fixture_with_events(&mock);
+        let runs = RunManager::new();
+        let sink = SharedSink::default();
+
+        craftwave_lib::host::commands::chat::start_chat_core(
+            &app,
+            &runs,
+            "sess-audit-block".to_owned(),
+            vec![user_entry("审计拒绝场景")],
+            run_config(),
+            Box::new(sink.clone()),
+            false,
+        )
+        .await
+        .expect("启动成功");
+
+        wait_audit_frame(&sink, "block", Duration::from_secs(10)).await;
+        let ended = wait_ended(&sink, Duration::from_secs(10)).await;
+        let ChatFrame::RunEnded { reason, error, .. } = &ended else {
+            panic!("应为 runEnded");
+        };
+        assert_eq!(*reason, EndReason::Error, "审计拒绝按错误终态收场");
+        assert_eq!(
+            error.as_ref().map(|e| e.code.as_str()),
+            Some("E_AUDIT_BLOCKED"),
+            "runEnded.error.code = E_AUDIT_BLOCKED"
+        );
+        // run:error 事件带同一 code（followUp 队列按失败暂停的判定输入）。
+        let err_event = wait_event(&events, "run:error", Duration::from_secs(5)).await;
+        assert_eq!(err_event["code"], "E_AUDIT_BLOCKED");
+        // 命令未执行：toolResult ok=false + 审计拒绝摘要，无二次模型轮次。
+        let results: Vec<ChatFrame> = sink
+            .frames()
+            .iter()
+            .map(|t| t.frame.frame.clone())
+            .filter(|f| matches!(f, ChatFrame::ToolResult { .. }))
+            .collect();
+        assert_eq!(results.len(), 1);
+        let ChatFrame::ToolResult { ok, ui_summary, .. } = &results[0] else {
+            unreachable!()
+        };
+        assert!(!ok, "审计拒绝的调用不执行");
+        assert!(
+            ui_summary.contains("审计拒绝"),
+            "摘要带审计结论：{ui_summary}"
+        );
+        assert!(
+            events.payloads_of("ask:opened").is_empty(),
+            "Block 不弹审批卡"
+        );
+    }
+
+    /// 场景 6：指定审计模型生效 —— commandAudit.modelId 指向独立 mock 端点
+    /// 的模型，审计请求发往专用端点（会话模型端点不收非流式请求）。
+    #[tokio::test]
+    async fn audit_designated_model_receives_request() {
+        let session_mock = MockOpenAI::start_with_turn1(audit_turn1()).await;
+        let audit_mock = MockOpenAI::start().await;
+        audit_mock.set_nonstream_text(Some(r#"{"decision":"allow","reason":"专用审计模型放行"}"#));
+        let (app, _events) = app_fixture_with_events(&session_mock);
+        let mut config = (*app.config.load().unwrap()).clone();
+        let mut audit_provider = provider_fixture(&audit_mock.base_url);
+        audit_provider.id = "prov-audit".to_owned();
+        audit_provider.models[0].id = "model-audit".to_owned();
+        audit_provider.models[0].model = "audit-mock".to_owned();
+        config.providers.push(audit_provider);
+        config.agent = Some(craftwave_lib::providers::types::AgentConfig {
+            command_audit: Some(craftwave_lib::providers::types::CommandAuditConfig {
+                model_id: Some("model-audit".to_owned()),
+            }),
+            ..craftwave_lib::providers::types::AgentConfig::default()
+        });
+        app.config.save(config).expect("保存配置");
+        let runs = RunManager::new();
+        let sink = SharedSink::default();
+
+        craftwave_lib::host::commands::chat::start_chat_core(
+            &app,
+            &runs,
+            "sess-audit-model2".to_owned(),
+            vec![user_entry("指定审计模型生效")],
+            run_config(),
+            Box::new(sink.clone()),
+            false,
+        )
+        .await
+        .expect("启动成功");
+
+        wait_audit_frame(&sink, "allow", Duration::from_secs(10)).await;
+        let ended = wait_ended(&sink, Duration::from_secs(10)).await;
+        assert!(matches!(
+            ended,
+            ChatFrame::RunEnded {
+                reason: EndReason::Done,
+                ..
+            }
+        ));
+        // 审计请求发往专用端点；会话端点只收流式主请求。
+        let audit_bodies = nonstream_bodies(&audit_mock).await;
+        assert_eq!(audit_bodies.len(), 1, "审计请求发往专用模型端点");
+        assert_eq!(audit_bodies[0]["model"], "audit-mock");
+        let session_nonstream = nonstream_bodies(&session_mock).await;
+        assert!(
+            session_nonstream.is_empty(),
+            "会话端点不应收到审计请求（不静默回退会话模型）"
+        );
+    }
+}
+
 // —— 9. 小工具包（14 号票，§8.3 M2 表四行）：plan 档可见 + render_html 链路 ——
 
 mod small_tools {
@@ -3560,7 +4016,7 @@ mod image_face {
     }
 
     /// 等待 runEnded 帧出现（命令面任务异步产帧）。
-    async fn wait_ended(sink: &SharedSink, timeout: Duration) -> ChatFrame {
+    pub(super) async fn wait_ended(sink: &SharedSink, timeout: Duration) -> ChatFrame {
         let deadline = Instant::now() + timeout;
         loop {
             let frames = sink.frames();

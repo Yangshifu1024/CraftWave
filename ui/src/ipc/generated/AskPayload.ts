@@ -2,6 +2,7 @@
 import type { ApprovalDiff } from "./ApprovalDiff";
 import type { AskOption } from "./AskOption";
 import type { AskQuestion } from "./AskQuestion";
+import type { AuditNote } from "./AuditNote";
 import type { McpTransportKind } from "./McpTransportKind";
 import type { SkillTrustScope } from "./SkillTrustScope";
 
@@ -50,6 +51,14 @@ previewHtml?: string,
  * 审批。
  */
 planScope?: string, 
+/**
+ * 灰区命令审计结论（§3.2/§8.7，36 号票）：审计已出结论但须人工
+ * 确认时随审批卡展示——ask = 模型审计建议询问用户；manual = 审计
+ * 失败/超时/输出无效转人工（reason = 失败原因）。allow/block 不
+ * 产生审批卡（直接放行/拒绝收场，结论经 toolAudit 帧展示）；范围
+ * 门/外部目录/MCP 等非灰区审批卡不带本字段。
+ */
+audit?: AuditNote, 
 /**
  * 用户可选的操作列表（如仅本次允许/拒绝）。
  */

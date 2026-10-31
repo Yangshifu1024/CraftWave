@@ -1,7 +1,7 @@
 # 实现：灰区命令审计 Agent
 
 Type: task
-Status: open
+Status: resolved
 
 Blocked by: 22, 23
 
@@ -48,8 +48,25 @@ Blocked by: 22, 23
 
 ## 验收
 
-- [ ] 灰区命令审计三态生效，低风险可自动放行；硬规则与明确人批仍生效。
-- [ ] 审计失败转人工且取消可传播；MCP 行为不被放宽。
-- [ ] 全批挂起恢复无重复审计、无副作用重放，过期结论不复用。
-- [ ] 专用模型设置及缺省回填正确；授权目录只读证据收集；15 秒上限、取消、“审计中”、简短结论与会话计量生效。
-- [ ] 字段级契约回写完成，独立测试文件与前后端检查通过。
+- [x] 灰区命令审计三态生效，低风险可自动放行；硬规则与明确人批仍生效。
+- [x] 审计失败转人工且取消可传播；MCP 行为不被放宽。
+- [x] 全批挂起恢复无重复审计、无副作用重放，过期结论不复用。
+- [x] 专用模型设置及缺省回填正确；授权目录只读证据收集；15 秒上限、取消、“审计中”、简短结论与会话计量生效。
+- [x] 字段级契约回写完成，独立测试文件与前后端检查通过。
+
+## 决议记录（2026-10-30 实装）
+
+**落地形态**：审计编排在宿主挂起恢复循环（`chat.rs` `run_command_audit`），纯逻辑面独立成 `backend/audit.rs`（提示词骨架 / 严格 JSON 输出解析 / 授权目录只读证据收集）；审计配置 `providers/types.rs::CommandAuditConfig`（`agent.commandAudit.modelId`，serde default 回填）；审计状态帧 `backend/frames.rs::ToolAudit`（§3.4 五态，FRAMES 15→16）+ `stores/audits.ts`（前端按 (sessionId, callId) 分桶，runtime 实时与 run-reconnect 重放双入口同步）；审计放行单槽 `backend/gate.rs`（`grant_audit`/`consume_audit_grant`/`audit_class`）；错误码 `E_AUDIT_BLOCKED`（§3.6 补行）；AskPayload approval 增 `audit: Option<AuditNote>`（ask/manual 两态注记）。
+
+**关键定案**：
+
+1. **审计目标收敛为围栏 Confirm 灰区**（AST 写目标四象限 Confirm / 字面量掩码 Opaque / 解析失败 fail-closed / 安装类词法信号）；矩阵 NeedsApproval（confirm_each/auto_edit 档无写信号命令的审批）属**权限档人批要求，不进审计**——票面「权限档仍生效」为字段级口径，宁窄勿宽；plan 档围栏 Confirm 属档位语义同样不审计；git 策略确认类（push 恒确认 / add·stage·commit 开关后确认）属明确人批不审计。硬拒（黑名单/内部状态/计划硬门）在判定序直接 Blocked，天然不调模型。
+2. **审计放行检查点位阶经测试先行收敛**：初版放在判定序步骤 1（签名放行同位），gate 单测暴露其可绕过后续围栏黑名单（防御纵深缺陷）——最终放在**全部硬拒面之后**（0 内部状态 / 0.5 外部目录 / 0.6 git 策略 Block / 2 黑名单围栏 Block 之后，计划门与矩阵之前），设计文档 §5.4 已同步回写。单槽**消费即清**：恢复重放命中一次即清除（同一待决调用不重复审计），同 run 内同签名新调用不继承旧结论（重新走灰区）；审计 Allow 不写入既有 `approved` 人批签名缓存（票面硬约束：批准缓存不承载模型结论）。
+3. **灰区资格判定 = 完整判定序重放**（`ApprovalGate::audit_class`）：judge 纯函数无副作用，宿主在挂起后调用（此刻签名既未人批也无审计槽，重放与产生挂起时判定一致）。
+4. **非流式审计的用量边界**：`complete_once_capped` 是一次性调用——超时/请求失败丢弃在飞请求时**无中间 usage 可记**（非流式无部分计量），「已获得 usage 同样计入」在实践中覆盖「返回后解析失败」与全部成功路径；未返回的用量不伪造（Q39）。
+5. **15 秒总超时与取消的真实触发未单独 e2e**：超时分支（`tokio::select!` sleep 胜出）与请求失败分支共用 `AuditFlow::Failed` 收口（e2e 已覆盖失败转人工×2），取消在 select biased 首位、经 `audit_cancelled_finish` 按取消收场（与既有 denied_finish 同构）——15 秒真实等待与中途取消注入不适合 CI 时长，逻辑路径由实现审阅 + 同构收场对照覆盖，**诚实记录为覆盖缺口**。
+6. **测试样例勘误**：`touch` 不在 AST 写目标提取清单（§8.7 清单无 touch），灰区测试命令一律用 `echo hi > 路径` 重定向承载越界语义（e2e 放行后真执行写 `/tmp`，无害）。
+7. **审计只在主 run**：子代理审批恢复循环不接审计（`wait_approval_with` 传 audit=None）；MCP 分支不触碰（审计资格仅 command 静态工具，MCP 审批与结果未知不重放规则零改动）。
+8. **mock 基建扩展**：`tests/common/mock_openai.rs` 增 `set_nonstream_text` 旋钮（审计三态结论 JSON 注入，默认文本不变）——压缩/suggest 既有非流式测试零影响。
+
+**测试清单**：Rust 单元 16 例（`backend/audit_test.rs` 13 例：解析三态/前后缀容忍/坏输出/提示词骨架/目标截断/证据边界与预算；gate_test 增 3 例：灰区资格表/单槽消费即清/硬拒不豁免）；e2e 6 例（`tests/backend_e2e.rs::command_audit`：allow 全链不弹卡+单次审计+用量计量+无历史提示词 / ask 转人工带注记 / 请求失败转人工 / 指定模型失效转人工不静默换端点 / block 拒绝 E_AUDIT_BLOCKED 终态 / 指定模型生效独立端点）；前端 8 例（audits store 4 例 + AskPanel 注记 3 例 + SettingsPage 审计模型下拉 2 例）+ contract 锚点（toolAudit 帧/AuditState 五态/AskPayload audit/CommandAuditConfig）。检查链七项全绿（Rust lib 793 + e2e 46；前端 43 文件 456 例）。

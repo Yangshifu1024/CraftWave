@@ -413,3 +413,33 @@ describe("计划范围卡（25 号票，§8.6）", () => {
     });
   });
 });
+
+describe("灰区命令审计注记（36 号票，approval.audit）", () => {
+  it("audit.state=ask 显示模型审计建议行（含理由）", () => {
+    useAskStore.getState().open("s1", "ask-audit-1", {
+      ...approvalPayload,
+      audit: { state: "ask", reason: "写入位置在授权目录外" },
+    });
+    renderPanel();
+    const note = screen.getByTestId("ask-audit-note");
+    expect(note.textContent).toContain("模型审计建议人工确认");
+    expect(note.textContent).toContain("写入位置在授权目录外");
+  });
+
+  it("audit.state=manual 显示转人工行（含失败原因）", () => {
+    useAskStore.getState().open("s1", "ask-audit-2", {
+      ...approvalPayload,
+      audit: { state: "manual", reason: "审计超时：15 秒总预算已到" },
+    });
+    renderPanel();
+    const note = screen.getByTestId("ask-audit-note");
+    expect(note.textContent).toContain("审计不可用");
+    expect(note.textContent).toContain("审计超时");
+  });
+
+  it("载荷无 audit 注记时不渲染审计行", () => {
+    useAskStore.getState().open("s1", "ask-audit-3", approvalPayload);
+    const { container } = renderPanel();
+    expect(container.querySelector('[data-testid="ask-audit-note"]')).toBeNull();
+  });
+});

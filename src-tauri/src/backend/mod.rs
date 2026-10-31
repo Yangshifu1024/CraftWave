@@ -27,9 +27,12 @@
 //!   压缩范围计算、增量/分块摘要（Q31/Q38 共用总超时）与原子提交；
 //! - [`watchdog`]：监督看门狗（FR-03-07，37 号票，§5.7）——工具结果滑动
 //!   窗口与四类信号的 turn 边界评估（重复失败/空转的纠偏与终止）、模型流
-//!   停滞计时（仅请求阶段计时、有效增量刷新，Q33 边界）。
+//!   停滞计时（仅请求阶段计时、有效增量刷新，Q33 边界）；
+//! - [`audit`]：灰区命令审计的纯逻辑面（§8.7，36 号票）——审计提示词骨架、
+//!   模型输出解析与授权目录内的只读证据收集（编排面在 host 命令层）。
 
 pub mod ask;
+pub mod audit;
 pub mod compaction;
 pub mod estimator;
 pub mod exec;
@@ -49,6 +52,10 @@ mod frames_test;
 #[cfg(test)]
 #[path = "gate_test.rs"]
 mod gate_test;
+
+#[cfg(test)]
+#[path = "audit_test.rs"]
+mod audit_test;
 
 #[cfg(test)]
 #[path = "rig_bridge_test.rs"]

@@ -53,6 +53,9 @@ pub struct MockOpenAI {
     /// 非流式请求失败注入（04 号票压缩摘要失败的 e2e 面）：置 true 后
     /// 非流式补全一律返回 500，流式脚本不受影响。
     pub fail_nonstream: Arc<std::sync::atomic::AtomicBool>,
+    /// 非流式响应文本旋钮（36 号票审计 e2e 面）：Some(text) 时非流式补全
+    /// 返回该文本作为 assistant content（None = 默认 NONSTREAM_TEXT）。
+    pub nonstream_text: Arc<std::sync::Mutex<Option<String>>>,
     shutdown: Option<tokio::sync::oneshot::Sender<()>>,
     server: JoinHandle<()>,
 }
@@ -83,18 +86,24 @@ impl MockOpenAI {
         let route_sent = sent.clone();
         let route_requests = requests.clone();
         let route_fail = fail_nonstream.clone();
-        let app = Router::new()
-            .route(
-                "/v1/chat/completions",
-                post(move |Json(body): Json<Value>| {
-                    let sent = route_sent.clone();
-                    let requests = route_requests.clone();
-                    let fail = route_fail.clone();
-                    let turn1 = turn1.clone();
-                    async move { handle_completion(body, sent, requests, gap, turn1, fail).await }
-                }),
-            )
-            .route("/v1/models", get(get_models));
+        let nonstream_text: Arc<std::sync::Mutex<Option<String>>> = Arc::default();
+        let route_nonstream_text = nonstream_text.clone();
+        let app =
+            Router::new()
+                .route(
+                    "/v1/chat/completions",
+                    post(move |Json(body): Json<Value>| {
+                        let sent = route_sent.clone();
+                        let requests = route_requests.clone();
+                        let fail = route_fail.clone();
+                        let text = route_nonstream_text.clone();
+                        let turn1 = turn1.clone();
+                        async move {
+                            handle_completion(body, sent, requests, gap, turn1, fail, text).await
+                        }
+                    }),
+                )
+                .route("/v1/models", get(get_models));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind mock");
@@ -111,6 +120,7 @@ impl MockOpenAI {
             sent,
             requests,
             fail_nonstream,
+            nonstream_text,
             shutdown: Some(tx),
             server,
         }
@@ -120,6 +130,15 @@ impl MockOpenAI {
     pub fn set_fail_nonstream(&self, on: bool) {
         self.fail_nonstream
             .store(on, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// 设置非流式响应文本（36 号票审计 e2e：审计模型的三态结论 JSON）；
+    /// None 恢复默认文本。
+    pub fn set_nonstream_text(&self, text: Option<&str>) {
+        *self
+            .nonstream_text
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = text.map(str::to_owned);
     }
 
     pub async fn sent_chunks(&self) -> Vec<SentChunk> {
@@ -264,6 +283,7 @@ fn turn2_events() -> Vec<ScriptEvent> {
 /// 非流式（stream != true）请求的固定答复（suggest 等单次调用路径）。
 pub const NONSTREAM_TEXT: &str = "试试让我总结配置要点。";
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_completion(
     body: Value,
     sent: Arc<Mutex<Vec<SentChunk>>>,
@@ -271,6 +291,7 @@ async fn handle_completion(
     gap: Duration,
     turn1: Vec<ScriptEvent>,
     fail_nonstream: Arc<std::sync::atomic::AtomicBool>,
+    nonstream_text: Arc<std::sync::Mutex<Option<String>>>,
 ) -> Response {
     requests.lock().await.push(body.clone());
     // 非流式请求（rig Model::call 单次调用，如 suggest/压缩摘要的后台小调用）：
@@ -280,12 +301,17 @@ async fn handle_completion(
         if fail_nonstream.load(std::sync::atomic::Ordering::SeqCst) {
             return (StatusCode::INTERNAL_SERVER_ERROR, "injected failure").into_response();
         }
+        let content = nonstream_text
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .unwrap_or_else(|| NONSTREAM_TEXT.to_owned());
         return Json(json!({
             "id": "chatcmpl-mock",
             "object": "chat.completion",
             "created": 1,
             "model": "gpt-4o-mock",
-            "choices": [{"index": 0, "message": {"role": "assistant", "content": NONSTREAM_TEXT}, "finish_reason": "stop"}],
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": "stop"}],
             "usage": {"prompt_tokens": 120, "completion_tokens": 48, "total_tokens": 168}
         }))
         .into_response();

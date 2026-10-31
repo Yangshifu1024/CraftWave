@@ -512,3 +512,60 @@ describe("安全与审批页（23 号票：四开关 + 白名单管理）", () =
     expect(screen.queryByTestId("allowlist-hint")).toBeNull();
   });
 });
+
+describe("命令审计模型（36 号票，agent.commandAudit.modelId）", () => {
+  it("缺省显示「跟随会话模型」；选择模型写入草稿并随保存提交", async () => {
+    // 造一个带模型的 provider 供下拉选择
+    const config = structuredClone(BASE_CONFIG);
+    config.providers = [
+      {
+        id: "prov-1",
+        name: "Mock 供应商",
+        apiFormat: "openai_chat",
+        models: [
+          { id: "model-1", model: "gpt-x", maxTokens: 32768, contextWindow: 128000 },
+          { id: "model-2", model: "gpt-y", maxTokens: 32768, contextWindow: 128000 },
+        ],
+      },
+    ];
+    useSettingsStore.setState({ config, baseline: structuredClone(config) });
+
+    const { unmount } = render(<SettingsPage initialPage="agent" onClose={() => {}} />);
+    const select = await screen.findByTestId("command-audit-model-select");
+    expect((select as HTMLSelectElement).value).toBe("");
+    expect(select.textContent).toContain("跟随会话模型");
+
+    // 选择专用审计模型 → 草稿写入 commandAudit.modelId
+    fireEvent.change(select, { target: { value: "model-2" } });
+    expect(useSettingsStore.getState().config?.agent?.commandAudit?.modelId).toBe("model-2");
+    saveConfigMock.mockImplementation(async (c) => structuredClone(c));
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(saveConfigMock).toHaveBeenCalled());
+    expect(saveConfigMock.mock.calls.at(-1)?.[0].agent?.commandAudit).toEqual({
+      modelId: "model-2",
+    });
+    unmount();
+  });
+
+  it("已配置时回填显示；切回「跟随会话模型」清空 commandAudit", async () => {
+    const config = structuredClone(BASE_CONFIG);
+    config.providers = [
+      {
+        id: "prov-1",
+        name: "Mock 供应商",
+        apiFormat: "openai_chat",
+        models: [{ id: "model-1", model: "gpt-x", maxTokens: 32768, contextWindow: 128000 }],
+      },
+    ];
+    config.agent = { maxConcurrentSubagents: 4, commandAudit: { modelId: "model-1" } };
+    useSettingsStore.setState({ config, baseline: structuredClone(config) });
+
+    const { unmount } = render(<SettingsPage initialPage="agent" onClose={() => {}} />);
+    const select = await screen.findByTestId("command-audit-model-select");
+    expect((select as HTMLSelectElement).value).toBe("model-1");
+
+    fireEvent.change(select, { target: { value: "" } });
+    expect(useSettingsStore.getState().config?.agent?.commandAudit?.modelId).toBeUndefined();
+    unmount();
+  });
+});

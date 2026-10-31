@@ -334,7 +334,8 @@ fn export_ipc_manifest_and_cross_lang_fixture() {
             }))
             .collect::<Vec<_>>(),
     });
-    assert_eq!(manifest["frames"].as_array().unwrap().len(), 15);
+    // 帧：P0 9 帧 + 【M2】压缩/摘要/子代理 4 帧 + 36 号票 toolAudit（16）
+    assert_eq!(manifest["frames"].as_array().unwrap().len(), 16);
     // 事件键：14 号票 5 键 + 17 号票 5 键（run 终态三键 + notify/退出两键）
     // + 04 号票压缩三键（run:compacting/compacted/compact_failed）
     // + 06 号票三键（run:start / run:inject / run:queue）+ 08 号票 mcp:status

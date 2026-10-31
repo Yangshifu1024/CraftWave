@@ -303,8 +303,8 @@ pub const DEFAULT_MAX_CONCURRENT_SUBAGENTS: u32 = 4;
 pub const MAX_CONCURRENT_SUBAGENTS_LIMIT: u32 = 16;
 
 /// 智能体行为配置（§3.2 agent 组）。M2 03 号票起承载 customPrompt；
-/// M2 10 号票补 maxConcurrentSubagents（子代理全局并发上限）；commandAudit
-/// （36 号票）随对应票补齐。
+/// M2 10 号票补 maxConcurrentSubagents（子代理全局并发上限）；36 号票补
+/// commandAudit（灰区命令审计专用模型，§8.7）。
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -321,6 +321,11 @@ pub struct AgentConfig {
     /// 提高后立即按新上限启动排队任务（并发闸 [`crate::agent::sub_registry`]）。
     #[serde(default = "default_max_concurrent_subagents")]
     pub max_concurrent_subagents: u32,
+    /// 灰区命令审计配置（FR-05-05/§8.7，36 号票）：缺省整组为 None（serde
+    /// default 回填，旧配置零迁移）——未配置时审计模型跟随会话当前模型。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub command_audit: Option<CommandAuditConfig>,
 }
 
 /// serde 缺省值函数：子代理全局并发上限缺省 4（§5.9 Q13）。
@@ -328,14 +333,30 @@ fn default_max_concurrent_subagents() -> u32 {
     DEFAULT_MAX_CONCURRENT_SUBAGENTS
 }
 
-// AgentConfig 的缺省值：无自定义提示词 + 并发上限 4。
+// AgentConfig 的缺省值：无自定义提示词 + 并发上限 4 + 无审计配置组。
 impl Default for AgentConfig {
     fn default() -> Self {
         Self {
             custom_prompt: None,
             max_concurrent_subagents: DEFAULT_MAX_CONCURRENT_SUBAGENTS,
+            command_audit: None,
         }
     }
+}
+
+/// 灰区命令审计配置（§3.2 agent.commandAudit，36 号票，§8.7 字段级）。
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandAuditConfig {
+    /// 审计专用模型 id（指向某 ProviderModel.id）：未配置时跟随会话当前
+    /// 模型（挂起时点 refresher 刷新的会话模型槽，§8.7）。指定模型解析
+    /// 失败（模型/供应商已删除、Key 缺失）按审计失败转人工并显示原因，
+    /// 不静默切换其他供应商。总超时固定 15 秒（含证据收集与模型请求，
+    /// 不可配置）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub model_id: Option<String>,
 }
 
 /// 上下文压缩配置（§3.2 compaction 组，FR-03-05，04 号票实装）。

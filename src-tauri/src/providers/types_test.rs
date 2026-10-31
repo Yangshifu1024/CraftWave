@@ -203,6 +203,7 @@ fn agent_custom_prompt_normalize_and_roundtrip() {
         agent: Some(AgentConfig {
             custom_prompt: Some("  始终用中文回复  ".into()),
             max_concurrent_subagents: crate::providers::types::DEFAULT_MAX_CONCURRENT_SUBAGENTS,
+            command_audit: None,
         }),
         ..AppConfig::default()
     };
@@ -221,6 +222,7 @@ fn agent_custom_prompt_normalize_and_roundtrip() {
             agent: Some(AgentConfig {
                 custom_prompt: Some(blank.into()),
                 max_concurrent_subagents: crate::providers::types::DEFAULT_MAX_CONCURRENT_SUBAGENTS,
+                command_audit: None,
             }),
             ..AppConfig::default()
         };

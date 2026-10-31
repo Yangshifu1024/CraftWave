@@ -1361,6 +1361,34 @@ function AgentPage() {
           </label>
         </SettingsRow>
       </SettingsSection>
+      <SettingsSection title="命令审计">
+        <SettingsRow
+          title="审计模型"
+          description="确定性规则无法定性的命令（灰区）由该模型单次审计（15 秒上限，低风险可自动放行，失败转人工）。未选择时跟随会话当前模型；指定模型失效按审计失败转人工，不静默换供应商。保存后下次对话生效。"
+        >
+          <Select
+            width="wide"
+            aria-label="命令审计模型"
+            data-testid="command-audit-model-select"
+            value={config.agent?.commandAudit?.modelId ?? ""}
+            onChange={(e) => {
+              const value = e.target.value;
+              patchAgent({
+                commandAudit: value === "" ? undefined : { modelId: value },
+              });
+            }}
+          >
+            <option value="">跟随会话模型</option>
+            {config.providers.flatMap((provider) =>
+              provider.models.map((model) => (
+                <option key={model.id} value={model.id}>
+                  {provider.name} / {model.model}
+                </option>
+              )),
+            )}
+          </Select>
+        </SettingsRow>
+      </SettingsSection>
       <SettingsSection title="项目数据">
         <SettingsRow
           title="项目数据目录"

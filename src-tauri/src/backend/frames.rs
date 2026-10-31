@@ -138,6 +138,36 @@ pub enum ChatFrame {
     /// 子代理终态（§3.4【M2】增补帧，10 号票）：四象限收口，必为该子代理
     /// 帧序列的最后一帧。
     SubDone { sub_id: String, outcome: SubOutcome },
+    /// 灰区命令审计状态（§3.4【M2】增补帧，36 号票）：审计五态（§8.7——
+    /// running 进行中 / allow 放行 / block 拒绝 / ask 建议人工确认 / manual
+    /// 失败转人工）。帧序：同 callId 的 toolStarted/toolArgs 之后、toolResult
+    /// 或审批卡开启之前；进环形缓冲（attach_run 重放可恢复审计状态展示）。
+    ToolAudit {
+        call_id: String,
+        state: AuditState,
+        /// 简短依据（allow/ask/block）或失败原因（manual）；running 态省略。
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(optional))]
+        reason: Option<String>,
+    },
+}
+
+/// 灰区命令审计状态五态（§3.4 toolAudit.state / §8.7，36 号票）。
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "snake_case")]
+pub enum AuditState {
+    /// 证据收集与模型审计进行中（工具卡显示"审计中"；reason 省略）。
+    Running,
+    /// 审计放行：该调用随后恢复执行（reason = 模型给出的简短依据）。
+    Allow,
+    /// 审计拒绝：随后 E_AUDIT_BLOCKED 工具结果帧 + runEnded(error)。
+    Block,
+    /// 审计建议人工确认：随后 ask:opened 审批卡（载荷 audit.state=ask）。
+    Ask,
+    /// 审计失败/超时/输出无效转人工（随后审批卡，载荷 audit.state=manual，
+    /// reason = 失败原因）。
+    Manual,
 }
 
 /// 子代理终态四象限（§5.9，FR-07-02/09）：report=正常完成带汇报；

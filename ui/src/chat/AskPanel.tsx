@@ -248,6 +248,23 @@ function ApprovalForm({
           {payload.fenceReason}
         </p>
       )}
+      {/* 灰区命令审计注记（36 号票，§8.7）：ask = 模型审计建议人工确认
+          （reason = 简短依据）；manual = 审计失败/超时/输出无效转人工
+          （reason = 失败原因）。allow/block 不产生审批卡。 */}
+      {payload.audit && (
+        <p
+          data-testid="ask-audit-note"
+          className={`rounded px-2 py-1 text-ui-sm ${
+            payload.audit.state === "manual"
+              ? "bg-[var(--destructive)]/10 text-[var(--destructive)]"
+              : "bg-[var(--warning)]/10 text-[var(--warning)]"
+          }`}
+        >
+          {payload.audit.state === "manual"
+            ? `审计不可用，已转人工确认（${payload.audit.reason}）`
+            : `模型审计建议人工确认：${payload.audit.reason}`}
+        </p>
+      )}
       {/* 计划范围门（25 号票，§8.6）：载荷带 planScope = 范围卡——明示
           计划外写路径；三选项由后端下发（允许一次 / 本会话始终允许（写入
           所在目录）/ 拒绝），选中 always_session 后后端把目标父目录并入

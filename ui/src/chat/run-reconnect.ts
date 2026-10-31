@@ -28,6 +28,7 @@ import { create } from "zustand";
 import * as client from "@/ipc/client";
 import type { SequencedFrame } from "@/ipc/types";
 import { useAskStore } from "@/stores/ask";
+import { applyAuditFrame } from "@/stores/audits";
 import { applySubagentFrame } from "@/stores/subagents";
 import { FrameBuffer, type FrameSnapshot } from "./frames";
 
@@ -263,6 +264,8 @@ async function observeRun(sessionId: string, deps: ReconnectDeps): Promise<boole
         // 子代理 4 帧（10 号票）：重放路径同步 subagents store（重载后
         // 运行中子代理列表由重放恢复，与事件通道幂等）
         applySubagentFrame(sessionId, frame);
+        // 审计状态帧（36 号票）：重放路径同步 audits store（重载恢复审计行）
+        applyAuditFrame(sessionId, frame);
         if (frame.type === "runEnded") void finish();
       },
       0,

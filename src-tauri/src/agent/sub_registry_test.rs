@@ -194,6 +194,7 @@ fn registry_find_by_ask_routes_to_sub() {
                 fence_reason: None,
                 preview_html: None,
                 plan_scope: None,
+                audit: None,
                 options: vec![],
             },
             tx,

@@ -51,8 +51,8 @@ mod system_test;
 #[path = "workspace_test.rs"]
 mod workspace_test;
 
-/// ChatFrame P0 全集 9 帧 + 【M2】压缩帧/摘要帧 + 【M2】子代理 4 帧
-/// （§3.4；type 值与 TS 判别值一致）。
+/// ChatFrame P0 全集 9 帧 + 【M2】压缩帧/摘要帧 + 【M2】子代理 4 帧 + 36 号票
+/// toolAudit 审计帧（§3.4；type 值与 TS 判别值一致）。
 pub const FRAMES: &[&str] = &[
     "runStarted",
     "stepStarted",
@@ -69,6 +69,7 @@ pub const FRAMES: &[&str] = &[
     "subFrame",
     "subReport",
     "subDone",
+    "toolAudit",
 ];
 
 /// 事件键（§3.5 P0 子集 + 【M2】压缩三键 + 06 号票队列键 + 08 号票

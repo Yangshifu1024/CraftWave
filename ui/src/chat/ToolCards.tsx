@@ -41,6 +41,7 @@ import { useSessionScope } from "@/chat/session-scope";
 import { Button } from "@/components/ui/button";
 import * as client from "@/ipc/client";
 import type { ToolOutcome } from "@/ipc/types";
+import { auditOf, type ToolAuditInfo, useAuditsStore } from "@/stores/audits";
 import { outcomeLabel, useSubagentsStore } from "@/stores/subagents";
 
 /** 卡片通用状态判定（与 mirror 原型同口径，供测试直接断言）。 */
@@ -606,9 +607,15 @@ export function GrepCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
 }
 
 /** command：命令行（摘要 = 命令文本 font-sans 截断）；动作词随状态切换
- *  （ZCode 终端行同款：完成态「终端」、运行中「正在执行」）。 */
+ *  （ZCode 终端行同款：完成态「终端」、运行中「正在执行」）。
+ *  审计行（36 号票，§8.7）：挂起命令的灰区审计经 audits store 按 callId
+ *  关联——running 徽标「审计中」+ 终态徽标（放行/拒绝/转人工），展开详情
+ *  区显示简短理由/失败原因（结论与审批卡载荷 audit 字段同源）。 */
 export function CommandCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
   const args = (props.args ?? {}) as CardArgs;
+  const sessionId = useSessionScope();
+  const audits = useAuditsStore((s) => s.bySession);
+  const audit = auditOf(audits, sessionId, props.toolCallId);
   return (
     <ToolCardShell
       {...props}
@@ -616,7 +623,54 @@ export function CommandCard(props: ToolCallMessagePartProps<CardArgs, unknown>) 
       label="终端"
       runningLabel="正在执行"
       summary={str(args, "command")}
-    />
+      badges={audit ? <CommandAuditBadge audit={audit} /> : undefined}
+    >
+      {audit?.reason && (
+        <p
+          data-testid="command-audit-note"
+          className="mb-1 text-ui-sm text-[var(--muted-foreground)]"
+        >
+          审计结论：{audit.reason}
+        </p>
+      )}
+    </ToolCardShell>
+  );
+}
+
+/** 审计五态的徽标文案（running 态随 run 流光语义，其余为终态结论词）。 */
+function auditBadgeText(audit: ToolAuditInfo): string {
+  switch (audit.state) {
+    case "running":
+      return "审计中";
+    case "allow":
+      return "审计放行";
+    case "block":
+      return "审计拒绝";
+    case "ask":
+      return "审计建议确认";
+    case "manual":
+      return "审计不可用";
+  }
+}
+
+/** command 卡的审计状态徽标（五态配色：running 灰、allow 绿、block/manual
+ *  红、ask 橙——与 AskPanel 审计注记同色系）。 */
+function CommandAuditBadge({ audit }: { audit: ToolAuditInfo }) {
+  const color =
+    audit.state === "allow"
+      ? "text-emerald-600 dark:text-emerald-400"
+      : audit.state === "ask"
+        ? "text-[var(--warning)]"
+        : audit.state === "running"
+          ? "text-[var(--muted-foreground)]"
+          : "text-[var(--destructive)]";
+  return (
+    <span
+      data-testid={`command-audit-${audit.state}`}
+      className={`shrink-0 text-ui-sm font-medium whitespace-nowrap ${color}`}
+    >
+      {auditBadgeText(audit)}
+    </span>
   );
 }
 

@@ -471,6 +471,14 @@ pub struct ApprovalGate {
     /// 判定时与批准冻结基线（PlanState.baselinePaths）取并集。
     plan_scope_granted: Mutex<Vec<PathBuf>>,
     plan_scope_memory: Option<SessionPlanScope>,
+    /// 审计放行单槽（36 号票，§8.7/§5.4 执行绑定）：灰区命令审计 Allow 的
+    /// (工具名, 参数 JSON) 签名——宿主在审计放行后经 [`Self::grant_audit`]
+    /// 置位，恢复重放的判定在签名放行同位命中并**消费即清**（单次语义：
+    /// 同一待决调用不重复审计；同 run 内后续同参数新调用不继承旧结论，
+    /// 重新走灰区路径）。独立于既有 `approved` 签名批准缓存——模型审计
+    /// 结论不经人批缓存承载（票面硬约束）；槽的来源唯一（audit_class 为
+    /// 真的挂起才可能置位），恒确认面（git 策略）不产生槽。
+    audit_grant: Mutex<Option<(String, String)>>,
 }
 
 /// ApprovalGate 的登记与辅助判定。
@@ -492,6 +500,7 @@ impl ApprovalGate {
             data_dir: None,
             plan_scope_granted: Mutex::new(Vec::new()),
             plan_scope_memory: None,
+            audit_grant: Mutex::new(None),
         }
     }
 
@@ -583,6 +592,68 @@ impl ApprovalGate {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert((name.to_owned(), args_json.to_owned()));
+    }
+
+    /// 置位审计放行单槽（36 号票，§5.4 执行绑定）：宿主恢复循环在灰区命令
+    /// 审计 Allow 后调用——恢复重放的判定在签名放行同位命中并放行。单槽
+    /// （同一时刻至多一个待决调用），置位即覆盖。
+    pub fn grant_audit(&self, name: &str, args_json: &str) {
+        *self
+            .audit_grant
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            Some((name.to_owned(), args_json.to_owned()));
+    }
+
+    /// 审计放行单槽的命中查询（消费即清）：签名全等命中则清槽并返回 true。
+    /// 判定序在签名放行同位消费——恢复重放第一次判定命中并清除，同一待决
+    /// 调用不重复审计；后续同参数新调用不再命中（不继承旧结论）。
+    fn consume_audit_grant(&self, name: &str, args_json: &str) -> bool {
+        let mut slot = self
+            .audit_grant
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let hit = slot.as_ref() == Some(&(name.to_owned(), args_json.to_owned()));
+        if hit {
+            *slot = None;
+        }
+        hit
+    }
+
+    /// 灰区审计资格判定（36 号票，§8.7）：挂起项是否属「确定性规则无法
+    /// 定性」的围栏灰区（审计对象）。判定 = 完整判定序重放返回围栏 Confirm
+    /// 挂起（`fence_reason` 有值且无外部目录/范围门），且排除：
+    /// - git 策略确认类（push 恒确认 / add·stage·commit 开关后确认——明确
+    ///   人批要求，不产生审计放行槽，判定序 1.5 照常挂起）；
+    /// - plan 档（围栏 Confirm 属档位语义，审计不豁免权限档）；
+    /// - 外部目录授权 / 计划范围门挂起（授权面，不同载荷形态）；
+    /// - 矩阵 NeedsApproval（confirm_each/auto_edit 档命令审批——权限档
+    ///   人批要求，`fence_reason` 为 None 天然被排除）。
+    ///
+    /// 硬拒（黑名单/内部状态/计划硬门）在判定序直接 Blocked，不产生挂起，
+    /// 不调模型。判定纯函数无副作用、同输入确定性一致（宿主在挂起后调用，
+    /// 此刻该签名既未人批也无审计槽，重放结果与产生挂起时一致）。
+    pub fn audit_class(&self, name: &str, args_json: &str) -> bool {
+        if name != "command" || self.tier == PermissionTier::Plan {
+            return false;
+        }
+        let Some(command) = Self::command_of(args_json) else {
+            return false;
+        };
+        if matches!(
+            self.git_policy_hit(&command),
+            GitPolicyHit::ConfirmAlways(_) | GitPolicyHit::ConfirmExemptible(_)
+        ) {
+            return false;
+        }
+        matches!(
+            self.judge(name, args_json),
+            GateVerdict::Suspend {
+                fence_reason: Some(_),
+                external_dir: None,
+                plan_scope: None,
+            }
+        )
     }
 
     /// 从参数 JSON 中提取 command 字段（围栏判定的输入）。
@@ -1127,6 +1198,20 @@ impl ToolGate for ApprovalGate {
                 }
                 FenceVerdict::Allow => {}
             }
+        }
+        // (2a) 审计放行单槽（36 号票，§8.7/§5.4 执行绑定）：灰区命令审计
+        // Allow 的签名在恢复重放时于此命中并放行（消费即清）。检查点置于
+        // 全部硬拒面之后（0 内部状态 / 0.5 外部目录 / 0.6 git 策略 Block /
+        // 2 黑名单围栏 Block）：审计放行不可豁免任何硬拦与权限撤销重查；
+        // 置于 git 策略确认（1.5）之后无害——能进槽的签名在审计资格判定时
+        // 已排除 git 策略确认类（audit_class 同输入确定性重判一致），重放
+        // 不会误豁免恒确认面。检查点返回 Allow 即消除本次判定的全部灰区
+        // 待决（围栏 Confirm 与矩阵 NeedsApproval——与人工批准签名放行
+        // 的一次交互覆盖语义一致）；矩阵 NeedsApproval（权限档人批）对灰区
+        // 命令不可达：围栏 Confirm 挂起先于矩阵返回，恢复重放走不到矩阵；
+        // 无围栏待决的命令审批不产生审计槽。
+        if self.consume_audit_grant(name, args_json) {
+            return GateVerdict::Allow;
         }
         // (3) 计划硬门（25 号票，FR-06-02 严格模式，§8.6）：开关开启且无
         // 已批准计划 → FileWrite/Network 直接硬拦回喂（提示先建计划并等
