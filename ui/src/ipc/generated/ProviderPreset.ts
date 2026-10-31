@@ -27,7 +27,7 @@ baseUrl: string,
  */
 models: Array<PresetModel>, 
 /**
- * 本地服务标记（FR-02-04，19 号票）：true = 本机推理端点——免 API
+ * 本地服务标记：true = 本机推理端点——免 API
  * Key（resolve_model 允许无 Key，本地服务不校验凭据）、离线可用；
  * 设置页标注"本地 / 离线可用"并隐藏 Key 输入。
  */

@@ -2,6 +2,6 @@
 import type { AppConfig } from "./AppConfig";
 
 /**
- * `save_config` 参数契约（§3.3 #7；文档命名锚点，命令形参按字段平铺展开）。
+ * `save_config` 参数契约（文档命名锚点，命令形参按字段平铺展开）。
  */
 export type SaveConfigArgs = { config: AppConfig, };

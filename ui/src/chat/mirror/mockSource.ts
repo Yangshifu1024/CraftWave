@@ -16,7 +16,7 @@ type DistributiveOmit<T, K extends keyof never> = T extends unknown ? Omit<T, K>
 type FrameInput = DistributiveOmit<MirrorFrame, "seq">;
 
 /**
- * 验证剧本（覆盖票面全部判定点）：
+ * 验证剧本（覆盖全部判定点）：
  * 1. 正文流式；
  * 2. read_workspace_file：参数分 3 段增量到达，前两段为半截 JSON → 「参数准备中」；
  * 3. 参数到齐但结果未到 → 「运行中」；

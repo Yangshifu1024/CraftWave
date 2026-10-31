@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 /**
- * 滚动锚点测试（29 号票，FR-01-11 收口）：锚点纯几何（computeAnchor/
+ * 滚动锚点测试：锚点纯几何（computeAnchor/
  * resolveScrollTop）、ui-state 载入清洗（sanitizeScrollAnchors）、
  * DOM 落位（collectAnchorElements/applyAnchor——锚点失效回底部）。
  */
@@ -22,7 +22,7 @@ const ELEMENTS: AnchorElement[] = [
   { messageId: "m3", top: 1200 },
 ];
 
-describe("scroll-anchor（29 号票）", () => {
+describe("scroll-anchor", () => {
   it("纯几何与清洗：视口顶上方最后一条 + 相对偏移、恢复几何钳 0、ui-state 载入剔除形状不符", () => {
     // ---- computeAnchor（记账几何）：表驱动口径 ----
     const cases: [number, string, number][] = [

@@ -3,12 +3,12 @@ import type { QuotaData } from "./QuotaData";
 import type { QuotaStatus } from "./QuotaStatus";
 
 /**
- * 一家供应商的额度快照行（§3.3 #53 元素 / §7.7 `quota.json` 行，同构）。
+ * 一家供应商的额度快照行（元素 / `quota.json` 行，同构）。
  *
- * `lastOkAt`（票面增补，§7.7 回写）：上次成功取数时刻——区分「刚才还好
+ * `lastOkAt`（回写增补字段）：上次成功取数时刻——区分「刚才还好
  * 好的」与「从来没成功过」；本轮成功即本轮时刻，失败行带历史值，从未成功
  * 恒 None。失败行**保留历史 data**（最近一次成功的明细）：断网/失效后
- * 前端仍能显示最近快照，以 `lastOkAt` 标注数据时点（FR-02-15 离线兜底）。
+ * 前端仍能显示最近快照，以 `lastOkAt` 标注数据时点（离线兜底）。
  */
 export type QuotaSnapshot = { 
 /**

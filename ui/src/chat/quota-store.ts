@@ -1,14 +1,14 @@
 /**
- * 配额快照 store（21 号票，FR-02-15 Inspector 配额卡数据面）。
+ * 配额快照 store（Inspector 配额卡数据面）。
  *
- * 数据源 = `quota_snapshots`（§3.3 #53，后端并发实时拉取 + quota.json 离线
- * 兜底面）。刷新策略（FR-02-15 逐字）在 QuotaPanel 编排：配额页可见时每
+ * 数据源 = `quota_snapshots`（后端并发实时拉取 + quota.json 离线
+ * 兜底面）。刷新策略在 QuotaPanel 编排：配额页可见时每
  * 5 分钟周期 + 手动刷新按钮 + 切换 provider 即时；不可见即停（visible 门
  * 控，条件渲染卸载即清理定时器）。
  *
  * 本模块另承载「当前会话所用 provider」的解析（纯函数，测试锚点）：
  * 会话覆盖模型（session-model store，Ctrl+L 选择）> 全局 activeModelId →
- * 按 models 归属供应商；与后端 §11.1 的模型解析优先级一致。
+ * 按 models 归属供应商；与后端的模型解析优先级一致。
  */
 
 import { create } from "zustand";
@@ -20,8 +20,8 @@ export interface QuotaStore {
   /** 最近一次快照（null = 尚未加载；加载失败保留旧值做兜底显示）。 */
   rows: QuotaSnapshot[] | null;
   loading: boolean;
-  /** 拉取快照（周期/手动/切 provider 共用同一入口）。失败静默（FR-02-15
-   *  「查询失败静默降级」：不弹错，行面由后端六态表达）。 */
+  /** 拉取快照（周期/手动/切 provider 共用同一入口）。失败静默
+   *  （「查询失败静默降级」：不弹错，行面由后端六态表达）。 */
   load: () => Promise<void>;
 }
 
@@ -42,11 +42,11 @@ export const useQuotaStore = create<QuotaStore>((set) => ({
   },
 }));
 
-/** 配额自动刷新周期（FR-02-15：配额页可见时每 5 分钟）。 */
+/** 配额自动刷新周期（配额页可见时每 5 分钟）。 */
 export const QUOTA_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 
 /**
- * 解析「当前会话所用 provider」（票面首屏口径）：会话覆盖模型 > 全局
+ * 解析「当前会话所用 provider」（首屏口径）：会话覆盖模型 > 全局
  * activeModelId → 找 models 里含该 modelId 的供应商；都缺省/悬空 → None。
  */
 export function providerOfModel(

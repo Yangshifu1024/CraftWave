@@ -2,6 +2,6 @@
 import type { JsonValue } from "./serde_json/JsonValue";
 
 /**
- * `set_ui_state` 参数契约（§3.3 #31：`{ state: unknown }`）。
+ * `set_ui_state` 参数契约（`{ state: unknown }`）。
  */
 export type SetUiStateArgs = { state: JsonValue, };

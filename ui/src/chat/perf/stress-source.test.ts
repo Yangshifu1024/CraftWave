@@ -4,17 +4,17 @@ import { entriesToExported } from "../tree-persistence";
 import { buildStressEntries, STRESS_MESSAGE_COUNT, STRESS_SESSION_ID } from "./stress-source";
 
 /**
- * 压测数据源的结构不变量（34 号票 NFR-03 harness）：
- * 合成会话必须与真实会话条目契约同构，且覆盖票面点名的四类渲染负载
+ * 压测数据源的结构不变量（压测 harness）：
+ * 合成会话必须与真实会话条目契约同构，且覆盖四类渲染负载
  * （runMarker 分组 / 工具卡 / 长文本 / 图片 part）与压缩边界投影。
  * 这些不变量守住「压测压的是真实管线」——数据形状漂移即红。
  */
 
-describe("buildStressEntries（34 号票压测源冒烟）", () => {
+describe("buildStressEntries（压测源冒烟）", () => {
   const dataset = buildStressEntries();
 
   it("默认 2000 条单链线性：parentId 依次相接、meta.activeLeafId 指向链尾、覆盖四类渲染负载与压缩边界投影、可被收养管线还原", () => {
-    // ---- 默认生成 2000 条消息（PRD NFR-03 口径）----
+    // ---- 默认生成 2000 条消息（压测口径）----
     expect(STRESS_MESSAGE_COUNT).toBe(2000);
     expect(dataset.messageCount).toBe(2000);
     const messages = dataset.entries.filter((e): e is StoredMessageEntry => e.kind === "message");
@@ -81,7 +81,7 @@ describe("buildStressEntries（34 号票压测源冒烟）", () => {
     }
 
     // ---- 压缩边界不进消息树，作为独立投影返回且锚点真实存在 ----
-    // entries 里没有 compaction 条目（§6.3：投影面承载）
+    // entries 里没有 compaction 条目（投影面承载）
     expect(dataset.entries.some((e) => e.kind === "compaction")).toBe(false);
     expect(dataset.compactions.length).toBeGreaterThanOrEqual(3);
     const allIds = new Set(dataset.entries.map((e) => ("id" in e ? e.id : "")));

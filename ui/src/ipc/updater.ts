@@ -1,5 +1,5 @@
 /**
- * 应用内更新编排层（33 号票，FR-16-03/§12.4 更新器骨架）。
+ * 应用内更新编排层。
  *
  * 职责边界：更新本体（检查/下载/安装/重启）直用官方插件 JS API——
  * `@tauri-apps/plugin-updater` 的 check/downloadAndInstall（实际下载与
@@ -13,7 +13,7 @@
  * 3. 启动静默检查的间隔判定纯函数（shouldSilentCheck）与安装门前置
  *    （updatePrecheck IPC 命令在 client.ts，本文件编排调用）。
  *
- * 禁用兜底（票内 Answer）：tauri.conf.json 的 updater pubkey 为占位空串
+ * 禁用兜底（已定案）：tauri.conf.json 的 updater pubkey 为占位空串
  * （HITL 密钥未配）期间 check 必败——入口以 update_status.pubkeyConfigured
  * + config.update.enabled 双门禁用，不依赖 check 失败兜底。
  */
@@ -120,7 +120,7 @@ export async function relaunchForUpdate(): Promise<void> {
 
 /**
  * 启动静默检查的间隔判定（纯函数，vitest 表驱动）：`enabled` 关闭恒 false
- *（NFR-11：不发起任何更新外联）；无记账（lastUpdateCheckAt 缺省 0）视为
+ *（不发起任何更新外联）；无记账（lastUpdateCheckAt 缺省 0）视为
  * 从未检查过 → 检查；距上次检查不足 intervalHours 小时不重复检查。
  * 时钟全部由入参注入（now/lastCheckAt 均为 Unix 毫秒），测试无真实时钟依赖。
  */

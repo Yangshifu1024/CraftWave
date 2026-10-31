@@ -3,8 +3,8 @@ import type { RunSnapshotStatus } from "./RunSnapshotStatus";
 import type { UsageTotal } from "./UsageTotal";
 
 /**
- * §3.2 RunSnapshot（session_run_snapshot 返回与 runSnapshot 摘要帧负载，
- * FR-03-08 对账用，05 号票实装）。
+ * RunSnapshot（session_run_snapshot 返回与 runSnapshot 摘要帧负载，
+ * 前后端状态对账用）。
  */
 export type RunSnapshot = { 
 /**
@@ -12,7 +12,7 @@ export type RunSnapshot = {
  */
 status: RunSnapshotStatus, 
 /**
- * 本次 run 的唯一标识（§3.2 可选字段——idle 形态省略）。
+ * 本次 run 的唯一标识（可选字段——idle 形态省略）。
  */
 runId?: string, 
 /**

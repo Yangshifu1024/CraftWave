@@ -2,6 +2,6 @@
 import type { ReadRange } from "./ReadRange";
 
 /**
- * `read_workspace_file` 参数契约（§3.3 #28：range 按行翻页）。
+ * `read_workspace_file` 参数契约（range 按行翻页）。
  */
 export type ReadWorkspaceFileArgs = { sessionId: string, path: string, range?: ReadRange, };

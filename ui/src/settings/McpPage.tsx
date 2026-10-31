@@ -1,5 +1,5 @@
 /**
- * 设置页 MCP 管理组（§10.7，08 号票）：双作用域服务器管理。
+ * 设置页 MCP 管理组：双作用域服务器管理。
  *
  * 三个区块：
  *  - 服务器：配置合并视图（global + project 同名覆盖）逐行展示——名称 /
@@ -13,12 +13,12 @@
  *  - 测试连接：按草稿条目调 mcp_test（initialize + tools/list，总预算
  *    60 秒；不进池、不写信任）。
  *
- * 草稿态说明（票内定案）：mcp.json 不属 AppConfig（无 mcp 段），保存走
+ * 草稿态说明：mcp.json 不属 AppConfig（无 mcp 段），保存走
  * 独立的 mcp_save_config 命令、生命周期独立于设置页 saveAll——草稿态放
  * 组件内 useState，不入 stores/settings.ts（那里管 AppConfig 草稿与基线
- * 差集，混入会破坏「脏判定切片」模型；票面原文的落点在票内决议记录）。
+ * 差集，混入会破坏「脏判定切片」模型）。
  *
- * 事件消费：mcp:status 事件在本组件订阅（§3.5 M2 键）——设置页打开期间
+ * 事件消费：mcp:status 事件在本组件订阅——设置页打开期间
  * 连接状态迁移（starting/ready/stopped/error）实时刷新对应服务器行的
  * 状态徽标，无需轮询。
  */
@@ -58,7 +58,7 @@ const SCOPE_LABEL_KEYS: Record<McpScope, string> = {
   project: "settings.scopeProject",
 };
 
-/** 连接状态徽标（§3.5 四态 + idle=池无条目）的文案与配色。 */
+/** 连接状态徽标（四态 + idle=池无条目）的文案与配色。 */
 const STATE_LABEL: Record<string, string> = {
   idle: "settings.connIdle",
   starting: "settings.connStarting",
@@ -97,7 +97,7 @@ function mergeRows(config: McpListConfigResult): { name: string; scope: McpScope
     }
   }
   for (const [name] of Object.entries(config.project.mcpServers ?? {})) {
-    // 同名覆盖：项目条目压掉全局行（FR-08-02）
+    // 同名覆盖：项目条目压掉全局行
     if (seen.has(name)) {
       const idx = rows.findIndex((r) => r.name === name);
       if (idx >= 0) rows[idx] = { name, scope: "project" };
@@ -127,7 +127,7 @@ export function McpPage() {
   const [busyName, setBusyName] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  // 配置编辑草稿：作用域 → 文本（组件内草稿，票内决议记录）
+  // 配置编辑草稿：作用域 → 文本（组件内草稿）
   const [editScope, setEditScope] = useState<McpScope>("global");
   const [drafts, setDrafts] = useState<Partial<Record<McpScope, string>>>({});
   const [saveError, setSaveError] = useState<string | null>(null);

@@ -1,5 +1,5 @@
 /**
- * dialogs 域字典（31 号票）：询问/审批面板（AskPanel 五形态——question/
+ * dialogs 域字典：询问/审批面板（AskPanel 五形态——question/
  * approval/mcpTrust/projectTrust/externalDir）的全部用户可见文案。选项按钮
  * label 来自后端载荷（opt.label，不前端翻译——后端按 ai_language 口径），
  * 前端只承载表单 chrome 文案。

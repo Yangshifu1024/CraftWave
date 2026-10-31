@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 /**
- * Inspector「授权」页测试（24 号票，§9.9 撤销 UI 的会话面）：当前会话
+ * Inspector「授权」页测试（撤销 UI 的会话面）：当前会话
  * 已授权外部目录列表渲染 + 移除授权（revokeExternalDir 载荷 + 刷新）。
  * 精简版：列表/撤销/空态合并为代表例。
  */
@@ -54,7 +54,7 @@ function renderPanel() {
   );
 }
 
-describe("ExternalGrantsPanel（24 号票，§9.9）", () => {
+describe("ExternalGrantsPanel", () => {
   it("授权列表渲染、移除授权载荷（sessionId, dir）+ 刷新、无授权空态", async () => {
     // 每行一个目录 + 移除按钮 + 粒度说明
     useSessionsStore.setState({ refresh: refreshMock });

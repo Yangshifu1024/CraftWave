@@ -1,5 +1,5 @@
 /**
- * Inspector「授权」页（24 号票，§9.9 撤销 UI 的会话面）：当前会话已授权
+ * Inspector「授权」页（撤销 UI 的会话面）：当前会话已授权
  * 的外部目录列表（SessionMeta.authorizedExternalDirs，会话 roots 快照）
  * + 行内「移除授权」按钮（revoke_external_dir，移除后下次访问重新询问）。
  *

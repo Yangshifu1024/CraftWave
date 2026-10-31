@@ -8,7 +8,7 @@ import { t } from "@/i18n/core";
 import { Dialog, type DialogActionItem } from "./dialog";
 
 /** ConfirmDialog 的 props：open 是否显示；title 标题；description 补充说明；
- *  extra 说明之后的附加内容（33 号票 Q43：删除会话确认弹窗的备份目录入口
+ *  extra 说明之后的附加内容（如删除会话确认弹窗的备份目录入口
  *  按钮承载位）；confirmLabel 确认按钮文案；onConfirm/onCancel 两个回调。 */
 export interface ConfirmDialogProps {
   open: boolean;

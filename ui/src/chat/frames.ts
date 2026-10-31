@@ -1,17 +1,17 @@
 /**
- * 帧消费层（§3.4 帧 + §10.2 累积器语义）。
+ * 帧消费层（帧契约 + 累积器语义）。
  *
- * SequencedFrame 契约类型的单一来源是 ts-rs 生成物（02 号票：Rust backend/frames.rs
- * derive(TS) → ipc/generated/，本文件 re-export 保持既有引用不破坏）。技术设计
- * 文档 §10.2：channel.onmessage 把帧推入 FrameBuffer，消费侧以 64ms 节流快照
+ * SequencedFrame 契约类型的单一来源是 ts-rs 生成物（Rust backend/frames.rs
+ * derive(TS) → ipc/generated/，本文件 re-export 保持既有引用不破坏）。
+ * channel.onmessage 把帧推入 FrameBuffer，消费侧以 64ms 节流快照
  * 迭代器取全量累计快照 yield 给 assistant-ui（替换语义）。本文件同时承担
- * NFR-02 前端侧延迟埋点（帧到达 → 快照产出）。
+ * 前端侧延迟埋点（帧到达 → 快照产出）。
  */
 import type { SequencedFrame } from "@/ipc/generated/SequencedFrame";
 
 export type { SequencedFrame };
 
-/** 一次工具调用的累积态（镜像工具卡渲染面，§10.3）。 */
+/** 一次工具调用的累积态（镜像工具卡渲染面）。 */
 export interface ToolCallState {
   callId: string;
   name: string;
@@ -55,11 +55,11 @@ export interface FrameSnapshot {
   };
   /** runStarted 帧信息（帧到达前为 null）。 */
   run: RunInfo | null;
-  /** usage 帧累计（§10.5 runMetrics 口径：运行内累计）。 */
+  /** usage 帧累计（runMetrics 口径：运行内累计）。 */
   usage: { input: number; output: number; cacheRead: number; cacheWrite: number };
   /** 最近一次 usage 帧的输出速率（tok/s；无则 null）。 */
   rate: number | null;
-  /** compactDone 帧（§3.4【M2】，04 号票：通知面透传，不进打字机内容面——
+  /** compactDone 帧（通知面透传，不进打字机内容面——
    *  压缩边界与前后上下文占用估算；本 run 未发生压缩时为 null）。 */
   compaction: null | { cutEntryId: string; tokensBefore: number; tokensAfter: number };
   /**
@@ -70,7 +70,7 @@ export interface FrameSnapshot {
   thinking: { startedAt: number; endedAt: number | null } | null;
 }
 
-/** 单帧到达的埋点记录（NFR-02 前端侧）。 */
+/** 单帧到达的埋点记录（前端侧延迟埋点）。 */
 export interface FrameArrival {
   seq: number;
   /** 帧离开 Rust 侧的时刻（帧负载 ts；缺省 0）。 */
@@ -80,7 +80,7 @@ export interface FrameArrival {
 }
 
 /**
- * 帧累积器：parts 数组 + 乱序丢弃（§5.6 runEpoch 语义）+ 埋点。
+ * 帧累积器：parts 数组 + 乱序丢弃（帧序自愈语义）+ 埋点。
  */
 export class FrameBuffer {
   /** 内容时间线：text/reasoning 增量续接同类末段或新开段，工具按 toolStarted 位置入列。 */
@@ -112,7 +112,7 @@ export class FrameBuffer {
    * 每帧同时记录到达时刻埋点（供延迟统计）。
    */
   push(frame: SequencedFrame): void {
-    // §5.6：前端持有 runEpoch，seq 必须 > 已见最大，否则丢弃
+    // 帧序自愈：seq 必须 > 已见最大，否则丢弃
     if (frame.seq <= this.maxSeq) {
       this.droppedSeq += 1;
       return;
@@ -165,7 +165,7 @@ export class FrameBuffer {
         break;
       }
       case "compactDone":
-        // 通知面透传（§3.4【M2】：不进打字机内容面，指示/审计用）
+        // 通知面透传（不进打字机内容面，指示/审计用）
         this.compaction = {
           cutEntryId: frame.cutEntryId,
           tokensBefore: frame.tokensBefore,
@@ -232,7 +232,7 @@ export class FrameBuffer {
   }
 
   /**
-   * 64ms 节流快照迭代器（§10.2）：帧推送由外部 onmessage 驱动，本迭代器
+   * 64ms 节流快照迭代器：帧推送由外部 onmessage 驱动，本迭代器
    * 每 intervalMs 产出一个全量快照，直到 runEnded 且窗口排空。
    */
   async *snapshots(intervalMs = 64): AsyncGenerator<FrameSnapshot> {
@@ -249,7 +249,7 @@ export class FrameBuffer {
   }
 }
 
-// ---- toParts：快照 → assistant-ui content parts（§10.2/§10.3，adapter 直写 result） ----
+// ---- toParts：快照 → assistant-ui content parts（adapter 直写 result） ----
 
 import type { ToolCallMessagePart } from "@assistant-ui/react";
 

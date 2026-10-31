@@ -1,16 +1,16 @@
 /**
- * 会话工作区（16 号票 FR-01-01/02 + 17 号票三栏 FR-13-01）：
+ * 会话工作区（三栏布局：左栏会话树 / 中部会话区 / 右栏 Inspector）：
  *
  * - 背景一体化：窗口/左栏/右栏同底色；会话区承载在四周留缝的四角圆角
  *   卡上，卡头显示项目/标题并放右栏折叠钮（Tab 条已移除——会话切换由
  *   左栏承担；左栏常开，顶条只为交通灯让位）；
  * - 左栏：临时会话区 + 项目分组会话树、新建（临时会话/项目/项目下会话）、
  *   标题本地过滤、重命名/删除、项目删除（名下会话转临时）、项目改名
- *   （16 号票 shortcut，17 号票收敛）；宽度可拖（min=初始宽，max=半屏）；
+ *   （快捷菜单承载）；宽度可拖（min=初始宽，max=半屏）；
  * - 会话面：每会话一个 keep-mounted SessionTab（独立 runtime/草稿/运行态/
  *   滚动锚点；非活跃仅隐藏，run 帧照收）；
- * - 右栏 Inspector（可折叠，开合入 ui-state，FR-13-01；宽度可拖）；
- * - 宿主事件接线（17 号票）：app:exit_requested 退出确认（resolve_exit_request
+ * - 右栏 Inspector（可折叠，开合入 ui-state；宽度可拖）；
+ * - 宿主事件接线：app:exit_requested 退出确认（resolve_exit_request
  *   回执）、notify:activate 通知点击路由到对应会话。
  */
 
@@ -108,11 +108,11 @@ export function SessionWorkspace() {
   const activeId = useSessionsStore((s) => s.activeId);
   const inspectorOpen = useSessionsStore((s) => s.inspectorOpen);
   const setInspectorOpen = useSessionsStore((s) => s.setInspectorOpen);
-  // 首启引导状态（30 号票，ui-state.onboarding）：null = 无记录（全新数据目录）
+  // 首启引导状态（ui-state.onboarding）：null = 无记录（全新数据目录）
   const onboarding = useSessionsStore((s) => s.onboarding);
-  // 设置页浮层（17 号后从 App 顶层挪入工作区；入口在左栏底部）
+  // 设置页浮层（从 App 顶层挪入工作区；入口在左栏底部）
   const [settingsPage, setSettingsPage] = useState<PageKey | null>(null);
-  // 首启引导向导浮层（30 号票）：null = 关闭；数字 = 打开时的起始步序
+  // 首启引导向导浮层：null = 关闭；数字 = 打开时的起始步序
   // （覆盖层可随时关闭，主界面在底层已可用——不阻塞临时会话直接开聊）
   const [wizardStep, setWizardStep] = useState<number | null>(null);
   // 侧栏宽度为局部态不落盘（重启回初始宽；持久化的是开合状态）
@@ -128,7 +128,7 @@ export function SessionWorkspace() {
       .catch((err) => console.error("[sessions] 启动恢复失败", err));
   }, []);
 
-  // 首启自动弹（30 号票）：恢复会话列表（含 get_ui_state 的 onboarding 记录）
+  // 首启自动弹：恢复会话列表（含 get_ui_state 的 onboarding 记录）
   // 之后判定一次——无记录（全新数据目录）→ 自动弹向导；completed=false 不自动
   // 弹（走「继续配置」横幅）；completed=true 什么都不做。只判一次（关闭后
   // 不因状态变化重弹；再次进入经横幅手动打开）。
@@ -172,7 +172,7 @@ export function SessionWorkspace() {
       />
       {/* 会话区大圆角卡：上下与窗口边缘留缝（py-2），左右紧贴拖宽手柄 */}
       <div className="flex min-w-0 flex-1 flex-col py-2">
-        {/* 「继续初始配置」横幅（30 号票）：初始配置未完成时常驻卡头上方，
+        {/* 「继续初始配置」横幅：初始配置未完成时常驻卡头上方，
             点击从记录步续走向导；完成后随 completed=true 消失 */}
         <OnboardingResumeBanner
           state={onboarding}
@@ -227,7 +227,7 @@ export function SessionWorkspace() {
           )}
           {/* Inspector 只依赖会话域（scope/metrics/plan store），提升到
               工作区挂载以便拖宽手柄同层排布；随 activeId 取数即随 Tab 切换。
-              onOpenSettings：配额卡 no_key 行「去设置」（21 号票）。 */}
+              onOpenSettings：配额卡 no_key 行「去设置」。 */}
           <SessionScopeContext.Provider value={activeId}>
             <Inspector
               width={rightWidth}
@@ -242,7 +242,7 @@ export function SessionWorkspace() {
       {settingsPage && (
         <SettingsPage initialPage={settingsPage} onClose={() => setSettingsPage(null)} />
       )}
-      {/* 首启引导向导（30 号票）：条件渲染挂载，每次打开全新起算；
+      {/* 首启引导向导：条件渲染挂载，每次打开全新起算；
           覆盖层在最上层但可随时关闭，不阻塞底层主界面的临时会话 */}
       {wizardStep !== null && (
         <OnboardingWizard initialStep={wizardStep} onClose={() => setWizardStep(null)} />
@@ -251,7 +251,7 @@ export function SessionWorkspace() {
   );
 }
 
-/** 宿主事件接线（17 号票）：退出确认 + 通知点击路由（§9.6）。 */
+/** 宿主事件接线：退出确认 + 通知点击路由。 */
 function useHostEvents(): { exitDialog: React.ReactNode } {
   const [exitConfirm, setExitConfirm] = useState(false);
   const openTab = useSessionsStore((s) => s.openTab);
@@ -288,7 +288,7 @@ function useHostEvents(): { exitDialog: React.ReactNode } {
   };
 }
 
-/** 退出确认框（§9.6：存在活跃 run 的退出请求）。 */
+/** 退出确认框（存在活跃 run 的退出请求）。 */
 function ExitConfirmDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const t = useT();
   return (
@@ -317,17 +317,17 @@ function SessionTab({
   onOpenSettings: () => void;
 }) {
   const adapter = useMemo(() => sessionAdapter(sessionId), [sessionId]);
-  // 消息队列已迁移到后端（06 号票，§5.5）：运行中 Enter=steer 插话、
+  // 消息队列已迁移到后端：运行中 Enter=steer 插话、
   // Alt+Enter=followUp 排队（后端 queue.json 持久化 + run 正常完成后自动
   // 投递）——M1 的 unstable_enableMessageQueue 前端队列撤除，避免与后端
   // 队列双轨重复投递。
   const runtime = useLocalRuntime(adapter);
-  // run 收口摘要（17 号票折叠分组数据面）：历史收养后按 runMarker 推导
+  // run 收口摘要（折叠分组数据面）：历史收养后按 runMarker 推导
   const [summaries, setSummaries] = useState<Map<string, RunSummary>>(() => new Map());
   // 本 Tab 容器（滚动锚点的 DOM 探测边界：多 Tab keep-mounted，查询必须
   // 限定在各自容器内）
   const containerRef = useRef<HTMLDivElement | null>(null);
-  // 滚动锚点恢复信号（29 号票）：仅挂载后首次历史收养 bump——后续树重载
+  // 滚动锚点恢复信号：仅挂载后首次历史收养 bump——后续树重载
   // （观察态收口等）不拉扯用户当前滚动位置
   const [anchorRestoreTick, setAnchorRestoreTick] = useState(0);
   const firstAdopt = useRef(true);
@@ -336,14 +336,14 @@ function SessionTab({
     async (tree: NonNullable<Awaited<ReturnType<typeof loadHistory>>>) => {
       runtime.thread.import(loadedTreeToExported(tree));
       setSummaries(deriveRunSummaries(tree.messages));
-      // 压缩边界投影（04 号票，§6.3：compaction 条目不进树，store 承载）
+      // 压缩边界投影（compaction 条目不进树，store 承载）
       useCompactionStore.getState().setCompactions(sessionId, tree.compactions ?? []);
-      // steer 插话节点收养剔除（06 号票，§5.5）：树内已有同 id 的普通 user
+      // steer 插话节点收养剔除：树内已有同 id 的普通 user
       // 消息，本地「插话」节点任务完成
       useFollowUpStore
         .getState()
         .dropSteerNodes(sessionId, new Set(tree.messages.map((m) => m.id)));
-      // 挂载后首次历史就位：通知滚动锚点恢复（29 号票 FR-01-11——按
+      // 挂载后首次历史就位：通知滚动锚点恢复（按
       // leafId 定位回上次位置；切 Tab 的恢复由 Keeper 的 active 沿承担）
       if (firstAdopt.current) {
         firstAdopt.current = false;
@@ -363,7 +363,7 @@ function SessionTab({
         console.warn("[session] 历史收养失败（以空会话继续）", err);
       }
     })();
-    // 重连观察态（05 号票，§5.8）：WebView 重载/崩溃后 Rust run 仍存活时
+    // 重连观察态：WebView 重载/崩溃后 Rust run 仍存活时
     // 恢复实时流——快照 running → attach 重放续流；runEnded（或无帧兜底）
     // 收口后经本回调重载 canonical 树（含观察期间落盘的全部产物）
     void reconnectIfNeeded(sessionId, {
@@ -380,13 +380,13 @@ function SessionTab({
       cancelled = true;
     };
   }, [sessionId, adoptTree]);
-  // 会话偏好恢复（18 号票，FR-14-05）：进入会话 get_session_prefs → 回填
+  // 会话偏好恢复：进入会话 get_session_prefs → 回填
   // 模型覆盖与 thinking 档两个内存态 store（选模型 + 切档跨重启还原）。
   // 恢复走 store 纯方法（session-prefs 内部已处理），读失败静默按空偏好。
   useEffect(() => {
     void restoreSessionPrefs(sessionId);
   }, [sessionId]);
-  // Ctrl+L 模型快速切换（FR-13-05，18 号票）：仅活跃 Tab 响应（多 Tab
+  // Ctrl+L 模型快速切换：仅活跃 Tab 响应（多 Tab
   // keep-mounted，非活跃 handler 直接放行不拦截）——经 openRequest store
   // 唤起本会话 Composer 的 ModelPicker 下拉。
   useEffect(() => {
@@ -426,7 +426,7 @@ function SessionTab({
 }
 
 /**
- * 滚动锚点挂件（29 号票，FR-01-11 收口）：记账 + 恢复两面。
+ * 滚动锚点挂件：记账 + 恢复两面。
  *
  * - 记账：容器 scroll 事件（捕获——Viewport 在深层）防抖 300ms 后算锚点
  *   写 sessions store（随既有 ui-state 300ms 防抖落盘）；运行中
@@ -513,7 +513,7 @@ function RunningReporter({ sessionId }: { sessionId: string }) {
   return null;
 }
 
-/** 草稿恢复（§10.6，17 号票）：挂载时把 ui-state 里的本会话草稿写回输入框
+/** 草稿恢复：挂载时把 ui-state 里的本会话草稿写回输入框
  *  一次（此后 composer-keys 的记账接管——恢复写入同样幂等记账）。 */
 function DraftRestorer({ sessionId }: { sessionId: string }) {
   const aui = useAui();
@@ -526,7 +526,7 @@ function DraftRestorer({ sessionId }: { sessionId: string }) {
   return null;
 }
 
-/** 左栏（§10.7）：顶部条（交通灯让位，常驻）+ 搜索 + 临时会话区 +
+/** 左栏：顶部条（交通灯让位，常驻）+ 搜索 + 临时会话区 +
  *  项目分组会话树；底部「设置/用量」双入口各占一半宽度。与窗口背景
  *  一体化（无底色无边框）。宽度受控（拖宽手柄，min=初始宽 max=半屏），
  *  拖动时过渡关闭保证跟手。 */
@@ -582,8 +582,8 @@ function Sidebar({
       : menu.kind === "session"
         ? [
             { label: t("workspace.rename"), onSelect: () => setRenamingId(menu.id) },
-            // 导出（27 号票，FR-01-12）：左栏会话行 context-menu 下载入口
-            //（纯前端序列化）；成功/失败经顶部 Toast 反馈（29 号票收敛——
+            // 导出：左栏会话行 context-menu 下载入口
+            //（纯前端序列化）；成功/失败经顶部 Toast 反馈（
             // 失败不再只有 console）
             {
               label: t("workspace.exportMarkdown"),
@@ -787,7 +787,7 @@ function Sidebar({
         }
         extra={
           confirm?.kind === "session" ? (
-            // Q43/ADR-0003：删除确认说明历史升级备份可能仍含已删除内容
+            // 删除确认说明历史升级备份可能仍含已删除内容
             //（恢复会回到旧时点），并提供备份目录入口供用户自行管理——
             // 不宣称删除已擦除所有历史副本
             <div className="mt-3 rounded-lg border border-[var(--border)] bg-[var(--muted)]/50 p-3 text-ui-sm">
@@ -959,9 +959,9 @@ async function deleteSessionAndClose(sessionId: string): Promise<void> {
   useCompactionStore.getState().forgetSession(sessionId);
   useRunReconnectStore.getState().forgetSession(sessionId);
   useFollowUpStore.getState().forgetSession(sessionId);
-  // 滚动锚点随会话删除清理（29 号票）
+  // 滚动锚点随会话删除清理
   useSessionsStore.getState().forgetScrollAnchor(sessionId);
-  // 用量面收尾（20 号票）：旧数据标量回落桶摘除（明细以后端删除为准）
+  // 用量面收尾：旧数据标量回落桶摘除（明细以后端删除为准）
   useUsageStatsStore.getState().forgetSession(sessionId);
   await useSessionsStore.getState().refresh();
 }
@@ -1221,7 +1221,7 @@ export function MarqueeTitle({ text }: { text: string }) {
 }
 
 /** 相对时间（A6）：<1 分钟「刚刚」；当天「N 小时」；7 天内「N 天」；更早 MM-DD。
- *  非组件纯函数：经模块级 t() 查词（31 号票 i18n）。 */
+ *  非组件纯函数：经模块级 t() 查词。 */
 function relativeTime(updatedAt: number): string {
   const diffMs = Date.now() - updatedAt;
   const minutes = Math.floor(diffMs / 60000);

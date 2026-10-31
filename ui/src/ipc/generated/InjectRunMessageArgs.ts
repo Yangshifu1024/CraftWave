@@ -4,7 +4,7 @@ import type { QueuedImageAttachment } from "./QueuedImageAttachment";
 import type { RunConfig } from "./RunConfig";
 
 /**
- * `inject_run_message` 参数契约（§3.3 #21，06 号票改写；17 号票增
+ * `inject_run_message` 参数契约（改写；增
  * `attachments`）。
  */
 export type InjectRunMessageArgs = { sessionId: string, text: string, 
@@ -18,7 +18,7 @@ mode?: InjectMode,
  */
 runConfig?: RunConfig, 
 /**
- * 图片附件引用（17 号票，§3.3 #21 增补）：非空时**不入 steer**——按
- * §5.5「带图消息进 followUp」转会话级队列（引用已在 attach_image 落盘）。
+ * 图片附件引用：非空时**不入 steer**——按
+ * 带图消息规则转会话级 followUp 队列（引用已在 attach_image 落盘）。
  */
 attachments?: Array<QueuedImageAttachment>, };

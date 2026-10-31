@@ -1,10 +1,10 @@
 /**
- * 会话模型选择（FR-13-05 Ctrl+L，18 号票完成持久化收尾）：每会话一份
+ * 会话模型选择（Ctrl+L）：每会话一份
  * 内存态覆盖——发送时经 sessionAdapter 的惰性 runConfig 带上 `modelId`，
- * Rust 侧按 §11.1 优先级解析（RunConfig.modelId > 全局 activeModelId）。
+ * Rust 侧按优先级解析（RunConfig.modelId > 全局 activeModelId）。
  *
- * 18 号票追加：选择即经 session-prefs 的防抖落盘（set_session_prefs，
- * FR-02-07/FR-14-05——跨重启还原）；Ctrl+L 唤起的打开信号也收在本模块
+ * 选择即经 session-prefs 的防抖落盘（set_session_prefs，
+ * 跨重启还原）；Ctrl+L 唤起的打开信号也收在本模块
  * （openFor 单字段 store，ModelPicker 订阅自己的会话 id）。
  */
 

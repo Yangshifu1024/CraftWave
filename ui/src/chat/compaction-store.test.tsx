@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 /**
- * 压缩 store 与事件桥测试（FR-03-05，04 号票）：compaction store 纯逻辑
+ * 压缩 store 与事件桥测试：compaction store 纯逻辑
  * （分桶/投影/phase）+ useBackendEvents 对 run:compacting / run:compacted /
  * run:compact_failed 三键的分发（参考 stores/ask.test.ts 的 fake listen 形态）。
  */
@@ -40,7 +40,7 @@ function fakeListen() {
   };
 }
 
-describe("compaction（04 号票）", () => {
+describe("compaction", () => {
   it("store 分桶（setCompactions/setPhase/forgetSession）+ 事件桥三键分发（指示条/Toast/收口刷新）+ 刷新失败保留旧投影", async () => {
     // ---- useCompactionStore：setCompactions / setPhase 各自写同会话桶互不覆盖 ----
     act(() => {
@@ -70,7 +70,7 @@ describe("compaction（04 号票）", () => {
     act(() => first.handlers.get("run:compacting")?.({ sessionId: "s" }));
     expect(useCompactionStore.getState().bySession.s?.phase).toBe("compacting");
 
-    // compact_failed → Toast 反馈（29 号票收敛）+ phase 复位（指示条撤除）
+    // compact_failed → Toast 反馈 + phase 复位（指示条撤除）
     act(() => first.handlers.get("run:compact_failed")?.({ sessionId: "s" }));
     expect(useCompactionStore.getState().bySession.s?.phase).toBeNull();
     const errorToast = useToastStore

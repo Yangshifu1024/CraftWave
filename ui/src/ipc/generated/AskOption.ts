@@ -2,7 +2,7 @@
 import type { AskMode } from "./AskMode";
 
 /**
- * 审批选项（§3.2 approval.options 元素）。
+ * 审批选项（approval.options 元素）。
  */
 export type AskOption = { 
 /**

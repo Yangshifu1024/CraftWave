@@ -2,6 +2,6 @@
 import type { NewProjectInput } from "./NewProjectInput";
 
 /**
- * `save_project` 参数契约（§3.3 #11：`{ project: { id?, name, homeDir } }`）。
+ * `save_project` 参数契约（`{ project: { id?, name, homeDir } }`）。
  */
 export type SaveProjectArgs = { project: NewProjectInput, };

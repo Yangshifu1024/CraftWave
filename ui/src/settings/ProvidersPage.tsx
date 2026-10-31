@@ -18,7 +18,7 @@
  *  - video 能力字段不存在，输入类型只保留 文本(锁定) + 图像(可切换)；
  *  - 推理力度含「未设置」空档（原生 select 无 allowClear）。
  *
- * 30 号票注：表单字段区、字段校验、凭据（newKey）策略、连接测试状态机与
+ * 注：表单字段区、字段校验、凭据（newKey）策略、连接测试状态机与
  * 模型编辑器已抽取为共享层 `settings/ProviderFormShared.tsx`（首启引导的
  * 供应商步复用同一份，防两处表单漂移）；本组件只保留列表/弹框编排。
  */
@@ -89,8 +89,8 @@ export function ProvidersPage() {
   const [touched, setTouched] = useState<Partial<Record<FieldKey, boolean>>>({});
   const [submitTried, setSubmitTried] = useState(false);
   const [modelEditor, setModelEditor] = useState<ModelEditorState | null>(null);
-  // 连接测试（19 号票 FR-02-09）：卡片按 providerId 一份、弹框草稿一份。
-  // 测试是探测动作不落盘——状态不入 settings 草稿（对齐 13 号票搜索连通
+  // 连接测试：卡片按 providerId 一份、弹框草稿一份。
+  // 测试是探测动作不落盘——状态不入 settings 草稿（对齐搜索连通
   // 测试的草稿试连定案）。
   const [cardTests, setCardTests] = useState<Record<string, ConnectionTestState>>({});
   const [draftTest, setDraftTest] = useState<ConnectionTestState>({ state: "idle" });
@@ -301,7 +301,7 @@ export function ProvidersPage() {
                       key="test"
                       variant="ghost"
                       size="sm"
-                      // FR-02-09 探测三方言全接通（38 号票）：连接测试与
+                      // 探测三方言全接通：连接测试与
                       // 实际对话走同一 apiFormat 选择（openai_chat 与
                       // openai_responses 同 /models + Bearer，anthropic
                       // 用 x-api-key + anthropic-version），不再限制方言
@@ -437,7 +437,7 @@ export function ProvidersPage() {
                     <p className="mb-2 text-ui-sm text-[var(--muted-foreground)]">
                       {t("settings.providerAddHint")}
                     </p>
-                    {/* 预设快捷填充（19 号票）：本地三家标注「本地 / 离线可用」，
+                    {/* 预设快捷填充：本地三家标注「本地 / 离线可用」，
                         免 API Key（选中后 Key 行替换为说明文案） */}
                     <div className="mb-4 flex flex-wrap items-center gap-1.5">
                       <span className="text-ui-sm text-[var(--cw-text-2)]">

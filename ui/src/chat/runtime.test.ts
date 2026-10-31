@@ -6,12 +6,12 @@ import { useSessionModelStore } from "./session-model";
 import { useThinkingStore } from "./thinking-level";
 
 /**
- * tauriChatModel 契约测试（§10.2 产品化）：
+ * tauriChatModel 契约测试：
  * - toWire：assistant-ui 消息 → wire 中立消息（toolCall+toolResult 拆分）；
  * - adapter：start_chat 帧流 → 64ms 快照全量 yield → runEnded 终态 status；
- *   abortSignal → cancel_run 桥（S5：fire-and-forget）；
- * - 发送参数面：发送前树同步（syncTree 收原文）、28 号票发送合成引用段、
- *   会话内存态 runConfig（17/18 号票）随发送生效。
+ *   abortSignal → cancel_run 桥（fire-and-forget）；
+ * - 发送参数面：发送前树同步（syncTree 收原文）、发送合成引用段、
+ *   会话内存态 runConfig 随发送生效。
  */
 
 /** 构造 assistant-ui 最小消息面（run({messages}) 只消费 id/role/content/createdAt）。 */
@@ -80,7 +80,7 @@ function fakeStartChat(frames: SequencedFrame[]) {
   });
 }
 
-describe("runtime（§10.2 tauriChatModel 契约）", () => {
+describe("runtime（tauriChatModel 契约）", () => {
   it("toWire：文本/思考原样，tool-call 拆为 toolCall+toolResult 双 part，isError→ok=false，空 content 兜底", () => {
     const wire = toWire([
       msg("u1", "user", [{ type: "text", text: "读一下 README" }]),
@@ -140,7 +140,7 @@ describe("runtime（§10.2 tauriChatModel 契约）", () => {
       runConfig: { tier: "autoEdit", maxTurns: 4, steer: false },
       startChat: fakeStartChat(frames),
       cancelRun: vi.fn(async () => true),
-      syncTree: async () => {}, // 15 号票：发送前树同步注入 no-op（不触 IPC）
+      syncTree: async () => {}, // 发送前树同步注入 no-op（不触 IPC）
     });
 
     const yields: { content: unknown[]; status?: unknown }[] = [];
@@ -212,7 +212,7 @@ describe("runtime（§10.2 tauriChatModel 契约）", () => {
     });
   });
 
-  it("发送参数面：失败后的新消息完整送到后端（syncTree 收原文）、发送合成引用段（28 号票）、sessionRunConfig 会话覆盖生效", async () => {
+  it("发送参数面：失败后的新消息完整送到后端（syncTree 收原文）、发送合成引用段、sessionRunConfig 会话覆盖生效", async () => {
     // ---- 失败后的新消息完整送到后端：发送前同步与实际请求保持同一条消息链 ----
     const messages = [
       msg("u1", "user", [{ type: "text", text: "检查配置" }]),
@@ -237,7 +237,7 @@ describe("runtime（§10.2 tauriChatModel 契约）", () => {
       expect.objectContaining({ messages: toWire(messages) }),
     );
 
-    // ---- 发送合成引用段（28 号票，§10.6）：wire 面最后一条 user 尾部追加
+    // ---- 发送合成引用段：wire 面最后一条 user 尾部追加
     // [引用文件] 段；树同步（syncTree）与输入框原文不受影响 ----
     const refMessages = [
       msg("u1", "user", [{ type: "text", text: '看 @src/main.rs 和 @"a b/c.md" 说明了什么' }]),
@@ -287,7 +287,7 @@ describe("runtime（§10.2 tauriChatModel 契约）", () => {
       void _;
     expect(sent[2]).toEqual(toWire(plainMessages));
 
-    // ---- sessionRunConfig：会话内存态 runConfig（17/18 号票）----
+    // ---- sessionRunConfig：会话内存态 runConfig ----
     // 全部未设置：只有 DEFAULT_RUN_CONFIG 基线（modelId/thinking 键省略）
     const base = sessionRunConfig("sess-rc");
     expect(base.modelId).toBeUndefined();

@@ -3,10 +3,10 @@ import type { SequencedFrame } from "@/ipc/types";
 import { contextProgress, useRunMetricsStore } from "./run-metrics";
 
 /**
- * runMetrics store 口径测试（§10.5 + C-9；16 号票改按会话分桶）：
+ * runMetrics store 口径测试（按会话分桶）：
  * - rate = usage 帧 rate（缺省保持上次值）；
  * - turnUsage 运行内累计、runStarted 清零、runEnded 冻结（lastRun 摘要）；
- * - sessionUsage 只增不减（M1 无后台小调用源，C-9 口径天然满足）；
+ * - sessionUsage 只增不减（无后台小调用源时口径天然满足）；
  * - 同 store 多会话桶互不串扰（跨 Tab 并行 run）——全仓该模式的完整断言保留在此。
  */
 
@@ -22,7 +22,7 @@ beforeEach(() => {
   useRunMetricsStore.setState(useRunMetricsStore.getInitialState());
 });
 
-describe("run-metrics（§10.5 + C-9）", () => {
+describe("run-metrics", () => {
   it("ingest 剧本：usage 双口径累计、runStarted 清零/冻结摘要、取消终态、多会话桶互不串扰与 forgetSession、contextProgress 折算", () => {
     const store = useRunMetricsStore.getState();
 

@@ -1,12 +1,12 @@
 /**
- * Composer 图片附件体系（FR-12-02/FR-13-16，17 号票）：附件条 UI、附件
+ * Composer 图片附件体系：附件条 UI、附件
  * 状态管理、Tauri 拖拽事件接线与 vision 拦截提示。
  *
  * 组件结构：ComposerBar（Thread.tsx）经 useComposerAttachments 挂附件状态，
  * AttachmentBar 渲染附件条（缩略图 + 尺寸 + 移除），DirectoryConfirmDialog
- * 承接「拖拽目录 → 添加为项目」确认（FR-13-16）。
+ * 承接「拖拽目录 → 添加为项目」确认。
  *
- * 拖拽通道说明（票内定案）：Tauri v2 webview 原生接管文件拖拽（wry file
+ * 拖拽通道说明（定案）：Tauri v2 webview 原生接管文件拖拽（wry file
  * drop handler），HTML5 drop 事件拿不到拖入物（File 对象/绝对路径均不可
  * 用）——拖拽统一走 `getCurrentWebview().onDragDropEvent`（绝对路径），
  * 图片经 `attach_image` 的 filePath 形态由后端读字节；粘贴（clipboardData
@@ -244,13 +244,13 @@ export function isPointInElement(el: HTMLElement | null, x: number, y: number): 
   return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
 }
 
-/** 拖入目录的「添加为项目」确认态（FR-13-16）。 */
+/** 拖入目录的「添加为项目」确认态。 */
 export interface DropDirectory {
   path: string;
   name: string;
 }
 
-/** 「添加为项目」确认弹窗（拖拽目录 → save_project 既有命令，FR-13-16）；
+/** 「添加为项目」确认弹窗（拖拽目录 → save_project 既有命令）；
  *  复用既有 Dialog 骨架（遮罩/Esc 关闭与 a11y 语义由其承担）。 */
 export function DropDirectoryDialog({
   drop,

@@ -1,5 +1,5 @@
 /**
- * run 重连观察态（§5.6 runEpoch 自愈 / §5.8 attach_run 热重连，05 号票）。
+ * run 重连观察态（帧序自愈 + attach_run 热重连）。
  *
  * 触发场景：WebView 重载/崩溃后 Rust run 仍存活——前端对运行中的 run 一无
  * 所见（帧通道已随旧 webview 消亡）。本模块在会话进入/恢复路径先调
@@ -7,15 +7,15 @@
  * `attach_run(sessionId, channel, sinceSeq=0)` 从 0 重放最多 512 帧（重放
  * 窗口耗尽时后端补 runSnapshot 摘要帧），此后续流帧经同一通道热切换到达，
  * 帧喂独立 FrameBuffer 渲染只读实时视图（不注入 assistant-ui LocalRuntime
- * ——运行态 adapter 实例已随重载消亡，M1 13/15 号票树协议不动）。
+ * ——运行态 adapter 实例已随重载消亡，树协议不动）。
  *
- * §5.6 runEpoch 自愈（前端半）：
+ * 帧序自愈（前端半）：
  * - 帧 seq 必须 > 已见最大 seq 否则丢弃（"已见最大 seq"为会话级状态，
  *   不再是 runtime.ts 里单 adapter 的局部变量）；
  * - seq 缺口（跳跃）记 console 并由无帧兜底对账收口；
  * - runEnded 帧丢失兜底：5 秒无新帧且快照 status=idle → 收口重载终态。
  *
- * 待审批恢复（§5.6，2026-10-29 用户确认）：重连时查询后端仍有效的待审批/
+ * 待审批恢复（重连时查询后端仍有效的待审批/
  * 询问请求（`session_pending_ask`），命中即恢复 AskPanel（原始操作及参数
  * 照常展示）；已失效的请求由后端 E_NOT_FOUND 拒绝（AskPanel 收到即关闭）
  * ——重载本身不代表批准或拒绝，attach 不改变 run 生命周期或审批决定。
@@ -32,7 +32,7 @@ import { applyAuditFrame } from "@/stores/audits";
 import { applySubagentFrame } from "@/stores/subagents";
 import { FrameBuffer, type FrameSnapshot } from "./frames";
 
-/** 无帧兜底窗口（§5.6 runEnded 帧丢失兜底）：5 秒无新帧且快照 status=idle
+/** 无帧兜底窗口（runEnded 帧丢失兜底）：5 秒无新帧且快照 status=idle
  *  → 重载 canonical 终态收口。 */
 export const FRAME_IDLE_TIMEOUT_MS = 5000;
 
@@ -45,7 +45,7 @@ export interface ReconnectScope {
   phase: "idle" | "observing";
   /** 观察态渲染数据（独立 FrameBuffer 的全量累计快照）。 */
   snapshot: FrameSnapshot | null;
-  /** 已见最大帧序号（§5.6 runEpoch，会话级记账；-1 = 尚未见过任何帧）。 */
+  /** 已见最大帧序号（帧序自愈记账；-1 = 尚未见过任何帧）。 */
   maxSeq: number;
   /** 最后一帧到达时刻（Date.now() 毫秒；无帧兜底判定的基准）。 */
   lastFrameAt: number;
@@ -56,7 +56,7 @@ export interface RunReconnectState {
   /** sessionId → 观察态作用域（缺省 = idle / 无快照 / maxSeq -1）。 */
   scopes: Record<string, ReconnectScope>;
   /** 收口信号：runEnded（或兜底）退出观察态后自增，SessionTab 依赖它重载
-   *  canonical 树（§5.8 "runEnded 后树完整收口"）。 */
+   *  canonical 树（"runEnded 后树完整收口"）。 */
   reloadTick: Record<string, number>;
   /** 进入观察态（phase=observing，快照清空）。 */
   enter: (sessionId: string) => void;
@@ -156,7 +156,7 @@ export function defaultReconnectDeps(): ReconnectDeps {
 /**
  * 会话进入/恢复路径的统一入口（SessionTab 挂载时调用）：
  * ① `session_run_snapshot` → status=running → 进入重连观察态（attach 重放续流）；
- * ② 无论是否进入观察态，都查一次待审批请求并恢复 AskPanel（§5.6——重连
+ * ② 无论是否进入观察态，都查一次待审批请求并恢复 AskPanel（重连
  *    时刻审批可能仍挂起，与观察态无耦合）。
  * 返回是否进入了观察态。
  */
@@ -180,7 +180,7 @@ export async function reconnectIfNeeded(
 }
 
 /**
- * 待审批/询问恢复（§5.6，§3.3 #59c）：查询后端仍有效的未决请求，命中即
+ * 待审批/询问恢复：查询后端仍有效的未决请求，命中即
  * 按 askId 登记 AskPanel（原始载荷随行）。查询与实时 ask:opened/closed
  * 事件按 askId 对账——后开覆盖先开是 ask store 的既有语义，已解决的请求
  * 经 ask:closed 事件或 resolve 的 E_NOT_FOUND 关闭（AskPanel 侧）。
@@ -204,14 +204,14 @@ export async function restorePendingAsk(
 }
 
 /**
- * 进入观察态（§5.8）：attach_run(sinceSeq=0) 重放 + 续流；帧喂独立
- * FrameBuffer，runEpoch 过滤与会话级 maxSeq 记账在此处完成（重放帧中的
+ * 进入观察态：attach_run(sinceSeq=0) 重放 + 续流；帧喂独立
+ * FrameBuffer，帧序过滤与会话级 maxSeq 记账在此处完成（重放帧中的
  * runStarted 不触发运行态节点记账——本路径不触碰 noteRuntimeNode，观察态
- * 旁路 §6.3 双写协议）；runEnded → 收口（exit + onEnded 树重载）；5 秒无
- * 帧且快照 status=idle → 兜底收口（§5.6 runEnded 丢失）。
+ * 旁路双写协议）；runEnded → 收口（exit + onEnded 树重载）；5 秒无
+ * 帧且快照 status=idle → 兜底收口（runEnded 丢失）。
  */
 async function observeRun(sessionId: string, deps: ReconnectDeps): Promise<boolean> {
-  // 防重入（06 号票）：run:start 事件驱动的自动接入与本路径并发时，已在
+  // 防重入：run:start 事件驱动的自动接入与本路径并发时，已在
   // 观察态（同一 run 正在续流）则不再进第二次 attach
   if (useRunReconnectStore.getState().scopes[sessionId]?.phase === "observing") {
     return false;
@@ -231,7 +231,7 @@ async function observeRun(sessionId: string, deps: ReconnectDeps): Promise<boole
       console.warn("[reconnect] 终态收口（树重载）失败", err);
     }
   };
-  // 无帧兜底（§5.6）：5 秒无新帧且快照 status=idle → 收口重载终态
+  // 无帧兜底：5 秒无新帧且快照 status=idle → 收口重载终态
   timer = setInterval(() => {
     const scope = useRunReconnectStore.getState().scopes[sessionId];
     if (scope?.phase !== "observing") return;
@@ -251,7 +251,7 @@ async function observeRun(sessionId: string, deps: ReconnectDeps): Promise<boole
       (frame: SequencedFrame) => {
         const store = useRunReconnectStore.getState();
         const maxSeen = store.scopes[sessionId]?.maxSeq ?? -1;
-        // §5.6 runEpoch：帧 seq 必须 > 已见最大，否则丢弃
+        // 帧序自愈：帧 seq 必须 > 已见最大，否则丢弃
         if (frame.seq <= maxSeen) {
           return;
         }
@@ -261,10 +261,10 @@ async function observeRun(sessionId: string, deps: ReconnectDeps): Promise<boole
         }
         buffer.push(frame);
         store.noteFrame(sessionId, frame.seq, buffer.snapshot());
-        // 子代理 4 帧（10 号票）：重放路径同步 subagents store（重载后
+        // 子代理 4 帧：重放路径同步 subagents store（重载后
         // 运行中子代理列表由重放恢复，与事件通道幂等）
         applySubagentFrame(sessionId, frame);
-        // 审计状态帧（36 号票）：重放路径同步 audits store（重载恢复审计行）
+        // 审计状态帧：重放路径同步 audits store（重载恢复审计行）
         applyAuditFrame(sessionId, frame);
         if (frame.type === "runEnded") void finish();
       },

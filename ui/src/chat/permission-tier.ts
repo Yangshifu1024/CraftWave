@@ -1,7 +1,6 @@
 /**
- * 会话权限档（§10.6 / FR-13-02，17 号票）：Shift+Tab 循环切换，档位仅
- * 内存态（重启回默认档 autoEdit，与 DEFAULT_RUN_CONFIG 一致；§10.6 的
- * confirm_each 初始口径随安全域票复核——票面记录）。
+ * 会话权限档：Shift+Tab 循环切换，档位仅
+ * 内存态（重启回默认档 autoEdit，与 DEFAULT_RUN_CONFIG 一致）。
  *
  * 权限档指「本次运行中工具执行前要不要询问用户」的严格程度档位，
  * 从严到宽共四档：plan（只规划不动手）/ confirmEach（每个工具都确认）/
@@ -14,10 +13,10 @@ import { create } from "zustand";
 import { t } from "@/i18n/core";
 import type { PermissionTier } from "@/ipc/types";
 
-/** 循环顺序（§8.5 矩阵从严到宽）。 */
+/** 循环顺序（从严到宽）。 */
 const TIERS: PermissionTier[] = ["plan", "confirmEach", "autoEdit", "fullAccess"];
 
-/** 档位的用户可读名（Composer 档位指示）：经字典查词（31 号票 i18n——
+/** 档位的用户可读名（Composer 档位指示）：经字典查词（
  *  模块级 t() 每次调用查当前语言，组件重渲染时取到切换后文案）。 */
 export function tierLabel(tier: PermissionTier): string {
   switch (tier) {

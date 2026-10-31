@@ -1,12 +1,12 @@
 /**
- * 变更面板（26 号票，FR-11-02 逐字 + §10.7）：大尺寸 Dialog——左列文件
+ * 变更面板：大尺寸 Dialog——左列文件
  * 列表（状态徽标 M/A/D/U/untracked + ±N 增删统计，点选切换）、右列聚合
  * diff；顶部 recent log 折叠条；手动刷新按钮；非仓库空态「当前项目不是
- * git 仓库」。Inspector「变更」tab 打开；产物面板（28 号票）经
+ * git 仓库」。Inspector「变更」tab 打开；产物面板经
  * openChangesPanel(path?) 联动打开并定位文件 diff。
  *
- * 数据源 = §3.3 #37 git_status / #38 git_diff / #39 git_recent_log（只读）；
- * 超长文件折叠 = diff 行区限高滚动（虚拟化不做，票面边界）。
+ * 数据源 = git_status / git_diff / git_recent_log（只读）；
+ * 超长文件折叠 = diff 行区限高滚动（虚拟化不做）。
  */
 
 import { GitBranch, RefreshCw } from "lucide-react";
@@ -17,11 +17,11 @@ import { t, useT } from "@/i18n/core";
 import { gitDiff, gitRecentLog, gitStatus } from "@/ipc/client";
 import type { DiffPatch, GitStatusFile, GitStatusResult } from "@/ipc/types";
 
-/** 最近提交条数（折叠条展示面；§3.3 #39 缺省 20 由后端兜底）。 */
+/** 最近提交条数（折叠条展示面；缺省 20 由后端兜底）。 */
 const LOG_LIMIT = 10;
 
 /**
- * 文件列表行 = 状态（#37）与增删统计（#38）按路径合并（纯函数，测试面）：
+ * 文件列表行 = 状态（git_status）与增删统计（git_diff）按路径合并（纯函数，测试面）：
  * status 恒有（status 列表是全集）；diff 统计可能缺失（如截断/二进制之外的
  * 边缘——二进制仍有 hunks=[] 但统计为 0，此处合并只做并集兜底）。
  */
@@ -196,7 +196,7 @@ function ChangesPanelBody({
             {t("inspector.changesLoading")}
           </p>
         ) : !status.isRepo ? (
-          // 非 git 仓库空态（FR-11-02 验收第三条：不报错）
+          // 非 git 仓库空态（不报错）
           <p
             data-testid="changes-empty"
             className="py-10 text-center text-ui-base text-[var(--muted-foreground)]"
@@ -277,7 +277,7 @@ function ChangesPanelBody({
                 ) : null}
               </div>
             </div>
-            {/* user info（FR-11-01）：当前 git 身份的弱化展示行 */}
+            {/* user info：当前 git 身份的弱化展示行 */}
             <p
               className="flex items-center gap-1.5 text-ui-sm text-[var(--muted-foreground)]"
               data-testid="changes-user"

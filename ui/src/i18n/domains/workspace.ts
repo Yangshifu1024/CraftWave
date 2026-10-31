@@ -1,5 +1,5 @@
 /**
- * workspace 域字典（31 号票）：会话工作区面——左栏（会话树/项目树/右键
+ * workspace 域字典：会话工作区面——左栏（会话树/项目树/右键
  * 菜单/新建项目弹窗）、卡头、退出确认、聊天主界面（Thread：空状态/队列条/
  * Composer/状态栏/分支操作条，Thread.tsx）、相对时间与时长。
  *
@@ -12,7 +12,7 @@ const zh = {
   // ---- 左栏与工作区壳（SessionWorkspace.tsx）----
   /** 会话列表恢复中的全屏占位。 */
   restoring: "正在恢复会话…",
-  /** 退出确认框（§9.6 活跃 run 拦截）。 */
+  /** 退出确认框（活跃 run 拦截）。 */
   exitTitle: "仍有运行中的任务",
   exitDescription: "现在退出将终止所有运行中的任务。确定退出吗？",
   exitConfirm: "退出",
@@ -39,7 +39,7 @@ const zh = {
   /** 删除会话确认框。 */
   deleteSessionTitle: "删除会话「{{title}}」？",
   deleteSessionDescription: "会话历史与工具记录将一并删除，不可恢复。",
-  /** Q43/ADR-0003：删除确认的备份残留说明与目录入口（33 号票）。 */
+  /** 删除确认的备份残留说明与目录入口（见 ADR-0003）。 */
   deleteSessionBackupNote:
     "注意：历史升级备份（~/.craftwave/backups/）可能仍保留本会话的内容副本，从备份恢复会回到旧时点、已删除内容会重新出现。应用不会替你改写或删除历史备份。",
   openBackupDir: "打开备份目录",
@@ -92,7 +92,7 @@ const zh = {
   /** followUp 队列条。 */
   queuePaused: "上一次运行失败，待发队列已暂停（{{count}} 条待发）",
   resume: "继续",
-  /** 主动暂停行（33 号票更新门配套：更新安装前须暂停并保留队列）。 */
+  /** 主动暂停行（更新门配套：更新安装前须暂停并保留队列）。 */
   queuePauseHint: "安装应用更新前须暂停待发队列（更新后仍保持暂停，需手动继续）",
   pauseQueue: "暂停队列",
   queuedBadge: "排队",

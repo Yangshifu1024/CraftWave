@@ -1,5 +1,5 @@
 /**
- * 会话持久化前端侧测试（15 号票，§6.3 双写协议）：
+ * 会话持久化前端侧测试（双写协议）：
  * toSavePayload 剔除/改写纯逻辑 + syncTreeBeforeSend 的 E_SESSION_REV 自愈 +
  * loadHistory 的 NotFound 降级。IPC 经 vi.mock 注入 fake（替代真实后端调用，
  * 测试不依赖 Rust 侧）。
@@ -55,7 +55,7 @@ afterEach(() => {
   useSessionPersistStore.setState(useSessionPersistStore.getInitialState());
 });
 
-describe("session 持久化（15 号票，§6.3 双写协议）", () => {
+describe("session 持久化（双写协议）", () => {
   it("toSavePayload 剧本：线性链 parentId、运行态节点剔除与 {runId}:marker 改写、新 user 挂 marker 等价", () => {
     // 无运行态节点：线性链 parentId + activeLeaf=末条
     const nodes = new Map<string, string>();

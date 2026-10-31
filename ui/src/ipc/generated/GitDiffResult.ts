@@ -2,6 +2,6 @@
 import type { DiffPatch } from "./DiffPatch";
 
 /**
- * #38 返回：聚合补丁集（工作区含暂存 vs HEAD；untracked 计入）。
+ * `git_diff` 返回：聚合补丁集（工作区含暂存 vs HEAD；untracked 计入）。
  */
 export type GitDiffResult = { isRepo: boolean, patches: Array<DiffPatch>, };

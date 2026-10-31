@@ -1,5 +1,5 @@
 /**
- * Inspector 配额页（21 号票，FR-02-15/§10.7 M2 五页之一）。
+ * Inspector 配额页。
  *
  * 布局：首屏 = **当前会话所用 provider** 的大卡（解析自会话覆盖模型 >
  * 全局 activeModelId 的归属供应商，quota-store.providerOfModel）；其余
@@ -12,7 +12,7 @@
  * - no_key = 标签行 + 「去设置」（跳设置页供应商页）；
  * - unsupported = 灰行「暂不支持查询」占位（不报错）。
  *
- * 刷新策略（FR-02-15 逐字）：配额页可见时每 5min 周期 + 手动刷新按钮 +
+ * 刷新策略：配额页可见时每 5min 周期 + 手动刷新按钮 +
  * 切换 provider 即时；不可见即停（本组件由 Inspector 按条件渲染，卸载即
  * 清理定时器）。查询失败静默降级——后端六态行承载一切错误面，本组件不
  * 弹任何提示，绝不影响聊天。
@@ -31,13 +31,13 @@ import { t, useT } from "@/i18n/core";
 import { getConfig } from "@/ipc/client";
 import type { AppConfig, QuotaEntry, QuotaSnapshot, QuotaStatus } from "@/ipc/types";
 
-/** unsupported 行折叠为一行汇总的阈值（票面：>3 家折叠）。 */
+/** unsupported 行折叠为一行汇总的阈值（>3 家折叠）。 */
 const UNSUPPORTED_COLLAPSE_LIMIT = 3;
 
 /** 剩余百分比低于该值视为「余额不足前有感知」的警示档（进度条转红）。 */
 const LOW_REMAINING_PERCENT = 20;
 
-/** 六态行的人读标签（i18n 键面，渲染时查词——31 号票）。 */
+/** 六态行的人读标签（i18n 键面，渲染时查词）。 */
 const STATE_LABEL_KEYS: Record<QuotaStatus, string> = {
   ok: "inspector.quotaStateOk",
   error: "inspector.quotaStateError",
@@ -67,7 +67,7 @@ export function QuotaPanel({
   const [unsupportedExpanded, setUnsupportedExpanded] = useState(false);
 
   // 打开配额页（挂载）拉配置 + 快照；会话覆盖模型变化（切 provider）→
-  // 即时刷新（FR-02-15 刷新策略：「切 provider 即时」与「打开即拉」同入口）。
+  // 即时刷新（刷新策略：「切 provider 即时」与「打开即拉」同入口）。
   // sessionModel 刻意作为触发依赖（其变化即「切换 provider」，驱动即时重拉），
   // effect 内不直接引用其值——归属解析在渲染期由 providerOfModel 完成
   // biome-ignore lint/correctness/useExhaustiveDependencies: sessionModel 为触发依赖（切 provider 即时刷新），effect 内不读值
@@ -86,7 +86,7 @@ export function QuotaPanel({
     };
   }, [sessionModel, load]);
 
-  // 周期刷新（FR-02-15）：配额页可见时每 5 分钟；不可见即停（本组件被
+  // 周期刷新：配额页可见时每 5 分钟；不可见即停（本组件被
   // Inspector 条件渲染，卸载走本清理）
   useEffect(() => {
     const timer = setInterval(() => {
@@ -98,7 +98,7 @@ export function QuotaPanel({
   const currentProviderId = config === null ? undefined : providerOfModel(config, sessionModel);
   const current = rows?.find((row) => row.providerId === currentProviderId) ?? null;
   const others = rows?.filter((row) => row.providerId !== currentProviderId) ?? [];
-  // unsupported 汇总折叠（票面：>3 家折叠为一行汇总，点击展开）
+  // unsupported 汇总折叠（>3 家折叠为一行汇总，点击展开）
   const unsupported = others.filter((row) => row.state === "unsupported");
   const collapseUnsupported =
     unsupported.length > UNSUPPORTED_COLLAPSE_LIMIT && !unsupportedExpanded;
@@ -111,7 +111,7 @@ export function QuotaPanel({
       className="flex min-h-0 flex-1 flex-col overflow-y-auto p-3 text-ui-sm text-[var(--muted-foreground)]"
       data-testid="quota-panel"
     >
-      {/* 标题行 + 手动刷新（FR-02-15 刷新策略三入口之一） */}
+      {/* 标题行 + 手动刷新（刷新策略三入口之一） */}
       <div className="mb-2 flex items-center">
         <h3 className="text-ui-sm text-[var(--cw-dim)]">{t("inspector.quotaTitle")}</h3>
         <button
@@ -296,7 +296,7 @@ function rowMainValue(row: QuotaSnapshot, remaining: number | null): string {
 
 /** 展开明细区：ok 行 = 窗口明细（百分比/余额行各自形态）；error/rejected
  *  行 = 原因 + 重试按钮 + lastOkAt 时间行（entries 非空时一并显示——
- *  「数据获取时间」以 lastOkAt 标注，FR-02-15 离线兜底面）。 */
+ *  「数据获取时间」以 lastOkAt 标注，离线兜底面）。 */
 function QuotaDetail({ row, onRetry }: { row: QuotaSnapshot; onRetry: () => void }) {
   const t = useT();
   const data = row.data;

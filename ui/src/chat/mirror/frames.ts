@@ -1,8 +1,8 @@
 /**
  * 【S1 spike 原型，随时可弃】镜像工具桥接的帧协议与累积器。
  *
- * 帧类型对齐技术设计文档 §10.2 的 Channel 帧（ToolStart / ToolProgress / ToolResult），
- * 这里只取镜像工具验证所需的最小子集。真实帧协议字段以 S2/S3 票定稿为准。
+ * 帧类型对齐后端 Channel 帧（ToolStart / ToolProgress / ToolResult），
+ * 这里只取镜像工具验证所需的最小子集。真实帧协议字段以正式实现定稿为准。
  */
 import { parsePartialJsonObject, type ReadonlyJSONObject } from "assistant-stream/utils";
 
@@ -16,7 +16,7 @@ export type ToolStartFrame = {
 
 /**
  * ToolProgress：参数增量（半截 JSON 文本，累积后才是完整 argsText）。
- * 对齐设计文档「含半截 JSON 参数增量」。
+ * 对齐帧协议「含半截 JSON 参数增量」。
  */
 export type ToolProgressFrame = {
   type: "tool-progress";

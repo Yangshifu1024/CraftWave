@@ -6,7 +6,7 @@ import { t } from "@/i18n/core";
 const plugins = { cjk, code };
 const streamingPlugins = { cjk };
 
-/** streamdown 组件文案（31 号票 i18n）：渲染时查词——语言切换后新渲染的
+/** streamdown 组件文案：渲染时查词——语言切换后新渲染的
  *  Markdown 块即新语言。 */
 function translations(): StreamdownProps["translations"] {
   return {

@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 /**
- * sessions store 测试（16 号票，FR-01-01 多 Tab 状态面）：
+ * sessions store 测试（多 Tab 状态面）：
  * bootstrap（ui-state 恢复/兜底）、openTab/closeTab/setActive、ui-state 落盘。
  * ipc/client 经 vi.mock 注入 fake（替代真实后端调用，测试不依赖 Rust 侧）。
  */
@@ -159,7 +159,7 @@ describe("sessions store", () => {
     await useSessionsStore.getState().refresh();
     expect(useSessionsStore.getState().tabs[0]?.title).toBe("新名");
 
-    // applyTitle（27 号票 session:title 事件面）：在 Tab 中的会话 tabs 与左栏
+    // applyTitle（session:title 事件面）：在 Tab 中的会话 tabs 与左栏
     // 缓存列表同改（标题就地更新，其余字段与排序不动）
     const opened = meta("s1", undefined, "新会话");
     useSessionsStore.setState({
@@ -185,7 +185,7 @@ describe("sessions store", () => {
     expect(state.sessions.find((m) => m.id === "s1")?.title).toBe("后台起名");
   });
 
-  it("scrollAnchors（29 号票滚动锚点桶）：bootstrap 恢复带形状清洗；set/forget 随防抖落盘", async () => {
+  it("scrollAnchors（滚动锚点桶）：bootstrap 恢复带形状清洗；set/forget 随防抖落盘", async () => {
     // bootstrap 从 ui-state 恢复锚点；坏数据条目剔除（形状清洗）
     listSessions.mockResolvedValue([meta("s1")]);
     getUiState.mockResolvedValue({

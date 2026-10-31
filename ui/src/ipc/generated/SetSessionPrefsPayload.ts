@@ -2,7 +2,7 @@
 import type { ThinkingLevel } from "./ThinkingLevel";
 
 /**
- * `set_session_prefs` 的覆盖载荷（§3.3 #25 `prefs` 字段；双 Option 语义见
+ * `set_session_prefs` 的覆盖载荷（`prefs` 字段；双 Option 语义见
  * [`SetSessionPrefsArgs`]）。
  */
 export type SetSessionPrefsPayload = { modelId?: string | null, thinking?: ThinkingLevel | null, };

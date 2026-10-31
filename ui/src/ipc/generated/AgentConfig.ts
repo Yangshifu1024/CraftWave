@@ -2,26 +2,26 @@
 import type { CommandAuditConfig } from "./CommandAuditConfig";
 
 /**
- * 智能体行为配置（§3.2 agent 组）。M2 03 号票起承载 customPrompt；
- * M2 10 号票补 maxConcurrentSubagents（子代理全局并发上限）；36 号票补
- * commandAudit（灰区命令审计专用模型，§8.7）。
+ * 智能体行为配置（agent 组）。M2 起承载 customPrompt；
+ * M2 补 maxConcurrentSubagents（子代理全局并发上限）；补
+ * commandAudit（灰区命令审计专用模型）。
  */
 export type AgentConfig = { 
 /**
- * 自定义提示词（FR-09-06）：非空时注入为每次对话的系统级前缀
- * （§6.2 注入次序首位：customPrompt → 压缩 summary → 当前计划）。
- * 空/未配置零注入；save_config 即时生效于下次 run（§7.6 缓存热替换）。
+ * 自定义提示词：非空时注入为每次对话的系统级前缀
+ * （注入次序首位：customPrompt → 压缩 summary → 当前计划）。
+ * 空/未配置零注入；save_config 即时生效于下次 run（缓存热替换）。
  */
 customPrompt?: string, 
 /**
- * 子代理全局并发上限（FR-07-04/§5.9 Q13，10 号票）：应用内所有会话共用，
+ * 子代理全局并发上限：应用内所有会话共用，
  * 满额排队不拒绝；要求正整数，旧配置缺省回填 4，非法值在保存边界拒绝。
  * 运行中修改：已启动任务继续不取消；降低后暂停补入直到运行数低于新上限，
  * 提高后立即按新上限启动排队任务（并发闸 [`crate::agent::sub_registry`]）。
  */
 maxConcurrentSubagents: number, 
 /**
- * 灰区命令审计配置（FR-05-05/§8.7，36 号票）：缺省整组为 None（serde
+ * 灰区命令审计配置：缺省整组为 None（serde
  * default 回填，旧配置零迁移）——未配置时审计模型跟随会话当前模型。
  */
 commandAudit?: CommandAuditConfig, };

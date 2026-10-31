@@ -1,16 +1,15 @@
 /**
- * 轻量 i18n 核心（31 号票，FR-13-09 + FR-14-04，NFR-19 门禁的数据面）。
+ * 轻量 i18n 核心（i18n 文案面 + 硬编码门禁的数据面）。
  *
- * 方案选型说明（票面点名 i18next，本票收口为轻量自研，理由见票内决议
- * 记录与设计文档 §10.8 回写）：本项目只有 zh-CN / en-US 两个静态打包
+ * 方案选型说明（收口为轻量自研而非 i18next）：本项目只有 zh-CN / en-US 两个静态打包
  * 语言，字典全量进 bundle，不需要 i18next 的异步加载/语言检测/插件生态；
- * 票面边界也已排除复数/ICU 高级语法——`{{var}}` 插值够用。自研面收敛
+ * 需求边界也已排除复数/ICU 高级语法——`{{var}}` 插值够用。自研面收敛
  * 为三件套：字典（按域拆分、zh/en 同构）+ 语言状态（模块级单例 +
  * useSyncExternalStore 订阅）+ 查词函数 t()（回退链 + 插值）。接口形状
  * 对齐 i18next 惯例（t(key, vars)、changeLanguage、`{{var}}` 语法），
  * 后续若需要升级到 i18next，调用面迁移成本最小。
  *
- * 生效链（票面定案）：App 启动读 `config.ui.language` 初始化（useLangBoot，
+ * 生效链：App 启动读 `config.ui.language` 初始化（useLangBoot，
  * 默认 zh-CN 兜底防裸 key）→ 设置页语言选择即时 setLang + save_config →
  * 首启向导语言步写同字段自动联动。语言切换只改内存状态并通知订阅者，
  * React 组件经 useT() 订阅自动重渲染，即时生效无刷新。
@@ -123,7 +122,7 @@ export const t: TFn = (key, vars) => {
 };
 
 /**
- * 错误码本地化（§3.6 错误面口径，31 号票定案）：errors 域有该码的映射
+ * 错误码本地化（错误面口径）：errors 域有该码的映射
  * → 本地化文案；无映射 → 回退后端原始 message（不空白）。
  */
 export function tError(code: string, fallbackMessage: string, vars?: TVars): string {

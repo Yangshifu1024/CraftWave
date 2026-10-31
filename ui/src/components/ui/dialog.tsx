@@ -10,7 +10,7 @@ import { t } from "@/i18n/core";
 import { Button } from "./button";
 
 /** 底部动作区的一个按钮描述：label 文案；variant 按钮变体（默认 outline）；
- *  disabled 禁用态；onClick 点击回调；testId 测试锚点（33 号票安装按钮）。 */
+ *  disabled 禁用态；onClick 点击回调；testId 测试锚点。 */
 export interface DialogActionItem {
   label: string;
   variant?: "default" | "outline" | "ghost" | "danger";

@@ -54,7 +54,7 @@ describe("cancel-bridge（S5 取消传播）", () => {
     await Promise.resolve();
     expect(disposedCalls).toEqual([]);
 
-    // ---- 全链前端语义：cancel_run 发起后 runEnded(cancelled) 帧驱动终态（§5.3 run 状态机）----
+    // ---- 全链前端语义：cancel_run 发起后 runEnded(cancelled) 帧驱动终态（run 状态机）----
     const invokeCalls: Array<{ cmd: string; args?: unknown }> = [];
     const chainController = new AbortController();
     const buffer = new FrameBuffer();
@@ -98,7 +98,7 @@ describe("cancel-bridge（S5 取消传播）", () => {
       ok: true,
       uiSummary: "[read] 共 12 行：port = 8087",
     });
-    // call_2 被收割：ok=false（§3.4 error 面在 ui 类型外，帧透传不破坏解析）
+    // call_2 被收割：ok=false（error 面在 ui 类型外，帧透传不破坏解析）
     batch.push({
       seq: 4,
       type: "toolResult",

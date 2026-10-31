@@ -51,35 +51,35 @@ log: LogConfig,
  */
 notifications: NotificationConfig, 
 /**
- * 智能体行为配置（可空 = 全部缺省，§3.2 agent 组）。
+ * 智能体行为配置（可空 = 全部缺省， agent 组）。
  */
 agent?: AgentConfig, 
 /**
- * 上下文压缩（FR-03-05，04 号票；缺省值经 Default：0.6 阈值 / 180s 超时）。
+ * 上下文压缩（缺省值经 Default：0.6 阈值 / 180s 超时）。
  */
 compaction: CompactionConfig, 
 /**
- * 工具批执行（FR-03-11/FR-04-04，07 号票；缺省值经 Default：并发上限 4）。
+ * 工具批执行（缺省值经 Default：并发上限 4）。
  */
 tools: ToolsConfig, 
 /**
- * 监督看门狗（FR-03-07，37 号票；缺省值经 Default：停滞超时 300 秒。
+ * 监督看门狗（缺省值经 Default：停滞超时 300 秒。
  * 旧配置无该组时 serde default 回填默认值）。
  */
 watchdog: WatchdogConfig, 
 /**
- * 网络工具 SSRF 防护（FR-05-07/§9.2，12 号票；缺省值经 Default：
+ * 网络工具 SSRF 防护（缺省值经 Default：
  * 拒绝私网访问。旧配置无该组时 serde default 回填）。
  */
 network: NetworkConfig, 
 /**
- * 网络搜索（FR-05-05/C-12 本地优先三通道，13 号票；缺省值经 Default：
+ * 网络搜索（本地优先三通道；缺省值经 Default：
  * SearXNG 不启用 + Key 未配 = 零配置默认走内置抓取。旧配置无该组时
  * serde default 回填）。
  */
 search: SearchConfig, 
 /**
- * 应用内更新（FR-16-03，33 号票；缺省值经 Default：启用 + 24 小时。
+ * 应用内更新（缺省值经 Default：启用 + 24 小时。
  * 旧配置无该组时 serde default 回填，schemaVersion 维持 2——新增域
  * 不破坏旧版读取，serde 忽略未知字段）。
  */

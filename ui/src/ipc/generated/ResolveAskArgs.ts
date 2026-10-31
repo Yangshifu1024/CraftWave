@@ -2,6 +2,6 @@
 import type { AskAnswer } from "./AskAnswer";
 
 /**
- * `resolve_ask` 参数契约（§3.3 #22）。
+ * `resolve_ask` 参数契约。
  */
 export type ResolveAskArgs = { askId: string, answer: AskAnswer, };

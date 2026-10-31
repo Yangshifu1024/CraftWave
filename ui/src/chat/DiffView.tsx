@@ -1,10 +1,10 @@
 /**
- * diff 渲染公共组件（26 号票，FR-11-02）：从 AskPanel 的审批 diff 预览抽出
+ * diff 渲染公共组件：从 AskPanel 的审批 diff 预览抽出
  * ——审批卡（AskPanel）与变更面板（ChangesPanel）共用同一套「文件名标题 +
  * 按 hunk 分组的增删行列表」渲染，防两处样式漂移。
  *
- * 形态 = §3.2 AskPayload.approval.diff 的 { path, hunks: [{header,
- * lines: [{kind, text}]}] }（§3.3 #38 DiffPatch 同构复用 hunks 子结构）。
+ * 形态 = AskPayload.approval.diff 的 { path, hunks: [{header,
+ * lines: [{kind, text}]}] }（DiffPatch 同构复用 hunks 子结构）。
  */
 
 import { useT } from "@/i18n/core";

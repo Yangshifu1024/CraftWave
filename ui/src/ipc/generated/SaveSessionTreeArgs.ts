@@ -2,6 +2,6 @@
 import type { MessageEntry } from "./MessageEntry";
 
 /**
- * `save_session_tree` 参数契约（§3.3 #26；文档命名锚点，命令形参按字段平铺展开）。
+ * `save_session_tree` 参数契约（文档命名锚点，命令形参按字段平铺展开）。
  */
 export type SaveSessionTreeArgs = { sessionId: string, messages: Array<MessageEntry>, activeLeafId?: string, baseRevision: number, };

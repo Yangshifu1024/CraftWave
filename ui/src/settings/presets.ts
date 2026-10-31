@@ -1,5 +1,5 @@
 /**
- * 内置供应商预设消费层（03 号票单源定稿，§3.3 预设单源注记）。
+ * 内置供应商预设消费层（单源定稿）。
  *
  * 预设是"一键新增常用供应商"的静态模板（名称/端点/模型建议，不含凭据）；
  * slug 是每个预设的稳定标识键（如 "openai"）。
@@ -32,13 +32,13 @@ function newUuid(): string {
   return `tmp-${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
 }
 
-/** 草稿层新 id（供应商/模型共用 uuid 语义，§3.2）。 */
+/** 草稿层新 id（供应商/模型共用 uuid 语义）。 */
 export function newDraftId(): string {
   return newUuid();
 }
 
 /** 从预设实例化 ProviderConfig（草稿用；凭据经 save_provider 提交）。
- *  本地预设（FR-02-04，19 号票）随预设带出 local=true——免 Key、离线可用。 */
+ *  本地预设随预设带出 local=true——免 Key、离线可用。 */
 export function newProviderFromPreset(slug: string): ProviderConfig | null {
   const preset = findPreset(slug);
   if (!preset) return null;

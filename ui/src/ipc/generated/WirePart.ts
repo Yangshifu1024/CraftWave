@@ -2,7 +2,7 @@
 import type { PlanItem } from "./PlanItem";
 
 /**
- * wire 中立 part（§3.2 D8 载体）：消息内容的组成片段，前端与后端共用同一形状。
+ * wire 中立 part（D8 载体）：消息内容的组成片段，前端与后端共用同一形状。
  * camelCase 变体名与字段名对齐 TS 镜像。
  */
 export type WirePart = { "type": "text", text: string, } | { "type": "reasoning", text: string, } | { "type": "toolCall", callId: string, name: string, argsJson: string, } | { "type": "toolResult", callId: string, ok: boolean, summary: string, } | { "type": "planSnapshot", items: Array<PlanItem>, } | { "type": "runMarker", runId: string, startedAt: number, endedAt?: number, durationMs?: number, toolCount?: number, } | { "type": "image", blobHash: string, mimeType: string, };

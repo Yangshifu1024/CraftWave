@@ -1,13 +1,13 @@
 /**
- * runMetrics store（§10.1 zustand `runMetrics`：速率/轮次/会话累计，帧驱动）。
+ * runMetrics store（zustand：速率/轮次/会话累计，帧驱动）。
  *
- * §10.5 + C-9 口径：
+ * 口径：
  * - rate = usage 帧的 rate（Rust 侧按「本轮输出 tok/s」计算）；无 rate 帧时保持上次值；
  * - turnUsage = 当前运行内 usage 累计（runEnded 后冻结）；
  * - sessionUsage = 会话累计：帧累计兜底，tokens:update 事件（Rust 会话累计
- *   全量，含 suggest 后台小调用）到达时权威 replace（14 号票接线）。
+ *   全量，含 suggest 后台小调用）到达时权威 replace。
  *
- * 16 号票多会话：全部状态按 sessionId 分桶（跨 Tab 并行 run 各自累计互不串扰）。
+ * 多会话：全部状态按 sessionId 分桶（跨 Tab 并行 run 各自累计互不串扰）。
  */
 
 import { create } from "zustand";
@@ -19,9 +19,9 @@ export interface SessionMetrics {
   rate: number | null;
   /** 当前/最近一次运行的 usage 累计（runEnded 后冻结） */
   turnUsage: UsageTotal;
-  /** 会话累计（帧累计兜底；tokens:update 事件到达时权威校正，§10.5/14 号票） */
+  /** 会话累计（帧累计兜底；tokens:update 事件到达时权威校正） */
   sessionUsage: UsageTotal;
-  /** 进行中 run 的标识（runStarted 写入；runEnded 摘要回填用，17 号票） */
+  /** 进行中 run 的标识（runStarted 写入；runEnded 摘要回填用） */
   currentRunId: string | null;
   /** 思考计时（参考样式 A5）：reasoningDelta 首帧时刻（epoch ms）；模型转出
    *  正文/开始工具即置 null——「🧠 思考中…Ns」状态条的驱动面。 */
@@ -69,7 +69,7 @@ export interface RunMetricsStore {
   bySession: Record<string, SessionMetrics>;
   /** 帧入口：adapter 的 channel.onmessage 转发（帧不带 sessionId，入口补） */
   ingest: (sessionId: string, frame: SequencedFrame) => void;
-  /** tokens:update 事件入口（Rust 会话累计全量；replace 语义，含后台小调用，C-9） */
+  /** tokens:update 事件入口（Rust 会话累计全量；replace 语义，含后台小调用） */
   applyTokensUpdate: (sessionId: string, usage: UsageTotal) => void;
   /** 会话删除后清桶。 */
   forgetSession: (sessionId: string) => void;
@@ -93,7 +93,7 @@ export const useRunMetricsStore = create<RunMetricsStore>((set) => ({
   ingest: (sessionId, frame) => {
     switch (frame.type) {
       case "runStarted":
-        // 新 run：轮次清零（§10.5 turnUsage 按 runId 清零累计），会话累计保留
+        // 新 run：轮次清零（turnUsage 按 runId 清零累计），会话累计保留
         set((s) => ({
           bySession: updateSession(s.bySession, sessionId, (m) => ({
             ...m,
@@ -152,8 +152,8 @@ export const useRunMetricsStore = create<RunMetricsStore>((set) => ({
   },
 
   applyTokensUpdate: (sessionId, usage) => {
-    // 权威校正（§10.5 sessionUsage 以 tokens:update 为准）：Rust 侧会话累计
-    // 全量 replace（含 suggest 等后台小调用的计入，C-9）；帧累计兜底防丢事件。
+    // 权威校正（sessionUsage 以 tokens:update 为准）：Rust 侧会话累计
+    // 全量 replace（含 suggest 等后台小调用的计入）；帧累计兜底防丢事件。
     set((s) => ({
       bySession: updateSession(s.bySession, sessionId, (m) => ({
         ...m,
@@ -179,7 +179,7 @@ export function useSessionMetrics(sessionId: string): SessionMetrics {
   return useRunMetricsStore((s) => s.bySession[sessionId]) ?? EMPTY_METRICS;
 }
 
-/** 上下文进度（§10.5：sessionUsage 折算当前模型 contextWindow；返回占比 0–1）。 */
+/** 上下文进度（sessionUsage 折算当前模型 contextWindow；返回占比 0–1）。 */
 export function contextProgress(usage: UsageTotal, contextWindow: number): number {
   if (contextWindow <= 0) return 0;
   const total = usage.input + usage.output;

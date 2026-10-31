@@ -1,5 +1,5 @@
 /**
- * 设置页全局状态（§10.1 zustand `settings`：设置草稿 → save_config 落盘）。
+ * 设置页全局状态（zustand `settings`：设置草稿 → save_config 落盘）。
  *
  * 草稿模型三概念：
  *  - 草稿（config）：正在编辑、尚未整份保存的配置；
@@ -21,7 +21,7 @@ import { newProviderFromPreset } from "@/settings/presets";
 export const DEFAULT_CONFIG: AppConfig = {
   schemaVersion: 2,
   providers: [],
-  // 审批四开关缺省口径（23 号票，FR-14-04）：①开 ②关 ③会话记忆开 ④白名单开
+  // 审批四开关缺省口径：①开 ②关 ③会话记忆开 ④白名单开
   approval: {
     enabled: true,
     autoConfirm: false,
@@ -31,8 +31,8 @@ export const DEFAULT_CONFIG: AppConfig = {
     requirePlan: false,
     gitAllowStageCommit: false,
   },
-  // 界面组（29 号票 §3.2 ui 组补齐）：closeToTray 缺省 true（关闭收进
-  // 托盘，§9.6 现状语义）；hotkey 缺省开 + ⌥/Alt+Space
+  // 界面组：closeToTray 缺省 true（关闭收进
+  // 托盘，维持现状语义）；hotkey 缺省开 + ⌥/Alt+Space
   ui: {
     language: "zh-CN",
     theme: "system",
@@ -45,15 +45,15 @@ export const DEFAULT_CONFIG: AppConfig = {
   tools: { maxParallel: 4, batchReadLimit: 20 },
   watchdog: { stallTimeoutSecs: 300 },
   agent: { maxConcurrentSubagents: 4 },
-  // 网络工具 SSRF 防护（12 号票，§3.2 network 组）：缺省拒绝私网访问
+  // 网络工具 SSRF 防护（network 组）：缺省拒绝私网访问
   network: { allowPrivateNetwork: false },
-  // 网络搜索（13 号票，§3.2 search 组）：SearXNG 不启用 + Key 未配 =
-  // 零配置默认走内置抓取（C-12 优先级②兜底）
+  // 网络搜索（search 组）：SearXNG 不启用 + Key 未配 =
+  // 零配置默认走内置抓取（本地优先的兜底通道）
   search: {
     searxng: { enabled: false, baseUrl: "http://127.0.0.1:8888", maxResults: 10 },
     tavilyApiKey: undefined,
   },
-  // 应用内更新（33 号票，§3.2 update 组）：缺省启用 + 24 小时静默检查间隔
+  // 应用内更新（update 组）：缺省启用 + 24 小时静默检查间隔
   //（与 Rust 侧 UpdateConfig::default 同口径）
   update: { enabled: true, intervalHours: 24 },
 };
@@ -68,16 +68,16 @@ interface SettingsState {
   loading: boolean;
   /** 整份保存中（保存按钮置灰防重复提交） */
   saving: boolean;
-  /** 最近一次操作的 §3.1 错误负载（骨架级：字符串展示） */
+  /** 最近一次操作的错误负载（骨架级：字符串展示） */
   error: string | null;
   load: () => Promise<void>;
   /** 从内置预设实例化一个供应商（仅入草稿，经 saveAll 落盘） */
   addFromPreset: (slug: string) => void;
-  /** 新增/更新供应商并立即持久化（Key 明文存 config.json，§9.4） */
+  /** 新增/更新供应商并立即持久化（Key 明文存 config.json） */
   upsertProvider: (provider: ProviderConfig, newKey?: string) => Promise<boolean>;
   /** 删除供应商（即时持久化） */
   removeProvider: (providerId: string) => Promise<boolean>;
-  /** 命令白名单追加（即时持久化，23 号票）：审批弹窗勾选「加入白名单」的
+  /** 命令白名单追加（即时持久化）：审批弹窗勾选「加入白名单」的
    *  写入入口——前缀已存在时不重复追加；config 与 baseline 一起前移，
    *  脏判定不受影响。失败抛错（调用方决定提示面）。 */
   appendToAllowlist: (prefix: string) => Promise<void>;

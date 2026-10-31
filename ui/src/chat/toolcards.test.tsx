@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 /**
- * 正式工具卡单测（§10.3，14 号票）：args/参数流式/result 直写驱动的渲染面。
+ * 正式工具卡单测：args/参数流式/result 直写驱动的渲染面。
  * useToolArgsStatus 需要 runtime 上下文——按卡片的真实依赖面 mock（S1 实证
  * 返回形状：{ status, argsStatus }）。
  * 精简版：每种卡留代表 1 例；同形状摘要断言循环表驱动；同卡多状态分段断言。
@@ -37,7 +37,7 @@ vi.mock("@assistant-ui/react", async (importOriginal) => {
   };
 });
 
-/** 边车数据面（12 号票两卡终态按 callId 拉边车）：用例内改写返回值。 */
+/** 边车数据面（web 两卡终态按 callId 拉边车）：用例内改写返回值。 */
 const loadToolOutcomes = vi.hoisted(() => vi.fn(async () => ({}) as Record<string, unknown>));
 vi.mock("@/ipc/client", () => ({
   loadToolOutcomes: loadToolOutcomes,
@@ -160,7 +160,7 @@ describe("工具卡渲染（每种卡代表 1 例）", () => {
     expect(failedCard.textContent).toContain("E_FENCE_BLOCKED");
   });
 
-  it("plan 卡：摘要完成数 + 展开条目；已批准基线与范围声明（25 号票，plan-state 同源）", () => {
+  it("plan 卡：摘要完成数 + 展开条目；已批准基线与范围声明（plan-state 同源）", () => {
     // 预置所属会话的批准态：基线 2 条
     usePlanStateStore.getState().applyUpdate("sess-p", {
       items: [],
@@ -192,7 +192,7 @@ describe("工具卡渲染（每种卡代表 1 例）", () => {
     usePlanStateStore.setState({ bySession: {} });
   });
 
-  it("web 工具卡（12 号票）：web_fetch 拉边车渲染标题/正文预览；http_request 徽标与 spill 路径", async () => {
+  it("web 工具卡：web_fetch 拉边车渲染标题/正文预览；http_request 徽标与 spill 路径", async () => {
     // web_fetch：终态拉边车（默认收起，展开后正文预览前 50 行）
     const content = Array.from({ length: 60 }, (_, i) => `第 ${i + 1} 行`).join("\n");
     loadToolOutcomes.mockResolvedValue({
@@ -252,7 +252,7 @@ describe("工具卡渲染（每种卡代表 1 例）", () => {
     expect(httpCard.textContent).toContain("/data/logs/spill/call-test.txt");
   });
 
-  it("web_search 卡（13 号票）：来源通道徽标（本地/抓取/云）+ 结果列表/空结果", async () => {
+  it("web_search 卡：来源通道徽标（本地/抓取/云）+ 结果列表/空结果", async () => {
     const cases: {
       channel: string;
       badge: string;
@@ -308,7 +308,7 @@ describe("工具卡渲染（每种卡代表 1 例）", () => {
     }
   });
 
-  it("MCP 兜底卡（08 号票）：工具名摘要 + 展开参数 JSON；错误态默认展开显示失败原因", () => {
+  it("MCP 兜底卡：工具名摘要 + 展开参数 JSON；错误态默认展开显示失败原因", () => {
     // MCP 动态工具的归一名运行时才定——兜底卡直接以 part 的 toolName 为摘要
     render(
       <McpFallbackCard
@@ -332,7 +332,7 @@ describe("工具卡渲染（每种卡代表 1 例）", () => {
     );
     const failed = screen.getByTestId("tool-card-c1");
     expect(failed.getAttribute("data-phase")).toBe("error");
-    // 错误态默认展开：失败原因无需点击即可见（Q14 结果未知的行动指引可见）
+    // 错误态默认展开：失败原因无需点击即可见（结果未知的行动指引可见）
     expect(failed.textContent).toContain("E_MCP_RESULT_UNKNOWN");
   });
 });

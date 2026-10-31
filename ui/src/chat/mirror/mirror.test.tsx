@@ -43,7 +43,7 @@ function sendFromComposer(text: string) {
   fireEvent.change(screen.getByPlaceholderText("发一条消息，Alt+Enter 排队待发…"), {
     target: { value: text },
   });
-  // Send 带 aria-label「发送」（17 号票起 Composer 区还有回底按钮等，按名取）
+  // Send 带 aria-label「发送」（Composer 区还有回底按钮等，按名取）
   fireEvent.click(screen.getByRole("button", { name: "发送" }));
 }
 

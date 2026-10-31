@@ -1,15 +1,15 @@
 /**
- * 正式镜像工具清单（§10.3/§12.3，14 号票）：defineToolkit 声明 M1 注册表
+ * 正式镜像工具清单：defineToolkit 声明注册表
  * 8 个工具的「后端工具渲染副本」——type:"frontend"、不带 execute（S1 钉死：
  * local runtime 无 execute 管线，结果由 adapter 把 toolResult 帧直写进
  * tool-call part 的 result/isError 驱动状态机）。
  *
  * name/parameters 与 Rust ToolSpec 同源：参数 schema 逐字镜像
  * src-tauri/src/tools/*.rs 的 params_schema，由 contract.test.ts 对照
- * cargo test 产出的 ipc-manifest.json toolSpecs 双向锁定（§12.3）——
+ * cargo test 产出的 ipc-manifest.json toolSpecs 双向锁定——
  * 原始表 [`CW_TOOL_PARAMETERS`] 单独导出供契约测试比对。
  * suggest 仅 run 尾调用（非模型工具）不声明；ask 落地为极简状态卡
- * （交互在 AskPanel，票面记录）。
+ * （交互在 AskPanel）。
  */
 
 import { defineToolkit } from "@assistant-ui/react";
@@ -43,7 +43,7 @@ export const CW_TOOL_PARAMETERS: Record<string, JSONSchema7> = {
       offset: { type: "integer", description: "起始行号（1-based）" },
       limit: { type: "integer", description: "返回行数，默认 2000" },
       kind: { type: "string", enum: ["text", "image"] },
-      // 文档参数（16 号票，§8.3 read 行）：.docx/.xlsx/.pdf 按扩展名分派
+      // 文档参数（read 工具）：.docx/.xlsx/.pdf 按扩展名分派
       // 进文档管线；与 Rust doc::params_schema_properties() 逐字镜像。
       page: {
         type: "integer",
@@ -178,7 +178,7 @@ export const CW_TOOL_PARAMETERS: Record<string, JSONSchema7> = {
     required: ["title", "questions"],
     additionalProperties: false,
   },
-  // skill 工具（§8.3 M2 表 Meta 行，09 号票；与 knowledge/skills.rs 的
+  // skill 工具（与 knowledge/skills.rs 的
   // skill_spec params_schema 逐字镜像，contract.test 双向锁定）
   skill: {
     type: "object",
@@ -189,7 +189,7 @@ export const CW_TOOL_PARAMETERS: Record<string, JSONSchema7> = {
     required: ["name"],
     additionalProperties: false,
   },
-  // subagent 工具（§8.3 M2 表 Meta 行，10 号票；与 agent/roles.rs 的
+  // subagent 工具（与 agent/roles.rs 的
   // subagent_spec params_schema 逐字镜像，contract.test 双向锁定）
   subagent: {
     type: "object",
@@ -221,7 +221,7 @@ export const CW_TOOL_PARAMETERS: Record<string, JSONSchema7> = {
     required: ["role", "task"],
     additionalProperties: false,
   },
-  // web_fetch 工具（§8.3 M2 表 Network 行，12 号票；与 tools/web_fetch.rs
+  // web_fetch 工具（与 tools/web_fetch.rs
   // 的 params_schema 逐字镜像，contract.test 双向锁定）
   web_fetch: {
     type: "object",
@@ -236,7 +236,7 @@ export const CW_TOOL_PARAMETERS: Record<string, JSONSchema7> = {
     required: ["url"],
     additionalProperties: false,
   },
-  // http_request 工具（§8.3 M2 表 Network 行，12 号票；与 tools/http_request.rs
+  // http_request 工具（与 tools/http_request.rs
   // 的 params_schema 逐字镜像，contract.test 双向锁定）
   http_request: {
     type: "object",
@@ -257,7 +257,7 @@ export const CW_TOOL_PARAMETERS: Record<string, JSONSchema7> = {
     required: ["method", "url"],
     additionalProperties: false,
   },
-  // web_search 工具（§8.3 M2 表 Network 行，13 号票；与 tools/web_search.rs
+  // web_search 工具（与 tools/web_search.rs
   // 的 params_schema 逐字镜像，contract.test 双向锁定）
   web_search: {
     type: "object",
@@ -273,7 +273,7 @@ export const CW_TOOL_PARAMETERS: Record<string, JSONSchema7> = {
     required: ["query"],
     additionalProperties: false,
   },
-  // batch_read 工具（§8.3 M2 表 ReadOnly 行，14 号票；与 tools/batch_read.rs
+  // batch_read 工具（与 tools/batch_read.rs
   // 的 params_schema 逐字镜像，contract.test 双向锁定）
   batch_read: {
     type: "object",
@@ -287,7 +287,7 @@ export const CW_TOOL_PARAMETERS: Record<string, JSONSchema7> = {
     required: ["paths"],
     additionalProperties: false,
   },
-  // glob 工具（§8.3 M2 表 ReadOnly 行，14 号票；与 tools/glob.rs 逐字镜像）
+  // glob 工具（与 tools/glob.rs 逐字镜像）
   glob: {
     type: "object",
     properties: {
@@ -297,7 +297,7 @@ export const CW_TOOL_PARAMETERS: Record<string, JSONSchema7> = {
     required: ["pattern"],
     additionalProperties: false,
   },
-  // calculate 工具（§8.3 M2 表 ReadOnly 行，14 号票；与 tools/calculate.rs
+  // calculate 工具（与 tools/calculate.rs
   // 逐字镜像）
   calculate: {
     type: "object",
@@ -310,7 +310,7 @@ export const CW_TOOL_PARAMETERS: Record<string, JSONSchema7> = {
     required: ["expression"],
     additionalProperties: false,
   },
-  // render_html 工具（§8.3 M2 表 ReadOnly* 行，14 号票；与 tools/render_html.rs
+  // render_html 工具（与 tools/render_html.rs
   // 逐字镜像）
   render_html: {
     type: "object",

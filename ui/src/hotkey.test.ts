@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 /**
- * 全局热键编排测试（29 号票，FR-13-11）：归一化/显示格式化/录制捕获纯
+ * 全局热键编排测试：归一化/显示格式化/录制捕获纯
  * 函数表驱动 + applyHotkey 的注册流（@tauri-apps/plugin-global-shortcut
  * 经 vi.mock 注入桩——不触真实系统热键）。原逐分支用例已合并为三个剧本，
  * 覆盖语义不减。
@@ -53,7 +53,7 @@ const key = (init: {
     bubbles: true,
   });
 
-describe("hotkey 纯函数与注册流（29 号票 FR-13-11）", () => {
+describe("hotkey 纯函数与注册流", () => {
   it("normalizeAccelerator 归一化表驱动（与后端 normalize_accelerator 同规则）+ formatAccelerator 显示文案", () => {
     const cases: [string, string | null][] = [
       ["Alt+Space", "alt+space"],

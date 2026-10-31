@@ -9,11 +9,11 @@
  *   4. 离开拦截（切页 / 返回 / 页内 Esc 共用同一份"保存 / 放弃 / 留下"三选弹框）。
  * 页面 JSX 手写；注册表（settings/registry.ts）只提供页序、页名与分组。
  * M1 数据面：providers / activeModelId / ui / proxy / approval / log 真实接线；
- * 03 号票补工作区与智能体页（customPrompt + 项目数据目录入口）与关于/日志页
- * 的目录入口（open_dir）；37 号票补看门狗停滞超时；08 号票补 MCP 管理页
+ * 工作区与智能体页（customPrompt + 项目数据目录入口）与关于/日志页
+ * 的目录入口（open_dir）；看门狗停滞超时；MCP 管理页
  * （McpPage：双作用域配置编辑 / 启停 / 测试连接 / mcp:status 状态徽标）；
- * 09 号票补技能管理页（SkillsPage：skill_list 列表 / 启停 / 重扫 / 预览）。
- * 写入后检查页保留导航占位，随后续票接线。
+ * 技能管理页（SkillsPage：skill_list 列表 / 启停 / 重扫 / 预览）。
+ * 写入后检查页保留导航占位，随后续版本接线。
  */
 
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
@@ -91,12 +91,12 @@ function pageSlice(config: AppConfig, page: PageKey): unknown {
     case "providers":
       return { providers: config.providers, activeModelId: config.activeModelId ?? null };
     case "network":
-      // 网络页承载 proxy + search（13 号票：SearXNG 配置组 + Tavily Key）
+      // 网络页承载 proxy + search（SearXNG 配置组 + Tavily Key）
       return { proxy: config.proxy ?? null, search: config.search };
     case "security":
       return config.approval;
     case "agent":
-      // 工作区与智能体页承载 agent + watchdog（37 号票）两组字段
+      // 工作区与智能体页承载 agent + watchdog 两组字段
       return { agent: config.agent ?? null, watchdog: config.watchdog };
     case "logs":
       return config.log;
@@ -245,7 +245,7 @@ export function SettingsPage({
   }
 
   /**
-   * 保存（29 号票 Toast 收敛 + 热键应用）：成功/失败经顶部 Toast 反馈；
+   * 保存（Toast 反馈 + 热键应用）：成功/失败经顶部 Toast 反馈；
    * 成功后按新配置应用全局热键（applyHotkey 幂等——enabled=false 注销、
    * 换键先注销再注册、冲突错误进 hotkey store 红字 + Toast）。
    */
@@ -526,7 +526,7 @@ function SettingsRow({
 }
 
 /**
- * 「打开目录」按钮（03 号票，FR-14-07）：统一走 open_dir 命令（后端白名单
+ * 「打开目录」按钮：统一走 open_dir 命令（后端白名单
  * 校验 + 系统打开），失败在按钮旁行内提示（错误码 + 消息），不打断页面。
  */
 function OpenDirButton({
@@ -622,7 +622,7 @@ function ChoiceCard({
 }
 
 /**
- * 通知授权态查询（19 号票）：挂载时查一次；窗口重新聚焦（典型场景 =
+ * 通知授权态查询：挂载时查一次；窗口重新聚焦（典型场景 =
  * 用户从系统设置授权后切回）时重查，授权变更即时反映。
  * 查询失败（如非 Tauri 环境）→ null = 不显示引导，宁可少打扰。
  */
@@ -651,7 +651,7 @@ function useNotificationPermission(): NotificationPermissionStatus | null {
   return status;
 }
 
-/** 通知授权引导条（19 号票，macOS 为主）：未授权/被拒时提示 + 打开系统
+/** 通知授权引导条（macOS 为主）：未授权/被拒时提示 + 打开系统
  *  设置深链；授权后（或 unknown 查不出）不渲染，不打扰。
  *  status 为生成物契约里的自由字符串（Rust 发射面取值 granted/denied/
  *  prompt/unknown 四字面量，见 system.rs 文档），组件内部按字面量比较。 */
@@ -691,8 +691,8 @@ function NotificationPermissionNotice({
 }
 
 /** 界面页：主题 + 界面语言 + AI 回复语言（ui 段整卡）+ 系统通知偏好
- *  （含 19 号票的 macOS 授权引导：未授权/被拒时提示并给系统设置入口）
- *  + 窗口行为（29 号票：关闭按钮行为 + 全局快捷键）。 */
+ *  （含 macOS 授权引导：未授权/被拒时提示并给系统设置入口）
+ *  + 窗口行为（关闭按钮行为 + 全局快捷键）。 */
 function AppearancePage() {
   const t = useT();
   const config = useSettingsStore((s) => s.config);
@@ -704,7 +704,7 @@ function AppearancePage() {
   const notifications = config.notifications ?? { enabled: true, interventionOnly: false };
   const patchNotifications = (patch: Partial<AppConfig["notifications"]>) =>
     patchConfig({ notifications: { ...notifications, ...patch } });
-  // 界面语言即时生效（31 号票）：选择即切 i18n 内存态（全界面无刷新换语言）
+  // 界面语言即时生效：选择即切 i18n 内存态（全界面无刷新换语言）
   // 并整份保存落盘（语言是全局即时项，与其他草稿字段的「显式保存」不同——
   // 先例：白名单追加/供应商表单的即时持久化通道）。
   const changeLanguage = (language: AppConfig["ui"]["language"]) => {
@@ -814,11 +814,11 @@ function AppearancePage() {
 }
 
 /**
- * 窗口行为区（29 号票）：关闭按钮行为 + 全局快捷键。
- * - closeToTray（§9.6）：开（缺省）= 点关闭按钮收进托盘继续运行；关 =
+ * 窗口行为区：关闭按钮行为 + 全局快捷键。
+ * - closeToTray：开（缺省）= 点关闭按钮收进托盘继续运行；关 =
  *   点关闭按钮走退出拦截协议（活跃任务先弹确认）。保存后即时生效
  *   （Rust 侧每次关闭时读配置）；
- * - hotkey（§10.7）：启用开关 + 快捷键录制（按下组合键捕获显示、Esc 取
+ * - hotkey：启用开关 + 快捷键录制（按下组合键捕获显示、Esc 取
  *   消）；注册失败（被其他应用占用）红字提示——注册发生在保存后
  *   （applyHotkey），红字数据面在 hotkey store。
  */
@@ -879,7 +879,7 @@ function AppearanceWindowBehavior({
 }
 
 /**
- * 快捷键录制钮（29 号票）：常态显示当前组合键；点击进入录制态（按钮打
+ * 快捷键录制钮：常态显示当前组合键；点击进入录制态（按钮打
  * data-hotkey-recording 标记，设置页 Esc handler 据此让位），按下有效
  * 组合键即归一化写回草稿并退出录制，Esc 取消恢复原值。
  */
@@ -929,7 +929,7 @@ function HotkeyRecorder({
 }
 
 /**
- * 代理地址即时校验（19 号票 FR-02-10）：scheme 白名单与后端
+ * 代理地址即时校验：scheme 白名单与后端
  * providers::http::validate_proxy_url 同口径（http/https/socks5/socks5h，
  * socks5h = 域名由代理远端解析）；返回错误文案或 undefined。
  * 草稿层允许非法值写入（输入不被打断），错误就地展示、保存时后端归一化
@@ -952,8 +952,8 @@ function proxyUrlIssue(url: string): string | undefined {
 
 /**
  * 网络页：代理模式三选 + 自定义地址（M1 保存到 config.proxy）+ 网络搜索
- * （13 号票，C-12 本地优先三通道的配置面）：
- * - 代理三模式热生效语义（19 号票 FR-02-10）：none = 显式直连（不读环境
+ * （本地优先三通道的配置面）：
+ * - 代理三模式热生效语义：none = 显式直连（不读环境
  *   变量代理）；system = 环境变量 + 系统代理设置（内建探测）；manual =
  *   指定地址（scheme 即时校验、错误就地展示）。保存后下一次对话生效
  *   （进行中的对话不被切换——客户端按对话构建）；
@@ -969,8 +969,8 @@ function NetworkPage() {
   const config = useSettingsStore((s) => s.config);
   const patchConfig = useSettingsStore((s) => s.patchConfig);
   if (!config) return null;
-  // 缺省高亮对齐后端语义：proxy 字段未配置 = no_proxy 直连（19 号票口径，
-  // 防环境变量泄漏）；M1 时代 UI 缺省显示"系统代理"与后端行为不一致，本票对齐。
+  // 缺省高亮对齐后端语义：proxy 字段未配置 = no_proxy 直连（防环境变量泄漏）；
+  // UI 缺省显示与后端行为保持一致。
   const mode = config.proxy?.mode ?? "none";
   const manualUrl = config.proxy?.url ?? "";
   const manualIssue = mode === "manual" ? proxyUrlIssue(manualUrl) : undefined;
@@ -1037,7 +1037,7 @@ function NetworkPage() {
 }
 
 /**
- * 网络搜索区块（13 号票，网络页的下半部分独立成组件）：连通测试状态
+ * 网络搜索区块（网络页的下半部分独立成组件）：连通测试状态
  * （SearXNG / Tavily 各一份）在组件内 useState 管理——测试是探测动作
  * 不落盘，不入 settings 草稿（对齐 MCP 管理页测试连接的草稿态定案）。
  */
@@ -1212,7 +1212,7 @@ function NetworkSearchPage({
   );
 }
 
-/** 安全与审批页：审批四开关（FR-14-04，23 号票字段级）+ 命令白名单管理。
+/** 安全与审批页：审批四开关（字段级）+ 命令白名单管理。
  *  四开关：① 审批总开关 ② 自动放行等待 ③ 会话内记忆（「始终允许（本会话）」
  *  选项展示）④ 命令白名单启用。白名单条目 = 命令前缀（词序列前缀匹配），
  *  手填增删。 */
@@ -1294,8 +1294,8 @@ function SecurityPage() {
   );
 }
 
-/** 白名单条目的词边界校验（23 号票：与后端 allowlist_hit 的切词口径一致）：
- *  返回 null = 合法；返回字符串 = 人话拒绝原因（经 t() 查词，31 号票 i18n）。 */
+/** 白名单条目的词边界校验（与后端 allowlist_hit 的切词口径一致）：
+ *  返回 null = 合法；返回字符串 = 人话拒绝原因（经 t() 查词）。 */
 function validateAllowlistEntry(entry: string): string | null {
   const trimmed = entry.trim();
   if (trimmed === "") return t("settings.allowlistEmpty");
@@ -1392,7 +1392,7 @@ function AllowlistSection({
 }
 
 /**
- * 「打开日志目录」按钮（32 号票改走 open_logs_dir，§3.3 #56）：固定打开
+ * 「打开日志目录」按钮（走 open_logs_dir 命令）：固定打开
  * `~/.craftwave/logs/`（后端创建 + 白名单口径与 open_dir 同源），失败在
  * 按钮旁行内提示，不打断页面。
  */
@@ -1431,7 +1431,7 @@ function OpenLogsDirButton() {
 }
 
 /**
- * 会话日志条目行（32 号票，kind/level 着色 + 长行折行）：行 JSON 解析成功
+ * 会话日志条目行（kind/level 着色 + 长行折行）：行 JSON 解析成功
  * 时按 level 着色（error 红 / warn 黄 / debug 灰）并前缀 kind 徽标；坏行
  * 原样灰显（日志是诊断面，坏行不给读制造障碍）。
  */
@@ -1477,9 +1477,9 @@ function LogLine({ raw }: { raw: string }) {
 }
 
 /**
- * 会话日志查看器（32 号票，FR-15-01/§10.7 诊断组）：会话选择器（日志文件
+ * 会话日志查看器（诊断组）：会话选择器（日志文件
  * 清单过滤 sessions/ 前缀，活跃 Tab 做标题映射）→ read_session_log 拉尾部
- * 500 行渲染只读日志面 +「刷新」钮。拉取式（无实时流，票面边界）。
+ * 500 行渲染只读日志面 +「刷新」钮。拉取式（无实时流）。
  */
 function LogViewerSection() {
   const t = useT();
@@ -1604,7 +1604,7 @@ function LogViewerSection() {
 }
 
 /** 日志页：级别下拉（verbose 说明）+ 打开日志目录（open_logs_dir）+
- *  会话日志查看器（32 号票，FR-15-01/FR-14-04/FR-14-07）。 */
+ *  会话日志查看器。 */
 function LogsPage() {
   const t = useT();
   const config = useSettingsStore((s) => s.config);
@@ -1637,14 +1637,13 @@ function LogsPage() {
 }
 
 /**
- * 工作区与智能体页（03 号票起承载本票两项；Shell 选择、压缩阈值等余项随后
- * 续票——10/04 号票——接入）：
- * - 自定义提示词（FR-09-06，agent.customPrompt）：多行文本，注入为每次对话
+ * 工作区与智能体页：
+ * - 自定义提示词（agent.customPrompt）：多行文本，注入为每次对话
  *   的系统级前缀；空/未配置零注入；走草稿 + saveAll 提交，下次 run 生效；
- * - 模型流停滞超时（FR-03-07，watchdog.stallTimeoutSecs，37 号票）：数字
+ * - 模型流停滞超时（watchdog.stallTimeoutSecs）：数字
  *   输入（5–3600 秒，缺省 300）；按 run 装配驱动时读取生效（保存后下次
  *   对话应用）；
- * - 打开项目数据目录（FR-14-07）：当前活跃 Tab 所属项目的 `<homeDir>/.craftwave`，
+ * - 打开项目数据目录：当前活跃 Tab 所属项目的 `<homeDir>/.craftwave`，
  *   无项目会话时按钮禁用并说明原因。
  */
 function AgentPage() {
@@ -1797,8 +1796,8 @@ function AgentPage() {
   );
 }
 
-/** 关于页：应用身份只读信息 + 检查更新区（33 号票，FR-16-03）+ 打开数据
- * 目录与备份目录入口（03 号票 FR-14-07 / 33 号票 Q43 备份目录入口） */
+/** 关于页：应用身份只读信息 + 检查更新区 + 打开数据
+ * 目录与备份目录入口 */
 function AboutPage() {
   const t = useT();
   return (

@@ -3,7 +3,7 @@ import type { McpConfigFile } from "./McpConfigFile";
 import type { McpScope } from "./McpScope";
 
 /**
- * `mcp_save_config` 参数契约（§3.3 #41）：整份保存一个作用域。
+ * `mcp_save_config` 参数契约：整份保存一个作用域。
  */
 export type McpSaveConfigArgs = { 
 /**

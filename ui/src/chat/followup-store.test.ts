@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 /**
- * followUp 队列前端面测试（06 号票，FR-01-07）：
+ * followUp 队列前端面测试：
  * - routeEnterKey 三态路由（composer-keys 纯函数）；
  * - queueFollowUp / sendSteer / removeQueuedFollowUp / resume / pause 的
  *   store 编排（IPC 注入，失败暂停/失败保留红线）；
@@ -42,7 +42,7 @@ beforeEach(() => {
   useFollowUpStore.setState({ steerNodes: {} });
 });
 
-describe("followup-store（06 号票）", () => {
+describe("followup-store", () => {
   it("routeEnterKey（Enter 三态路由）：空闲 none、运行中 steer、Alt+Enter followUp、IME 组合期一律 none", () => {
     // 空闲 Enter=普通发送（none，交给原生）；运行中 Enter=steer 插话
     expect(routeEnterKey({ altKey: false, isRunning: false, isComposing: false })).toBe("none");
@@ -104,7 +104,7 @@ describe("followup-store（06 号票）", () => {
     expect(await removeQueuedFollowUp("s1", "fu-b", deps)).toBe(false);
     expect(useSessionsStore.getState().queues.s1).toEqual([{ id: "fu-b", text: "二" }]);
 
-    // ---- resume（失败暂停的明确继续）/ pause（33 号票主动暂停）：失败只记日志不抛 ----
+    // ---- resume（失败暂停的明确继续）/ pause（主动暂停）：失败只记日志不抛 ----
     resumeFollowupQueue.mockResolvedValue({ runId: "r1", delivered: true });
     await resumeFollowUpQueue("s1", deps);
     expect(resumeFollowupQueue).toHaveBeenCalledWith("s1");

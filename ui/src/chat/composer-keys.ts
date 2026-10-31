@@ -1,17 +1,17 @@
 /**
- * Composer 按键体系（§10.6 / FR-13-05，17 号票；06 号票起 Enter 三态路由）。
+ * Composer 按键体系（含 Enter 三态路由）。
  *
  * 覆盖：`@` 路径补全菜单（search_workspace_paths 驱动，光标锚定，Tab 优先级
  * 菜单 > ghost hint）、↑↓ 空输入翻阅本人历史消息、Esc 停止运行/关闭浮层、
  * Shift+Tab 循环权限档（内存态）、Tab 接受 ghost hint。
- * Enter 路由（06 号票，FR-01-07 两种语义界面明确）：空闲 Enter=普通发送、
+ * Enter 路由（两种语义界面明确）：空闲 Enter=普通发送、
  * 运行中 Enter=steer 插话（inject_run_message，turn 边界消费不终止 run）、
  * Alt+Enter=followUp 排队（任何时刻可排，run 正常完成后自动投递）；
  * Shift+Enter 换行 / IME 组合期防误发由 ComposerPrimitive.Input 原生承担
- * （0.15.31 内建 isComposing 检查，17 号票实证）。
+ * （0.15.31 内建 isComposing 检查）。
  *
  * 同时承担草稿记账：composer 文本变化即写 sessions store（落盘防抖在
- * store 的 persistUiState）——§10.6「草稿按 Tab 存 ui-state」。
+ * store 的 persistUiState）——草稿按 Tab 存 ui-state。
  */
 
 import { useAui, useAuiState } from "@assistant-ui/react";
@@ -35,14 +35,14 @@ export interface AtMenuState {
   activeIndex: number;
 }
 
-/** / 技能菜单快照（FR-01-17 技能半边，09 号票；浮层渲染面）。 */
+/** / 技能菜单快照（浮层渲染面）。 */
 export interface SkillMenuState {
   query: string;
   items: SkillListEntry[];
   activeIndex: number;
 }
 
-/** 内置子代理角色（FR-07-02，10 号票：$ 触发符菜单的静态清单；与 Rust
+/** 内置子代理角色（$ 触发符菜单的静态清单；与 Rust
  *  agent/roles.rs 的 ROLES 同名单——7 角色由契约测试对照 subagent 工具
  *  description 双侧钉住）。 */
 export const SUBAGENT_ROLES: { name: string; summary: string }[] = [
@@ -55,7 +55,7 @@ export const SUBAGENT_ROLES: { name: string; summary: string }[] = [
   { name: "backend-dev", summary: "workspace.roleBackendDev" },
 ];
 
-/** $ 菜单快照（FR-07-02，10 号票；浮层渲染面）。 */
+/** $ 菜单快照（浮层渲染面）。 */
 export interface DollarMenuState {
   query: string;
   items: { name: string; summary: string }[];
@@ -63,7 +63,7 @@ export interface DollarMenuState {
 }
 
 /**
- * Enter 键的三态路由判定（纯函数，FR-01-07 两种语义界面明确）：
+ * Enter 键的三态路由判定（纯函数，两种语义界面明确）：
  * - Alt+Enter → followUp 排队（任何时刻可排，含运行中）；
  * - 运行中 Enter → steer 插话（注入当前 run，不终止）；
  * - 其余 → none（空闲 Enter 的普通发送 / Shift+Enter 换行交给
@@ -82,9 +82,9 @@ export function routeEnterKey(opts: {
 }
 
 /**
- * 从 (text, cursor) 检测未闭合的 `@` 触发（§10.6 光标锚定，28 号票引号升级）：
+ * 从 (text, cursor) 检测未闭合的 `@` 触发（光标锚定，支持引号路径）：
  * - 光标往回到最近 `@` 之间无引号外空白即视为路径查询中，返回插入位与查询词；
- * - 引号路径（`@"a b/c.txt"`，28 号票）：回扫遇**未闭合** `"` 内空白不终止
+ * - 引号路径（`@"a b/c.txt"`）：回扫遇**未闭合** `"` 内空白不终止
  *   （引号闭合即止——闭合的引用段视为完整，不再触发菜单）；引号内的 `@`
  *   不嵌套触发（`@"a@b/c.txt"` 中间的 @ 是普通字符）。
  *
@@ -117,7 +117,7 @@ export function detectAtQuery(text: string, cursor: number): { at: number; query
 }
 
 /**
- * 从 (text, cursor) 检测 `/` 技能触发（FR-01-17 技能半边，09 号票；与
+ * 从 (text, cursor) 检测 `/` 技能触发（与
  * detectAtQuery 同构的光标锚定 + 首字符互斥）：
  * - 光标往回到最近的 `/` 之间无空白 → 查询中；
  * - `/` 必须在行首或前一字符是空白（排除 `src/main.rs` 这类路径文本误触）；
@@ -145,7 +145,7 @@ export function detectSlashQuery(
 }
 
 /**
- * 从 (text, cursor) 检测 `$` 角色触发（FR-07-02，10 号票；与 detectAtQuery/
+ * 从 (text, cursor) 检测 `$` 角色触发（与 detectAtQuery/
  * detectSlashQuery 同构的光标锚定 + 首字符互斥）：
  * - 光标往回到最近的 `$` 之间无空白 → 查询中；
  * - `$` 必须在行首或前一字符是空白（排除 `cost$100` 这类文本误触）；
@@ -189,7 +189,7 @@ export function filterRoles(
   return [...starts, ...contains];
 }
 
-/** 选中角色的插入文本（票面定案：插入 `$角色名 ` 后用户续写任务，发送
+/** 选中角色的插入文本（插入 `$角色名 ` 后用户续写任务，发送
  *  文本原样入会话——模型经 subagent 工具 description 理解点名语义）。 */
 export function insertDollarInvocation(
   text: string,
@@ -201,7 +201,7 @@ export function insertDollarInvocation(
   return `${text.slice(0, at)}$${name} ${rest}`;
 }
 
-/** 选中技能的插入文本（票面定案：展开为明确指令文本，避免依赖模型对裸
+/** 选中技能的插入文本（展开为明确指令文本，避免依赖模型对裸
  *  `/名` 的理解；尾部空格衔接用户后续输入——后续文本若以空白开头则剥掉
  *  首段空白，避免出现双空格）。 */
 export function insertSkillInvocation(
@@ -229,7 +229,7 @@ export function filterSkills(skills: SkillListEntry[], query: string): SkillList
 }
 
 /**
- * 补全项的插入文本（28 号票引号升级）：路径含空格 → 引号包裹
+ * 补全项的插入文本：路径含空格 → 引号包裹
  * `@"a b/c.txt"`（发送合成引用段与模型 read 都按整段路径消费）；无空格
  * 维持裸路径。替换范围 = [at+1, cursor)（即查询段整体——含查询中已敲出的
  * 开引号，选中补全后引号形态归一）。目录与文件同形态。
@@ -241,13 +241,13 @@ export function insertAtCompletion(text: string, at: number, cursor: number, pat
 
 /**
  * Composer 键盘体系主 hook：返回输入框要挂的 onKeyDown/onCursor 回调、
- * @ 补全菜单状态（atMenu）与 / 技能菜单状态（skillMenu）（FR-01-17 两半边，
- * 09 号票；触发符按首字符互斥：光标前最近的 @ / / 各归其菜单）与菜单交互
+ * @ 补全菜单状态（atMenu）与 / 技能菜单状态（skillMenu）（触发符按首字符
+ * 互斥：光标前最近的 @ / / 各归其菜单）与菜单交互
  * 方法（pickActive/pickSkill 选中、hoverIndex/hoverSkill 悬停）。
  * 同时内部承担三件记账：@ 菜单的触发检测与防抖搜索、/ 菜单的技能清单拉取、
- * 草稿实时写入会话 store。键位优先级（§10.6）：触发符菜单 > ghost hint。
+ * 草稿实时写入会话 store。键位优先级：触发符菜单 > ghost hint。
  *
- * 17 号票增 interceptEnter：带图附件的 Enter 分流（先于既有路由询问）——
+ * interceptEnter：带图附件的 Enter 分流（先于既有路由询问）——
  * 返回 true 表示按键已被附件发送路径消费（调用方内部完成发送/排队），
  * onKeyDown 即 preventDefault 收口；无附件时传入 undefined 走原路由。
  */
@@ -285,7 +285,7 @@ export function useComposerKeys(options?: {
   const clearHint = useAskStore((s) => s.clearHint);
   const cycleTier = usePermissionTierStore((s) => s.cycle);
   const setDraft = useSessionsStore((s) => s.setDraft);
-  // 带图附件的 Enter 拦截（17 号票）：ref 承载避免 options 变化重建回调链
+  // 带图附件的 Enter 拦截：ref 承载避免 options 变化重建回调链
   const interceptRef = useRef(options?.interceptEnter);
   interceptRef.current = options?.interceptEnter;
 
@@ -307,14 +307,14 @@ export function useComposerKeys(options?: {
       return;
     }
     setSkillMenu(null); // @ 触发优先：关掉可能开着的 / 菜单（互斥）
-    setDollarMenu(null); // 同时关掉可能开着的 $ 菜单（10 号票三符互斥）
+    setDollarMenu(null); // 同时关掉可能开着的 $ 菜单（三符互斥）
     setAtMenu((prev) =>
       prev !== null && prev.query === detected.query
         ? prev
         : { query: detected.query, items: [], activeIndex: 0 },
     );
     const timer = setTimeout(() => {
-      // 引号路径查询（28 号票）：搜索词剥引号字符（`"a b/c` → `a b/c`，
+      // 引号路径查询：搜索词剥引号字符（`"a b/c` → `a b/c`，
       // 后端基名子串匹配不含引号形态）
       const needle = detected.query.replace(/"/g, "");
       void searchWorkspacePaths(sessionId, needle, 8)
@@ -328,7 +328,7 @@ export function useComposerKeys(options?: {
     return () => clearTimeout(timer);
   }, [text, sessionId]);
 
-  // ---- / 技能菜单状态机（FR-01-17 技能半边，09 号票）----
+  // ---- / 技能菜单状态机 ----
   // 技能清单：挂载时拉一次（skill_list），reload/toggle 后由调用方重开菜单
   // 时刷新（清单数据量小，不轮询）。
   const [skills, setSkills] = useState<SkillListEntry[]>([]);
@@ -357,7 +357,7 @@ export function useComposerKeys(options?: {
     setSkillMenu({ query: detected.query, items, activeIndex: 0 });
   }, [text, skills]);
 
-  // ---- $ 角色菜单状态机（FR-07-02，10 号票）：静态 7 角色清单；与 @ //
+  // ---- $ 角色菜单状态机：静态 7 角色清单；与 @ //
   // 互斥（先测 @ 再测 /，都未命中才测 $）。
   const [dollarMenu, setDollarMenu] = useState<DollarMenuState | null>(null);
   useEffect(() => {
@@ -389,7 +389,7 @@ export function useComposerKeys(options?: {
     setAtMenu(null);
   }, [aui, atMenu, text]);
 
-  /** 插入选中技能的明确指令文本（09 号票定案：展开为「请用 skill 工具加载
+  /** 插入选中技能的明确指令文本（展开为「请用 skill 工具加载
    *  技能 X…」+ 保留用户后续输入）。 */
   const pickSkill = useCallback(() => {
     const snapshot = skillMenu;
@@ -405,7 +405,7 @@ export function useComposerKeys(options?: {
     setSkillMenu(null);
   }, [aui, skillMenu, text]);
 
-  /** 插入选中角色的 `$角色名 ` 前缀（10 号票定案：点名语义由发送文本原样
+  /** 插入选中角色的 `$角色名 ` 前缀（点名语义由发送文本原样
    *  承载——模型经 subagent 工具 description 理解）。 */
   const pickDollar = useCallback(() => {
     const snapshot = dollarMenu;
@@ -421,12 +421,12 @@ export function useComposerKeys(options?: {
     setDollarMenu(null);
   }, [aui, dollarMenu, text]);
 
-  // ---- 历史翻阅（↑↓ 空输入，§10.6）----
+  // ---- 历史翻阅（↑↓ 空输入）----
   const historyRef = useRef<{ index: number; draft: string }>({ index: -1, draft: "" });
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     onCursor(event.currentTarget.selectionStart ?? 0);
-    // 1) 触发符菜单导航（§10.6 键位优先级：菜单 > ghost hint；@ 与 / 互斥开）
+    // 1) 触发符菜单导航（键位优先级：菜单 > ghost hint；@ 与 / 互斥开）
     if (atMenu !== null) {
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
         event.preventDefault();
@@ -477,7 +477,7 @@ export function useComposerKeys(options?: {
         return;
       }
     }
-    // 1c) $ 角色菜单导航（10 号票，§10.6：触发符菜单 > ghost hint）
+    // 1c) $ 角色菜单导航（触发符菜单 > ghost hint）
     if (dollarMenu !== null && dollarMenu.items.length > 0) {
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
         event.preventDefault();
@@ -521,24 +521,24 @@ export function useComposerKeys(options?: {
       aui.composer.setText(stack[clamped], { origin: "user" });
       return;
     }
-    // 3) Tab 接受 ghost hint（§10.4）
+    // 3) Tab 接受 ghost hint
     if (event.key === "Tab" && !event.shiftKey && matchGhost(hint ?? null, text) !== null) {
       event.preventDefault();
       aui.composer.setText(hint ?? "", { origin: "user" });
       clearHint(sessionId);
       return;
     }
-    // 4) Shift+Tab 循环权限档（内存态，§10.6）
+    // 4) Shift+Tab 循环权限档（内存态）
     if (event.key === "Tab" && event.shiftKey) {
       event.preventDefault();
       cycleTier(sessionId);
       return;
     }
-    // 5) Enter 三态路由（06 号票，FR-01-07）：Alt+Enter=followUp 排队、
+    // 5) Enter 三态路由：Alt+Enter=followUp 排队、
     //    运行中 Enter=steer 插话；空闲 Enter（普通发送）与 Shift+Enter（换行）
     //    不拦截，交给 ComposerPrimitive.Input 原生。两种排队语义排队成功后
     //    清空输入框（steer 回执后时间线插节点，followUp 进队列条）。
-    //    5a) 带图附件拦截（17 号票）：先于既有路由——附件发送/入队由
+    //    5a) 带图附件拦截：先于既有路由——附件发送/入队由
     //        ComposerBar 的回调统一处理（空闲 thread.append、运行中 inject）。
     if (event.key === "Enter" && !event.shiftKey) {
       if (interceptRef.current?.(event.altKey, isRunning) === true) {
@@ -582,7 +582,7 @@ export function useComposerKeys(options?: {
     }
   };
 
-  // ---- 草稿记账（§10.6 按 Tab 存 ui-state；空串自动清除该键） ----
+  // ---- 草稿记账（按 Tab 存 ui-state；空串自动清除该键） ----
   useEffect(() => {
     setDraft(sessionId, text);
   }, [sessionId, text, setDraft]);

@@ -1,5 +1,5 @@
 /**
- * 计划状态 store 单测（25 号票，§3.5 plan:update 全量计划态）：applyUpdate
+ * 计划状态 store 单测（plan:update 全量计划态）：applyUpdate
  * 整份替换、会话隔离、forgetSession 清桶——PlanCard/Inspector 基线标记与
  * 范围展示的数据面。
  */
@@ -21,7 +21,7 @@ beforeEach(() => {
   usePlanStateStore.setState({ bySession: {} });
 });
 
-describe("plan-state store（25 号票全量计划态）", () => {
+describe("plan-state store（全量计划态）", () => {
   it("applyUpdate 整份替换并按会话隔离、forgetSession 清桶、EMPTY_PLAN_STATE 稳定空态", () => {
     usePlanStateStore.getState().applyUpdate("s1", sampleState(true));
     usePlanStateStore.getState().applyUpdate("s2", sampleState(false));

@@ -1,13 +1,13 @@
 /**
- * 右栏 Inspector（FR-13-01，17 号票；10 号票增子代理页 tab——§10.7 M2 五页
- * 之一）：tab 一「用量」= 计数条三数的明细展开、缓存命中率与上下文进度条；
+ * 右栏 Inspector（含子代理页 tab）：
+ * tab 一「用量」= 计数条三数的明细展开、缓存命中率与上下文进度条；
  * tab 二「子代理」= sub:spawn/done 事件 + subFrame 驱动的列表（角色徽标/
  * subId/状态/步数/用量），运行中自动跟随展开活跃项，抽屉回看 =
  * load_subagent_history 拉全量只读渲染。
  *
  * 数据按活跃会话取（useSessionMetrics 分桶）；上下文窗口取当前激活模型
  * 的 contextWindow（get_config 一次拉取；无激活模型时按文档默认 128000）。
- * 「run 结束自动折叠」（§10.4/FR-01-10）行为保留，UI 开关已移除——按
+ * 「run 结束自动折叠」行为保留，UI 开关已移除——按
  * ui-state 持久化值（缺省 true）执行。
  */
 
@@ -41,7 +41,7 @@ import {
   useSubagentsStore,
 } from "@/stores/subagents";
 
-/** 技术设计文档 normalize 默认：contextWindow 缺省 128000。 */
+/** normalize 默认：contextWindow 缺省 128000。 */
 const DEFAULT_CONTEXT_WINDOW = 128000;
 
 /** 激活模型的上下文窗口（无激活模型 → 默认值；解析失败不阻塞渲染）。 */
@@ -87,14 +87,14 @@ export function Inspector({
   width: number;
   open: boolean;
   animate: boolean;
-  /** 「去设置」跳转（21 号票配额卡 no_key 行）：打开设置页供应商页。 */
+  /** 「去设置」跳转（配额卡 no_key 行）：打开设置页供应商页。 */
   onOpenSettings: () => void;
 }) {
   const t = useT();
   const sessionId = useSessionScope();
-  // tab 态（内存态：重载回「用量」缺省页）；「变更」tab（26 号票）= 打开
-  // 宽弹窗的入口（§10.7 变更面板为 Dialog 形态，tab 只承载入口按钮）；
-  // 「产物」tab（28 号票）= 会话产物登记页（write/edit 自动登记 + 一键打开）。
+  // tab 态（内存态：重载回「用量」缺省页）；「变更」tab = 打开
+  // 宽弹窗的入口（变更面板为 Dialog 形态，tab 只承载入口按钮）；
+  // 「产物」tab = 会话产物登记页（write/edit 自动登记 + 一键打开）。
   const [tab, setTab] = useState<
     "usage" | "artifacts" | "quota" | "subagents" | "grants" | "changes"
   >("usage");
@@ -104,7 +104,7 @@ export function Inspector({
   useEffect(() => {
     if (runningCount > 0) setTab("subagents");
   }, [runningCount]);
-  // 会话累计恢复（Q37，20 号票）：会话打开/切换时拉 #59k，四口径经
+  // 会话累计恢复：会话打开/切换时拉 session_usage，四口径经
   // tokens:update 同款 replace 回填 runMetrics（旧数据标量入回落桶）。
   // Inspector 面板常驻挂载（open 只控宽度），本副作用即会话级恢复点。
   useEffect(() => {
@@ -212,16 +212,16 @@ export function Inspector({
         ) : (
           <SubagentsPanel sessionId={sessionId} />
         )}
-        {/* 变更面板（26 号票，FR-11-02）：宽弹窗单例挂载——tab 入口与
-            openChangesPanel 联动（28 号票产物页）都经 changes-store 驱动 */}
+        {/* 变更面板：宽弹窗单例挂载——tab 入口与
+            openChangesPanel 联动（产物页）都经 changes-store 驱动 */}
         <ChangesPanel />
       </div>
     </aside>
   );
 }
 
-/** 「变更」tab 内容（26 号票）：打开宽弹窗的入口按钮 + 当前变更文件数
- *  摘要（轻量拉取 #37 一次，不随 tab 切换轮询）。 */
+/** 「变更」tab 内容：打开宽弹窗的入口按钮 + 当前变更文件数
+ *  摘要（轻量拉取 git_status 一次，不随 tab 切换轮询）。 */
 function ChangesEntryPanel({ sessionId }: { sessionId: string }) {
   const t = useT();
   const openPanel = useChangesStore((s) => s.openPanel);
@@ -271,10 +271,10 @@ function ChangesEntryPanel({ sessionId }: { sessionId: string }) {
   );
 }
 
-/** 统计区块（20 号票，FR-15-02）：范围切换（今天/近 7 天/近 30 天/全部）
+/** 统计区块：范围切换（今天/近 7 天/近 30 天/全部）
  *  + 按日柱状图（近 30 天）+ 按模型排行（四口径/占比条）；数据源
  *  stats_token，tokens:update 到达时本地增量修正今日（event-bridge 接线）。
- *  范围缓存命中率 = cacheRead/(input+cacheRead)（§10.5 公式）。 */
+ *  范围缓存命中率 = cacheRead/(input+cacheRead)。 */
 const RANGE_LABELS: { key: StatsRangeKey; labelKey: string }[] = [
   { key: "today", labelKey: "inspector.rangeToday" },
   { key: "7d", labelKey: "inspector.range7d" },
@@ -338,8 +338,8 @@ function UsageStatsSection() {
   );
 }
 
-/** 用量 tab（原 Inspector 主体，17 号票形态保留；20 号票增统计区块与
- *  Q37 恢复回落显示）。 */
+/** 用量 tab（Inspector 主体，含统计区块与
+ *  旧数据恢复回落显示）。 */
 function UsagePanel({ sessionId }: { sessionId: string }) {
   const t = useT();
   const { rate, turnUsage, sessionUsage, lastRun } = useSessionMetrics(sessionId);
@@ -352,17 +352,17 @@ function UsagePanel({ sessionId }: { sessionId: string }) {
     sessionUsage.cacheRead > 0
       ? sessionUsage.cacheRead / (sessionUsage.input + sessionUsage.cacheRead)
       : null;
-  // 上下文占用：会话累计（输入侧 + 缓存读，§10.5 口径折算）
+  // 上下文占用：会话累计（输入侧 + 缓存读，口径折算）
   const contextUsed = sessionUsage.input + sessionUsage.cacheRead;
   const contextRatio = Math.min(1, contextUsed / contextWindow);
-  // Q37 旧数据回落：明细四口径全零且 index.json 有历史标量 → 合计行回落
+  // 旧数据回落：明细四口径全零且 index.json 有历史标量 → 合计行回落
   const legacyTotal =
     legacy !== undefined && total(sessionUsage) === 0 && legacy > 0 ? legacy : null;
   return (
     <div className="flex flex-col gap-3 overflow-y-auto p-3 text-ui-sm tabular-nums text-[var(--muted-foreground)]">
-      {/* 计划（B 组）：plan:update 驱动的当前计划（内存态，重启清空）。
-          25 号票：批准态标记（已批准 + 基线条目数）、写范围声明与批准按钮
-          （§8.6 批准基线冻结的用户面——批准动作经 #26c approve_plan）。 */}
+      {/* 计划：plan:update 驱动的当前计划（内存态，重启清空）。
+          批准态标记（已批准 + 基线条目数）、写范围声明与批准按钮
+          （批准基线冻结的用户面——批准动作经 approve_plan）。 */}
       {planItems.length > 0 && (
         <section>
           <h3 className="mb-1 flex items-center gap-2 text-ui-sm text-[var(--cw-dim)]">
@@ -458,7 +458,7 @@ function UsagePanel({ sessionId }: { sessionId: string }) {
       <section>
         <h3 className="mb-1 flex items-center text-ui-sm text-[var(--cw-dim)]">
           {t("inspector.sectionContext")}
-          {/* §10.5 落点：进度条旁的手动压缩（FR-03-05，04 号票）；
+          {/* 进度条旁的手动压缩；
               运行中/压缩中禁用（后端 E_SESSION_RUNNING 兜底） */}
           <CompactButton />
         </h3>
@@ -467,7 +467,7 @@ function UsagePanel({ sessionId }: { sessionId: string }) {
           data-testid="inspector-context"
         >
           <div className="h-full bg-[var(--primary)]" style={{ width: `${contextRatio * 100}%` }} />
-          {/* §10.5：0.6 阈值标线（超过即接近压缩线） */}
+          {/* 0.6 阈值标线（超过即接近压缩线） */}
           <div
             className="absolute top-0 h-full w-px bg-[var(--destructive)]"
             style={{ left: "60%" }}
@@ -500,7 +500,7 @@ function UsagePanel({ sessionId }: { sessionId: string }) {
   );
 }
 
-/** 终态徽标配色（四象限着色，票面：subDone 徽标按象限着色）。 */
+/** 终态徽标配色（四象限着色：subDone 徽标按象限着色）。 */
 function outcomeColor(state: SubagentItem["state"]): string {
   switch (state) {
     case "report":
@@ -516,7 +516,7 @@ function outcomeColor(state: SubagentItem["state"]): string {
   }
 }
 
-/** 子代理 tab（10 号票）：列表（角色徽标/subId/状态/步数/用量）+ 抽屉回看。
+/** 子代理 tab：列表（角色徽标/subId/状态/步数/用量）+ 抽屉回看。
  *  列表按 spawn 顺序（时间线序）；运行中项高亮；点击行开抽屉拉全量历史
  *  只读渲染。 */
 function SubagentsPanel({ sessionId }: { sessionId: string }) {
@@ -569,7 +569,7 @@ function SubagentsPanel({ sessionId }: { sessionId: string }) {
   );
 }
 
-/** 抽屉回看（FR-07-06）：load_subagent_history 拉全量只读渲染（角色运行
+/** 抽屉回看：load_subagent_history 拉全量只读渲染（角色运行
  *  中的轮次输出 + 汇报）；失败给行内错误。 */
 function SubDrawer({ sub }: { sub: SubagentItem }) {
   const t = useT();

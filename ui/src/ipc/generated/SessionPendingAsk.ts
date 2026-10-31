@@ -2,7 +2,7 @@
 import type { AskPayload } from "./AskPayload";
 
 /**
- * §3.3 #59c 的返回体：仍有效的未决询问/审批（原始载荷随行，§5.6）。
+ * 的返回体：仍有效的未决询问/审批（原始载荷随行）。
  */
 export type SessionPendingAsk = { askId: string, runId: string, 
 /**

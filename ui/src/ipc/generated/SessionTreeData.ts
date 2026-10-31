@@ -3,8 +3,8 @@ import type { MessageEntry } from "./MessageEntry";
 import type { StoredCompactionEntry } from "./StoredCompactionEntry";
 
 /**
- * `load_session_tree` 返回（§6.1 定稿结构：headId=activeLeafId + messages 含 `status?`；
- * 04 号票增 `compactions` 投影面——§6.3 定稿：compaction 条目不投影为树节点，
+ * `load_session_tree` 返回（定稿结构：headId=activeLeafId + messages 含 `status?`；
+ * 增 `compactions` 投影面—— 定稿：compaction 条目不投影为树节点，
  * 前端按此数组渲染"已压缩早期上下文"分隔提示，wire 边界由后端史册承载）。
  */
 export type SessionTreeData = { sessionId: string, messages: Array<MessageEntry>, 

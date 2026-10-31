@@ -4,6 +4,6 @@ import type { ModelUsage } from "./ModelUsage";
 import type { TotalUsage } from "./TotalUsage";
 
 /**
- * `stats_token` 返回契约（§3.3 #52）。
+ * `stats_token` 返回契约。
  */
 export type StatsTokenResult = { byDay: Array<DayUsage>, byModel: Array<ModelUsage>, total: TotalUsage, };

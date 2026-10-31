@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 /**
- * 用量统计图表测试（20 号票）：多日多模型 fixture 的渲染面——柱状图根数、
+ * 用量统计图表测试：多日多模型 fixture 的渲染面——柱状图根数、
  * 空态、排行条内容与占比序。精简版：两图合并为代表例，段内手动卸载。
  */
 
@@ -40,7 +40,7 @@ const models: ModelUsage[] = [
   },
 ];
 
-describe("用量统计图表（20 号票）", () => {
+describe("用量统计图表", () => {
   it("DailyBars：柱根数/截窗/空态/零值占位；ModelBars：排行内容与空态", () => {
     // 柱根数 = 天数
     const first = render(<DailyBars days={days} />);

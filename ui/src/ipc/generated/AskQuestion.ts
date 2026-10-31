@@ -2,7 +2,7 @@
 import type { AskChoice } from "./AskChoice";
 
 /**
- * 单个问题（§3.2 question.questions 元素）。
+ * 单个问题（question.questions 元素）。
  */
 export type AskQuestion = { 
 /**

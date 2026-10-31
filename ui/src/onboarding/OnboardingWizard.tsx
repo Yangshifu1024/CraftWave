@@ -1,10 +1,10 @@
 /**
- * 首启引导向导（30 号票，FR-13-18 / §10.7）：全新用户第一次打开 CraftWave
+ * 首启引导向导：全新用户第一次打开 CraftWave
  * 不用自己摸设置——四步向导把「能开始干活」的最小配置走完：
  *
  *   语言 → 供应商与 Key（含连通测试）→ 项目 → 权限档与安全简介
  *
- * 行为口径（票面）：
+ * 行为口径：
  *  - 每一步都可跳过（右上「跳过」单步前进）；顶部 × 整包关闭 = 跳过未完成，
  *    记录当前步，下次从该步续走；completed 后不再自动弹、横幅消失；
  *  - 引导绝不阻塞临时会话直接开聊：覆盖层可随时关闭，主界面在底层可用；
@@ -15,7 +15,7 @@
  *    测试」，不阻塞向导（软依赖）；
  *  - 第 4 步纯静态说明（四档权限 Shift+Tab 循环语义 / 审批弹窗 / 计划门 /
  *    设置入口），仅一个「完成」钮，无写操作；
- *  - 键盘可达（NFR-20）：全流程 Tab 聚焦 / Enter 提交 / Esc 整包关闭；
+ *  - 键盘可达：全流程 Tab 聚焦 / Enter 提交 / Esc 整包关闭；
  *  - 记账：完成、单步跳过、整包关闭均即时经 sessions store 的
  *    setOnboarding → 既有 300ms 防抖 set_ui_state 通道落盘。
  */
@@ -103,7 +103,7 @@ export function OnboardingWizard({ initialStep = 0, onClose }: OnboardingWizardP
     onClose();
   }
 
-  /** Esc 整包关闭（NFR-20；输入法组合键中的 Esc 不算）。 */
+  /** Esc 整包关闭（输入法组合键中的 Esc 不算）。 */
   function onKeyDown(e: React.KeyboardEvent) {
     if (e.key === "Escape" && !e.nativeEvent.isComposing) {
       e.preventDefault();
@@ -256,14 +256,13 @@ function LanguageCard({
   );
 }
 
-/** 第 1 步：语言。zh-CN / en-US 单选 → save_config 写 config.ui.language。
- *  31 号票 i18n 落地前界面文案维持中文，本步只落配置值。 */
+/** 第 1 步：语言。zh-CN / en-US 单选 → save_config 写 config.ui.language。 */
 function LanguageStep({ onNext }: { onNext: () => void }) {
   const t = useT();
   const config = useSettingsStore((s) => s.config);
   const [language, setLanguageState] = useState<Language>(config?.ui.language ?? "zh-CN");
   const [saving, setSaving] = useState(false);
-  // 31 号票联动（§10.7 注记）：选择即切 i18n 内存态——向导自身与底层主界面
+  // 联动：选择即切 i18n 内存态——向导自身与底层主界面
   // 立即换语言，落盘仍随「下一步」的 save_config 通道。
   function chooseLanguage(lang: Language) {
     setLanguageState(lang);
@@ -283,7 +282,7 @@ function LanguageStep({ onNext }: { onNext: () => void }) {
       if (!ok) throw new Error(useSettingsStore.getState().error ?? t("onboarding.saveFailed"));
       onNext();
     } catch (err) {
-      // 29 号票 Toast 已落地：失败直接轻提示（票面 console.warn 锚点收编）
+      // 失败直接轻提示（console.warn 留诊断锚点）
       console.warn("[onboarding] 语言设置保存失败", err);
       pushToast(
         "error",
@@ -473,7 +472,7 @@ function ProviderStep({ onForward, onSkip }: { onForward: () => void; onSkip: ()
           {t("onboarding.providerExisting", { count: config?.providers.length ?? 0 })}
         </p>
       )}
-      {/* 预设快捷填充（19 号票同源清单）：本地三家标注「本地 / 离线可用」 */}
+      {/* 预设快捷填充（与设置页同源清单）：本地三家标注「本地 / 离线可用」 */}
       <div className="mb-4 flex flex-wrap items-center gap-1.5">
         <span className="text-ui-sm text-[var(--cw-text-2)]">
           {t("onboarding.providerFromPreset")}
@@ -526,7 +525,7 @@ function ProviderStep({ onForward, onSkip }: { onForward: () => void; onSkip: ()
         />
       </ProviderFields>
 
-      {/* 测试结果与降级提示（19 号票口径：七类分类人话文案） */}
+      {/* 测试结果与降级提示（七类分类人话文案） */}
       <div className="mt-2">
         <ConnectionTestResult test={test} />
         {testUnavailable && (
@@ -673,8 +672,8 @@ function ProjectStep({ onNext }: { onNext: () => void }) {
   );
 }
 
-/** 四档权限档一句话说明（§8.5 矩阵从严到宽；与 Composer Shift+Tab 循环一致）。
- *  label/text 为 i18n 键（31 号票），渲染时查词。 */
+/** 四档权限档一句话说明（权限矩阵从严到宽；与 Composer Shift+Tab 循环一致）。
+ *  label/text 为 i18n 键，渲染时查词。 */
 const TIER_INTRO: { label: string; text: string }[] = [
   { label: "onboarding.tierPlanLabel", text: "onboarding.tierPlanText" },
   { label: "onboarding.tierConfirmEachLabel", text: "onboarding.tierConfirmEachText" },
@@ -740,7 +739,7 @@ function SecurityStep({ onFinish }: { onFinish: () => void }) {
 /**
  * 「继续初始配置」横幅（主窗卡头上方常驻细条）：初始配置未完成时显示，
  * 点击从记录步续走向导；完成后随 completed=true 自动消失。
- * 渲染判定三态（票面测试口径）：无记录不渲染（首启走自动弹）、
+ * 渲染判定三态（测试口径）：无记录不渲染（首启走自动弹）、
  * 未完成渲染、已完成不渲染。
  */
 export function OnboardingResumeBanner({

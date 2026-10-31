@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 /**
- * 小工具包前端测试（14 号票，§8.3 M2 表四行的 UI 面）：
+ * 小工具包前端测试（四张工具卡的 UI 面）：
  * 1. 四张工具卡的渲染面（徽标/列表/结果行/预览折叠）；
  * 2. HtmlPreview 沙箱逃逸向量断言——iframe 的 sandbox 属性契约（只带
  *    allow-scripts，无 allow-same-origin/allow-top-navigation/allow-forms）
@@ -8,7 +8,7 @@
  *    parent/top/localStorage 抛 SecurityError——由浏览器沙箱规范在
  *    opaque origin 下保证，happy-dom 无法真实执行跨框脚本，故此处钉死
  *    装配面契约；预览页 CSP 的禁外联面由 Rust 侧 render_html_test 断言）；
- * 3. AskPanel 审批卡的「查看预览」入口（FR-12-04）。
+ * 3. AskPanel 审批卡的「查看预览」入口。
  */
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -112,7 +112,7 @@ const baseOptions = [
   { id: "deny", label: "拒绝", mode: "deny" as const },
 ];
 
-describe("small-tools（14 号票）", () => {
+describe("small-tools", () => {
   it("四张工具卡：batch_read 徽标与逐文件列表、glob 命中计数与上限、calculate 结果行、render_html 折叠预览", async () => {
     // ---- batch_read：文件数徽标 + 逐文件成功/失败/截断列表 + 内容折叠 ----
     sidecarData("c1", {
@@ -217,7 +217,7 @@ describe("small-tools（14 号票）", () => {
     );
   });
 
-  it("HtmlPreview 沙箱契约（sandbox 只带 allow-scripts、注册失败错误行）+ AskPanel 审批卡「查看预览」入口（FR-12-04）", async () => {
+  it("HtmlPreview 沙箱契约（sandbox 只带 allow-scripts、注册失败错误行）+ AskPanel 审批卡「查看预览」入口", async () => {
     // ---- 沙箱逃逸向量（装配契约面）：无 allow-same-origin / top-navigation / forms ----
     // 逃逸向量 ①（同源访问）：无 allow-same-origin → opaque origin，
     // 预览页脚本对 parent/top 的 DOM/存储访问被浏览器判定跨源拒绝。

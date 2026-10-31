@@ -1,8 +1,8 @@
 /**
- * HTML 沙箱预览（14 号票，FR-12-04/§8.3 render_html 行）：把模型产出的
+ * HTML 沙箱预览（render_html 同款载体）：把模型产出的
  * 自包含 HTML 渲染进隔离 iframe。
  *
- * 加载通道（票内定案，§9.5 回写）：srcdoc/blob: 帧会继承主窗 CSP
+ * 加载通道（定案）：srcdoc/blob: 帧会继承主窗 CSP
  * （`script-src 'self'` 拦预览页内联脚本），因此走后端自定义协议
  * `preview://localhost/<token>`（Windows `http://preview.localhost/`）——
  * 协议响应自带预览专用 CSP（放内联脚本/样式、禁一切外联），不继承主窗

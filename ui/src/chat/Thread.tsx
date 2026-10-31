@@ -90,8 +90,8 @@ import { useSessionsStore } from "@/stores/sessions";
 const NO_ENTRIES: never[] = [];
 const NO_NODES: never[] = [];
 
-/** 消息区（FR-13-15 滚动跟随：Viewport autoScroll 内建「跟随最新 + 上滚
- *  暂停」；不在底部时显示回底按钮，17 号票）。内容列限宽居中（参考样式
+/** 消息区（滚动跟随：Viewport autoScroll 内建「跟随最新 + 上滚
+ *  暂停」；不在底部时显示回底按钮）。内容列限宽居中（参考样式
  *  A1：工作流风格平铺，不占满整屏宽）。 */
 export function ChatThread({ onOpenSettings }: { onOpenSettings?: () => void }) {
   const t = useT();
@@ -99,7 +99,7 @@ export function ChatThread({ onOpenSettings }: { onOpenSettings?: () => void }) 
     // 透明背景：透出承载它的大圆角卡（bg-card），自身不再铺底色
     <div className="flex h-full min-h-0 flex-1 flex-col text-[var(--foreground)]">
       <ThreadPrimitive.Root className="relative flex min-h-0 flex-1 flex-col">
-        {/* cw-scroll-viewport：滚动锚点（29 号票）的查询标识——SessionTab 的
+        {/* cw-scroll-viewport：滚动锚点的查询标识——SessionTab 的
             记账/恢复面按类名定位本会话的滚动容器 */}
         <ThreadPrimitive.Viewport className="cw-scroll-viewport flex min-w-0 flex-1 flex-col overflow-y-auto px-4 py-6">
           <AuiIf condition={(s) => s.thread.isEmpty}>
@@ -107,11 +107,11 @@ export function ChatThread({ onOpenSettings }: { onOpenSettings?: () => void }) 
           </AuiIf>
           {/* 内容列限宽居中（约 62%，A1）：消息与过程行统一宽度 */}
           <div className="mx-auto min-w-0 w-full max-w-4xl space-y-4 2xl:max-w-6xl">
-            {/* 压缩边界分隔提示（§6.3 定稿：非消息体，04 号票） */}
+            {/* 压缩边界分隔提示（非消息体） */}
             <CompactionDivider />
             <ThreadPrimitive.Messages>
               {({ message }) =>
-                // system = runMarker 等存储标记节点（custom 载荷保真，§6.2 跳过内容）——不渲染
+                // system = runMarker 等存储标记节点（custom 载荷保真，跳过内容渲染）——不渲染
                 message.role === "system" ? null : message.role === "user" ? (
                   <UserMessage />
                 ) : (
@@ -119,7 +119,7 @@ export function ChatThread({ onOpenSettings }: { onOpenSettings?: () => void }) 
                 )
               }
             </ThreadPrimitive.Messages>
-            {/* steer 插话节点（06 号票：run:inject 回执本地插入，树收养后剔除） */}
+            {/* steer 插话节点（run:inject 回执本地插入，树收养后剔除） */}
             <SteerNodes />
             {/* 运行中末尾 spinner（A3） */}
             <AuiIf condition={(s) => s.thread.isRunning}>
@@ -141,12 +141,12 @@ export function ChatThread({ onOpenSettings }: { onOpenSettings?: () => void }) 
             内容也不会钻入其背后（sticky 方案的两个老问题一并消除） */}
         <div className="shrink-0 px-4 pb-3">
           <div className="relative mx-auto w-full max-w-4xl 2xl:max-w-6xl">
-            {/* 回底按钮（FR-13-15）：已在底部时原语输出 disabled，用
+            {/* 回底按钮：已在底部时原语输出 disabled，用
                 disabled:hidden 隐藏；挂 composer 容器上方自适应其高度 */}
             <ThreadPrimitive.ScrollToBottom className="cw-pop-in absolute bottom-full left-1/2 z-20 mb-2 flex size-8 -translate-x-1/2 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--card)] text-[var(--muted-foreground)] shadow hover:text-[var(--foreground)] disabled:hidden">
               <ArrowDown size={14} aria-hidden className="shrink-0" />
             </ThreadPrimitive.ScrollToBottom>
-            {/* 压缩生命周期指示条（Composer 上方轻量呈现，04 号票） */}
+            {/* 压缩生命周期指示条（Composer 上方轻量呈现） */}
             <CompactionIndicator />
             <ComposerBar />
             <ComposerGhost />
@@ -185,7 +185,7 @@ function greeting(date: Date): string {
 }
 
 /** 空状态建议词 key（编码代理场景，点击整句填入 composer 不发送）；
- *  文案经字典查词（31 号票 i18n）。 */
+ *  文案经字典查词。 */
 const EMPTY_STATE_SUGGESTIONS = [
   "workspace.suggestion1",
   "workspace.suggestion2",
@@ -231,10 +231,10 @@ function ThreadEmptyState() {
   );
 }
 
-/** 队列条（FR-01-07 排队面，06 号票后端队列）：followUp 待发消息逐条展示
+/** 队列条（排队面，后端队列）：followUp 待发消息逐条展示
  *  （带「排队」徽标）——× 移除（后端删除 + 本地同步）、铅笔取出编辑（删除
- *  后文本回填输入框，改完 Alt+Enter 重新排队）、⏸ 主动暂停（33 号票更新门
- *  配套：更新安装前用户须明确暂停并保留队列）；暂停态（run 失败，06 号票）
+ *  后文本回填输入框，改完 Alt+Enter 重新排队）、⏸ 主动暂停（更新门
+ *  配套：更新安装前用户须明确暂停并保留队列）；暂停态（run 失败）
  *  显示横幅与「继续」入口。后端 queue.json 为投递权威，本地队列条以事件
  *  （run:queue）与本地操作共同驱动（stores/sessions.ts queues 桶）。 */
 function FollowUpQueueBar() {
@@ -254,7 +254,7 @@ function FollowUpQueueBar() {
     });
   };
   const pause = () => {
-    // 主动暂停（33 号票 #59o）：写 queue.json paused=true 持久化，更新重启
+    // 主动暂停：写 queue.json paused=true 持久化，更新重启
     // 后仍等待用户明确继续；run:queue 事件回推校正本地状态
     void pauseFollowUpQueue(sessionId).catch(() => {});
   };
@@ -332,7 +332,7 @@ function FollowUpQueueBar() {
   );
 }
 
-/** steer 插话节点（06 号票，§5.5 本地插入面）：run:inject 回执驱动——时间线
+/** steer 插话节点（本地插入面）：run:inject 回执驱动——时间线
  *  尾部带「插话」徽标的 user 节点。树重载收养后由 SessionTab 的 adoptTree
  *  按 entryId 剔除 store 节点（树内已有同 id 的普通 user 消息），此处不做
  *  消息列表订阅（assistant-ui messages selector 引用不稳定，防无限重渲染）。 */
@@ -359,23 +359,23 @@ function SteerNodes() {
   );
 }
 
-/** Composer 区（§10.6 / FR-13-02，17 号票）：输入框 + 附件（按钮/拖拽/粘贴，
- *  FR-12-02）+ 权限档指示 + @ 菜单浮层 + / 技能菜单浮层（09 号票）。
- *  Enter 三态路由（06 号票）/Shift+Enter 换行/IME 组合期防误发由
+/** Composer 区：输入框 + 附件（按钮/拖拽/粘贴）
+ *  + 权限档指示 + @ 菜单浮层 + / 技能菜单浮层。
+ *  Enter 三态路由/Shift+Enter 换行/IME 组合期防误发由
  *  useComposerKeys + ComposerPrimitive.Input 共同承担；带图附件的 Enter
  *  分流经 interceptEnter 先行（空闲 thread.append 携 image part、运行中/
- *  Alt+Enter 转 followUp 队列——§5.5 带图不入 steer）。 */
+ *  Alt+Enter 转 followUp 队列——带图不入 steer）。 */
 function ComposerBar() {
   const t = useT();
   const sessionId = useSessionScope();
   const aui = useAui();
   const isRunning = useAuiState((s) => s.thread.isRunning);
   const composerText = useAuiState((s) => s.composer.text);
-  // 附件状态（17 号票，FR-12-02）：组件态，SessionTab keep-mounted 每会话一份
+  // 附件状态：组件态，SessionTab keep-mounted 每会话一份
   const { attachments, hint, showHint, addFiles, addFromPath, remove, clear } =
     useComposerAttachments(sessionId);
   const hasAttachments = attachments.length > 0;
-  // vision 判定（17 号票）：订阅模型清单触发重渲染后取判定值（挂载/会话
+  // vision 判定：订阅模型清单触发重渲染后取判定值（挂载/会话
   // 切换刷新一次清单；ModelPicker 切换会话覆盖模型即时反映）
   useVisionStore((s) => s.byModel);
   useVisionStore((s) => s.activeModelId);
@@ -388,10 +388,10 @@ function ComposerBar() {
     // eslint 未启用——biome 的 exhaustive-deps 对 getState() 无告警面
   }, []);
 
-  // 带图发送/入队（17 号票）：空闲 → thread.append 携 cwimg 引用的 image
+  // 带图发送/入队：空闲 → thread.append 携 cwimg 引用的 image
   // part（保存链路 partToWire 解析回 blobHash，JSONL 不含图片本体）；运行中
-  // / Alt+Enter → inject 的 attachments 通路转 followUp 队列（§5.5 带图不入
-  // steer）。非 vision 模型拦截并提示（Q30 前置面；后端另有兜底拒绝）。
+  // / Alt+Enter → inject 的 attachments 通路转 followUp 队列（带图不入
+  // steer）。非 vision 模型拦截并提示（后端另有兜底拒绝）。
   const submitWithAttachments = useCallback(
     (mode: "auto" | "queue") => {
       if (!hasAttachments) return;
@@ -480,7 +480,7 @@ function ComposerBar() {
   // @ chip 高亮 overlay 的定位基准（输入框壳）
   const composerInputShellRef = useRef<HTMLDivElement>(null);
 
-  // 粘贴图片提取（FR-12-02 三入口之一）：clipboardData 的图片 File 走附件
+  // 粘贴图片提取（附件三入口之一）：clipboardData 的图片 File 走附件
   // 通道；无图片文件的粘贴（文本等）不受影响
   const onPaste = useCallback(
     (e: React.ClipboardEvent) => {
@@ -496,7 +496,7 @@ function ComposerBar() {
     [vision, showHint, addFiles, t],
   );
 
-  // 拖拽路由（FR-13-16，17 号票）：Tauri webview 原生接管文件拖拽（HTML5
+  // 拖拽路由：Tauri webview 原生接管文件拖拽（HTML5
   // drop 不可用），走 onDragDropEvent + Composer 区命中判定——图片转附件
   //（非 vision 拦截提示）、目录弹「添加为项目」、普通文件转 @ 路径引用
   //（roots 外路径不因拖入放开授权，模型 read 照走校验）。
@@ -554,7 +554,7 @@ function ComposerBar() {
 
   return (
     <div className="relative" ref={rootRef}>
-      {/* 拖拽高亮（dragover 语义经 Tauri enter/over 事件驱动，FR-13-16） */}
+      {/* 拖拽高亮（dragover 语义经 Tauri enter/over 事件驱动） */}
       {dragActive && (
         <div
           data-testid="composer-drag-highlight"
@@ -590,7 +590,7 @@ function ComposerBar() {
           ))}
         </ul>
       )}
-      {/* / 技能菜单浮层（09 号票，FR-01-17 技能半边：skill_list 驱动，
+      {/* / 技能菜单浮层（skill_list 驱动，
           ↑↓ 导航、Tab/Enter 选中展开为明确指令文本，Esc 关闭） */}
       {skillMenu !== null && skillMenu.items.length > 0 && (
         <ul
@@ -621,7 +621,7 @@ function ComposerBar() {
           ))}
         </ul>
       )}
-      {/* $ 角色菜单浮层（10 号票，FR-07-02：静态 7 角色清单，↑↓ 导航、
+      {/* $ 角色菜单浮层（静态 7 角色清单，↑↓ 导航、
           Tab/Enter 选中插入 $角色名 前缀，Esc 关闭；选中后用户续写任务） */}
       {dollarMenu !== null && dollarMenu.items.length > 0 && (
         <ul
@@ -652,13 +652,13 @@ function ComposerBar() {
           ))}
         </ul>
       )}
-      {/* followUp 队列条（06 号票后端队列：排队徽标 + 暂停横幅 + 继续入口） */}
+      {/* followUp 队列条（后端队列：排队徽标 + 暂停横幅 + 继续入口） */}
       <FollowUpQueueBar />
       {/* 输入壳（ZCode 同款结构）：p-3 卡，输入框与工具栏/状态栏纵向 gap-2；
           hover 边框提亮一档（--input），focus-within 蓝边呼应聚焦令牌；
           底色用 --composer-bg（暗色 #272728 亮于中部卡，亮色同卡白） */}
       <ComposerPrimitive.Root className="flex flex-col gap-2 rounded-2xl border border-[var(--border)] bg-[var(--composer-bg)] p-3 transition-colors hover:border-[var(--input)] focus-within:border-[var(--cw-focus)]">
-        {/* 附件条（17 号票，FR-12-02）：缩略图 + 尺寸 + 移除 */}
+        {/* 附件条：缩略图 + 尺寸 + 移除 */}
         <AttachmentBar attachments={attachments} onRemove={remove} />
         {/* 附件提示行（超限/失败/vision 拦截；自动消退） */}
         <AttachmentHintLine hint={hint} />
@@ -673,9 +673,9 @@ function ComposerBar() {
             onClick={(e) => onCursor(e.currentTarget.selectionStart ?? 0)}
             onPaste={onPaste}
           />
-          {/* @ 引用 chip 高亮（28 号票）：透明 overlay 叠在输入框上，对 @…token
+          {/* @ 引用 chip 高亮：透明 overlay 叠在输入框上，对 @…token
               着色（同字体/行高/padding + 滚动同步；不接收指针事件，输入框原文
-              不变——textarea 原生无法内嵌 chip 的 §10.6 定案形态） */}
+              不变——textarea 原生无法内嵌 chip） */}
           <AtHighlightOverlay text={composerText} containerRef={composerInputShellRef} />
         </div>
         {/* 附件按钮的隐藏文件选择器（accept 限定白名单四格式） */}
@@ -725,7 +725,7 @@ function ComposerBar() {
             {/* 键位同位替换（ZCode 单键形态）：空闲=发送；运行中=停止（点击中断本轮）。
                 运行中排队不再占按钮：queue capability 打开时 Input 的 Enter 仍入队
                 （队列条照常展示）——按钮只承担「立即动作」（发送/停止），排队是键盘语义。
-                17 号票：带附件时发送钮走附件路径（空闲 thread.append / 运行中入队）。 */}
+                带附件时发送钮走附件路径（空闲 thread.append / 运行中入队）。 */}
             <AuiIf condition={(s) => s.thread.isRunning}>
               <ComposerPrimitive.Cancel
                 aria-label={t("workspace.stop")}
@@ -771,14 +771,14 @@ function ComposerBar() {
         {/* 状态栏（A5）——思考计时 + 速率/本轮/会话三数 + 工具次数（ZCode 无此层，保留） */}
         <ComposerStatusBar />
       </ComposerPrimitive.Root>
-      {/* 拖拽目录「添加为项目」确认（FR-13-16；save_project 既有命令） */}
+      {/* 拖拽目录「添加为项目」确认（save_project 既有命令） */}
       <DropDirectoryDialog drop={dropDir} onClose={() => setDropDir(null)} />
     </div>
   );
 }
 
 /**
- * @ 引用 chip 高亮 overlay（28 号票，§10.6「真实路径高亮」定案形态）：
+ * @ 引用 chip 高亮 overlay（「真实路径高亮」形态）：
  * `ComposerPrimitive.Input` 是 textarea，原生无法内嵌 chip——本组件以透明
  * 文本层叠在输入框正上方，按 extractAtTokenSpans 的区间对 `@…` token 着色
  * （chip 观感）。对齐三要素：同字体/行高（text-ui-base leading-5）、同
@@ -846,7 +846,7 @@ export function AtHighlightOverlay({
 }
 
 /** 权限档描述（双行菜单第二行，按档位查字典：plan→plan / confirmEach→build /
- *  autoEdit→edit / fullAccess→yolo，31 号票 i18n）。 */
+ *  autoEdit→edit / fullAccess→yolo）。 */
 function tierDescription(tier: PermissionTier): string {
   switch (tier) {
     case "plan":
@@ -860,9 +860,9 @@ function tierDescription(tier: PermissionTier): string {
   }
 }
 
-/** 权限档下拉（FR-13-02）：双行菜单（图标 + 档名 + 描述，行尾勾标记当前
+/** 权限档下拉：双行菜单（图标 + 档名 + 描述，行尾勾标记当前
  *  档，ZCode 模式菜单同款）；fullAccess 触发器警示橙。Shift+Tab 循环仍可用，
- *  §10.6 内存态——本次会话有效。 */
+ *  内存态——本次会话有效。 */
 function TierMenu() {
   const t = useT();
   const sessionId = useSessionScope();
@@ -928,18 +928,18 @@ function TierMenu() {
 }
 
 /** thinking 档触发器文案：未显式设置显示「默认」（per-model reasoningEffort
- *  回落，§11.4 优先级链），显式档显示档位名。 */
+ *  回落优先级链），显式档显示档位名。 */
 function thinkingTriggerLabel(level: ThinkingLevel | undefined): string {
   return level === undefined ? t("workspace.thinkingDefault") : thinkingLabel(level);
 }
 
 /**
- * thinking 档下拉（FR-02-08，18 号票）：Composer 工具条的思考力度快捷钮
- * （票面「Shift+Tab 或按钮」二选一——Shift+Tab 已被权限档占用（§10.6），
+ * thinking 档下拉：Composer 工具条的思考力度快捷钮
+ * （「Shift+Tab 或按钮」二选一——Shift+Tab 已被权限档占用，
  * 走按钮 + 下拉）。六行 = 「跟随默认」（清除显式设置，回落 per-model
- * reasoningEffort）+ 五档（off→minimal→low→medium→high，票面循环顺序）。
- * 选择即 setLevelPersisted（内存态 + set_session_prefs 防抖落盘，FR-14-05）；
- * 运行中切换由后端每拍请求前重读 prefs 生效（§11.1 FR-02-07 修正案）。
+ * reasoningEffort）+ 五档（off→minimal→low→medium→high，循环顺序）。
+ * 选择即 setLevelPersisted（内存态 + set_session_prefs 防抖落盘）；
+ * 运行中切换由后端每拍请求前重读 prefs 生效。
  */
 function ThinkingMenu() {
   const t = useT();
@@ -1026,18 +1026,18 @@ function ThinkingMenu() {
 }
 
 /**
- * 模型选择下拉（FR-13-05 Ctrl+L，18 号票完成持久化收尾）：列出配置里全部
- * 供应商的模型；选中即本会话覆盖（发送时经 RunConfig.modelId 生效，§11.1）
+ * 模型选择下拉（Ctrl+L）：列出配置里全部
+ * 供应商的模型；选中即本会话覆盖（发送时经 RunConfig.modelId 生效）
  * 并防抖落盘（set_session_prefs，跨重启还原），「跟随默认」回到全局
  * activeModelId。清单在每次打开时拉取（设置页改动即时反映）；Ctrl+L 经
- * openRequest store 唤起（SessionTab 监听派发，18 号票）。
+ * openRequest store 唤起（SessionTab 监听派发）。
  */
 function ModelPicker() {
   const t = useT();
   const sessionId = useSessionScope();
   const selected = useSessionModelStore((s) => s.bySession[sessionId]);
   const [open, setOpen] = useState(false);
-  // Ctrl+L 打开信号（18 号票）：openRequest 指向本会话即展开并消费掉
+  // Ctrl+L 打开信号：openRequest 指向本会话即展开并消费掉
   const openRequest = useSessionModelStore((s) => s.openRequest);
   const consumeOpen = useSessionModelStore((s) => s.consumeOpen);
   useEffect(() => {
@@ -1162,14 +1162,14 @@ function UserMessage() {
   const t = useT();
   const sessionId = useSessionScope();
   const parts = useAuiState((s) => s.message.parts);
-  // 带历史图 + 当前模型非 vision：气泡尾部提示「模型看不到」（Q30 定稿：
+  // 带历史图 + 当前模型非 vision：气泡尾部提示「模型看不到」（定稿：
   // 界面原图保留并提示，历史图在模型请求中转占位）
   const hasImage = parts.some((p) => p.type === "image");
   useVisionStore((s) => s.byModel);
   useVisionStore((s) => s.activeModelId);
   useSessionModelStore((s) => s.bySession[sessionId]);
   const vision = visionOf(sessionId);
-  // 消息 id（29 号票滚动锚点的 DOM 锚）：data-message-id 挂在气泡根上
+  // 消息 id（滚动锚点的 DOM 锚）：data-message-id 挂在气泡根上
   const messageId = useAuiState((s) => s.message.id);
   return (
     <MessagePrimitive.Root
@@ -1206,9 +1206,9 @@ function UserMessage() {
 }
 
 /**
- * 消息内图片（17 号票）：image part 的 image 字段为 cwimg 引用（blobHash
+ * 消息内图片：image part 的 image 字段为 cwimg 引用（blobHash
  * 桥接，见 image-ref.ts）——渲染时经 read_image_blob 拉 base64 data URL
- * 显示（CSP img-src 已放行 data:，§9.5）；blob 缺失（会话删除等）灰显占位。
+ * 显示（CSP img-src 已放行 data:）；blob 缺失（会话删除等）灰显占位。
  * 外来形态（非 cwimg 引用）按文本占位降级，不渲染未知来源。
  */
 function MessageImagePart({ sessionId, image }: { sessionId: string; image: string }) {
@@ -1264,11 +1264,11 @@ function MessageImagePart({ sessionId, image }: { sessionId: string; image: stri
 }
 
 /**
- * 折叠分组状态（§10.4）：运行中（链上最后一条消息）过程区全量实时展开；
+ * 折叠分组状态：运行中（链上最后一条消息）过程区全量实时展开；
  * **最终答复开始输出的瞬间即折叠**（ZCode 的折叠发生在 run 结束，这里按
  * 需求前移到总结出现——finalAnswerStarted 见 AssistantMessage）；纯问答
  * （无工具、信号不触发）的 run 结束后留 3 秒兜底收起。摘要行是唯一出入口，
- * 点击随时展开/收起回看完整过程（过程数据由边车补全，FR-04-07）。
+ * 点击随时展开/收起回看完整过程（过程数据由边车补全）。
  */
 function useRunCollapse(
   processCount: number,
@@ -1310,7 +1310,7 @@ function useRunCollapse(
 }
 
 /** 时长格式化（ZCode formatConversationWorkDuration 口径）：秒取整最少 1 秒，
- *  单位经字典查词（31 号票 i18n），跨分钟带分。 */
+ *  单位经字典查词，跨分钟带分。 */
 function formatDuration(ms: number): string {
   const totalSeconds = Math.max(1, Math.round(ms / 1000));
   const minutes = Math.floor(totalSeconds / 60);
@@ -1378,9 +1378,9 @@ function AssistantMessage({ onOpenSettings }: { onOpenSettings?: () => void }) {
   const durationMs =
     summary?.durationMs ??
     (lastRun !== null && lastRun.runId === runId ? lastRun.durationMs : undefined);
-  // 崩溃中断态（15 号票 shortcut 渲染层落地，17 号票）：marker 无 endedAt
+  // 崩溃中断态（shortcut 渲染层落地）：marker 无 endedAt
   const interrupted = summary !== undefined && summary.endedAt === undefined;
-  // 消息 id（29 号票滚动锚点的 DOM 锚）：data-message-id 挂在消息根上
+  // 消息 id（滚动锚点的 DOM 锚）：data-message-id 挂在消息根上
   const messageId = useAuiState((s) => s.message.id);
 
   return (
@@ -1420,7 +1420,7 @@ function AssistantMessage({ onOpenSettings }: { onOpenSettings?: () => void }) {
         {/* 内联 render props（勿抽组件）：S1 实证 Parts 对 tool-call part 渲染
             null 时才 fallback 到注册的镜像工具卡；抽组件会让 fallback 判定失效。
             折叠态过程 part 返回隐藏空元素（非 null）以抑制 fallback 卡。
-            08 号票：toolUI 为 null = 工具未注册（MCP 动态工具等），兜底渲染
+            toolUI 为 null = 工具未注册（MCP 动态工具等），兜底渲染
             McpFallbackCard（工具名 + 参数 JSON 折叠 + uiSummary + 错误态）。 */}
         <MessagePrimitive.Parts>
           {({ part }) => {
@@ -1429,7 +1429,7 @@ function AssistantMessage({ onOpenSettings }: { onOpenSettings?: () => void }) {
               if (part.text.length === 0 || (collapsed && part.text !== finalText)) {
                 return <span hidden />;
               }
-              // 流式 Markdown（FR-01-03）：Streamdown 增量解析全量累计快照
+              // 流式 Markdown：Streamdown 增量解析全量累计快照
               return <Markdown streaming={streaming}>{part.text}</Markdown>;
             }
             if (collapsed) {
@@ -1445,7 +1445,7 @@ function AssistantMessage({ onOpenSettings }: { onOpenSettings?: () => void }) {
               return <ReasoningPart text={part.text} status={part.status} timing={part.timing} />;
             }
             if (part.type === "tool-call") {
-              // toolUI 为 null = 该工具名未注册任何卡（MCP 动态工具，08 号票）
+              // toolUI 为 null = 该工具名未注册任何卡（MCP 动态工具）
               // → 兜底卡；已注册工具返回 null，由 assistant-ui 落注册卡
               if (part.toolUI == null) {
                 return <McpFallbackCard {...part} />;
@@ -1508,7 +1508,7 @@ function BranchBar({ editOnly, noTopGap }: { editOnly: boolean; noTopGap?: boole
   );
 }
 
-/** Composer 状态栏（A5，§10.5 三数 + 思考计时 + 工具次数）：常驻输入卡片
+/** Composer 状态栏（速率/本轮/会话三数 + 思考计时 + 工具次数）：常驻输入卡片
  *  底部一行；思考计时由 reasoning/text 帧驱动（run-metrics thinkingSince）。 */
 function ComposerStatusBar() {
   const t = useT();
@@ -1556,8 +1556,8 @@ function ComposerStatusBar() {
   );
 }
 
-/** ghost 填入动作（Tab 与按钮共用）：填入整句建议并清除 hint（§10.4）。
- * hint 取本会话桶（16 号票）。键盘路径（Tab 优先级：@ 菜单 > hint）在
+/** ghost 填入动作（Tab 与按钮共用）：填入整句建议并清除 hint。
+ * hint 取本会话桶。键盘路径（Tab 优先级：@ 菜单 > hint）在
  * composer-keys.ts。 */
 function useGhostFill(): (() => void) | null {
   const sessionId = useSessionScope();
@@ -1572,8 +1572,8 @@ function useGhostFill(): (() => void) | null {
   };
 }
 
-/** 建议提示词 ghost（§10.4：空输入整句 / 前缀匹配补尾；接受 = 填入不发送；
- * hint 取本会话桶，16 号票）。 */
+/** 建议提示词 ghost（空输入整句 / 前缀匹配补尾；接受 = 填入不发送；
+ * hint 取本会话桶）。 */
 function ComposerGhost() {
   const t = useT();
   const sessionId = useSessionScope();

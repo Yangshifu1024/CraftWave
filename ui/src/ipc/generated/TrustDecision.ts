@@ -3,6 +3,6 @@
 /**
  * 决策值（remember = 记住此版本同指纹免问；revoke = 显式撤销，下次使用
  * 重新询问）。deny / allow_once 不落盘（会话内存面与「不产生记录」口径，
- * §9.8/§9.7 同构）。
+ * 同构）。
  */
 export type TrustDecision = "remember" | "revoke";

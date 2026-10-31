@@ -2,6 +2,6 @@
 import type { GitCommitInfo } from "./GitCommitInfo";
 
 /**
- * #39 返回：最近提交列表（HEAD 起时间倒序）。
+ * `git_recent_log` 返回：最近提交列表（HEAD 起时间倒序）。
  */
 export type GitLogResult = { isRepo: boolean, commits: Array<GitCommitInfo>, };

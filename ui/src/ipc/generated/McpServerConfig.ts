@@ -3,20 +3,20 @@ import type { McpToolFilter } from "./McpToolFilter";
 import type { JsonValue } from "./serde_json/JsonValue";
 
 /**
- * 服务器条目字段（§9.7 逐字：command/args/env/cwd/url/headers/enabled/
+ * 服务器条目字段（逐字：command/args/env/cwd/url/headers/enabled/
  * timeout/read_only/always_allow/tools{allow,deny glob}）。
  *
- * 字段语义定案（08 号票，设计文档 §9.7 已回写）：
+ * 字段语义定案（设计文档 已回写）：
  * - `command/args/env/cwd`：stdio 传输的四要素（command 有值即 stdio）；
  * - `url/headers`：streamable HTTP 传输的两要素（url 有值即 HTTP）；
  *   两者同时给出以 stdio 为准（配置校验报错，不允许二义）；
  * - `enabled`：缺省 true——false 的服务器不出现在发现面，连接命令报
  *   E_INVALID_ARG（用户显式停用）；
  * - `timeout`：单次工具调用超时秒数，缺省 60，合法区间 1–600（对齐
- *   §8.8 命令超时上界）；
- * - `read_only`/`always_allow`：**只取用户确认的配置**（§9.7 Q44）——
+ *   命令超时上界）；
+ * - `read_only`/`always_allow`：**只取用户确认的配置**——
  *   read_only=true 把该 server 全部工具标为 ReadOnly 能力；always_allow
- *   =true 时未声明 read_only 的工具调用仍须通过 Q44 许可表核验（绑定
+ *   =true 时未声明 read_only 的工具调用仍须通过 许可表核验（绑定
  *   服务器指纹 + 原始工具名 + 输入 schema 哈希），不是无脑放行；
  * - `tools.allow/deny`：注册时过滤的 glob 工具名清单（对原始工具名匹配；
  *   deny 优先于 allow——命中 deny 一律不注册）。
@@ -56,12 +56,12 @@ enabled: boolean,
 timeout?: number, 
 /**
  * 用户确认的只读声明（true = 全部工具按 ReadOnly 能力参与门控矩阵；
- * 远端 annotations 不参与判定，§9.7）。字段名按票面逐字 snake_case。
+ * 远端 annotations 不参与判定）。字段名逐字 snake_case。
  */
 read_only?: boolean, 
 /**
- * 用户确认的服务器级免审批声明（配合 Q44 许可表逐工具核验，见
- * [`Self`] 文档）。字段名按票面逐字 snake_case。
+ * 用户确认的服务器级免审批声明（配合 许可表逐工具核验，见
+ * [`Self`] 文档）。字段名逐字 snake_case。
  */
 always_allow?: boolean, 
 /**

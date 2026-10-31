@@ -1,5 +1,5 @@
 /**
- * 用量统计图表（20 号票，FR-15-02）：手写轻量 SVG 组件（票面定案——
+ * 用量统计图表：手写轻量 SVG 组件（定案——
  * 无图表依赖，两种图数据 ≤90 点，体积零成本；评审若要求组件库，
  * recharts 体积代价另行记录）。
  *
@@ -106,7 +106,7 @@ export function ModelBars({ models }: { models: ModelUsage[] }) {
                 {hit !== null ? t("inspector.modelCache", { rate: hit }) : ""}
               </span>
             </div>
-            {/* 占比条：CSS 宽度即可（票面允许柱状/条形各自选型），色带同柱状图 */}
+            {/* 占比条：CSS 宽度即可（柱状/条形各自选型），色带同柱状图 */}
             <div className="mt-0.5 h-1.5 w-full overflow-hidden rounded bg-[var(--muted)]">
               <div
                 className="h-full bg-[var(--primary)] opacity-80"

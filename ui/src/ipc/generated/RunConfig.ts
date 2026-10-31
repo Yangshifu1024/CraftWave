@@ -3,7 +3,7 @@ import type { PermissionTier } from "./PermissionTier";
 import type { ThinkingLevel } from "./ThinkingLevel";
 
 /**
- * §3.2 RunConfig（Rust 侧镜像）。
+ * RunConfig（Rust 侧镜像）。
  */
 export type RunConfig = { 
 /**
@@ -11,13 +11,13 @@ export type RunConfig = {
  */
 modelId?: string, 
 /**
- * 会话 thinking 档（FR-02-08，18 号票）：本次 run 的起点档位（serde
+ * 会话 thinking 档：本次 run 的起点档位（serde
  * default 向后兼容——旧前端载荷无此字段照常解析）。运行中以后端
- * prefs 文件为权威（每拍请求前刷新，§11.1）；None = 未显式设置，按
- * per-model reasoningEffort 回落（§11.4 优先级链）。
+ * prefs 文件为权威（每拍请求前刷新）；None = 未显式设置，按
+ * per-model reasoningEffort 回落（优先级链）。
  */
 thinking?: ThinkingLevel, tier: PermissionTier, maxTurns: number, 
 /**
- * steer 注入随 §5.5 后续票（本票前端恒不传 true）。
+ * steer 注入（当前前端恒不传 true，注入走 inject_run_message）。
  */
 steer: boolean, };

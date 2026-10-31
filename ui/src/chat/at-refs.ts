@@ -1,26 +1,26 @@
 /**
- * @ 引用发送合成（§10.6，28 号票 / FR-10-03）：发送时提取消息正文中的
+ * @ 引用发送合成：发送时提取消息正文中的
  * @token（普通形态 `@path` 与引号形态 `@"path with space"`），把 roots 内
  * 的相对路径去重、上限 20，追加为正文尾部的引用段——模型侧据此精确知道
- * 用户指哪个文件，按需走 read 工具读取（不复制内容、不预读，§6.2 wire
+ * 用户指哪个文件，按需走 read 工具读取（不复制内容、不预读，wire
  * 重建零改动）。
  *
  * 引用段只在发送变换时合成：输入框原文、树落盘（syncTreeBeforeSend）与
- * ghost hint/↑↓ 历史都不受影响。绝对路径（17 号票拖拽插入形态）与含
+ * ghost hint/↑↓ 历史都不受影响。绝对路径（拖拽插入形态）与含
  * `..` 段的 token 视为「越界」，原样保留在正文、不进引用段（模型 read
  * 照走授权链）。
  */
 
-/** 引用段准入的 token 上限（超出截断并提示；Toast 随 29 号票，先 console.warn）。 */
+/** 引用段准入的 token 上限（超出截断并提示，先 console.warn）。 */
 export const AT_REF_LIMIT = 20;
 
-/** 引用段格式（§10.6 回写口径）：正文尾部空行 + 标题行 + 逐行 `- @<路径>`。 */
+/** 引用段格式（回写口径）：正文尾部空行 + 标题行 + 逐行 `- @<路径>`。 */
 export function buildRefSection(refs: string[]): string {
   return `\n\n[引用文件]\n${refs.map((r) => `- @${r}`).join("\n")}`;
 }
 
 /** 单个 @token 是否进引用段（相对路径准入）：非空、不以 `/` 开头、无 `..`
- *  段（防目录穿越）；Windows 反斜杠形态同样拒绝（正斜杠归一口径，16 号票）。 */
+ *  段（防目录穿越）；Windows 反斜杠形态同样拒绝（正斜杠归一口径）。 */
 export function isRefCandidate(token: string): boolean {
   if (token.length === 0) return false;
   if (token.startsWith("/") || token.startsWith("\\")) return false;
@@ -41,7 +41,7 @@ export function extractAtTokens(text: string): string[] {
 }
 
 /**
- * @token 提取的区间版（chip 高亮渲染面，28 号票）：返回每个 token 的
+ * @token 提取的区间版（chip 高亮渲染面）：返回每个 token 的
  * 字符串与其在原文中的 [start, end) 区间——引号形态的区间含 `@"` 与闭合
  * `"` 整体（高亮整段引用）；普通形态区间含 `@`。
  */
@@ -78,7 +78,7 @@ export function extractAtTokenSpans(text: string): Array<{
 /**
  * 引用条目收集（提取 → 相对路径准入过滤 → 去重 → 上限截断）。发送变换与
  * 测试共用：runtime 的 withAtRefSection 取返回数组拼引用段（content part
- * 面组装）；超出上限 console.warn（Toast 随 29 号票）。
+ * 面组装）；超出上限 console.warn。
  */
 export function collectRefs(text: string): string[] {
   if (!text.includes("@")) return [];

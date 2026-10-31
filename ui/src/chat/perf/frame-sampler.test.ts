@@ -2,12 +2,12 @@ import { describe, expect, it } from "vitest";
 import { summarizeGaps } from "./frame-sampler";
 
 /**
- * 帧采样统计核心的单元测试（34 号票 NFR-03）：量化口径「>100ms 渲染长帧
+ * 帧采样统计核心的单元测试：量化口径「>100ms 渲染长帧
  * 计数 = 0 为通过线」的判定逻辑在此钉住——阈值边界、统计口径与 pass 判定
  * 漂移即红。rAF 采样壳依赖浏览器环境，不在单测面。
  */
 
-describe("summarizeGaps（34 号票帧采样口径）", () => {
+describe("summarizeGaps（帧采样口径）", () => {
   it("阈值边界（>100ms 才算长帧）、空样本零值通过、混合样本如实统计、报告回带审计字段", () => {
     // 空样本：无帧时报告零值且通过
     const empty = summarizeGaps([], 100, 0);

@@ -6,7 +6,7 @@
 export type ApprovalConfig = { 
 /**
  * 审批总开关（false 时不再弹出任何审批；黑名单/内部状态硬拦/计划门/
- * MCP 审批与信任询问不受影响，plan 档判定不变——23 号票字段级）。
+ * MCP 审批与信任询问不受影响，plan 档判定不变——字段级）。
  */
 enabled: boolean, 
 /**
@@ -14,25 +14,25 @@ enabled: boolean,
  */
 autoConfirm: boolean, 
 /**
- * ③ 会话内记忆启用（23 号票，FR-14-04）：true 时命令类审批展示
+ * ③ 会话内记忆启用：true 时命令类审批展示
  * 「始终允许（本会话）」选项（AskPayload option mode=always_session），
  * 选中后同签名命令本会话跨 run 免批；false 不出该选项。默认开。
  */
 sessionMemoryEnabled: boolean, 
 /**
- * ④ 命令白名单启用（23 号票，FR-14-04）：整体开关，false 时
+ * ④ 命令白名单启用：整体开关，false 时
  * commandAllowlist 不参与判定（条目保留不删）。默认开。
  */
 allowlistEnabled: boolean, 
 /**
- * 命令白名单：命中即免审批直接放行（23 号票字段级：词序列前缀匹配
+ * 命令白名单：命中即免审批直接放行（字段级：词序列前缀匹配
  * ——条目 `git status` 匹配 `git status …` 不匹配 `git statusx`；
  * 围栏 Confirm 与矩阵 NeedsApproval 免除，黑名单 Block 永不豁免，
  * plan 档不豁免）。
  */
 commandAllowlist: Array<string>, 
 /**
- * 严格计划硬门（FR-06-02，§8.6，25 号票实装）：true 且无已批准计划
+ * 严格计划硬门（实装）：true 且无已批准计划
  * 时 FileWrite/Network 工具直接 E_PLAN_REQUIRED 硬拦（不挂起）。默认
  * 关（默认"有计划即守门"：无计划时不阻写，PRD 定稿策略）；设置页
  * 安全页「严格计划模式」开关承载。旧配置无该字段时 serde default
@@ -40,7 +40,7 @@ commandAllowlist: Array<string>,
  */
 requirePlan: boolean, 
 /**
- * git 写策略白名单（FR-11-03，§8.7 git 分类表，26 号票实装）：false
+ * git 写策略白名单（git 分类表，实装）：false
  * （缺省，serde default 回填旧配置零迁移）= AI 默认禁止 stage/commit
  * ——`git add`/`git stage`/`git commit` 经审批门策略层 E_FENCE_BLOCKED
  * 硬拦，`git merge`/`git rebase` 恒禁（开关不豁免）；true = add/stage/
@@ -48,6 +48,6 @@ requirePlan: boolean,
  * `git push` 恒 Confirm（「push 永远确认」，任何配置不豁免）；
  * `git push --force` 恒 Block（黑名单既有 + 策略层双保险）。设置页
  * 安全页「允许 AI 执行 stage/commit」开关承载。应用受控 worktree
- * 管理（10 号票 agent/worktree.rs）不消费本开关——分开授权。
+ * 管理（agent/worktree.rs）不消费本开关——分开授权。
  */
 gitAllowStageCommit: boolean, };

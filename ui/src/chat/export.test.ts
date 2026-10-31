@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 /**
- * 会话导出序列化测试（27 号票，FR-01-12/§10.7 形态定稿）：
+ * 会话导出序列化测试（形态定稿）：
  * - Markdown：标题 + 导出时间 + 逐条 user/assistant 段 + 工具列表行
  *   （边车 uiSummary 优先、帧面 summary 降级、ok/error 标注）；
  *   reasoning 不导出；runMarker 内部条目不进 Markdown；空会话；
@@ -104,7 +104,7 @@ function unstubDownload(...spies: ReturnType<typeof vi.fn>[]) {
   vi.restoreAllMocks();
 }
 
-describe("export（27 号票）", () => {
+describe("export", () => {
   it("toMarkdown：标题与导出时间、user/assistant 段、工具行（边车优先/降级/兜底）、reasoning 与 runMarker 不进归档", () => {
     // 标题 + 导出时间行 + user/assistant 段与时间
     const md = toMarkdown(

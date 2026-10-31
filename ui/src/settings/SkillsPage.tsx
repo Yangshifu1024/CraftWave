@@ -1,12 +1,12 @@
 /**
- * 设置页技能管理组（§10.7 M2 清单，09 号票）：skill_list 列表（名称 /
+ * 设置页技能管理组：skill_list 列表（名称 /
  * 来源徽标：内置·全局·项目 / 信任状态 / 启停开关 / 一句话描述）、「重新
  * 扫描」按钮（skill_reload）、行点击 skill_inspect 弹 SKILL.md 正文预览
- * （Markdown 只读，Dialog 承载）。24 号票增信任撤销：已「记住」的技能
+ * （Markdown 只读，Dialog 承载）。信任撤销：已「记住」的技能
  * 行内「撤销信任」按钮（skill_revoke_trust 写 revoke 记录，下次运行
  * 重新询问）。
  *
- * 数据面说明（票内定案，与 08 号票 McpPage 同精神）：技能清单不属 AppConfig
+ * 数据面说明（与 McpPage 同精神）：技能清单不属 AppConfig
  * （无 config 段），生命周期独立于设置页 saveAll 草稿——数据放组件内
  * useState，启停经 skill_toggle 即时落盘（skills-state.json，后端权威）。
  */
@@ -22,7 +22,7 @@ import { useT } from "@/i18n/core";
 import { skillInspect, skillList, skillReload, skillRevokeTrust, skillToggle } from "@/ipc/client";
 import type { SkillListEntry } from "@/ipc/types";
 
-/** 来源徽标（§7.7 覆盖优先级 内置 < 全局 < 项目；合并视图只显示胜出来源）。 */
+/** 来源徽标（覆盖优先级 内置 < 全局 < 项目；合并视图只显示胜出来源）。 */
 const SOURCE_LABEL: Record<SkillListEntry["source"], string> = {
   builtin: "settings.skillSourceBuiltin",
   global: "settings.skillSourceGlobal",
@@ -65,7 +65,7 @@ export function SkillsPage() {
     refresh();
   }, []);
 
-  /** 启停切换（即时落盘，FR-14-04）：本地先行翻转 + 失败回滚。 */
+  /** 启停切换（即时落盘）：本地先行翻转 + 失败回滚。 */
   const toggle = (name: string, enabled: boolean) => {
     setSkills((prev) => prev?.map((s) => (s.name === name ? { ...s, enabled } : s)) ?? prev);
     skillToggle(name, enabled).catch(() => {
@@ -76,7 +76,7 @@ export function SkillsPage() {
     });
   };
 
-  /** 信任撤销（24 号票，§9.8）：写 revoke 记录后刷新清单（信任状态列
+  /** 信任撤销：写 revoke 记录后刷新清单（信任状态列
    *  以后端为权威）。失败提示（撤销不生效会让用户误以为已脱险）。 */
   const revokeTrust = (name: string) => {
     skillRevokeTrust({ name })

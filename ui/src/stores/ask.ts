@@ -1,15 +1,15 @@
 /**
- * 询问与建议提示词的全局状态（§10.1 状态分界）。
+ * 询问与建议提示词的全局状态（zustand 状态分界）。
  *
  * zustand：React 生态的轻量全局状态管理库；一个 store（状态仓库）就是一份
  * 任意组件都能读写的全局状态。本文件管两个桶：
  *  - ask：未决的询问/审批（后端事件驱动——模型需要用户确认时弹面板）；
  *  - askHint：建议提示词（run:suggestions 事件驱动——run 结束后给出的下一步建议）。
  *
- * 事件桥（chat/event-bridge.ts 的 useBackendEvents）把 §3.5 五键后端事件分发
+ * 事件桥（chat/event-bridge.ts 的 useBackendEvents）把五键后端事件分发
  * 进本 store 与 runMetrics（用量记账）；用户的应答经 ipc/client.resolveAsk 送回后端。
  *
- * 多会话分桶（16 号票）：未决 ask 与 hint 都按 sessionId（会话唯一标识）分桶
+ * 多会话分桶：未决 ask 与 hint 都按 sessionId（会话唯一标识）分桶
  * ——即各会话各存一格、互不干扰；AskPanel 只渲染当前会话那一桶，多个 Tab
  * 并行运行时审批互不遮挡。
  */
@@ -27,7 +27,7 @@ export interface AskPanelState {
 export interface AskStore {
   /** sessionId → 未决 ask（AskPanel 渲染本会话桶）。 */
   bySession: Record<string, AskPanelState>;
-  /** sessionId → 建议提示词（run:suggestions；§10.4 ghost 承载，接受后清除）。 */
+  /** sessionId → 建议提示词（run:suggestions；ghost 承载，接受后清除）。 */
   hints: Record<string, string>;
   /** 收到 ask:opened 事件时登记一个未决询问（后开覆盖先开）。 */
   open: (sessionId: string, askId: string, payload: AskPayload) => void;
@@ -93,7 +93,7 @@ export function sessionHint(state: AskStore, sessionId: string): string | null {
 }
 
 /**
- * ghost 提示匹配（§10.4）：ghost 指输入框里以灰色预填的建议文本。
+ * ghost 提示匹配：ghost 指输入框里以灰色预填的建议文本。
  * 输入为空时整句可用；已输入内容恰是建议的前缀时，返回建议的剩余尾部（补齐用）。
  * 返回 null = 无可用 ghost（不匹配，或用户已完整输入了建议本身）。
  */

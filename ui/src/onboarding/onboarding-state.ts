@@ -1,13 +1,13 @@
 /**
- * 首启引导状态（30 号票，FR-13-18）：schema 定义、不可信数据清洗与判定
- * 纯函数——存放于 ui-state（§3.3 #30/#31，前端自管 JSON 域，无 Rust 改动）。
+ * 首启引导状态：schema 定义、不可信数据清洗与判定
+ * 纯函数——存放于 ui-state（前端自管 JSON 域，无 Rust 改动）。
  *
- * 存储形态（票内即定义）：`onboarding: { completed, step, skippedAt? }`
+ * 存储形态：`onboarding: { completed, step, skippedAt? }`
  *  - completed：四步是否走完（含末步跳过——末步之后无续走目标，跳过即收口）；
  *  - step：下次续走应落的步序（0 起；四步 = 语言 0 / 供应商 1 / 项目 2 / 安全简介 3）；
  *  - skippedAt：最后一次单步跳过的时间戳（Unix 毫秒，诊断面，不参与判定）。
  *
- * 判定口径（票面）：
+ * 判定口径：
  *  - 无 onboarding 记录（全新数据目录）→ 自动弹向导；
  *  - completed=true → 不再自动弹，「继续配置」横幅消失；
  *  - completed=false → 横幅常驻，点击从记录 step 续走。

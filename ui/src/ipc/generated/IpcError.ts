@@ -2,7 +2,7 @@
 import type { JsonValue } from "./serde_json/JsonValue";
 
 /**
- * IPC 命令统一错误负载（§3.1/§3.6，D14）：`{ code, message, detail? }`，camelCase。
+ * IPC 命令统一错误负载：`{ code, message, detail? }`，camelCase。
  *
  * 命令层一律返回 `Result<T, IpcError>`；Tauri 把 Serialize 错误直接序列化给
  * 前端 reject。与 `ToolError` 的分工：IpcError 走 IPC 边界（可带 `detail`、

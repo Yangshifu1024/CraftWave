@@ -1,5 +1,5 @@
-// composer-keys 纯逻辑测试（17 号票：@ 触发检测与插入；09 号票：/ 技能触发
-// 检测、技能插入形态与清单过滤；10 号票：$ 角色触发符；28 号票：@ 引号路径）。
+// composer-keys 纯逻辑测试（@ 触发检测与插入；/ 技能触发
+// 检测、技能插入形态与清单过滤；$ 角色触发符；@ 引号路径）。
 import { describe, expect, it } from "vitest";
 import {
   detectDollarQuery,
@@ -16,9 +16,9 @@ import {
   insertSkillInvocation,
 } from "./composer-keys";
 
-describe("触发符检测（@ / $ 同构光标锚定；28 号票引号路径升级）", () => {
+describe("触发符检测（@ / $ 同构光标锚定；含引号路径）", () => {
   it("@ 检测：未闭合触发、间隔空白终止、取最近触发位、引号路径回扫", () => {
-    // 光标前未闭合的 @ 返回插入位与查询词（§10.6 光标锚定）
+    // 光标前未闭合的 @ 返回插入位与查询词（光标锚定）
     const text = "看一下 @src/ma";
     expect(detectAtQuery(text, text.length)).toEqual({ at: 4, query: "src/ma" });
     // @ 与光标间隔空白 → 非触发态
@@ -29,7 +29,7 @@ describe("触发符检测（@ / $ 同构光标锚定；28 号票引号路径升�
     // 多个触发位时取最近的 @
     expect(detectAtQuery("@a 起 @b", 7)).toEqual({ at: 5, query: "b" });
 
-    // ---- 28 号票引号路径：未闭合引号回扫 ----
+    // ---- 引号路径：未闭合引号回扫 ----
     // 引号内空白不终止触发（`@"a b/c` 输入中）
     expect(detectAtQuery('看 @"a b/c', 10)).toEqual({ at: 2, query: '"a b/c' });
     // 闭合引号即止：完整引用形态后不再触发
@@ -47,7 +47,7 @@ describe("触发符检测（@ / $ 同构光标锚定；28 号票引号路径升�
   });
 
   it("/ 与 $ 检测：行首与空白后触发、句中斜杠与 cost$ 不触发、三符互斥（更近触发符优先）", () => {
-    // / 的正常触发形态（09 号票 FR-01-17）
+    // / 的正常触发形态
     expect(detectSlashQuery("/hel", 4)).toEqual({ at: 0, query: "hel" });
     expect(detectSlashQuery("请用 /dem", 9)).toEqual({ at: 3, query: "dem" });
     // 句中斜杠（路径文本）不触发——前一字符非空白
@@ -56,7 +56,7 @@ describe("触发符检测（@ / $ 同构光标锚定；28 号票引号路径升�
     expect(detectSlashQuery("/hel 之后", 8)).toBeNull();
     expect(detectSlashQuery("/", 1)).toEqual({ at: 0, query: "" });
 
-    // $ 的正常触发形态（FR-07-02，10 号票，与 @ / 同构）
+    // $ 的正常触发形态（与 @ / 同构）
     expect(detectDollarQuery("$ex", 3)).toEqual({ at: 0, query: "ex" });
     expect(detectDollarQuery("帮我看看 $", 10)).toEqual({ at: 5, query: "" });
     // 非空白后的 $ 不触发（排除 cost$100 误触）；间隔空白非触发态
@@ -77,7 +77,7 @@ describe("触发符检测（@ / $ 同构光标锚定；28 号票引号路径升�
   });
 
   it("插入形态：/ 技能展开为指令、@ 路径补全（空格路径引号包裹）、$ 角色替换", () => {
-    // / 技能选中插入：票面定案展开为明确指令文本，衔接用户后续输入
+    // / 技能选中插入：展开为明确指令文本，衔接用户后续输入
     // （光标在查询结束处——后续输入原样保留）
     expect(insertSkillInvocation("/hel 帮我入门", 0, 4, "hello")).toBe(
       "请用 skill 工具加载技能 hello 并按其指引行动 帮我入门",
@@ -90,7 +90,7 @@ describe("触发符检测（@ / $ 同构光标锚定；28 号票引号路径升�
     // @ 补全：替换查询词为完整路径并留尾空格
     const text = "读 @src/ma";
     expect(insertAtCompletion(text, 2, text.length, "src/main.rs")).toBe("读 @src/main.rs ");
-    // 28 号票：路径含空格 → 插入 @"path" 引号形态；无空格 → 维持裸路径
+    // 路径含空格 → 插入 @"path" 引号形态；无空格 → 维持裸路径
     expect(insertAtCompletion("看 @", 2, 3, "a b/c.txt")).toBe('看 @"a b/c.txt" ');
     expect(insertAtCompletion("看 @", 2, 3, "src/main.rs")).toBe("看 @src/main.rs ");
     // 替换范围含查询中已敲出的开引号（`@"a b` 选中 c.txt → 完整形态）

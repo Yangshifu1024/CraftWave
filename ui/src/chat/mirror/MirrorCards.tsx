@@ -1,7 +1,7 @@
 /**
  * 【S1 spike 原型，随时可弃】镜像工具卡片。
  *
- * 状态机（票面判定点）：
+ * 状态机（判定点）：
  *   参数准备中（argsText 仍在流式，半截 JSON）→ 运行中（参数齐、结果未到）→ 完成 / 错误（result 到达）。
  * 数据来源全部官方原语：part props（result/isError）+ useToolArgsStatus（status/argsStatus）。
  *
@@ -108,7 +108,7 @@ export function MirrorToolCard(props: CardProps) {
           {phaseLabel}
         </span>
       </div>
-      {/* 参数准备中：半截 JSON 原文照显（票面要求：半截参数增量可见） */}
+      {/* 参数准备中：半截 JSON 原文照显（半截参数增量可见） */}
       <pre className="mt-1 max-h-24 overflow-hidden whitespace-pre-wrap break-all text-[var(--muted-foreground)]">
         {argsText || "（等待参数…）"}
       </pre>

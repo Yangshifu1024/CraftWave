@@ -1,6 +1,6 @@
 /**
- * usage-stats store 测试（20 号票）：范围换算、本地增量修正、范围切换重拉、
- * Q37 旧数据标量回落桶。
+ * usage-stats store 测试：范围换算、本地增量修正、范围切换重拉、
+ * 旧数据标量回落桶。
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -70,7 +70,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("usage-stats（20 号票）", () => {
+describe("usage-stats", () => {
   it("纯函数面：本地日期换算、范围参数、增量修正（回退钳 0）、缓存命中率公式", () => {
     // localDay 与 shiftLocalDay 产生 YYYY-MM-DD 且跨月归一
     expect(localDay(new Date(2026, 9, 30))).toBe("2026-10-30");
@@ -90,7 +90,7 @@ describe("usage-stats（20 号票）", () => {
     // usageDelta：新全量 − 旧全量，异常回退（新值 < 旧值）不倒扣
     expect(usageDelta(u(100, 10, 20, 5), u(150, 12, 25, 5))).toEqual(u(50, 2, 5, 0));
     expect(usageDelta(u(100), u(50))).toEqual(u(0, 0, 0, 0));
-    // cacheHitRate：§10.5 公式（cacheRead/(input+cacheRead)）
+    // cacheHitRate：公式（cacheRead/(input+cacheRead)）
     expect(cacheHitRate({ input: 30, cacheRead: 70 })).toBeCloseTo(0.7);
     expect(cacheHitRate({ input: 0, cacheRead: 0 })).toBeNull();
   });
@@ -144,7 +144,7 @@ describe("usage-stats（20 号票）", () => {
     expect(mockStatsToken).toHaveBeenCalledTimes(4);
     vi.useRealTimers();
 
-    // ---- Q37 旧数据标量回落与恢复：四口径回填 / legacy 入桶 / 失败静默 ----
+    // ---- 旧数据标量回落与恢复：四口径回填 / legacy 入桶 / 失败静默 ----
     const applied: [string, UsageTotal][] = [];
     const apply = (id: string, usage: UsageTotal) => applied.push([id, usage]);
     // 正常明细：usage 回填

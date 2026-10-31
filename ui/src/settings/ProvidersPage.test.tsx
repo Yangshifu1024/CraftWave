@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 /**
- * 供应商页连接测试与本地预设单测（19 号票，FR-02-09/10/04）。
+ * 供应商页连接测试与本地预设单测。
  *
  * mock 唯一 invoke 出口（@/ipc/client），断言三个外部行为面：
  * 1. 测试按钮状态机（成功结果显示延迟/模型数；失败显示七类分类人话文案，
@@ -99,8 +99,8 @@ beforeEach(() => {
   });
 });
 
-describe("供应商页（19 号票）", () => {
-  it("测试连接状态机（FR-02-09）：成功显示延迟与模型数；失败显示人话文案且脱敏", async () => {
+describe("供应商页", () => {
+  it("测试连接状态机：成功显示延迟与模型数；失败显示人话文案且脱敏", async () => {
     // 成功：延迟 + 模型数
     testProvider.mockResolvedValue({
       ok: true,
@@ -146,7 +146,7 @@ describe("供应商页（19 号票）", () => {
     expect(probeErrorLabel("E_UNKNOWN_KIND")).toContain("E_UNKNOWN_KIND");
   });
 
-  it("本地预设 chips 填充且免 Key（FR-02-04）；远端预设仍要求 Key", () => {
+  it("本地预设 chips 填充且免 Key；远端预设仍要求 Key", () => {
     // 本地预设 chip（Ollama 带「本地」标注）点击填充
     const local = render(<ProvidersPage />);
     fireEvent.click(screen.getByRole("button", { name: /添加供应商/ }));

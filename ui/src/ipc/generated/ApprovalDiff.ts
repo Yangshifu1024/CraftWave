@@ -2,7 +2,7 @@
 import type { DiffHunk } from "./DiffHunk";
 
 /**
- * 改动预览（§3.2 approval.diff；write = 新文件全部为新增行，edit = 单段替换）。
+ * 改动预览（approval.diff；write = 新文件全部为新增行，edit = 单段替换）。
  */
 export type ApprovalDiff = { 
 /**

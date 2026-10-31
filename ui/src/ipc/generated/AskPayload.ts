@@ -7,9 +7,8 @@ import type { McpTransportKind } from "./McpTransportKind";
 import type { SkillTrustScope } from "./SkillTrustScope";
 
 /**
- * 询问/审批载荷（§3.2；08 号票起实装 question/approval/mcpTrust 三形态，
- * projectTrust 项目资源信任随 09 号票实装，externalDir 外部目录授权随
- * 24 号票实装）。
+ * 询问/审批载荷（question/approval/mcpTrust/projectTrust/externalDir
+ * 五种形态）。
  */
 export type AskPayload = { "kind": "question", 
 /**
@@ -37,22 +36,22 @@ command?: string,
  */
 fenceReason?: string, 
 /**
- * HTML 预览全文（FR-12-04，14 号票）：write/edit 的目标为 .html/.htm
+ * HTML 预览全文：write/edit 的目标为 .html/.htm
  * 且内容 ≤50,000 字符时由宿主审批载荷附带——审批卡「查看预览」入口
  * 以 render_html 同款沙箱渲染（不落盘不解析，同工具约定）。
  */
 previewHtml?: string, 
 /**
- * 计划范围门的计划外写路径（FR-06-03，§8.6，25 号票）：Some =
+ * 计划范围门的计划外写路径：Some =
  * 范围门询问——选项三枚 allow_once/always_session/deny，
- * always_session 把写目标父目录以目录范围并入会话基线扩展（§8.6；
- * 会话级不持久化），allow_once 不扩大基线；载荷无推荐项，不参与
+ * always_session 把写目标父目录以目录范围并入会话基线扩展
+ * （会话级不持久化），allow_once 不扩大基线；载荷无推荐项，不参与
  * autoConfirm 自动批准（计划范围须用户明确同意）。None = 非范围门
  * 审批。
  */
 planScope?: string, 
 /**
- * 灰区命令审计结论（§3.2/§8.7，36 号票）：审计已出结论但须人工
+ * 灰区命令审计结论：审计已出结论但须人工
  * 确认时随审批卡展示——ask = 模型审计建议询问用户；manual = 审计
  * 失败/超时/输出无效转人工（reason = 失败原因）。allow/block 不
  * 产生审批卡（直接放行/拒绝收场，结论经 toolAudit 帧展示）；范围
@@ -85,7 +84,7 @@ commandOrUrl: string,
  */
 options: Array<AskOption>, } | { "kind": "projectTrust", 
 /**
- * 资源名（技能名或项目指令文件名；24 号票起两挂接点共用本形态）。
+ * 资源名（技能名或项目指令文件名；两挂接点共用本形态）。
  */
 resourceName: string, 
 /**
@@ -93,7 +92,7 @@ resourceName: string,
  */
 scope: SkillTrustScope, 
 /**
- * 整目录版本指纹（Q21 [`crate::knowledge::skills::version_fingerprint`]，
+ * 整目录版本指纹（[`crate::knowledge::skills::version_fingerprint`]，
  * 展示前 16 位）。
  */
 fingerprint: string, 

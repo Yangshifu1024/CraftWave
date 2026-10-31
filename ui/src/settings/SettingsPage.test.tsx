@@ -46,7 +46,7 @@ vi.mock("@/ipc/client", async (importOriginal) => {
   };
 });
 
-// 全局热键插件桩（29 号票：保存成功后 applyHotkey 会调插件注册——测试
+// 全局热键插件桩（保存成功后 applyHotkey 会调插件注册——测试
 // 环境无 Tauri，桩成永不失败的 no-op；注册流自身单测在 hotkey.test.ts）
 vi.mock("@tauri-apps/plugin-global-shortcut", () => ({
   register: vi.fn(async () => undefined),
@@ -67,7 +67,7 @@ const BASE_CONFIG: AppConfig = {
     requirePlan: false,
     gitAllowStageCommit: false,
   },
-  // 界面组（29 号票 §3.2 ui 组补齐）：关闭收进托盘缺省开、热键缺省 alt+space
+  // 界面组：关闭收进托盘缺省开、热键缺省 alt+space
   ui: {
     language: "zh-CN",
     theme: "system",
@@ -99,7 +99,7 @@ beforeEach(() => {
   permissionStatusMock.mockResolvedValue({ status: "granted", hasSettingsEntry: true });
   // openDir 默认成功（三入口用例按需覆盖为 reject）
   openDirMock.mockResolvedValue(undefined);
-  // 32 号票日志三命令：缺省空清单/成功打开/空行（查看器用例按需覆盖）
+  // 日志三命令：缺省空清单/成功打开/空行（查看器用例按需覆盖）
   listLogFilesMock.mockReset();
   openLogsDirMock.mockReset();
   readSessionLogMock.mockReset();
@@ -115,7 +115,7 @@ beforeEach(() => {
   });
   // 会话域复位：无活跃 Tab / 无项目（项目入口用例按需造数据）
   useSessionsStore.setState({ tabs: [], activeId: null, projects: [] });
-  // 29 号票：保存成功出 Toast
+  // 保存成功出 Toast
   useToastStore.setState({ toasts: [] });
 });
 // 每个用例后卸载渲染出的组件，避免 DOM 残留影响下一个用例
@@ -191,7 +191,7 @@ describe("SettingsPage 布局与离开拦截", () => {
   });
 });
 
-describe("通知授权引导（19 号票）", () => {
+describe("通知授权引导", () => {
   it("按授权状态出引导与打开系统设置入口（prompt/denied/granted/无入口）", async () => {
     const cases: {
       label: string;
@@ -244,7 +244,7 @@ describe("通知授权引导（19 号票）", () => {
   });
 });
 
-describe("界面页（29 号票 §3.2）", () => {
+describe("界面页", () => {
   it("字号即时预览；保存进入配置，取消关闭后回到基线", async () => {
     const close = vi.fn();
     const view = render(<SettingsPage onClose={close} />);
@@ -268,7 +268,7 @@ describe("界面页（29 号票 §3.2）", () => {
   });
 
   it("关闭行为开关保存载荷带 closeToTray=false 且成功出 Toast；快捷键录制归一化随保存提交", async () => {
-    // 关闭行为开关 → 保存（29 号票反馈收敛：成功出 Toast）
+    // 关闭行为开关 → 保存（反馈收敛：成功出 Toast）
     saveConfigMock.mockResolvedValue(structuredClone(BASE_CONFIG));
     const first = render(<SettingsPage initialPage="appearance" onClose={() => {}} />);
     const closeSwitch = await screen.findByTestId("close-to-tray-switch");
@@ -308,7 +308,7 @@ describe("界面页（29 号票 §3.2）", () => {
   });
 });
 
-describe("数据目录入口（03 号票 open_dir 三按钮）", () => {
+describe("数据目录入口（open_dir 三按钮）", () => {
   it("关于页 ~/ 语义路径、日志页免路径、工作区页 homeDir（无项目禁用）；失败行内提示", async () => {
     // 关于页「打开数据目录」按 ~/ 语义路径调 open_dir；失败 → 行内提示不打断
     const about = render(<SettingsPage initialPage="about" onClose={() => {}} />);
@@ -321,7 +321,7 @@ describe("数据目录入口（03 号票 open_dir 三按钮）", () => {
     about.unmount();
     openDirMock.mockResolvedValue(undefined);
 
-    // 日志页「打开日志目录」走 open_logs_dir（32 号票：免路径传参，后端固定 ~/.craftwave/logs）
+    // 日志页「打开日志目录」走 open_logs_dir（免路径传参，后端固定 ~/.craftwave/logs）
     const logs = render(<SettingsPage initialPage="logs" onClose={() => {}} />);
     const logsButton = await screen.findByTestId("open-logs-dir");
     fireEvent.click(logsButton);
@@ -380,7 +380,7 @@ describe("数据目录入口（03 号票 open_dir 三按钮）", () => {
   });
 });
 
-describe("工作区与智能体页（03/10/37 号票）", () => {
+describe("工作区与智能体页", () => {
   it("自定义提示词/子代理并发/停滞超时编辑进草稿并随保存提交", async () => {
     const view = render(<SettingsPage initialPage="agent" onClose={() => {}} />);
     const prompt = await screen.findByTestId("custom-prompt-input");
@@ -406,7 +406,7 @@ describe("工作区与智能体页（03/10/37 号票）", () => {
   });
 });
 
-describe("网络搜索（13 号票，C-12 三通道配置面）", () => {
+describe("网络搜索（本地优先三通道配置面）", () => {
   it("SearXNG 开关/地址进草稿；连通测试走草稿值且不经保存；保存载荷携带 search 组", async () => {
     const view = render(<SettingsPage initialPage="network" onClose={() => {}} />);
     const enabled = await screen.findByTestId("searxng-enabled-switch");
@@ -441,20 +441,20 @@ describe("网络搜索（13 号票，C-12 三通道配置面）", () => {
   });
 });
 
-describe("安全与审批页（23/25/26 号票）", () => {
+describe("安全与审批页", () => {
   it("审批四开关渲染；严格计划/git 写策略/记忆/白名单切换写草稿", async () => {
     await openSecurityPage();
-    // 审批四开关（FR-14-04 字段级）
+    // 审批四开关（字段级）
     expect(screen.getByLabelText("启用操作审批")).toBeTruthy();
     expect(screen.getByLabelText("自动放行等待")).toBeTruthy();
     expect(screen.getByLabelText("会话内记忆")).toBeTruthy();
     expect(screen.getByLabelText("命令白名单")).toBeTruthy();
-    // 严格计划模式开关（25 号票 FR-06-02）：默认关（默认有计划才守门）
+    // 严格计划模式开关：默认关（默认有计划才守门）
     const requirePlan = screen.getByTestId("require-plan-switch");
     expect(requirePlan.getAttribute("aria-checked")).toBe("false");
     fireEvent.click(requirePlan);
     expect(useSettingsStore.getState().config?.approval.requirePlan).toBe(true);
-    // git 写策略开关（26 号票 FR-11-03）：默认关（AI 默认禁止 stage/commit）
+    // git 写策略开关：默认关（AI 默认禁止 stage/commit）
     const gitSwitch = screen.getByTestId("git-allow-stage-commit-switch");
     expect(gitSwitch.getAttribute("aria-checked")).toBe("false");
     fireEvent.click(gitSwitch);
@@ -494,7 +494,7 @@ describe("安全与审批页（23/25/26 号票）", () => {
   });
 });
 
-describe("会话日志（32 号票）", () => {
+describe("会话日志", () => {
   it("级别写进草稿并随保存提交（旁注 verbose 说明）；查看器清单过滤/Tab 标题映射/拉尾部渲染", async () => {
     // 级别下拉写草稿 + 保存
     saveConfigMock.mockImplementation(async (config) => structuredClone(config));

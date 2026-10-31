@@ -1,5 +1,5 @@
 /**
- * 主题应用（FR-13-03，17 号票）：把 light（浅色）/ dark（深色）/ system（跟随系统）
+ * 主题应用：把 light（浅色）/ dark（深色）/ system（跟随系统）
  * 三种主题模式落到页面上。
  *
  * 实现方式：在 <html> 根元素上切换 dark 类名。styles.css 里准备了 :root 与

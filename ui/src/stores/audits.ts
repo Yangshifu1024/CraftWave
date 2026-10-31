@@ -1,7 +1,7 @@
 /**
- * 灰区命令审计 store（§10.1 zustand，36 号票）：工具卡审计行的共享数据面。
+ * 灰区命令审计 store（zustand）：工具卡审计行的共享数据面。
  *
- * 数据源单通道：toolAudit 帧（§3.4 五态，§8.7）——实时（runtime onFrame）
+ * 数据源单通道：toolAudit 帧（五态）——实时（runtime onFrame）
  * 与重连重放（run-reconnect）两条路径都经过，经 [`applyAuditFrame`] 分发；
  * WebView 重载后审计状态由 attach 重放恢复。按 (sessionId, callId) 存取
  * （帧面 callId 在单 run 内唯一，跨 run 以会话分桶隔离）。

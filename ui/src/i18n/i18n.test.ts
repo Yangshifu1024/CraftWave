@@ -1,16 +1,16 @@
 // @vitest-environment happy-dom
 /**
- * i18n 门禁测试（31 号票，§10.8「CI 检查 key 完整性」+ NFR-19 硬编码门禁）：
+ * i18n 门禁测试（key 完整性检查 + 硬编码门禁）：
  *
  * 1. key 完整性：zh/en 两包深度键集合双向 diff 为空（编译期同构之外的第二道
  *    运行时防线——字典以 TS 对象承载，此测试防动态删除/拼接绕过类型检查），
  *    且 zh 基准包无空文案；
  * 2. 硬编码回退扫描：用 TypeScript 编译器 AST 扫描 ui/src 非测试源码的
  *    字符串字面量 / JSX 文本 / 模板串静态段中的 CJK 字符——新增硬编码即红
- *    （NFR-19「新增文案不得硬编码」门禁）；豁免面见 ALLOWLIST（注释与
+ *    （「新增文案不得硬编码」门禁）；豁免面见 ALLOWLIST（注释与
  *    正则天然不在 AST 字符串节点内，无需豁免）；
  * 3. 查词剧本：语言切换冒烟（setLang 后 t() 输出随语言变化）、{{var}} 插值、
- *    缺键回退链（双双缺键回 key 本身不空白）、tError 对 §3.6 注册表抽样码
+ *    缺键回退链（双双缺键回 key 本身不空白）、tError 对错误码注册表抽样码
  *    本地化 + 未知码回退原始 message。
  */
 
@@ -55,17 +55,17 @@ const ALL_DOMAINS = [
   errorsDomain,
 ];
 
-// ---- 2. 硬编码回退扫描（NFR-19 门禁）----
+// ---- 2. 硬编码回退扫描（硬编码门禁）----
 
 /** 显式豁免清单：`<文件相对路径>: <理由>`。新增豁免必须写明理由（评审面）。 */
 const ALLOWLIST: Record<string, string> = {
-  // 镜像工具演示页（S1 spike，?mirror=1 调试入口）：非应用 chrome 主链路，
-  // M3 随镜像体系收编时一并抽词
+  // 镜像工具演示页（spike，?mirror=1 调试入口）：非应用 chrome 主链路，
+  // 随镜像体系收编时一并抽词
   "chat/mirror/MirrorCards.tsx": "镜像演示页（spike 调试入口，非主链路）",
   "chat/mirror/mockSource.ts": "镜像演示剧本数据（非 UI chrome）",
   "chat/scripted-backend.ts": "测试用剧本假后端（非生产 UI）",
   // 导出归档的文档格式串（写入文件的 Markdown 头部字段名）——文档格式
-  // 稳定性优先，不随界面语言切换（票面边界：仅应用 chrome 文案）
+  // 稳定性优先，不随界面语言切换（边界：仅应用 chrome 文案）
   "chat/export.ts": "导出归档文档格式串（非界面 chrome）",
   // runtime 回声 adapter（无 Rust 后端时的开发兜底）与内部诊断串
   "chat/runtime.ts": "回声 adapter 开发兜底文案（非生产 UI 链路）",
@@ -80,7 +80,7 @@ const ALLOWLIST: Record<string, string> = {
   "chat/tree-persistence.ts": "树同步内部诊断串（非界面 chrome）",
   // 应用入口的结构性异常（挂载点缺失 = 页面未渲染，开发者诊断面）
   "main.tsx": "挂载点缺失的结构性异常（开发者诊断）",
-  // NFR-03 压测 harness（34 号票，dev-only：?stress=1 且仅 dev 构建可达，
+  // 压测 harness（dev-only：?stress=1 且仅 dev 构建可达，
   // 生产构建整体剔除）——开发者诊断面，用户永不可见，抽词进字典是负资产
   "chat/perf/StressHarness.tsx": "压测 harness 页（dev-only 诊断面，生产剔除）",
   "chat/perf/stress-source.ts": "压测合成数据文案（dev-only，生产剔除）",
@@ -175,7 +175,7 @@ function extractStringTexts(source: ts.SourceFile): { text: string; line: number
   return out;
 }
 
-describe("i18n 门禁（31 号票 §10.8 + NFR-19）", () => {
+describe("i18n 门禁（key 完整性 + 硬编码门禁）", () => {
   it("key 完整性：zh/en 两包深度键集合双向 diff 为空 + 逐域同构（便于定位）+ zh 基准包无空文案", () => {
     const zhKeys = collectKeys(Object.fromEntries(ALL_DOMAINS.map((d) => [d.name, d.zh])));
     const enKeys = collectKeys(Object.fromEntries(ALL_DOMAINS.map((d) => [d.name, d.en])));
@@ -201,7 +201,7 @@ describe("i18n 门禁（31 号票 §10.8 + NFR-19）", () => {
     }
   });
 
-  it("硬编码中文回退扫描：ui/src 非测试源码的字符串字面量与 JSX 文本无白名单外的 CJK（NFR-19 门禁）", () => {
+  it("硬编码中文回退扫描：ui/src 非测试源码的字符串字面量与 JSX 文本无白名单外的 CJK（硬编码门禁）", () => {
     const files = collectSourceFiles(SRC_ROOT).filter(
       (f) => !f.startsWith("i18n/") && f !== "i18n.ts",
     );
@@ -224,7 +224,7 @@ describe("i18n 门禁（31 号票 §10.8 + NFR-19）", () => {
     }
     expect(
       violations,
-      `发现白名单外的硬编码中文（NFR-19：所有 UI 文案经 i18n 字典）：\n${violations.join("\n")}`,
+      `发现白名单外的硬编码中文（所有 UI 文案须经 i18n 字典）：\n${violations.join("\n")}`,
     ).toEqual([]);
   });
 

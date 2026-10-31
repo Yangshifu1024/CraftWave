@@ -1,10 +1,10 @@
 /**
- * errors 域字典（31 号票，§3.6 错误面口径定案）：错误码 → 用户可见本地化
+ * errors 域字典（错误面口径定案）：错误码 → 用户可见本地化
  * 文案。后端 `E_*` 错误码机器面不变、message 归一为英文技术串；前端展示
  * 层按错误码经 tError(code, fallbackMessage) 取本域映射——映射缺失时
  * 回退原始 message 不空白（unknown code / 后端新增码的兜底）。
  *
- * 键名 = §3.6 错误码注册表的码值原样（provider 七类子码逐个列出）。
+ * 键名 = 错误码注册表的码值原样（provider 七类子码逐个列出）。
  */
 
 const zh = {
@@ -19,7 +19,7 @@ const zh = {
   E_CANCELLED: "操作已取消",
   E_CONTEXT_OVERFLOW: "上下文超出模型窗口且压缩后仍放不下，已暂停并保留输入",
   E_STORAGE_IO: "本地存储写入失败",
-  // 供应商（FR-03-04 七类）
+  // 供应商（七类）
   E_PROVIDER_AUTH: "鉴权失败：请检查 API Key",
   E_PROVIDER_BILLING: "账户额度或计费问题",
   E_PROVIDER_RATE_LIMITED: "请求过于频繁，已触发限流",

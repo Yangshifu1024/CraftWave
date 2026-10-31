@@ -19,12 +19,12 @@ name: string,
  */
 apiFormat: ApiFormat, 
 /**
- * 缺省按 apiFormat 用官方缺省地址（§3.2）；自定义 OpenAI 兼容端点在此覆写。
+ * 缺省按 apiFormat 用官方缺省地址；自定义 OpenAI 兼容端点在此覆写。
  */
 baseUrl?: string, 
 /**
  * API Key 明文（用户决策废除 keyring，2026-10-28：Key 存 config.json，
- * 文件权限 0600 收紧；§9.4 已改写）。空串归一为 None。
+ * 文件权限 0600 收紧）。空串归一为 None。
  */
 apiKey?: string, 
 /**
@@ -36,11 +36,11 @@ models: Array<ProviderModel>,
  */
 headers?: { [key in string]: string }, 
 /**
- * 本地服务标记（FR-02-04，19 号票）：Ollama / llama.cpp / LM Studio 等
+ * 本地服务标记：Ollama / llama.cpp / LM Studio 等
  * 本机推理端点——免 API Key（`resolve_model` 允许 apiKey 缺省，rig 侧
  * 以占位值发请求，本地服务不校验凭据），设置页隐藏 Key 输入并标注
  * "本地 / 离线可用"。仅按本字段显式判定，不做"baseUrl 是 localhost 即
  * 本地"的隐式推断（远端自建网关同样可能是回环地址）。旧配置无该字段
- * serde default 回填 false（schemaVersion 维持 2，§3.2）。
+ * serde default 回填 false（schemaVersion 维持 2）。
  */
 local?: boolean, };

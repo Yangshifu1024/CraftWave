@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 /**
- * 设置页「检查更新」区组件测试（33 号票）：三态渲染（有新版 Dialog / 已最新
+ * 设置页「检查更新」区组件测试：三态渲染（有新版 Dialog / 已最新
  * Toast / 失败 Toast）、禁用兜底门（enabled=false / pubkey 未配）、安装门前置
  * （updatePrecheck 阻止原因展示与放行路径）、重启按钮链。
  * 精简版：门与三态循环断言；安装门阻止/放行合并。
@@ -44,7 +44,7 @@ function renderSection() {
   return render(<UpdateSection deps={deps()} />);
 }
 
-describe("UpdateSection（33 号票）", () => {
+describe("UpdateSection", () => {
   it("禁用兜底门：配置关闭 / pubkey 未实配时按钮禁用并示原因；门全开可用", async () => {
     const cases: { label: string; seed?: () => void; enabled: boolean; hint: string }[] = [
       {

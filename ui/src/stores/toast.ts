@@ -1,8 +1,8 @@
 /**
- * 操作反馈 Toast store（29 号票，FR-13-17/§10.7：反馈统一为顶部轻提示）。
+ * 操作反馈 Toast store（反馈统一为顶部轻提示）。
  *
  * 设计口径：
- * - 轻提示 = 不打断输入焦点、不抢按键（NFR-20）：store 只管数据与出队
+ * - 轻提示 = 不打断输入焦点、不抢按键：store 只管数据与出队
  *   计时，渲染面（ToastHost）容器的骨架不接收指针事件，只有卡片本体可点；
  * - 自动出队：成功/信息 3 秒、错误 6 秒（错误要看清/可点开详情，停留更久），
  *   push 时由 store 排定时器（vitest 用 fake timers 可确定性地测出队）；
@@ -28,7 +28,7 @@ export interface ToastItem {
   duration?: number;
 }
 
-/** 各类提示的缺省停留时长（毫秒；§10.7：成功/信息 3s、错误 6s）。 */
+/** 各类提示的缺省停留时长（毫秒：成功/信息 3s、错误 6s）。 */
 export const DEFAULT_DURATION_BY_KIND: Record<ToastKind, number> = {
   success: 3000,
   info: 3000,

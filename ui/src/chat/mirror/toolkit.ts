@@ -1,7 +1,7 @@
 /**
  * 【S1 spike 原型，随时可弃】镜像工具清单：defineToolkit 声明的「后端工具渲染副本」。
  *
- * 与设计文档 §10.3 的对照（0.15.31 实测差异，详见 spike 报告）：
+ * 与 assistant-ui 库的对照（0.15.31 实测差异，详见 spike 报告）：
  * - defineToolkit 真实存在（@assistant-ui/react 0.15.31 导出），条目形状
  *   { type, description, parameters, render } 与设计假设一致；
  * - 但 **execute 桥接在 local runtime 不成立**：0.15.31 里负责调 execute 的
@@ -9,8 +9,8 @@
  *   永远不会触发 execute。故镜像工具不带 execute，结果由 adapter 把 Rust
  *   tool-result 帧直接写进 tool-call part 的 result 字段驱动状态机；
  * - makeAssistantToolUI / useAssistantToolUI 已标 @deprecated（官方迁移指引：
- *   render 放 toolkit 条目上），设计文档若引用旧 API 需要更新。
- * - parameters 用 JSONSchema7 字面量（与 Rust ipc-manifest.json 同源校验属 §12.3）。
+ *   render 放 toolkit 条目上），旧 API 的引用处需相应更新。
+ * - parameters 用 JSONSchema7 字面量（与 Rust ipc-manifest.json 同源校验）。
  */
 import { defineToolkit } from "@assistant-ui/react";
 import { ReadWorkspaceFileCard, RunCommandCard } from "./MirrorCards";

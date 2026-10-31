@@ -2,8 +2,8 @@
 import type { McpScope } from "./McpScope";
 
 /**
- * `mcp_snapshot` 的单服务器行（§3.3 #47 逐字段 + 补充面：scope/detail/
- * fingerprint/trustStatus 为 08 号票管理页数据面扩展）。
+ * `mcp_snapshot` 的单服务器行（逐字段 + 补充面：scope/detail/
+ * fingerprint/trustStatus 为 管理页数据面扩展）。
  */
 export type McpSnapshotServer = { 
 /**

@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 /**
- * 首启引导向导测试（30 号票，FR-13-18）。
+ * 首启引导向导测试。
  *
  * mock 唯一 invoke 出口（@/ipc/client）与 sessions/settings 两个 store 的
  * 初始态，断言外部行为面（原逐分支用例已合并为四步向导的四个剧本，覆盖
@@ -16,7 +16,7 @@
  *
  * SessionWorkspace 的自动弹接线（恢复会话列表后 shouldAutoOpen 判定）依赖
  * assistant-ui 重资源树，不在本文件覆盖——判定纯函数在 onboarding-state
- * 测试钉住，真实首启弹层走用户 GUI 验收面（票内决议记录诚实声明）。
+ * 测试钉住，真实首启弹层走用户 GUI 验收面（诚实声明自动化覆盖边界）。
  */
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -97,7 +97,7 @@ function baseConfig(): AppConfig {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // 31 号票 i18n：语言是模块级全局态——语言步用例切 en-US 后须复位，
+  // i18n 语言是模块级全局态——语言步用例切 en-US 后须复位，
   // 避免泄漏到后续用例（组件文案按 zh 基准断言）
   setLang("zh-CN");
   getConfigMock.mockResolvedValue(baseConfig());
@@ -127,7 +127,7 @@ beforeEach(() => {
 
 afterEach(cleanup);
 
-describe("OnboardingWizard（30 号票四步向导）", () => {
+describe("OnboardingWizard（四步向导）", () => {
   it("导航与记账剧本：顶部 × 整包关闭、语言步落盘 en-US、单步跳过带 skippedAt、从记录 step 续走", async () => {
     // 顶部 × 整包关闭：completed=false、step 保持当前步、onClose 回调
     let wizard = render(<OnboardingWizard initialStep={0} onClose={() => {}} />);
@@ -221,7 +221,7 @@ describe("OnboardingWizard（30 号票四步向导）", () => {
     wizard.unmount();
 
     // 探测失败：红字分类文案 +「仍要保存并重测」与「跳过此步」并存
-    //（票面：两者并存）；跳过后已存供应商保留（saveProvider 共连通段那一次）
+    // 两者并存：跳过后已存供应商保留（saveProvider 共连通段那一次）
     testProviderMock.mockResolvedValue({
       ok: false,
       error: { code: "E_PROVIDER_AUTH", message: "401 invalid key" },
@@ -294,7 +294,7 @@ describe("OnboardingWizard（30 号票四步向导）", () => {
     expect(screen.getByText(t("onboarding.tierConfirmEachLabel"))).toBeTruthy();
     expect(screen.getByText(t("onboarding.tierAutoEditLabel"))).toBeTruthy();
     expect(screen.getByText(t("onboarding.tierFullAccessLabel"))).toBeTruthy();
-    // 末步不提供单步跳过（票面：仅一个「完成」钮，纯展示无写操作）
+    // 末步不提供单步跳过（仅一个「完成」钮，纯展示无写操作）
     expect(screen.queryByTestId("onboarding-skip-step")).toBeNull();
     // 「完成」收口 completed=true + 关闭回调
     fireEvent.click(screen.getByTestId("onboarding-finish"));

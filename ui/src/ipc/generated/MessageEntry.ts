@@ -4,7 +4,7 @@ import type { MessageStatus } from "./MessageStatus";
 import type { WirePart } from "./WirePart";
 
 /**
- * message 条目载荷（§6.1）。同时是 `save_session_tree` 的 messages 元素形态
- * （§6.3：前端树同步载荷，`parentId` null→省略字段，`status?` 仅 assistant）。
+ * message 条目载荷。同时是 `save_session_tree` 的 messages 元素形态
+ * （前端树同步载荷，`parentId` null→省略字段，`status?` 仅 assistant）。
  */
 export type MessageEntry = { id: string, parentId?: string, role: MessageRole, parts: Array<WirePart>, createdAt: number, runId?: string, status?: MessageStatus, };

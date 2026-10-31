@@ -2,7 +2,7 @@
 import type { InjectMode } from "./InjectMode";
 
 /**
- * `inject_run_message` 返回契约（§3.3 #21，06 号票改写）：实际入队的通道。
+ * `inject_run_message` 返回契约：实际入队的通道。
  */
 export type InjectRunMessageResult = { queued: boolean, 
 /**

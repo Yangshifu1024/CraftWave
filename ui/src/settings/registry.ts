@@ -34,7 +34,7 @@ export const PAGE_ORDER: PageKey[] = [
 /** 默认页：设置页打开时的落点 */
 export const DEFAULT_PAGE: PageKey = "appearance";
 
-/** 页名（导航项与操作条标题共用）：值为 i18n 键（31 号票——消费点经 t()
+/** 页名（导航项与操作条标题共用）：值为 i18n 键（消费点经 t()
  *  查词渲染，双语随界面语言切换）。 */
 export const PAGE_LABEL: Record<PageKey, string> = {
   appearance: "settings.pageAppearance",

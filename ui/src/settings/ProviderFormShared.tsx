@@ -1,7 +1,7 @@
 /**
- * 供应商表单共享层（30 号票首启引导抽取）：字段校验、凭据（newKey）策略、
+ * 供应商表单共享层（自首启引导抽取）：字段校验、凭据（newKey）策略、
  * 连接测试状态机与全部表单控件的单源实现——设置页 ProvidersPage 与首启
- * 引导向导的供应商步共用同一份，避免两处表单漂移（票面红线：抽取后
+ * 引导向导的供应商步共用同一份，避免两处表单漂移（抽取后
  * ProvidersPage 既有用例必须全绿）。
  *
  * 数据面口径与原 ProvidersPage 一致：
@@ -9,7 +9,7 @@
  *    apiKey 为可选展示值（编辑态"保留现有 Key"时不回显）；
  *  - 凭据策略（CredentialState）：新增恒录入新 Key；编辑 keep / replace 两选；
  *  - 连接测试（ConnectionTestState）：idle/testing/ok/error 四态，
- *    error 为 §3.6 E_PROVIDER_* 七类分类（probeErrorLabel 人话映射）。
+ *    error 为 E_PROVIDER_* 七类分类（probeErrorLabel 人话映射）。
  */
 
 import { Button } from "@/components/ui/button";
@@ -46,7 +46,7 @@ export function apiFormatLabel(v: ApiFormat): string {
 /** 请求头行（表单内表示；提交时转回 Record） */
 export type HeaderRow = { name: string; value: string };
 
-/** 连接测试状态机（FR-02-09，19 号票）：idle 未测 / testing 进行中 /
+/** 连接测试状态机：idle 未测 / testing 进行中 /
  *  ok 已连通（延迟 + 模型数）/ error 失败（七类分类文案）。 */
 export type ConnectionTestState =
   | { state: "idle" }
@@ -54,7 +54,7 @@ export type ConnectionTestState =
   | { state: "ok"; latencyMs: number; modelCount: number }
   | { state: "error"; error: ProbeError };
 
-/** 探测错误分类（§3.6 E_PROVIDER_* 七类）→ 人话文案映射表。 */
+/** 探测错误分类（E_PROVIDER_* 七类）→ 人话文案映射表。 */
 export function probeErrorLabel(code: string): string {
   const labels: Record<string, string> = {
     E_PROVIDER_AUTH: "settings.probeAuth",
@@ -125,7 +125,7 @@ export function fieldIssue(
     if (!/^https?:\/\/[^\s/]+/i.test(url)) return t("settings.invalidUrl");
   }
   if (key === "keys") {
-    // 本地供应商（FR-02-04，19 号票）：免 API Key（本地服务不校验凭据）
+    // 本地供应商：免 API Key（本地服务不校验凭据）
     if (form.local) return undefined;
     const hasKey = credential.isNew
       ? credential.newKey.trim() !== ""
@@ -207,11 +207,11 @@ export function formToProvider(form: ProviderForm, credential: CredentialState):
 }
 
 /**
- * 连接测试（FR-02-09）：对已保存供应商发探测（草稿态编辑时以表单当前
+ * 连接测试：对已保存供应商发探测（草稿态编辑时以表单当前
  * baseUrl 做 baseUrlOverride 覆写——"未保存草稿直接测试"，不落库）。
  * 结果按 { state, latency, modelCount / error } 写入调用方给的槽。
  * reject（test_provider 未注册 / 供应商不存在等参数面错误）时先交给
- * onReject 接管——返回 true 表示调用方已处理（如 30 号票向导的
+ * onReject 接管——返回 true 表示调用方已处理（如首启向导的
  * 「稍后在设置中测试」降级），不再写 error 槽；未接管则兜底为
  * protocol 分类展示（设置页现状）。
  */
@@ -299,7 +299,7 @@ export function ProviderFields({
   credential: CredentialState;
   errors: Partial<Record<FieldKey, string | undefined>>;
   onPatch: (patch: Partial<ProviderForm>) => void;
-  /** 凭据策略切换（编辑态 radio 用；新增态恒录新 Key 可缺省——30 号票向导） */
+  /** 凭据策略切换（编辑态 radio 用；新增态恒录新 Key 可缺省——首启向导） */
   onCredentialMode?: (mode: "keep" | "replace") => void;
   onNewKey: (value: string) => void;
   /** 草稿试连回调（编辑态注入；缺省 = 新增态不显示测试按钮） */
@@ -385,7 +385,7 @@ export function ProviderFields({
                   placeholder="https://api.example.com/v1"
                   onChange={(e) => onPatch({ baseUrl: e.target.value })}
                 />
-                {/* 草稿试连（19 号票 FR-02-09）：仅编辑态可用——已保存供应商
+                {/* 草稿试连：仅编辑态可用——已保存供应商
                     的 baseUrl 覆写探测；新增态还没有可探测的配置主体 */}
                 {onTestDraft && (
                   <Button
@@ -433,7 +433,7 @@ export function ProviderFields({
           <div className="settings-row-control">
             <FieldControl error={form.local ? undefined : errors.keys} wide>
               {form.local ? (
-                // 本地预设（FR-02-04，19 号票）：免 Key——Key 输入隐藏
+                // 本地预设：免 Key——Key 输入隐藏
                 <div className="flex w-full items-center gap-2 text-ui-sm text-[var(--cw-text-2)]">
                   <Tag>{t("settings.localTag")}</Tag>
                   <span>{t("settings.noApiKeyNeeded")}</span>
@@ -747,7 +747,7 @@ export function ModelEditor({
 }
 
 /**
- * 连接测试结果行（FR-02-09，19 号票）：idle 不渲染；testing 进行中提示；
+ * 连接测试结果行：idle 不渲染；testing 进行中提示；
  * ok 带延迟与模型数；error 带七类分类的人话文案（原始 message 兜底展示
  * 在 title 里，方便排查精简网关的非标准响应）。
  */

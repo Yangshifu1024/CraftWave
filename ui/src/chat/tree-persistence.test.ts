@@ -1,5 +1,5 @@
 /**
- * tree-persistence 双向转换测试（S4 spike，15/17 号票增量）。
+ * tree-persistence 双向转换测试。
  *
  * 测试面：用无界面（headless）的 LocalRuntime 跑剧本化对话，验证
  * 「assistant-ui 消息树 ↔ 存储条目 ↔ JSON/JSONL 落盘」三个方向往返后
@@ -143,7 +143,7 @@ function assertTreeEqual(a: ExportedMessageRepository, b: ExportedMessageReposit
   expect(normalizeRepo(b)).toStrictEqual(normalizeRepo(a));
 }
 
-// ---- roundtrip 主流程：导出 → §6.1 条目 → JSON 落盘 → 读回 → 重载还原 ----
+// ---- roundtrip 主流程：导出 → 存储条目 → JSON 落盘 → 读回 → 重载还原 ----
 
 /** 临时目录登记表：用例结束统一清理，避免残留。 */
 const tempDirs: string[] = [];
@@ -167,9 +167,9 @@ function roundtripViaFile(
   return { entries: loaded, restored: entriesToExported(loaded) };
 }
 
-describe("tree-persistence（S4 spike）", () => {
-  it("线性会话 roundtrip：两轮对话逐节点一致（含 activeLeaf）、reasoning 映射、§6.1 条目 schema、C-4 导出结构字段面", async () => {
-    // ---- 两轮对话导出→§6.1 JSON 落盘→重载后树逐节点一致 ----
+describe("tree-persistence", () => {
+  it("线性会话 roundtrip：两轮对话逐节点一致（含 activeLeaf）、reasoning 映射、存储条目 schema、导出结构字段面", async () => {
+    // ---- 两轮对话导出→JSON 落盘→重载后树逐节点一致 ----
     const thread = createRuntime([
       { text: splitChunks("第一轮回复", 2) },
       { text: splitChunks("第二轮回复", 2) },
@@ -195,7 +195,7 @@ describe("tree-persistence（S4 spike）", () => {
     ]);
     expect(entries.filter((e) => e.kind === "message")).toHaveLength(4);
 
-    // ---- C-4 实证：0.15.31 导出结构字段面 ----
+    // ---- 导出结构字段面（assistant-ui 0.15.31 实测口径）----
     // ExportedMessageRepository = { headId?, messages:[{message,parentId,runConfig?}] }
     expect(Object.keys(exported).sort()).toStrictEqual(["headId", "messages"]);
     expect(typeof exported.headId).toBe("string");
@@ -226,7 +226,7 @@ describe("tree-persistence（S4 spike）", () => {
     expect(assistantEntry?.parts.map((p) => p.type)).toStrictEqual(["reasoning", "text"]);
     assertTreeEqual(reasoningExported, entriesToExported(reasoningEntries));
 
-    // ---- §6.1 存储条目形状（schema 符合性）：session 首、meta 尾、message 居中、epoch 毫秒时间戳 ----
+    // ---- 存储条目形状（schema 符合性）：session 首、meta 尾、message 居中、epoch 毫秒时间戳 ----
     const schemaEntries = exportToEntries(reasoningExported, "sess-s4-schema", 7);
     expect(schemaEntries[0]).toStrictEqual({
       kind: "session",
@@ -340,7 +340,7 @@ describe("tree-persistence（S4 spike）", () => {
     });
   });
 
-  it("toolCall/toolResult 拆分与合并（§3.2 WirePart 口径）、JSONL 行格式、空树 roundtrip、deriveRunSummaries（17 号票）", () => {
+  it("toolCall/toolResult 拆分与合并（WirePart 口径）、JSONL 行格式、空树 roundtrip、deriveRunSummaries", () => {
     // ---- assistant-ui 单一 tool-call part 导出为 toolCall+toolResult 两条，还原时合并回单 part ----
     const repo = ExportedMessageRepositoryFactory.fromBranchableArray([
       {

@@ -1,12 +1,12 @@
 /**
- * 会话持久化的前端侧（15 号票，§6.3/§6.4 双写协议的发送方）。
+ * 会话持久化的前端侧（双写协议的发送方）。
  *
  * 双写协议：同一棵消息树由两端共同落盘——前端负责 save 用户操作造成的
  * 拓扑变化（编辑、分支切换），Rust 侧 RunRecorder 按帧落盘 run 产物
  * （canonical，即权威记录）。两边通过 revision（版本号，乐观并发）对齐：
  * save 必须带上次拿到的版本，版本不符会被拒绝（E_SESSION_REV）。
  *
- * 协议要点（票 15 Answer 详述）：
+ * 协议要点：
  * - **canonical 条目 Rust 权威**：run 产物由 Rust RunRecorder 按帧落盘
  *   （turn 级条目，id 规则 `{runId}:{turn}` / `{runId}:{turn}.tools` /
  *   `{runId}:marker`）；前端树上本次运行的运行态节点（assistant-ui 单 run
@@ -16,7 +16,7 @@
  *   正确落盘）再 start_chat；分支操作（编辑/切换）的拓扑也在下一次
  *   save 自然同步。
  * - **E_SESSION_REV 自愈**：canonical 落盘推进了 revision 而本地基线过期时，
- *   load 拿新 revision 重试一次（§6.4 重载重试）。
+ *   load 拿新 revision 重试一次（重载重试）。
  */
 
 import type { ThreadMessage } from "@assistant-ui/react";
@@ -26,7 +26,7 @@ import * as client from "@/ipc/client";
 import type { MessageEntry, SessionTreeData } from "@/ipc/types";
 import { useSessionsStore } from "./sessions";
 
-/** 每会话一份的运行态记账（16 号票多会话分桶）。 */
+/** 每会话一份的运行态记账（多会话分桶）。 */
 export interface SessionPersistScope {
   /** 乐观并发基线（save_session_tree.baseRevision；0 = 尚未同步过）。 */
   revision: number;
@@ -34,7 +34,7 @@ export interface SessionPersistScope {
   runtimeNodes: Map<string, string>;
 }
 
-/** 会话持久化状态仓库的形状：按 sessionId 分桶的记账（16 号票多会话）。 */
+/** 会话持久化状态仓库的形状：按 sessionId 分桶的记账（多会话）。 */
 export interface SessionPersistState {
   /** sessionId → 记账（缺省 = { revision: 0, 空 Map }）。 */
   scopes: Record<string, SessionPersistScope>;
@@ -127,13 +127,13 @@ export function toSavePayload(
 }
 
 /**
- * 发送前树同步（§6.3 双写的先手）：save 活动路径。E_SESSION_REV 时 load
+ * 发送前树同步（双写的先手）：save 活动路径。E_SESSION_REV 时 load
  * 校正 revision 重试一次；再失败仅记 console（发送流程不因此中断——
  * Rust 侧 user 兜底会补落，分支拓扑延后到下次成功 save）。
  *
  * 首次可见刷新：save 成功推进索引 messageCount 后，若该会话此前不在左栏
- * 列表（新建未发送的空会话），补一次 refresh 让它即时出现（FR-01-01：
- * 会话发送后才进列表）。
+ * 列表（新建未发送的空会话），补一次 refresh 让它即时出现（会话发送后
+ * 才进列表）。
  */
 export async function syncTreeBeforeSend(
   sessionId: string,
@@ -162,7 +162,7 @@ export async function syncTreeBeforeSend(
   } catch (err) {
     const ipcErr = client.toIpcError(err);
     if (ipcErr.code !== "E_SESSION_REV") throw err;
-    // canonical 已推进（run 落盘/挂起恢复）：重载基线重试一次（§6.4）
+    // canonical 已推进（run 落盘/挂起恢复）：重载基线重试一次
     const tree = await client.loadSessionTree(sessionId);
     useSessionPersistStore.getState().setRevision(sessionId, tree.revision);
     const result = await attempt(tree.revision);

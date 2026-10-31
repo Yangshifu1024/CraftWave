@@ -7,23 +7,23 @@ import type { SubOutcome } from "./SubOutcome";
 import type { UsageTotal } from "./UsageTotal";
 
 /**
- * ChatFrame：帧协议全集 9 帧（§3.4）。帧类型名与字段名均按 §3.1 契约：
+ * ChatFrame：帧协议全集 9 帧。帧类型名与字段名均按契约：
  * type 值是 camelCase，字段名也是 camelCase。
  */
 export type ChatFrame = { "type": "runStarted", runId: string, model: string, } | { "type": "stepStarted", turn: number, } | { "type": "textDelta", turn: number, delta: string, } | { "type": "reasoningDelta", turn: number, delta: string, } | { "type": "toolStarted", callId: string, name: string, } | { "type": "toolArgs", callId: string, chunk: string, } | { "type": "toolResult", callId: string, ok: boolean, uiSummary: string, 
 /**
- * 错误面（§3.4 `error?`）：被取消的工具补 E_CANCELLED（§5.3），
+ * 错误面（`error?`）：被取消的工具补 E_CANCELLED，
  * 其余情况为 None。
  */
 error?: FrameError, } | { "type": "usage", usage: UsageTotal, 
 /**
- * 输出速度，单位 token/秒（FR-01-13）；主循环按"本轮输出 token 数
+ * 输出速度，单位 token/秒；主循环按"本轮输出 token 数
  * ÷ 本轮流式调用耗时"计算。
  */
 rate?: number, } | { "type": "runEnded", reason: EndReason, durationMs: number, toolCount: number, turn: number, 
 /**
- * 错误终态面（§3.4 `error?`）：reason=error 时承载（§11.3 的错误
- * 分类器属 provider 适配层的后续工单，本阶段以 E_INTERNAL 兜底）。
+ * 错误终态面（`error?`）：reason=error 时承载（错误分类细化属
+ * provider 适配层的后续工单，本阶段以 E_INTERNAL 兜底）。
  */
 error?: FrameError, } | { "type": "compactDone", cutEntryId: string, tokensBefore: number, tokensAfter: number, } | { "type": "runSnapshot", 
 /**
@@ -31,7 +31,7 @@ error?: FrameError, } | { "type": "compactDone", cutEntryId: string, tokensBefor
  */
 status: RunSnapshotStatus, 
 /**
- * 本次 run 的唯一标识（§3.2 可选字段——idle 形态省略）。
+ * 本次 run 的唯一标识（可选字段——idle 形态省略）。
  */
 runId?: string, 
 /**

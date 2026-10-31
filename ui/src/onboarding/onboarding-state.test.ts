@@ -1,5 +1,5 @@
 /**
- * 首启引导状态纯函数单测（30 号票）：ui-state 自管 JSON 的清洗（不可信
+ * 首启引导状态纯函数单测：ui-state 自管 JSON 的清洗（不可信
  * 形状一律回退）、自动弹/横幅/续走三类判定与推进记账语义（前进、单步
  * 跳过、整包关闭、末步收口）。原逐断言用例已表驱动合并，覆盖语义不减。
  */
@@ -16,7 +16,7 @@ import {
   shouldShowResumeBanner,
 } from "./onboarding-state";
 
-describe("onboarding-state 纯函数（30 号票）", () => {
+describe("onboarding-state 纯函数", () => {
   it("sanitizeOnboarding（ui-state 自管 JSON 不可信形状清洗）：坏形状回 null、正常 round-trip、step 修复与 skippedAt 丢弃", () => {
     // 表：[输入, 期望]（期望 null = 视作全新数据目录，触发首启自动弹）
     const badToNull: unknown[] = [
@@ -63,7 +63,7 @@ describe("onboarding-state 纯函数（30 号票）", () => {
     });
   });
 
-  it("触发判定（票面：无记录自动弹；completed 后不再弹且横幅消失）：shouldAutoOpen 与 shouldShowResumeBanner 三态口径", () => {
+  it("触发判定（无记录自动弹；completed 后不再弹且横幅消失）：shouldAutoOpen 与 shouldShowResumeBanner 三态口径", () => {
     const states = [null, { completed: false, step: 0 }, { completed: true, step: 3 }] as const;
     for (const state of states) {
       expect(shouldAutoOpen(state)).toBe(state === null);

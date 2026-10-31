@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 /**
- * Toast store 测试（29 号票，FR-13-17 顶部轻提示）：自动出队（fake timers
+ * Toast store 测试（顶部轻提示）：自动出队（fake timers
  * 定格 3s/6s 时长口径）、同屏堆叠上限挤最老、手动 dismiss、便捷入口。
  */
 

@@ -1,5 +1,5 @@
 /**
- * 消息内图片引用（cwimg://）的编解码（17 号票，§3.2 image part 的前端载体）。
+ * 消息内图片引用（cwimg://）的编解码（image part 的前端载体）。
  *
  * 设计对齐：WirePart::Image 只存 `{ blobHash, mimeType }`（不含图片本体，
  * JSONL 不膨胀）；assistant-ui 的 ImageMessagePart 只有一个 `image` 字符串
@@ -54,8 +54,8 @@ export function parseCwImageUrl(image: string): { blobHash: string; mimeType: st
   return { blobHash, mimeType };
 }
 
-/** 附件上限（FR-12-02）：单条消息 ≤4 张。 */
+/** 附件上限：单条消息 ≤4 张。 */
 export const MAX_ATTACHMENTS = 4;
 
-/** 附件单张字节上限（FR-12-02）：≤5MiB（与后端 put_blob 同口径）。 */
+/** 附件单张字节上限：≤5MiB（与后端 put_blob 同口径）。 */
 export const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;

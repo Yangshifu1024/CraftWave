@@ -2,7 +2,7 @@
 import type { McpScope } from "./McpScope";
 
 /**
- * `mcp_connect` / `mcp_disconnect` / `mcp_reconnect` 参数契约（§3.3 #42–44）。
+ * `mcp_connect` / `mcp_disconnect` / `mcp_reconnect` 参数契约（–44）。
  */
 export type McpServerRefArgs = { 
 /**

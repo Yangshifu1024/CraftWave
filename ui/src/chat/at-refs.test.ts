@@ -1,4 +1,4 @@
-// at-refs 纯逻辑测试（28 号票，§10.6 发送合成引用段）：token 提取（引号/
+// at-refs 纯逻辑测试（发送合成引用段）：token 提取（引号/
 // 普通双形态）、相对路径准入（绝对/穿越剔除）、去重与上限 20、引用段拼装。
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -14,7 +14,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("at-refs（28 号票）", () => {
+describe("at-refs", () => {
   it("extractAtTokens 与 extractAtTokenSpans：普通/引号双形态、未闭合不产出、区间覆盖与升序", () => {
     // 普通形态：@ 后到空白前
     expect(extractAtTokens("看 @src/main.rs 和 @docs/a.md")).toEqual(["src/main.rs", "docs/a.md"]);

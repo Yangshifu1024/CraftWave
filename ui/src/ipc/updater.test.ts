@@ -1,5 +1,5 @@
 /**
- * ipc/updater.ts 单测（33 号票）：静默检查间隔判定纯函数表驱动 +
+ * ipc/updater.ts 单测：静默检查间隔判定纯函数表驱动 +
  * checkForUpdate 三态收敛（插件 mock）+ 暂存资源释放纪律。
  */
 
@@ -36,7 +36,7 @@ afterEach(() => {
   discardPendingUpdate();
 });
 
-describe("ipc/updater（33 号票）", () => {
+describe("ipc/updater", () => {
   it("shouldSilentCheck（静默检查间隔判定，表驱动）：enabled 门、从未检查、interval 边界与可调档、非正 interval 兜底", () => {
     const HOUR = 3_600_000;
     const cases: [
@@ -46,7 +46,7 @@ describe("ipc/updater（33 号票）", () => {
       enabled: boolean,
       expected: boolean,
     ][] = [
-      // enabled=false 恒不检查（NFR-11：不发起更新外联）
+      // enabled=false 恒不检查（不发起更新外联）
       [1_000, 0, 24, false, false],
       [1_000, 0, 0, false, false],
       // 从未检查过（记账缺省 0/负数）→ 检查

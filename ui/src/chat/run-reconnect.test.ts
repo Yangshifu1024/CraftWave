@@ -1,12 +1,12 @@
 /**
- * run 重连观察态纯逻辑测试（§5.6 runEpoch 自愈 / §5.8 attach 重放，05 号票）：
+ * run 重连观察态纯逻辑测试（帧序自愈 / attach 重放）：
  * IPC 全部走注入的假实现，不依赖 Rust 后端。覆盖：
  * - 快照 running → 进入观察态并 attach(sinceSeq=0)；非 running 不进；
  *   attach 空重放（runId 省略）→ 立即收口退出；
- * - 帧 runEpoch 过滤：重复/倒退 seq 丢弃；seq 缺口记 console 警告；
+ * - 帧序过滤：重复/倒退 seq 丢弃；seq 缺口记 console 警告；
  * - runEnded 帧 → 退出观察态 + onEnded 收口（树重载信号）；
  * - 无帧兜底：5 秒无新帧且快照 idle → 收口（runEnded 帧丢失场景）；
- * - 观察态旁路运行态节点记账（帧路径不触碰 noteRuntimeNode，§6.3 双写）；
+ * - 观察态旁路运行态节点记账（帧路径不触碰 noteRuntimeNode，双写协议）；
  * - 待审批恢复：查询命中登记 AskPanel、未命中不登记。
  */
 
@@ -78,7 +78,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("run-reconnect（§5.6 观察态）", () => {
+describe("run-reconnect（观察态）", () => {
   it("快照 running → attach(sinceSeq=0) 重放 + 续流，runEnded 收口退出；非 running 与空重放竞态不进观察态", async () => {
     // ---- 快照 running：attach 重放帧 + runEnded 收口 ----
     const attach = fakeAttach(async (emit) => {
@@ -191,7 +191,7 @@ describe("run-reconnect（§5.6 观察态）", () => {
       "seq 跳跃触发对账告警",
     ).toBe(true);
 
-    // ---- 观察态旁路运行态节点记账（§6.3 双写）：帧路径不触碰 noteRuntimeNode ----
+    // ---- 观察态旁路运行态节点记账（双写协议）：帧路径不触碰 noteRuntimeNode ----
     // 挂起 attach 的重放帧由 attach impl 直接返回的场景见它例；此处经 emitter
     // 投递的 runStarted 同样不触发运行态节点记账（防污染 canonical 双写）。
     emitter(frame(10, { type: "runStarted", runId: "r-observe", model: "m" }));
@@ -212,7 +212,7 @@ describe("run-reconnect（§5.6 观察态）", () => {
     expect(useRunReconnectStore.getState().scopes.s4?.phase).toBe("idle");
   });
 
-  it("restorePendingAsk 待审批恢复（§5.6 #59c）：命中按 askId 恢复、未命中不登记、reconnectIfNeeded 组合下也恢复", async () => {
+  it("restorePendingAsk 待审批恢复：命中按 askId 恢复、未命中不登记、reconnectIfNeeded 组合下也恢复", async () => {
     const approvalPayload = {
       kind: "approval" as const,
       title: "写入新文件 a.rs",

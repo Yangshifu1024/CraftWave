@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 /**
- * SkillsPage 交互测试（09 号票，§10.7 技能组）：清单渲染（名称/来源徽标/
+ * SkillsPage 交互测试（技能组）：清单渲染（名称/来源徽标/
  * 启停开关/描述）、启停切换（乐观翻转 + 失败回滚）、重新扫描、行点击正文
- * 预览；24 号票增信任撤销。IPC 全部经 vi.mock 替换（McpPage.test 同款桩面）。
+ * 预览、信任撤销。IPC 全部经 vi.mock 替换（McpPage.test 同款桩面）。
  * 精简版：每功能面留代表 1 例，相关段合并。
  */
 
@@ -93,7 +93,7 @@ describe("SkillsPage", () => {
     empty.unmount();
   });
 
-  it("启停：开关切换调 skill_toggle（FR-14-04）；失败回滚开关态（后端为权威）", async () => {
+  it("启停：开关切换调 skill_toggle；失败回滚开关态（后端为权威）", async () => {
     const entry: SkillListEntry = {
       name: "demo",
       source: "global",
@@ -122,7 +122,7 @@ describe("SkillsPage", () => {
     failed.unmount();
   });
 
-  it("重扫重拉清单；行点击预览正文；信任撤销（24 号票：trusted 有入口，其余无）", async () => {
+  it("重扫重拉清单；行点击预览正文；信任撤销（trusted 有入口，其余无）", async () => {
     // 重扫后清单多出 added（reload 感知新增）
     seedSkills([
       {

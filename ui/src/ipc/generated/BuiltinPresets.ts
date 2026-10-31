@@ -1,5 +1,5 @@
 // 本文件由 cargo test 生成（src-tauri/src/ipc_manifest_test.rs），勿手改。
-// 权威来源：src-tauri/src/providers/presets.rs 的 builtin_presets()（§3.3 预设单源注记）。
+// 权威来源：src-tauri/src/providers/presets.rs 的 builtin_presets()（预设单源）。
 import type { ProviderPreset } from "./ProviderPreset";
 
 /** 内置供应商预设全集（顺序即设置页「从预设添加」的展示顺序）。 */

@@ -2,6 +2,6 @@
 import type { ProviderConfig } from "./ProviderConfig";
 
 /**
- * `save_provider` 参数契约（§3.3 #8；文档命名锚点，命令形参按字段平铺展开）。
+ * `save_provider` 参数契约（文档命名锚点，命令形参按字段平铺展开）。
  */
 export type SaveProviderArgs = { provider: ProviderConfig, newKey?: string, };

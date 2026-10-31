@@ -1,8 +1,8 @@
 /**
- * NFR-03 压测帧采样器（34 号票，dev-only）：requestAnimationFrame 采样渲染
- * 帧间隔，统计超过阈值（100ms，与 NFR-02 同量级）的「渲染长帧」数。
+ * 压测帧采样器（dev-only）：requestAnimationFrame 采样渲染
+ * 帧间隔，统计超过阈值（100ms）的「渲染长帧」数。
  *
- * 量化口径（PRD 未给数值，本票定为评审可调的注记线）：**压测期间 >100ms
+ * 量化口径（评审可调的阈值线）：**压测期间 >100ms
  * 的帧间隔计数 = 0 为通过线**。统计核心（summarizeGaps）为纯函数，单元
  * 测试直接覆盖；浏览器采样壳（FrameSampler）只在 dev 压测页运行。
  */

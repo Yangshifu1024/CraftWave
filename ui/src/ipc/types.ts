@@ -1,22 +1,22 @@
 /**
- * IPC 契约类型出口（§2.4 ipc/types.ts）。
+ * IPC 契约类型出口。
  *
- * 02 号票起（C-2 定案）payload 类型的单一来源切换为 ts-rs 生成物：Rust 契约
+ * payload 类型的单一来源为 ts-rs 生成物：Rust 契约
  * 类型 derive(TS) 后由 cargo test 统一导出到 `./generated/`（生成物进 git，
  * 见 src-tauri/src/ipc_manifest_test.rs 的导出面），本文件只做再导出
  * （re-export）——禁止在本文件手写 payload 类型，防止双源漂移。
  *
  * 纪律说明：
- * - 生成物按 Rust 类型一文件一名（D14 两侧同名）；字段可缺省（`?`）即 serde
+ * - 生成物按 Rust 类型一文件一名（两侧同名）；字段可缺省（`?`）即 serde
  *   Option/缺省字段，线上传输时该键可省略；
  * - 历史手写镜像别名已收编为 Rust 同名：ToolOutcomeJson→ToolOutcome、
  *   ThemeName→Theme、WorkspaceReadRange→ReadRange；无消费面的
  *   NotificationPermission 镜像已删除（status 字段为 string，与 Rust 发射面一致）；
- * - 仅存的手写面是 §3.5 事件载荷族（Rust 侧以 json! 字面量发射、无结构体
+ * - 仅存的手写面是事件载荷族（Rust 侧以 json! 字面量发射、无结构体
  *   来源，随对应功能票收编），其引用的类型仍来自生成物。
  *
- * 键面不动：client.ts 的 COMMANDS/EVENT_KEYS 注册表与 manifest 双向扫描照旧
- * （§12.3，C-2 明文）；生成物 ↔ 再导出面的一致性由 contract.test 扫描钉住。
+ * 键面不动：client.ts 的 COMMANDS/EVENT_KEYS 注册表与 manifest 双向扫描照旧；
+ * 生成物 ↔ 再导出面的一致性由 contract.test 扫描钉住。
  */
 
 // ---- 生成物再导出（与 ui/src/ipc/generated/ 一一对应）----
@@ -35,7 +35,7 @@ export * from "./generated/AppConfig";
 export * from "./generated/ApprovalConfig";
 export * from "./generated/ApprovalDiff";
 export * from "./generated/ApprovePlanArgs";
-// 产物面板与编辑器打开（28 号票，§3.3 #59l/#35/#36）
+// 产物面板与编辑器打开
 export * from "./generated/ArtifactRow";
 export * from "./generated/AskAnswer";
 export * from "./generated/AskChoice";
@@ -84,7 +84,7 @@ export * from "./generated/GitStatusArgs";
 export * from "./generated/GitStatusFile";
 export * from "./generated/GitStatusResult";
 export * from "./generated/GitUser";
-// 全局热键配置（29 号票，§3.2 ui.hotkey；UiConfig 引用的连带导出面）
+// 全局热键配置（UiConfig 引用的连带导出面）
 export * from "./generated/HotkeyConfig";
 export * from "./generated/IncompleteReason";
 export * from "./generated/InjectMode";
@@ -130,14 +130,14 @@ export * from "./generated/OpenDirArgs";
 export * from "./generated/OpenInEditorArgs";
 export * from "./generated/PathKindArgs";
 export * from "./generated/PathKindResult";
-// 更新器支撑命令载荷（33 号票，§3.3 #59m/#59n/#59o）
+// 更新器支撑命令载荷
 export * from "./generated/PauseFollowupQueueArgs";
 export * from "./generated/PauseFollowupQueueResult";
 export * from "./generated/PermissionTier";
 export * from "./generated/PlanItem";
 export * from "./generated/PlanItemStatus";
 export * from "./generated/PresetModel";
-// HTML 沙箱预览注册（14 号票，§3.3 #59g）
+// HTML 沙箱预览注册
 export * from "./generated/PreviewRegisterArgs";
 export * from "./generated/PreviewRegisterResult";
 export * from "./generated/ProbeError";
@@ -148,7 +148,7 @@ export * from "./generated/ProviderPreset";
 export * from "./generated/ProxyConfig";
 export * from "./generated/ProxyMode";
 export * from "./generated/QueuedImageAttachment";
-// 配额快照（21 号票，§3.3 #53）
+// 配额快照
 export * from "./generated/QuotaData";
 export * from "./generated/QuotaEntry";
 export * from "./generated/QuotaSnapshot";
@@ -191,7 +191,7 @@ export * from "./generated/SessionPendingAskArgs";
 export * from "./generated/SessionPrefsArgs";
 export * from "./generated/SessionRunSnapshotArgs";
 export * from "./generated/SessionTreeData";
-// 用量统计（20 号票，§3.3 #52/#59k）
+// 用量统计
 export * from "./generated/SessionUsageArgs";
 export * from "./generated/SessionUsageResult";
 export * from "./generated/SetSessionPrefsArgs";
@@ -226,7 +226,7 @@ export * from "./generated/ToolsConfig";
 export * from "./generated/TotalUsage";
 export * from "./generated/TrustDecision";
 export * from "./generated/UiConfig";
-// 更新器配置与状态/安装门载荷（33 号票，§3.2 update 组/§3.3 #59m/#59n）
+// 更新器配置与状态/安装门载荷
 export * from "./generated/UpdateConfig";
 export * from "./generated/UpdatePrecheckResult";
 export * from "./generated/UpdateStatusResult";
@@ -235,17 +235,17 @@ export * from "./generated/WatchdogConfig";
 export * from "./generated/WirePart";
 export * from "./generated/WorkspacePathHit";
 
-/** message 存储条目 = StoredEntry 的 message 变体（kind 判别收窄，§6.1）。
+/** message 存储条目 = StoredEntry 的 message 变体（kind 判别收窄）。
  *  类型级派生别名，非手写镜像。 */
 export type StoredMessageEntry = Extract<StoredEntry, { kind: "message" }>;
 
-/** meta 存储条目 = StoredEntry 的 meta 变体（会话级元信息，§6.1）。 */
+/** meta 存储条目 = StoredEntry 的 meta 变体（会话级元信息）。 */
 export type StoredMetaEntry = Extract<StoredEntry, { kind: "meta" }>;
 
-/** session 存储条目 = StoredEntry 的 session 变体（会话头，§6.1）。 */
+/** session 存储条目 = StoredEntry 的 session 变体（会话头）。 */
 export type StoredSessionEntry = Extract<StoredEntry, { kind: "session" }>;
 
-// ---- §3.5 事件载荷族（手写聚合面：Rust 发射点为 json! 字面量，无结构体来源）----
+// ---- 事件载荷族（手写聚合面：Rust 发射点为 json! 字面量，无结构体来源）----
 
 /** ask:opened 事件载荷：后端打开了询问/审批，前端应弹出对应面板。 */
 export type AskOpenedEvent = {
@@ -261,7 +261,7 @@ export type AskClosedEvent = {
 };
 
 /**
- * plan:update 事件载荷：全量计划态（25 号票扩展——计划卡实时刷新 + 基线
+ * plan:update 事件载荷：全量计划态（计划卡实时刷新 + 基线
  * 标记与待批准范围展示）。paths = 模型声明的写范围；approved/baselinePaths
  * = 批准态与冻结基线（approve_plan 冻结后同键补发一次）。
  */
@@ -281,7 +281,7 @@ export type RunSuggestionsEvent = {
 };
 
 /** tokens:update 事件载荷：会话累计 token 用量的权威校正（覆盖前端累计值）。
- *  20 号票增补 modelId：本次增量贡献的实际执行模型（Inspector 统计区块对
+ *  modelId：本次增量贡献的实际执行模型（Inspector 统计区块对
  *  当日/该模型条目做本地增量修正的依据；缺省 = 老载荷兼容，回退整段重拉）。 */
 export type TokensUpdateEvent = {
   sessionId: string;
@@ -289,7 +289,7 @@ export type TokensUpdateEvent = {
   modelId?: string;
 };
 
-/** run:compacting 事件载荷：上下文压缩开始（Composer 指示条驱动，04 号票）。 */
+/** run:compacting 事件载荷：上下文压缩开始（Composer 指示条驱动）。 */
 export type RunCompactingEvent = {
   sessionId: string;
 };
@@ -307,16 +307,16 @@ export type RunCompactFailedEvent = {
   sessionId: string;
 };
 
-/** run:start 事件载荷（06 号票实装）：run 任务确认启动——手动 start_chat 与
+/** run:start 事件载荷：run 任务确认启动——手动 start_chat 与
  *  后端自动投递的新 run 都发。前端以「本会话是否运行态」区分：非运行态收到
- *  即后端自动投递，经 attach_run 观察态（§5.8）接入续流。 */
+ *  即后端自动投递，经 attach_run 观察态接入续流。 */
 export type RunStartEvent = {
   sessionId: string;
   runId: string;
 };
 
-/** run:inject 事件载荷（06 号票实装）：steer 被消费（turn 边界）。前端据
- *  entryId/text 本地插入插话节点（canonical 由 Rust 侧同 id 落盘，§5.5）。 */
+/** run:inject 事件载荷：steer 被消费（turn 边界）。前端据
+ *  entryId/text 本地插入插话节点（canonical 由 Rust 侧同 id 落盘）。 */
 export type RunInjectEvent = {
   sessionId: string;
   runId: string;
@@ -325,7 +325,7 @@ export type RunInjectEvent = {
   text: string;
 };
 
-/** run:queue 事件载荷（06 号票）：followUp 队列状态变化——入队/出队/移除/
+/** run:queue 事件载荷：followUp 队列状态变化——入队/出队/移除/
  *  暂停/恢复即发，队列条以此驱动增删（后端 queue.json 为权威）。 */
 export type RunQueueEvent = {
   sessionId: string;
@@ -335,7 +335,7 @@ export type RunQueueEvent = {
   returned?: string[];
 };
 
-/** mcp:status 事件载荷（08 号票，§3.5 M2 键）：MCP 连接池状态迁移——
+/** mcp:status 事件载荷：MCP 连接池状态迁移——
  *  设置页服务器行的状态徽标实时驱动（Rust 发射点为 json! 字面量）。 */
 export type McpStatusEvent = {
   scope: McpScope;
@@ -345,8 +345,8 @@ export type McpStatusEvent = {
   detail?: string;
 };
 
-// ---- 子代理生命周期事件载荷族（10 号票，§3.5【M2】六键；Rust 发射面为
-// json! 字面量、无结构体来源，随本票手写收编——payload 统一形如
+// ---- 子代理生命周期事件载荷族（六键；Rust 发射面为
+// json! 字面量、无结构体来源，手写收编——payload 统一形如
 // { sessionId, runId, subId, ...可选字段 }）----
 
 /** sub:spawn：子代理委派启动（跨 Tab Inspector 订阅）。 */
@@ -373,7 +373,7 @@ export type SubReportEvent = {
   report: string;
 };
 
-/** sub:usage：子代理自身用量累计（Q40：仅子面板展示，不重复累进会话总量）。 */
+/** sub:usage：子代理自身用量累计（仅子面板展示，不重复累进会话总量）。 */
 export type SubUsageEvent = {
   sessionId: string;
   runId: string;
@@ -398,7 +398,7 @@ export type SubErrorEvent = {
   message?: string;
 };
 
-/** session:title 事件载荷（27 号票，§3.5 P0 键）：自动起名完成——meta 行 +
+/** session:title 事件载荷：自动起名完成——meta 行 +
  *  index 双写落盘之后发出；失败静默兜底的标题同样经本事件带出（只有
  *  「无标题可落」才不发）。前端据以就地更新左栏列表与卡头标题。 */
 export type SessionTitleEvent = {

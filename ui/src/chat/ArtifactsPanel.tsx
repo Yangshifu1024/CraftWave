@@ -1,6 +1,6 @@
 /**
- * 产物面板（§10.7 / FR-10-06，28 号票）：Inspector「产物」tab——本会话 AI
- * 写过的文件自动登记清单（`<sid>.artifacts.json`，后端 #59l list_artifacts
+ * 产物面板：Inspector「产物」tab——本会话 AI
+ * 写过的文件自动登记清单（`<sid>.artifacts.json`，后端 list_artifacts
  * 读面：去重计数 + exists 存在探测 + 存在优先/最近写入倒序）。
  *
  * 行 = 文件名 + 相对路径 + `×runCount` 徽标；exists=false 灰显置底（后端
@@ -8,7 +8,7 @@
  * - 预览：read_workspace_file 只读 Dialog（truncated 提示；二进制/越界等
  *   错误行内展示，不弹窗打断）；
  * - 打开：open_in_editor（探测不到可用编辑器 reject E_NOT_FOUND → 行内提示）；
- * - 定位变更：openChangesPanel(sessionId, path)（26 号票 changes-store
+ * - 定位变更：openChangesPanel(sessionId, path)（changes-store
  *   约定接口——产物页与变更面板的联动接缝）。
  *
  * 刷新时机 = 页签激活（组件挂载/会话切换）+ run 终态（run:done/error/
@@ -66,7 +66,7 @@ export function ArtifactsPanel({ sessionId }: { sessionId: string }) {
     };
   }, [sessionId]);
 
-  // 刷新时机（票面口径）：页签激活（挂载/会话切换）+ run 终态三事件
+  // 刷新时机：页签激活（挂载/会话切换）+ run 终态三事件
   useEffect(() => {
     const cancel = reload();
     const unlistens = [
@@ -87,7 +87,7 @@ export function ArtifactsPanel({ sessionId }: { sessionId: string }) {
     return () => clearTimeout(timer);
   }, [note]);
 
-  /** 预览（#28 read_workspace_file）：错误行内展示（toast 随 29 号票）。 */
+  /** 预览（read_workspace_file）：错误行内展示。 */
   const openPreview = useCallback(
     (path: string) => {
       void readWorkspaceFile(sessionId, path)
@@ -190,7 +190,7 @@ export function ArtifactsPanel({ sessionId }: { sessionId: string }) {
                       <FolderOpen size={10} aria-hidden />
                       {t("inspector.artifactsOpen")}
                     </button>
-                    {/* 变更面板联动接缝（26 号票 openChangesPanel 约定接口） */}
+                    {/* 变更面板联动接缝（openChangesPanel 约定接口） */}
                     <button
                       type="button"
                       data-testid={`artifact-locate-${baseName(row.path)}`}
@@ -224,7 +224,7 @@ export function ArtifactsPanel({ sessionId }: { sessionId: string }) {
   );
 }
 
-/** run 终态事件订阅（run:done/run:error/run:cancelled，§3.5）按会话过滤。 */
+/** run 终态事件订阅（run:done/run:error/run:cancelled）按会话过滤。 */
 function listenRunEnd(
   key: "run:done" | "run:error" | "run:cancelled",
   sessionId: string,

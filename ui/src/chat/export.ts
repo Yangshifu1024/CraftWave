@@ -1,20 +1,20 @@
 /**
- * 会话导出（27 号票，FR-01-12；§10.7 形态定稿）：纯前端序列化，无新命令。
+ * 会话导出：纯前端序列化，无新命令。
  *
  * 数据源（与历史恢复同源）：
- * - `loadSessionTree`（活动路径 messages，§6.3——只导活动路径/当前分支，
- *   全树导出不做，PRD「分支当前路径」口径）；
- * - `loadToolOutcomes`（工具 uiSummary，历史工具卡恢复同源，§7.5）；
- *   工具行明细缺文件时按帧面 summary 降级（#29 语义）。
+ * - `loadSessionTree`（活动路径 messages——只导活动路径/当前分支，
+ *   全树导出不做，「分支当前路径」口径）；
+ * - `loadToolOutcomes`（工具 uiSummary，历史工具卡恢复同源）；
+ *   工具行明细缺文件时按帧面 summary 降级。
  *
- * 两种形态（§10.7 27 号票定稿）：
+ * 两种形态：
  * - Markdown（人读归档）：`# <标题>` + 导出时间行 → 逐条 `## user /
  *   assistant`（createdAt + 文本）→ 工具调用以列表行
  *   `- ⚙ name — uiSummary（ok/error）` 附在产生它的 assistant 段内；
- *   reasoning 不导出（归档/分享面，票面边界）。
+ *   reasoning 不导出（归档/分享面边界）。
  * - JSONL（机器可读）：活动路径消息逐行导出（含 toolCall/toolResult
  *   parts），仅剔除 reasoning part；图片 part 只含 blobHash 引用不含本体
- *   （§6.1 image part 本就不携带字节，不宣称跨机器完整回放）。
+ *   （image part 本就不携带字节，不宣称跨机器完整回放）。
  *
  * 下载：Blob + `URL.createObjectURL` + `a[download]`（Tauri WebView 同
  * 浏览器下载语义），文件名 `<标题>-<YYYYMMDD>.md|jsonl`（非法文件名字符
@@ -59,7 +59,7 @@ export function toolLinesOf(
   const lines: ToolLine[] = [];
   for (const part of entry.parts) {
     if (part.type !== "toolCall") continue;
-    // 边车优先（全量结果面）；缺文件按帧面 summary/ok 降级（#29 语义）
+    // 边车优先（全量结果面）；缺文件按帧面 summary/ok 降级
     const sidecar = outcomes[part.callId];
     const result = resultByCall.get(part.callId);
     const uiSummary = sidecar?.uiSummary || result?.summary || part.name;
@@ -104,8 +104,8 @@ export function messageToMarkdown(
   return lines.join("\n");
 }
 
-/** 序列化为 Markdown（人读归档，§10.7 形态）。reasoning/planSnapshot/
- * runMarker 等内部条目不导出（票面边界）。 */
+/** 序列化为 Markdown（人读归档形态）。reasoning/planSnapshot/
+ * runMarker 等内部条目不导出。 */
 export function toMarkdown(
   meta: Pick<SessionMeta, "title">,
   messages: MessageEntry[],

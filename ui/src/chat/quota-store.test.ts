@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 /**
- * 配额 store 单测（21 号票，FR-02-15）：
- * - providerOfModel：会话覆盖模型 > 全局 activeModelId 的归属解析（票面
- *   「首屏 = 当前会话所用 provider」的纯函数锚点）；
+ * 配额 store 单测：
+ * - providerOfModel：会话覆盖模型 > 全局 activeModelId 的归属解析
+ *   （「首屏 = 当前会话所用 provider」的纯函数锚点）；
  * - worstRemainingPercent：多窗口取最紧张（CodeWave 择劣口径）；
  * - store.load：成功写入 / 失败静默保留旧值（离线兜底）/ 并发去重。
  *
@@ -77,7 +77,7 @@ function baseConfig(): AppConfig {
   } as AppConfig;
 }
 
-describe("quota-store（21 号票）", () => {
+describe("quota-store", () => {
   it("providerOfModel 归属解析、worstRemainingPercent 择劣、store.load 成功/失败静默/并发去重", async () => {
     const config = baseConfig();
 

@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import { FrameBuffer, type FrameSnapshot, type SequencedFrame, toParts } from "./frames";
 
 /**
- * 【S2 Spike】前端帧管线测试：保真（无丢失无乱序）、半截 JSON「参数准备中」、
- * 64ms 节流快照节奏、帧到达 → 快照产出的前端侧延迟（NFR-02 余量佐证）、
- * toParts 展开面与并发工具批（07 号票）。
+ * 前端帧管线测试：保真（无丢失无乱序）、半截 JSON「参数准备中」、
+ * 64ms 节流快照节奏、帧到达 → 快照产出的前端侧延迟佐证、
+ * toParts 展开面与并发工具批。
  */
 
 /** 联合分发 Omit：保留每个帧变体自己的字段面。 */
@@ -73,7 +73,7 @@ describe("FrameBuffer（S2 帧管线）", () => {
     expect(FrameBuffer.argsReady(ready.argsJson)).toBe(true);
     expect(JSON.parse(ready.argsJson)).toEqual({ path: "/etc/app/config.toml", offset: 0 });
 
-    // ---- 乱序/重复 seq 丢弃（§5.6 runEpoch 语义）且不影响后续累积 ----
+    // ---- 乱序/重复 seq 丢弃（帧序自愈语义）且不影响后续累积 ----
     const outOfOrder = new FrameBuffer();
     outOfOrder.push(frames[0]!); // seq0 runStarted
     outOfOrder.push(frames[2]!); // seq2 第一段思考
@@ -85,7 +85,7 @@ describe("FrameBuffer（S2 帧管线）", () => {
       { kind: "reasoning", text: "用户要我看配置，先调用 read。" },
     ]);
 
-    // ---- usage 帧记录运行累计与速率（13 号票）；runStarted 记录 run/model 锚点 ----
+    // ---- usage 帧记录运行累计与速率；runStarted 记录 run/model 锚点 ----
     // scriptedFrames 无 usage 帧：补发（Rust 侧每 turn 收口一帧）
     buffer.push({
       ...frames[0]!,
@@ -106,7 +106,7 @@ describe("FrameBuffer（S2 帧管线）", () => {
     expect(withUsage.rate).toBe(130);
     expect(withUsage.run).toEqual({ runId: "run-1", model: "gpt-4o-mock" });
 
-    // ---- compactDone 帧（04 号票，§3.4【M2】）：透传进 compaction 字段，不进打字机内容面 ----
+    // ---- compactDone 帧：透传进 compaction 字段，不进打字机内容面 ----
     let seq = 0;
     const f = (frame: FrameArg): SequencedFrame => ({ seq: seq++, ...frame }) as SequencedFrame;
     const compactionBuffer = new FrameBuffer();
@@ -124,7 +124,7 @@ describe("FrameBuffer（S2 帧管线）", () => {
     expect(new FrameBuffer().snapshot().compaction).toBeNull(); // 未发生压缩为 null
   });
 
-  it("64ms 节流快照与前端延迟埋点：帧处理亚毫秒（NFR-02 余量），快照间隔不小于节流窗口", async () => {
+  it("64ms 节流快照与前端延迟埋点：帧处理亚毫秒，快照间隔不小于节流窗口", async () => {
     // ---- 前端侧延迟：帧到达 → 快照可读，处理开销亚毫秒级 ----
     const latencyBuffer = new FrameBuffer();
     const latencies: number[] = [];
@@ -142,7 +142,7 @@ describe("FrameBuffer（S2 帧管线）", () => {
     console.log(
       `S2[前端] 帧到达→快照可读：平均=${avg.toFixed(3)}ms 最大=${max.toFixed(3)}ms（共 ${latencies.length} 帧）`,
     );
-    // NFR-02 全链 <100ms：Rust 侧实测 TTFT≈0.4ms + 节流 ≤64ms；
+    // 全链 <100ms：Rust 侧实测 TTFT≈0.4ms + 节流 ≤64ms；
     // 前端 buffer+快照处理亚毫秒，给 React 渲染留出 >35ms 余量。
     expect(max).toBeLessThan(5);
 
@@ -326,7 +326,7 @@ describe("FrameBuffer（S2 帧管线）", () => {
     // 工具之后新开正文组
     expect(batchParts[3]!.text).toBe("根目录如下。");
 
-    // ---- 并发工具批（07 号票）：同批多卡各自推进，结果与自己的 callId 配对 ----
+    // ---- 并发工具批：同批多卡各自推进，结果与自己的 callId 配对 ----
     // 帧序（Rust 侧受控并发的真实交错形态）：同批三个工具的 started/args 流式
     // 帧交错到达，结果帧按源序（B 先完成、A 最慢）。
     const parallel = new FrameBuffer();

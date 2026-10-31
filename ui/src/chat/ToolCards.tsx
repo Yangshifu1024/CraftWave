@@ -1,13 +1,13 @@
 /**
- * 正式工具卡片（§10.3 规格，14 号票；17 号后按参考样式改版）：
+ * 正式工具卡片（按参考样式改版）：
  * toolkit 条目的 render 组件，统一为「单行摘要 + 点击展开详情」的工作流
  * 风格——摘要行 = 动作图标 + 主参数（路径/命令/模式）+ diff 统计徽标 +
  * 状态（运行中文案扫光 / 错误感叹 / 静默完成）；详情区（点击展开）承载参数
- * 全文、结果摘要与 toolres 边车（§7.5）的完整数据。错误态默认展开。
+ * 全文、结果摘要与 toolres 边车的完整数据。错误态默认展开。
  *
  * 数据源：part props（args/result/isError）+ useToolArgsStatus（S1 钉死）。
  * 状态机：参数准备中（半截 JSON）→ 运行中 → 完成/错误（result 直写驱动）。
- * 15 号票：终态卡片按 callId 拉 toolres 边车，折叠展示 detail/data 全量。
+ * 终态卡片按 callId 拉 toolres 边车，折叠展示 detail/data 全量。
  */
 
 import { type ToolCallMessagePartProps, useToolArgsStatus } from "@assistant-ui/react";
@@ -76,7 +76,7 @@ interface CardProps extends ToolCallMessagePartProps<CardArgs, unknown> {
   badges?: React.ReactNode;
 }
 
-/** 终态卡片的边车 detail（§7.5）：按 callId 拉一次，缺文件静默（summary 降级）。 */
+/** 终态卡片的边车 detail：按 callId 拉一次，缺文件静默（summary 降级）。 */
 function useToolOutcomeDetail(toolCallId: string, settled: boolean): ToolOutcome | null {
   const sessionId = useSessionScope();
   const [outcome, setOutcome] = useState<ToolOutcome | null>(null);
@@ -322,7 +322,7 @@ function FileChip({ path }: { path: string }) {
   );
 }
 
-/** read 图片态边车 data 的形状（17 号票：kind=image 结果，含 base64）。 */
+/** read 图片态边车 data 的形状（kind=image 结果，含 base64）。 */
 interface ImageReadOutcome {
   kind?: unknown;
   path?: unknown;
@@ -330,9 +330,9 @@ interface ImageReadOutcome {
   base64?: unknown;
 }
 
-/** read：路径 + 行区间（详情含区间说明）。16 号票：.docx/.xlsx/.pdf 等文档
+/** read：路径 + 行区间（详情含区间说明）。.docx/.xlsx/.pdf 等文档
  *  扩展名进入文档态（徽标 + 页数/sheet 摘要 + 内容折叠预览 + warnings 黄条）。
- *  17 号票：kind="image" 结果进入图片态（缩略图展示，detail 边车取 base64）。 */
+ *  kind="image" 结果进入图片态（缩略图展示，detail 边车取 base64）。 */
 export function ReadCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
   const args = (props.args ?? {}) as CardArgs;
   const ext = docExtension(str(args, "path"));
@@ -429,7 +429,7 @@ function docBadgeClass(ext: string): string {
   }
 }
 
-/** read 文档态边车 data 的形状（16 号票：文档管线结构化输出，字段随格式可选）。 */
+/** read 文档态边车 data 的形状（文档管线结构化输出，字段随格式可选）。 */
 interface DocReadOutcome {
   kind?: unknown;
   content?: unknown;
@@ -443,7 +443,7 @@ interface DocReadOutcome {
 
 /** 文档读取卡：扩展名徽标 + 页数/sheet/段落摘要 + 内容 Markdown 折叠预览
  *  （前 80 行）+ truncated 续读提示行（提示模型，非按钮）+ warnings 黄条
- *  （降级解析等仅 UI 提示，§8.2）。 */
+ *  （降级解析等仅 UI 提示）。 */
 function DocReadCard({
   ext,
   ...props
@@ -464,7 +464,7 @@ function DocReadCard({
     : [];
   const paragraphCount = typeof data?.paragraphCount === "number" ? data.paragraphCount : undefined;
   const tableCount = typeof data?.tableCount === "number" ? data.tableCount : undefined;
-  // warnings（§8.2 仅 UI）：detail 是 JsonValue，按对象形状安全提取。
+  // warnings（仅 UI 提示）：detail 是 JsonValue，按对象形状安全提取。
   const detailRecord =
     outcome?.detail && typeof outcome.detail === "object" && !Array.isArray(outcome.detail)
       ? (outcome.detail as { warnings?: unknown })
@@ -520,7 +520,7 @@ function DocReadCard({
             `${pageCount !== undefined || sheets.length > 0 ? " · " : ""}${t("toolcards.docParaCount", { count: paragraphCount })}${tableCount !== undefined ? ` · ${t("toolcards.docTableCount", { count: tableCount })}` : ""}`}
         </p>
       )}
-      {/* warnings 黄条（降级解析等，§8.2 仅 UI 不进模型文本） */}
+      {/* warnings 黄条（降级解析等，仅 UI 不进模型文本） */}
       {warnings.length > 0 && (
         <div
           data-testid="doc-warnings"
@@ -630,7 +630,7 @@ export function GrepCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
 
 /** command：命令行（摘要 = 命令文本 font-sans 截断）；动作词随状态切换
  *  （ZCode 终端行同款：完成态「终端」、运行中「正在执行」）。
- *  审计行（36 号票，§8.7）：挂起命令的灰区审计经 audits store 按 callId
+ *  审计行：挂起命令的灰区审计经 audits store 按 callId
  *  关联——running 徽标「审计中」+ 终态徽标（放行/拒绝/转人工），展开详情
  *  区显示简短理由/失败原因（结论与审批卡载荷 audit 字段同源）。 */
 export function CommandCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
@@ -705,7 +705,7 @@ interface PlanItemArg {
 }
 
 /**
- * plan：计划卡（FR-06-01 消息内呈现；摘要 = 完成数统计）。25 号票（§8.6）：
+ * plan：计划卡（消息内呈现；摘要 = 完成数统计）。
  * 展示模型声明的写范围（args.paths，批准时冻结为基线）；基线态标记
  * （已批准 + 基线条目数）从 plan-state store 按所属会话读取（plan:update
  * 驱动，内存态——卡片渲染与 Inspector 计划区块同源）。
@@ -768,7 +768,7 @@ export function PlanCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
   );
 }
 
-/** ask：极简状态卡（问题本体在 AskPanel 呈现，§10.3 的 M1 落地形态）。 */
+/** ask：极简状态卡（问题本体在 AskPanel 呈现）。 */
 export function AskCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
   const t = useT();
   const args = (props.args ?? {}) as CardArgs;
@@ -785,7 +785,7 @@ export function AskCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
 }
 
 /**
- * skill 工具卡（09 号票，§8.3 Meta 行）：技能名 + 加载状态 + 正文折叠预览
+ * skill 工具卡：技能名 + 加载状态 + 正文折叠预览
  * （终态按 callId 拉边车 data.body，Markdown 只读渲染；加载中显示技能名
  * 扫光）。失败态（未信任/未知技能）沿 Shell 的错误展开展示 uiSummary。
  */
@@ -794,7 +794,7 @@ export function SkillCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
   const args = (props.args ?? {}) as CardArgs;
   const { toolCallId, result, isError } = props;
   // 正文来源：边车 data.body（帧面 result 是模型通道压缩文本，不含结构化
-  // data——与 read 等卡的边车恢复口径一致，FR-04-07）。失败路径不写边车
+  // data——与 read 等卡的边车恢复口径一致）。失败路径不写边车
   // （执行器约定），不拉取。
   const settled = result !== undefined && !isError;
   const outcome = useToolOutcomeDetail(toolCallId, settled);
@@ -824,7 +824,7 @@ export function SkillCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
 }
 
 /**
- * subagent 工具卡（10 号票，FR-07-02/06）：角色徽标 + task 摘要 + 实时
+ * subagent 工具卡：角色徽标 + task 摘要 + 实时
  * 步数/状态（subagents store 按 callId 关联，sub:step/subFrame 驱动）+
  * `<report>` 折叠全文（subReport 后展开可见）；终态徽标按四象限着色。
  */
@@ -906,7 +906,7 @@ function outcomeColorOf(state: string): string {
 }
 
 /**
- * MCP 动态工具兜底卡（08 号票）：toolkit 只静态声明 8 个内置工具的专用卡，
+ * MCP 动态工具兜底卡：toolkit 只静态声明 8 个内置工具的专用卡，
  * MCP 服务器的动态工具（归一名运行时才定）无法静态枚举——未命中专用卡的
  * 工具调用一律落本卡（Thread.tsx 在 part.toolUI 为 null 时兜底渲染）。
  * 渲染 = 工具名 + 参数 JSON 折叠 + uiSummary + 错误态，结构与专用卡一致
@@ -925,7 +925,7 @@ export function McpFallbackCard(props: ToolCallMessagePartProps<CardArgs, unknow
   );
 }
 
-/** web_fetch 边车 data 的形状（12 号票：{ url, title, content, length }）。 */
+/** web_fetch 边车 data 的形状（{ url, title, content, length }）。 */
 interface WebFetchOutcome {
   title?: unknown;
   content?: unknown;
@@ -934,7 +934,7 @@ interface WebFetchOutcome {
 }
 
 /**
- * web_fetch 工具卡（12 号票，§8.3 M2 表 Network 行）：URL 摘要 + 终态拉
+ * web_fetch 工具卡：URL 摘要 + 终态拉
  * 边车 data——标题 + 正文 Markdown 折叠预览（默认收起，展开渲染前 50 行）。
  * 失败态（SSRF 拒绝/超限）沿 Shell 的错误展开展示 uiSummary。
  */
@@ -951,7 +951,7 @@ export function WebFetchCard(props: ToolCallMessagePartProps<CardArgs, unknown>)
   const content = typeof data?.content === "string" ? data.content : null;
   const length = typeof data?.length === "number" ? data.length : undefined;
   const truncated = data?.truncated === true;
-  // 正文预览前 50 行（票面：默认收起，展开前 50 行）
+  // 正文预览前 50 行（默认收起，展开前 50 行）
   const preview =
     content !== null
       ? content.split("\n").slice(0, 50).join("\n") +
@@ -986,7 +986,7 @@ export function WebFetchCard(props: ToolCallMessagePartProps<CardArgs, unknown>)
   );
 }
 
-/** http_request 边车 data 的形状（12 号票：{ status, headers, body, spillPath? }）。 */
+/** http_request 边车 data 的形状（{ status, headers, body, spillPath? }）。 */
 interface HttpRequestOutcome {
   status?: unknown;
   headers?: unknown;
@@ -996,7 +996,7 @@ interface HttpRequestOutcome {
 }
 
 /**
- * http_request 工具卡（12 号票，§8.3 M2 表 Network 行）：method 徽标 + URL
+ * http_request 工具卡：method 徽标 + URL
  * 摘要 + 状态码徽标；详情含响应头折叠、body 折叠与 spill 文件路径
  * （对齐 CommandCard 形态：单行摘要 + 点击展开详情）。
  */
@@ -1078,7 +1078,7 @@ export function HttpRequestCard(props: ToolCallMessagePartProps<CardArgs, unknow
   );
 }
 
-/** web_search 边车 data 的形状（13 号票：{ query, channel, results, count }）。 */
+/** web_search 边车 data 的形状（{ query, channel, results, count }）。 */
 interface WebSearchOutcome {
   query?: unknown;
   channel?: unknown;
@@ -1094,8 +1094,8 @@ interface SearchAttempt {
   error?: unknown;
 }
 
-/** 来源通道徽标文案与配色（票面：标注来源通道——本地/抓取/云）；文案经
- *  查词（模块级 t，31 号票 i18n）。 */
+/** 来源通道徽标文案与配色（标注来源通道——本地/抓取/云）；文案经
+ *  查词（模块级 t）。 */
 function channelBadge(channel: string): { label: string; className: string } | undefined {
   switch (channel) {
     case "searxng":
@@ -1119,7 +1119,7 @@ function channelBadge(channel: string): { label: string; className: string } | u
 }
 
 /**
- * web_search 工具卡（13 号票，§8.3 M2 表 Network 行）：查询词摘要 + 来源
+ * web_search 工具卡：查询词摘要 + 来源
  * 通道徽标（本地/抓取/云）+ 结果列表（标题链接 + 摘要）；失败态在
  * Shell 错误展开之上附逐层通道尝试记录（detail.attempts）。
  */
@@ -1131,7 +1131,7 @@ export function WebSearchCard(props: ToolCallMessagePartProps<CardArgs, unknown>
   // 结果来源：边车 data（帧面 result 是模型通道压缩文本，不含结构化 data）。
   // 成功与失败终态都拉边车——web_search 的全败结构化错误（detail.attempts
   // 逐层通道原因）由执行器无条件持久化，失败态卡片要展示它（与 web_fetch
-  // 失败不写边车的约定不同，13 号票的结构化错误面走 detail）。
+  // 失败不写边车的约定不同，web_search 的结构化错误面走 detail）。
   const settled = result !== undefined;
   const outcome = useToolOutcomeDetail(toolCallId, settled);
   const data = (outcome?.data ?? null) as WebSearchOutcome | null;
@@ -1242,7 +1242,7 @@ export function WebSearchCard(props: ToolCallMessagePartProps<CardArgs, unknown>
   );
 }
 
-// —— 小工具包四卡（14 号票，§8.3 M2 表 batch_read/glob/calculate/render_html）——
+// —— 小工具包四卡（batch_read/glob/calculate/render_html）——
 
 /** batch_read 的边车 data.files 元素形状（宽松取字段用）。 */
 interface BatchReadFileEntry {
@@ -1443,7 +1443,7 @@ export function CalculateCard(props: ToolCallMessagePartProps<CardArgs, unknown>
 }
 
 /** render_html 工具卡：字符数徽标 + 默认折叠的沙箱预览（手动展开才挂
- *  iframe——防闪烁、防未经查看的脚本执行，票面要求）。 */
+ *  iframe——防闪烁、防未经查看的脚本执行）。 */
 export function RenderHtmlCard(props: ToolCallMessagePartProps<CardArgs, unknown>) {
   const t = useT();
   const args = (props.args ?? {}) as CardArgs;

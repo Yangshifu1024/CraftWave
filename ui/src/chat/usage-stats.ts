@@ -1,14 +1,14 @@
 /**
- * 用量统计 store（20 号票，FR-02-13/FR-15-02 Inspector 统计区块数据面）。
+ * 用量统计 store（Inspector 统计区块数据面）。
  *
- * 数据源 = `stats_token`（§3.3 #52，后端优先 stats_cache、降级直读
+ * 数据源 = `stats_token`（后端优先 stats_cache、降级直读
  * stats/*.json）；范围切换（今天 / 近 7 天 / 近 30 天 / 全部）即重拉。
  *
  * tokens:update 到达时的本地增量修正（不等轮询）：按事件载荷的 modelId 把
  * 本次增量累进「今日」的 byDay/byModel/total 条目（新当日/新模型即建行），
  * 随后静默重拉做权威校正（防本地漂移；modelId 缺省的老载荷直接重拉）。
  *
- * 另承载 Q37 的旧数据标量回落面：会话恢复拉到的 legacyTotalTokens 存桶，
+ * 另承载旧数据的标量回落面：会话恢复拉到的 legacyTotalTokens 存桶，
  * Inspector 合计行回落显示（明细四口径不可知时不伪造拆分）。
  */
 
@@ -16,7 +16,7 @@ import { create } from "zustand";
 import { statsToken } from "@/ipc/client";
 import type { DayUsage, ModelUsage, StatsRange, StatsTokenResult, UsageTotal } from "@/ipc/types";
 
-/** 统计范围（票面四档）。 */
+/** 统计范围（四档）。 */
 export type StatsRangeKey = "today" | "7d" | "30d" | "all";
 
 /** 本地日期 → `YYYY-MM-DD`（与后端记账日同口径：本机时区）。 */
@@ -72,7 +72,7 @@ export interface UsageStatsStore {
   data: StatsTokenResult | null;
   loading: boolean;
   error: string | null;
-  /** Q37 旧数据标量回落桶（sessionId → index.json totalTokens）。 */
+  /** 旧数据标量回落桶（sessionId → index.json totalTokens）。 */
   legacyTotals: Record<string, number>;
   /** 切换范围并立即重拉。 */
   setRange: (key: StatsRangeKey) => void;
@@ -80,7 +80,7 @@ export interface UsageStatsStore {
   load: () => Promise<void>;
   /** tokens:update 到达的本地增量修正（今日条目 + 权威重拉排程）。 */
   applyTokensDelta: (delta: UsageTotal, modelId: string | undefined) => void;
-  /** Q37 恢复：记录旧数据标量（合计行回落显示）。 */
+  /** 恢复链路：记录旧数据标量（合计行回落显示）。 */
   setLegacyTotal: (sessionId: string, total: number) => void;
   /** 会话删除后清回落桶。 */
   forgetSession: (sessionId: string) => void;
@@ -227,13 +227,13 @@ export function useUsageStats(): StatsTokenResult {
   return useUsageStatsStore((s) => s.data) ?? EMPTY_DATA;
 }
 
-/** 缓存命中率（§10.5 公式 = cacheRead/(input+cacheRead)；分母 0 → null）。 */
+/** 缓存命中率（公式 = cacheRead/(input+cacheRead)；分母 0 → null）。 */
 export function cacheHitRate(u: { input: number; cacheRead: number }): number | null {
   const denom = u.input + u.cacheRead;
   return denom > 0 ? u.cacheRead / denom : null;
 }
 
-/** 会话累计恢复（Q37，#59k 读面）：会话打开/切换时调用——四口径经
+/** 会话累计恢复（session_usage 读面）：会话打开/切换时调用——四口径经
  *  tokens:update 同款 replace 回填 runMetrics；旧数据标量入回落桶。
  *  失败静默（统计面不阻塞会话加载）。返回 void 供 fire-and-forget。 */
 export function restoreSessionUsage(

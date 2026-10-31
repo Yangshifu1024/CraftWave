@@ -1,5 +1,5 @@
 /**
- * 子代理 store 测试（10 号票）：事件六键与帧面的双通道分发（幂等合并）、
+ * 子代理 store 测试：事件六键与帧面的双通道分发（幂等合并）、
  * 四象限收口、subFrame 的 turn 推进、抽屉开合与历史缓存。
  */
 
@@ -40,7 +40,7 @@ describe("subagents store", () => {
     subStep({ sessionId: "s1", subId: "sub-1", turn: 2 });
     expect(list("s1")[0]!.turn).toBe(3);
 
-    // sub:usage 累计子代理自身消耗（Q40：不进 tokens:update 面）
+    // sub:usage 累计子代理自身消耗（不进 tokens:update 面）
     subUsage({
       sessionId: "s1",
       subId: "sub-1",

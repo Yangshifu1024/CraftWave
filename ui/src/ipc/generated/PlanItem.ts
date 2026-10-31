@@ -2,6 +2,6 @@
 import type { PlanItemStatus } from "./PlanItemStatus";
 
 /**
- * 计划条目（planSnapshot part 载荷，FR-06）。
+ * 计划条目（planSnapshot part 载荷）。
  */
 export type PlanItem = { id: string, text: string, status: PlanItemStatus, };

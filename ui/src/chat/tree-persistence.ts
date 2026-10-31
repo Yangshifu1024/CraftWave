@@ -7,12 +7,12 @@ import { cwImageUrl, parseCwImageUrl } from "./image-ref";
 type MessageLikeContent = Exclude<ThreadMessageLike["content"], string>;
 
 /**
- * 前端树 ↔ §6.1 存储条目双向转换（D8 载体，§6.3 单一事实源）。
+ * 前端树 ↔ 存储条目双向转换（单一事实源为存储条目）。
  *
  * 设计对齐：
- * - 存储条目 schema 见技术设计文档 §6.1（M1 子集：session/message/meta；
- *   compaction、branchSummary 属 M2，暂不实现）。
- * - 存储条目与 WirePart 类型是 Rust 契约镜像，单一事实源在 ui/src/ipc/types.ts（§2.4）。
+ * - 存储条目 schema（session/message/meta/compaction 等条目形态）以
+ *   ipc/types.ts 的 StoredEntry 为准。
+ * - 存储条目与 WirePart 类型是 Rust 契约镜像，单一事实源在 ui/src/ipc/types.ts。
  * - 条目内容不可变：编辑/分支一律追加新节点，本层是纯函数，无副作用。
  *
  * 落盘由 Rust storage 模块承载（append-only 分段 JSONL）；
@@ -55,7 +55,7 @@ function partToWire(
     case "reasoning":
       return [{ type: "reasoning", text: part.text }];
     case "tool-call": {
-      // assistant-ui 的工具调用+结果在一个 part 里；§6.1 拆为 toolCall/toolResult 两条
+      // assistant-ui 的工具调用+结果在一个 part 里；存储侧拆为 toolCall/toolResult 两条
       const wires: WirePart[] = [
         {
           type: "toolCall",
@@ -75,7 +75,7 @@ function partToWire(
       return wires;
     }
     case "image": {
-      // 图片 part（17 号票，§3.2 image part）：树内 image 字段是 cwimg 引用
+      // 图片 part：树内 image 字段是 cwimg 引用
       //（blobHash+mimeType 的桥接 URL，见 image-ref.ts）——解析回存储形态。
       // 非 cwimg 引用（外来图片 part）无法落存储，fail fast 防静默丢数据。
       const ref = parseCwImageUrl(part.image);
@@ -100,7 +100,7 @@ export function messageToEntry(
   parentId: string | null,
 ): StoredMessageEntry {
   // runMarker 条目（system + custom 载荷）：parts 还原为 RunMarker part
-  //（链上节点，wire 重建与渲染均跳过其内容，§6.2）
+  //（链上节点，wire 重建与渲染均跳过其内容）
   const runMarker = readRunMarker(message);
   if (runMarker !== null) {
     const entry: StoredMessageEntry = {
@@ -249,7 +249,7 @@ function entryToMessageLike(entry: StoredMessageEntry): ThreadMessageLike {
         // 已在上面与 toolCall 合并，跳过
         break;
       case "image":
-        // 图片 part（17 号票）：还原为 assistant-ui image part，image 字段
+        // 图片 part：还原为 assistant-ui image part，image 字段
         // 携 cwimg 引用（渲染组件按 blobHash 拉 read_image_blob 显示）
         rawParts.push({ type: "image", image: cwImageUrl(part.blobHash, part.mimeType) });
         break;
@@ -286,7 +286,7 @@ export function entriesToExported(entries: StoredEntry[]): ExportedMessageReposi
   );
 }
 
-/** load_session_tree 返回 → 导入结构（15 号票历史收养入口）。 */
+/** load_session_tree 返回 → 导入结构（历史收养入口）。 */
 export function loadedTreeToExported(tree: {
   messages: MessageEntryLike[];
   activeLeafId?: string;
@@ -302,7 +302,7 @@ export function loadedTreeToExported(tree: {
 /** load_session_tree 的 messages 元素形态（StoredMessageEntry 去掉 kind 判别键）。 */
 type MessageEntryLike = Omit<StoredMessageEntry, "kind">;
 
-/** 单个 run 的收口摘要（折叠分组摘要行与崩溃中断态的数据面，17 号票）。 */
+/** 单个 run 的收口摘要（折叠分组摘要行与崩溃中断态的数据面）。 */
 export interface RunSummary {
   runId: string;
   /** 正常收口的结束时刻；undefined = 该 run 无 marker 收口（崩溃恢复补的
@@ -313,8 +313,8 @@ export interface RunSummary {
 }
 
 /** 从会话树条目推导 run 收口摘要表（runId → 摘要）。
- *  依据 system 条目里的 runMarker part（§6.1）；崩溃修复行 endedAt 为空，
- *  恰好承载「未收口」语义（15 号票 shortcut 的渲染层落地，17 号票）。 */
+ *  依据 system 条目里的 runMarker part；崩溃修复行 endedAt 为空，
+ *  恰好承载「未收口」语义（渲染层据此标「已中断」）。 */
 export function deriveRunSummaries(messages: MessageEntryLike[]): Map<string, RunSummary> {
   const summaries = new Map<string, RunSummary>();
   for (const entry of messages) {

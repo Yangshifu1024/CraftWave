@@ -2,10 +2,10 @@
 import type { SetSessionPrefsPayload } from "./SetSessionPrefsPayload";
 
 /**
- * `set_session_prefs` 参数契约（§3.3 #25）：merge 语义——**只传的字段被改**
+ * `set_session_prefs` 参数契约：merge 语义——**只传的字段被改**
  * （字段缺省 = 不动；`null` = 清除该字段回默认；设值 = 覆盖）。双 Option
  * （`Option<Option<T>>`）区分「未传」与「传了 null」；权限档明确不持久化
- * （FR-14-05，不在载荷面）。
+ * （不在载荷面）。
  */
 export type SetSessionPrefsArgs = { sessionId: string, 
 /**

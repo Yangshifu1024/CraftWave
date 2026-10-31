@@ -2,7 +2,7 @@
 import type { McpServerConfig } from "./McpServerConfig";
 
 /**
- * `mcp_test` 参数契约（§3.3 #45）：草稿条目（不经保存直接试连）。
+ * `mcp_test` 参数契约：草稿条目（不经保存直接试连）。
  */
 export type McpTestArgs = { 
 /**

@@ -5,7 +5,7 @@ import type { RequiresActionReason } from "./RequiresActionReason";
 import type { JsonValue } from "./serde_json/JsonValue";
 
 /**
- * assistant 消息状态（assistant-ui 0.15.x `MessageStatus` 判别联合的镜像，§6.1 `status?`）。
+ * assistant 消息状态（assistant-ui 0.15.x `MessageStatus` 判别联合的镜像， `status?`）。
  * M1 只写入 complete（S4 实测：导入 running/requires-action 状态时前端会改写消息，complete 稳定）。
  */
 export type MessageStatus = { "type": "running" } | { "type": "requires-action", reason: RequiresActionReason, } | { "type": "complete", reason: CompleteReason, } | { "type": "incomplete", reason: IncompleteReason, error?: JsonValue, };

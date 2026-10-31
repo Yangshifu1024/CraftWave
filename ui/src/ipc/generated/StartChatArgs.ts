@@ -3,6 +3,6 @@ import type { MessageEntry } from "./MessageEntry";
 import type { RunConfig } from "./RunConfig";
 
 /**
- * `start_chat` 参数契约（§3.3 #18；文档命名锚点，命令形参按字段平铺展开）。
+ * `start_chat` 参数契约（文档命名锚点，命令形参按字段平铺展开）。
  */
 export type StartChatArgs = { sessionId: string, messages: Array<MessageEntry>, runConfig: RunConfig, };

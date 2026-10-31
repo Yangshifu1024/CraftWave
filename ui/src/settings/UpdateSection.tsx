@@ -1,6 +1,5 @@
 /**
- * 设置页「关于」页的检查更新区（33 号票，FR-16-03「检查可开关」+ 2026-10-29
- * 用户决策的运行与队列门）。
+ * 设置页「关于」页的检查更新区（检查可开关 + 用户决策的运行与队列门）。
  *
  * 交互链：按钮 → checkForUpdate() 三态——
  * - 有新版 → Dialog（新版本号 + release notes + 「下载并安装」）；
@@ -8,9 +7,9 @@
  *   阻止原因逐行展示；安装前重新检查——下载完成后新出现的 run 仍能阻止）；
  *   放行 → downloadAndInstall 进度态（下载中/安装中）→ 「重启以完成更新」
  *   → relaunch；
- * - 已最新 / 失败 → Toast（29 号票反馈层）。
+ * - 已最新 / 失败 → Toast 反馈。
  *
- * 禁用兜底（票内 Answer）：config.update.enabled=false（用户关）或
+ * 禁用兜底：config.update.enabled=false（用户关）或
  * update_status.pubkeyConfigured=false（HITL 密钥未配，tauri.conf.json 的
  * pubkey 占位空串期间 updater 校验必败）任一命中 → 入口禁用并显示原因。
  *

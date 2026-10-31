@@ -3,7 +3,7 @@ import type { GitStatusFile } from "./GitStatusFile";
 import type { GitUser } from "./GitUser";
 
 /**
- * #37 返回（字段级随票定形并回写 §3.3）：`isRepo` 区分「不是 git 仓库」
+ * `git_status` 返回：`isRepo` 区分「不是 git 仓库」
  * （前端空态文案）与「仓库但无变更」（空列表）。
  */
 export type GitStatusResult = { isRepo: boolean, files: Array<GitStatusFile>, user?: GitUser, };

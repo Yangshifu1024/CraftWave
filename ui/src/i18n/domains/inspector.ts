@@ -1,5 +1,5 @@
 /**
- * inspector 域字典（31 号票）：右栏 Inspector 全部面板——tab 头、用量页
+ * inspector 域字典：右栏 Inspector 全部面板——tab 头、用量页
  * （实时/本轮/会话累计/统计/上下文进度/最近运行/计划区块）、产物页、
  * 配额页（六态）、子代理页（列表/抽屉）、授权页、变更面板，以及压缩指示、
  * 子代理终态徽标（stores/subagents outcomeLabel）等共用面。

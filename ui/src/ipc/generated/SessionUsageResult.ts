@@ -2,7 +2,7 @@
 import type { UsageTotal } from "./UsageTotal";
 
 /**
- * `session_usage` 返回契约（§3.3 #59k）：usage = 会话累计四口径（主/子/
+ * `session_usage` 返回契约：usage = 会话累计四口径（主/子/
  * 辅助总和）；legacyTotalTokens = 旧版标量回落（明细文件缺失且 index.json
  * 有历史总量时带出，前端合计行回落显示——不伪造四口径拆分）。
  */

@@ -2,7 +2,7 @@
 import type { AuditNoteState } from "./AuditNoteState";
 
 /**
- * 灰区命令审计结论（§3.2 approval.audit，36 号票，§8.7）：审计已出结论
+ * 灰区命令审计结论（approval.audit）：审计已出结论
  * 但须人工确认时随审批卡展示的注记。
  */
 export type AuditNote = { 

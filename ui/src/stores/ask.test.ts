@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 /**
- * ask/askHint store 与事件桥测试（§10.1/§3.5，14 号票；16 号票改按会话分桶）：
+ * ask/askHint store 与事件桥测试（store 分域 + 按会话分桶）：
  * store 纯逻辑（开合/分桶/ghost 匹配）与 useBackendEvents 事件分发（事件监听
  * 用注入的 fake 假实现替代真实 IPC，不依赖 Rust 后端）。
  */
@@ -56,7 +56,7 @@ describe("ask store 与事件桥", () => {
     expect(useAskStore.getState().bySession.s3).toBeUndefined();
     expect(useAskStore.getState().hints.s3).toBeUndefined();
 
-    // matchGhost（§10.4）：空输入整句 / 前缀补尾 / 不匹配与已完整为 null
+    // matchGhost：空输入整句 / 前缀补尾 / 不匹配与已完整为 null
     expect(matchGhost("试试总结配置", "")).toBe("试试总结配置");
     expect(matchGhost("试试总结配置", "试试")).toBe("总结配置");
     expect(matchGhost("试试总结配置", "试试总结配置")).toBeNull();
@@ -110,7 +110,7 @@ describe("ask store 与事件桥", () => {
     act(() => handlers.get("tokens:update")?.(tokens));
     expect(useRunMetricsStore.getState().bySession.s?.sessionUsage).toEqual(tokens.usage);
 
-    // session:title（27 号票）→ sessions store 标题就地更新（tabs + 列表）
+    // session:title → sessions store 标题就地更新（tabs + 列表）
     const metaOf = (id: string, title: string) => ({
       id,
       title,

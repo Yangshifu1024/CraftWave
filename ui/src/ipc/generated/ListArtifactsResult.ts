@@ -2,6 +2,6 @@
 import type { ArtifactRow } from "./ArtifactRow";
 
 /**
- * `list_artifacts` 返回契约（§3.3 #59l：`{ artifacts }`）。
+ * `list_artifacts` 返回契约（`{ artifacts }`）。
  */
 export type ListArtifactsResult = { artifacts: Array<ArtifactRow>, };

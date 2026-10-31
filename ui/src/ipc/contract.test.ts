@@ -9,7 +9,7 @@ import { COMMANDS, EVENT_KEYS } from "./client";
 import type { MessageEntry, StoredEntry, StoredMessageEntry } from "./types";
 
 /**
- * §12.3 契约测试（前端侧，NFR-12 双向扫描 + 跨语言 roundtrip）。
+ * 契约测试（前端侧，双向扫描 + 跨语言 roundtrip）。
  *
  * 契约测试是什么：前后端对接口（命令名、参数类型、帧、事件、工具）有一份
  * 共同约定，两侧各自产出一份描述，测试比对两侧必须完全一致——谁改了接口
@@ -23,21 +23,21 @@ import type { MessageEntry, StoredEntry, StoredMessageEntry } from "./types";
  * 2. 命令契约类型名：全部命令（storage/provider/chat、MCP、技能、外部授权、
  *    子代理、git、用量、产物/日志/更新器等）的 args_type/ret_type 与文档锚点
  *    逐条一致，且逐条在 client.ts 接线；
- * 3. 覆盖度：manifest.frames 覆盖 §3.4 P0 全集 9 帧 + M2 压缩/摘要/子代理/
+ * 3. 覆盖度：manifest.frames 覆盖核心 9 帧 + 压缩/摘要/子代理/
  *    审计帧；manifest.tools/toolSpecs 覆盖工具注册表 17 工具且与 toolkit
- *    参数表逐字同源（§10.3，14 号票）；manifest.events 覆盖 §3.5 实装键
+ *    参数表逐字同源；manifest.events 覆盖实装事件键
  *    且与 EVENT_KEYS 一致；
  * 4. 跨语言 fixture（fixture：测试用的固定样例数据文件）：cargo test 产出的
  *    session-tree-fixture.jsonl（Rust serde 序列化落盘字节，即 storage 分段
  *    JSONL 行格式）——TS 镜像期望值逐条目比对 + 树还原 + 往返等价校验；
- * 5. 契约生成物（02 号票，C-2 定案）：payload 类型单一来源 = ts-rs 生成物
+ * 5. 契约生成物：payload 类型单一来源 = ts-rs 生成物
  *    ui/src/ipc/generated/（Rust ipc_manifest_test 统一导出、进 git）——
  *    manifest 名义类型 ↔ 生成文件正向一致 + 生成文件 ↔ types.ts 再导出面
  *    反向一致（类型删除后遗留的孤儿生成物在这里红）+ 关键生成物键面与
  *    字段级形状（信任/审计/审批/计划门/用量/git/更新器）。
  *
- * 两个产物文件由 `cargo test`（src-tauri/）生成；CI 顺序 = cargo test → vitest
- * （§12.3），缺文件即红（契约不齐不允许静默跳过）。
+ * 两个产物文件由 `cargo test`（src-tauri/）生成；CI 顺序 = cargo test → vitest，
+ * 缺文件即红（契约不齐不允许静默跳过）。
  */
 
 /** src-tauri 的 target 目录：cargo test 产出的契约文件都放在这里。 */
@@ -61,7 +61,7 @@ beforeAll(() => {
     raw = readFileSync(manifestPath, "utf8");
   } catch {
     throw new Error(
-      `契约产物缺失：${manifestPath}\n请先在 src-tauri/ 下运行 cargo test 生成（§12.3 CI 顺序：cargo test → vitest）`,
+      `契约产物缺失：${manifestPath}\n请先在 src-tauri/ 下运行 cargo test 生成（CI 顺序：cargo test → vitest）`,
     );
   }
   manifest = JSON.parse(raw) as typeof manifest;
@@ -75,7 +75,7 @@ function readArtifact(name: string): string {
     return readFileSync(artifactPath, "utf8");
   } catch {
     throw new Error(
-      `契约产物缺失：${artifactPath}\n请先在 src-tauri/ 下运行 cargo test 生成（§12.3 CI 顺序：cargo test → vitest）`,
+      `契约产物缺失：${artifactPath}\n请先在 src-tauri/ 下运行 cargo test 生成（CI 顺序：cargo test → vitest）`,
     );
   }
 }
@@ -102,7 +102,7 @@ function findCommand(name: string) {
 /** S5 spike 的前端取消桥接为注入式原型；cancel_run 已随核心链路票正式注册。 */
 const SPIKE_ONLY_INVOKES = new Set<string>([]);
 
-describe("§12.3 manifest 双向扫描与键面卫生", () => {
+describe("manifest 双向扫描与键面卫生", () => {
   it("client.ts 注册命令 ⊆ manifest.commands；切片命令反向全部接线；全源码无未知 invoke 字面量", () => {
     // 正向：前端用到的每个命令，Rust 清单都必须注册（防止前端调一个后端不存在的命令）
     const commands = new Set(manifest.commands.map((c) => c.name));
@@ -128,13 +128,13 @@ describe("§12.3 manifest 双向扫描与键面卫生", () => {
       "resolve_ask",
       "approve_plan",
       "compact_session",
-      // 会话偏好两命令（18 号票，§3.3 #24/#25）
+      // 会话偏好两命令
       "get_session_prefs",
       "set_session_prefs",
       "resolve_exit_request",
       "notification_permission_status",
       "open_notification_settings",
-      // 供应商连接测试（19 号票，§3.3 #32）
+      // 供应商连接测试
       "test_provider",
     ]) {
       expect(wired, `manifest 命令 ${name} 未在 client.ts 接线（禁止只注册不使用）`).toContain(
@@ -166,11 +166,11 @@ describe("§12.3 manifest 双向扫描与键面卫生", () => {
   });
 });
 
-/** 全部命令的契约类型名（与文档锚点一致，票号随行注释）。
+/** 全部命令的契约类型名（与 manifest 锚点一致）。
  *  [命令名, { args_type, ret_type }]——每个条目同时做「manifest 契约类型名一致」
  *  与「client.ts 已接线（双向）」两断言。 */
 const COMMAND_CONTRACTS: [string, { args_type: string; ret_type: string }][] = [
-  // storage/provider/chat 切片（15 号票 §6.3 / 03 号票 §3.3 #3 / 13 号票 §3.3 #18/#19）
+  // storage/provider/chat 切片
   ["save_session_tree", { args_type: "SaveSessionTreeArgs", ret_type: "SaveSessionTreeResult" }],
   ["load_session_tree", { args_type: "LoadSessionTreeArgs", ret_type: "SessionTreeData" }],
   ["get_config", { args_type: "()", ret_type: "AppConfig" }],
@@ -180,30 +180,29 @@ const COMMAND_CONTRACTS: [string, { args_type: string; ret_type: string }][] = [
   ["open_dir", { args_type: "OpenDirArgs", ret_type: "()" }],
   ["start_chat", { args_type: "StartChatArgs", ret_type: "StartChatResult" }],
   ["cancel_run", { args_type: "CancelRunArgs", ret_type: "bool" }],
-  // steer/followUp 队列三命令（06 号票，§3.3 #21/#59d/#59e）
+  // steer/followUp 队列三命令
   ["inject_run_message", { args_type: "InjectRunMessageArgs", ret_type: "InjectRunMessageResult" }],
   [
     "resume_followup_queue",
     { args_type: "ResumeFollowupQueueArgs", ret_type: "ResumeFollowupQueueResult" },
   ],
   ["remove_followup", { args_type: "RemoveFollowupArgs", ret_type: "RemoveFollowupResult" }],
-  // ask/计划门命令（14 号票，§3.3 #22/#26c）
+  // ask/计划门命令
   ["resolve_ask", { args_type: "ResolveAskArgs", ret_type: "()" }],
   ["approve_plan", { args_type: "ApprovePlanArgs", ret_type: "()" }],
-  // 手动压缩（04 号票，§3.3 #59b）
+  // 手动压缩
   ["compact_session", { args_type: "CompactSessionArgs", ret_type: "CompactSessionResult" }],
-  // 会话偏好两命令（18 号票，§3.3 #24/#25）
+  // 会话偏好两命令
   ["get_session_prefs", { args_type: "SessionPrefsArgs", ret_type: "GetSessionPrefsResult" }],
   ["set_session_prefs", { args_type: "SetSessionPrefsArgs", ret_type: "()" }],
-  // 退出确认与通知引导（17/19 号票，§9.6）
+  // 退出确认与通知引导
   ["resolve_exit_request", { args_type: "ResolveExitRequestArgs", ret_type: "()" }],
   ["notification_permission_status", { args_type: "()", ret_type: "NotificationPermissionStatus" }],
   ["open_notification_settings", { args_type: "()", ret_type: "()" }],
-  // 供应商连接测试（19 号票，§3.3 #32）
+  // 供应商连接测试
   ["test_provider", { args_type: "TestProviderArgs", ret_type: "TestProviderResult" }],
-  // MCP 八命令（08 号票，§3.3 #40–47）：#40 双作用域配置读取、#41 整份保存、
-  // #42–44 连接（触发 TOFU）/断开/重连、#45 草稿试连（总预算 60s 不进池）、
-  // #46 TOFU 决策（remember/revoke）、#47 连接池状态快照
+  // MCP 八命令：双作用域配置读取、整份保存、连接（触发 TOFU）/断开/重连、
+  // 草稿试连（总预算 60s 不进池）、TOFU 决策（remember/revoke）、连接池状态快照
   ["mcp_list_config", { args_type: "McpListConfigArgs", ret_type: "McpListConfigResult" }],
   ["mcp_save_config", { args_type: "McpSaveConfigArgs", ret_type: "()" }],
   ["mcp_connect", { args_type: "McpServerRefArgs", ret_type: "()" }],
@@ -212,28 +211,27 @@ const COMMAND_CONTRACTS: [string, { args_type: string; ret_type: string }][] = [
   ["mcp_test", { args_type: "McpTestArgs", ret_type: "McpTestResult" }],
   ["mcp_set_launch_trust", { args_type: "McpSetLaunchTrustArgs", ret_type: "()" }],
   ["mcp_snapshot", { args_type: "McpSnapshotArgs", ret_type: "McpSnapshotResult" }],
-  // 技能四命令（09 号票，§3.3 #48–51）：#48 多来源合并清单（元素非名义根）、
-  // #49 启停切换、#50 重扫全部来源、#51 正文预览
+  // 技能四命令：多来源合并清单（元素非名义根）、启停切换、重扫全部来源、正文预览
   ["skill_list", { args_type: "()", ret_type: "Vec<SkillListEntry>" }],
   ["skill_toggle", { args_type: "SkillToggleArgs", ret_type: "()" }],
   ["skill_reload", { args_type: "()", ret_type: "()" }],
   ["skill_inspect", { args_type: "SkillInspectArgs", ret_type: "SkillInspectResult" }],
-  // 外部目录授权（24 号票，§3.3 #33/#34 + Inspector 撤销补充面）
+  // 外部目录授权（预检/授权 + Inspector 撤销补充面）
   [
     "check_external_path",
     { args_type: "CheckExternalPathArgs", ret_type: "CheckExternalPathResult" },
   ],
   ["allow_external_dir", { args_type: "AllowExternalDirArgs", ret_type: "ExternalRootsResult" }],
   ["revoke_external_dir", { args_type: "RevokeExternalDirArgs", ret_type: "ExternalRootsResult" }],
-  // 技能信任撤销（24 号票，§9.8 撤销 UI 落盘面）
+  // 技能信任撤销（撤销 UI 落盘面）
   ["skill_revoke_trust", { args_type: "SkillRevokeTrustArgs", ret_type: "()" }],
-  // 子代理两命令（10 号票，§3.3 #58/#59）：#58 级联取消、#59 历史回看
+  // 子代理两命令：级联取消、历史回看
   ["stop_subagent", { args_type: "StopSubagentArgs", ret_type: "()" }],
   [
     "load_subagent_history",
     { args_type: "LoadSubagentHistoryArgs", ret_type: "Vec<MessageEntry>" },
   ],
-  // 帧重放与热重连三命令（05 号票，§3.3 #20/#57/#59c）：幂等空重放、
+  // 帧重放与热重连三命令：幂等空重放、
   // 无活跃 run → null（Option）、无未决 ask → null（Option）
   ["attach_run", { args_type: "AttachRunArgs", ret_type: "AttachRunResult" }],
   [
@@ -244,21 +242,21 @@ const COMMAND_CONTRACTS: [string, { args_type: string; ret_type: string }][] = [
     "session_pending_ask",
     { args_type: "SessionPendingAskArgs", ret_type: "Option<SessionPendingAsk>" },
   ],
-  // 用量统计两命令（20 号票，§3.3 #52/#59k）
+  // 用量统计两命令
   ["stats_token", { args_type: "StatsTokenArgs", ret_type: "StatsTokenResult" }],
   ["session_usage", { args_type: "SessionUsageArgs", ret_type: "SessionUsageResult" }],
-  // git 只读三命令（26 号票，§3.3 #37–#39）
+  // git 只读三命令
   ["git_status", { args_type: "GitStatusArgs", ret_type: "GitStatusResult" }],
   ["git_diff", { args_type: "GitDiffArgs", ret_type: "GitDiffResult" }],
   ["git_recent_log", { args_type: "GitLogArgs", ret_type: "GitLogResult" }],
-  // 产物面板与编辑器（28 号票，§3.3 #59l/#35/#36）+ 会话日志三命令（32 号票 #54–56）
+  // 产物面板与编辑器 + 会话日志三命令
   ["list_artifacts", { args_type: "ListArtifactsArgs", ret_type: "ListArtifactsResult" }],
   ["list_editors", { args_type: "()", ret_type: "Vec<EditorEntry>" }],
   ["open_in_editor", { args_type: "OpenInEditorArgs", ret_type: "()" }],
   ["read_session_log", { args_type: "ReadSessionLogArgs", ret_type: "ReadSessionLogResult" }],
   ["list_log_files", { args_type: "()", ret_type: "Vec<String>" }],
   ["open_logs_dir", { args_type: "()", ret_type: "()" }],
-  // 33 号票三命令（§3.3 #59m/#59n/#59o：更新器状态门/安装门/主动暂停）
+  // 更新器三命令（状态门/安装门/主动暂停）
   ["update_status", { args_type: "()", ret_type: "UpdateStatusResult" }],
   ["update_precheck", { args_type: "()", ret_type: "UpdatePrecheckResult" }],
   [
@@ -275,18 +273,18 @@ describe("命令契约类型名（表驱动扫描全部命令）", () => {
       // 双向：client.ts 已接线（禁止只注册不使用）
       expect(Object.values(COMMANDS), `${name} 应在 client.ts 接线`).toContain(name);
     }
-    // 自动起名（27 号票，§3.5 P0 键 session:title）：本票零新增命令
+    // 自动起名（事件键 session:title）：零新增命令
     //（导出为纯前端序列化；起名为后台任务无命令面）
     expect(Object.values(EVENT_KEYS)).toContain("session:title");
     expect(Object.values(COMMANDS)).not.toContain("session_title");
   });
 });
 
-describe("覆盖度：帧/工具/事件（§3.4/§8.3/§3.5）", () => {
+describe("覆盖度：帧/工具/事件", () => {
   it("manifest.frames 16 帧恰好、tools 17 工具恰好、toolSpecs 与 toolkit 逐字同源（双向）、events 与 EVENT_KEYS 一致", () => {
-    // 帧清单必须恰好是 P0 全集 9 帧 + 04 号票 compactDone + 05 号票
-    // runSnapshot + 10 号票子代理 4 帧（subStarted/subFrame/subReport/
-    // subDone）+ 36 号票 toolAudit（灰区命令审计五态）：一个不能少
+    // 帧清单必须恰好是核心 9 帧 + compactDone + runSnapshot +
+    // 子代理 4 帧（subStarted/subFrame/subReport/subDone）+
+    // toolAudit（灰区命令审计五态）：一个不能少
     //（且不允许混入未知帧）
     expect(manifest.frames).toHaveLength(16);
     for (const frame of [
@@ -310,8 +308,8 @@ describe("覆盖度：帧/工具/事件（§3.4/§8.3/§3.5）", () => {
       expect(manifest.frames).toContain(frame);
     }
 
-    // 工具清单（§8.3 M1 模型可见子集 + 09 skill + 10 subagent + 12 web 两工具
-    // + 13 web_search + 14 小工具包四件）
+    // 工具清单（模型可见子集 + skill + subagent + web 三工具
+    // + 小工具包四件）
     expect(manifest.tools).toEqual([
       "read",
       "write",
@@ -347,9 +345,9 @@ describe("覆盖度：帧/工具/事件（§3.4/§8.3/§3.5）", () => {
       expect(specNames, `toolkit 多出未注册工具 ${name}`).toContain(name);
     }
 
-    // 事件清单双保险：manifest 恰好 24 键（14/17 号票 10 键 + 04 号票压缩
-    // 三键 + 06 号票 run:start/run:inject/run:queue 三键 + 08 号票
-    // mcp:status + 10 号票 sub:* 六键 + 27 号票 session:title），
+    // 事件清单双保险：manifest 恰好 24 键（询问/计划/建议/token/run 终态等
+    // 10 键 + 压缩三键 + run:start/run:inject/run:queue 三键 +
+    // mcp:status + sub:* 六键 + session:title），
     // 且与前端 EVENT_KEYS 注册表完全一致
     expect(manifest.events).toEqual([
       "ask:opened",
@@ -459,7 +457,7 @@ const EXPECTED_ENTRIES: StoredEntry[] = [
     ],
     createdAt: 1760000000006,
   },
-  // 带图 user 消息（17 号票，§3.2 image part）：行内只含 blobHash/mimeType
+  // 带图 user 消息（image part）：行内只含 blobHash/mimeType
   // 引用，不含图片本体（体积不膨胀验收的跨语言锚点）；行序在分支链
   // （a2/a3/marker）之后——父先子后的存储纪律保持
   {
@@ -488,7 +486,7 @@ const EXPECTED_ENTRIES: StoredEntry[] = [
   { kind: "meta", activeLeafId: "run-2:marker", revision: 4 },
 ];
 
-describe("§6.1 跨语言 fixture roundtrip（Rust serde 落盘 ↔ TS 镜像）", () => {
+describe("跨语言 fixture roundtrip（Rust serde 落盘 ↔ TS 镜像）", () => {
   const fixtureText = readArtifact("session-tree-fixture.jsonl");
 
   it("Rust 落盘字节解析后与 TS 镜像逐条目一致（含 status 对象/可选字段省略）；保存载荷 = 存储条目剥离 kind（TS→Rust 方向）", () => {
@@ -503,12 +501,12 @@ describe("§6.1 跨语言 fixture roundtrip（Rust serde 落盘 ↔ TS 镜像）
     expect(payload.every((m) => !("kind" in m))).toBe(true);
   });
 
-  it("树还原 + 往返等价（15 号票防漂移锚点）+ compaction 不投影（§6.3）+ runMarker 的 wire 面等价", () => {
+  it("树还原 + 往返等价（防漂移锚点）+ compaction 不投影 + runMarker 的 wire 面等价", () => {
     const entries = parseSessionJsonl(fixtureText);
     const repo = entriesToExported(entries);
 
-    // 树结构（C-4：headId=activeLeaf，parentId null=根；导出序父先子后）。
-    // compaction 条目被跳过（§6.3 定稿：不投影为树节点）——7 条 message
+    // 树结构（headId=activeLeaf，parentId null=根；导出序父先子后）。
+    // compaction 条目被跳过（不投影为树节点）——7 条 message
     // 的 exact 断言即防线：混入 compaction 节点立即红。
     expect(repo.headId).toBe("run-2:marker");
     expect(repo.messages.map((m) => m.message.id)).toStrictEqual([
@@ -572,7 +570,7 @@ describe("§6.1 跨语言 fixture roundtrip（Rust serde 落盘 ↔ TS 镜像）
     });
     expect(repo.messages.map((m) => m.message.id)).not.toContain("manual:compact:1");
 
-    // 往返等价（15 号票防漂移锚点）：Rust canonical 条目经前端 import 再导出
+    // 往返等价（防漂移锚点）：Rust canonical 条目经前端 import 再导出
     // 必须与原条目逐字段等价——不等价即 save 全树同步时同 id 内容漂移 →
     // E_SESSION_REV（保存失败级故障，本断言是唯一自动防线）
     const original = entries.filter((e): e is StoredMessageEntry => e.kind === "message");
@@ -598,9 +596,9 @@ describe("§6.1 跨语言 fixture roundtrip（Rust serde 落盘 ↔ TS 镜像）
   });
 });
 
-// ---- 契约生成物（02 号票，C-2 定案）：payload 类型单一来源 = ts-rs 生成物 ----
+// ---- 契约生成物：payload 类型单一来源 = ts-rs 生成物 ----
 
-describe("§12.3 契约生成物：ts-rs generated/ ↔ manifest ↔ types.ts 再导出面", () => {
+describe("契约生成物：ts-rs generated/ ↔ manifest ↔ types.ts 再导出面", () => {
   /** 生成物目录（cargo test 统一导出、进 git；types.ts 逐文件再导出）。 */
   const generatedDir = resolve(import.meta.dirname, "./generated");
 
@@ -668,15 +666,15 @@ function generated(name: string): string {
 }
 
 describe("生成物键面与字段级形状（信任/审计/审批/计划门/用量/git/更新器）", () => {
-  it("生成物键面：信任面（24 号票）+ 审计四面（36 号票）+ 审批/白名单/计划门/选项（23/25 号票）", () => {
-    // 信任面（24 号票）：SessionMeta 生成物含授权字段（§9.9 会话 roots 快照
+  it("生成物键面：信任面 + 审计四面 + 审批/白名单/计划门/选项", () => {
+    // 信任面：SessionMeta 生成物含授权字段（会话 roots 快照
     // 持久化字段）；AskPayload 含 externalDir 形态（路径 + 选项）与 projectTrust
-    // 的 allow_session 键面（§3.2 口径，24 号票统一：allow_once → allow_session）
+    // 的 allow_session 键面（授权口径统一：allow_once → allow_session）
     expect(generated("SessionMeta")).toContain("authorizedExternalDirs");
     const askPayload = generated("AskPayload");
     expect(askPayload).toContain('"kind": "externalDir"');
     expect(askPayload).toContain("allow_session");
-    // 灰区命令审计（36 号票）：toolAudit 帧（type 判别 + state/reason）在
+    // 灰区命令审计：toolAudit 帧（type 判别 + state/reason）在
     // ChatFrame 生成物；审计五态（running/allow/block/ask/manual）；
     // AskPayload 带 audit 注记（ask/manual 两态 + reason）；审计专用模型配置
     const chatFrame = generated("ChatFrame");
@@ -689,7 +687,7 @@ describe("生成物键面与字段级形状（信任/审计/审批/计划门/用
     expect(askPayload).toContain("audit?: AuditNote");
     expect(generated("AgentConfig")).toContain("commandAudit");
     expect(generated("CommandAuditConfig")).toContain("modelId");
-    // 审批记忆/白名单/计划门（23/25 号票，FR-14-04/§8.6）：ApprovalConfig 七字段
+    // 审批记忆/白名单/计划门：ApprovalConfig 七字段
     //（四开关 + 白名单 + 计划硬门 requirePlan + git 写策略 gitAllowStageCommit）
     const approvalConfig = generated("ApprovalConfig");
     for (const field of [
@@ -705,7 +703,7 @@ describe("生成物键面与字段级形状（信任/审计/审批/计划门/用
     }
     // 范围门询问载荷（approval.planScope = 计划外写路径）
     expect(askPayload).toContain("planScope");
-    // approval 选项 mode 键面（§3.2 AskMode/AskOption 生成物）
+    // approval 选项 mode 键面（AskMode/AskOption 生成物）
     expect(generated("AskMode")).toContain('"allow_once" | "always_session" | "deny"');
     const askOption = generated("AskOption");
     for (const field of ["id", "label", "recommended", "mode"]) {
@@ -716,7 +714,7 @@ describe("生成物键面与字段级形状（信任/审计/审批/计划门/用
   });
 
   it("生成物字段级类型面（runSnapshot/用量/git/产物/日志/更新器/队列暂停）：TS 实例化编译期守形 + 代表字段断言", () => {
-    // runSnapshot 摘要帧（05 号票，§3.4）负载对齐 §3.2 RunSnapshot（chat/frames.ts 消费面）
+    // runSnapshot 摘要帧负载对齐 RunSnapshot 契约（chat/frames.ts 消费面）
     type ChatFrame = import("./generated/ChatFrame").ChatFrame;
     type RunSnapshotFrame = Extract<ChatFrame, { type: "runSnapshot" }>;
     const sample: RunSnapshotFrame = {
@@ -742,8 +740,8 @@ describe("生成物键面与字段级形状（信任/审计/审批/计划门/用
     };
     expect(snapshot.lastSeq).toBe(0);
 
-    // 用量统计（20 号票，§3.3 #52/#59k）：byDay/byModel/total 与生成物同构；
-    // legacyTotalTokens 可选（旧数据标量回落，Q37 不伪造拆分）
+    // 用量统计：byDay/byModel/total 与生成物同构；
+    // legacyTotalTokens 可选（旧数据标量回落，不伪造拆分）
     const day: import("./generated/DayUsage").DayUsage = {
       day: "2026-10-30",
       input: 1,
@@ -776,7 +774,7 @@ describe("生成物键面与字段级形状（信任/审计/审批/计划门/用
     };
     expect(usageResult.legacyTotalTokens).toBe(777);
 
-    // git 只读三命令（26 号票，§3.3 #37/#38）：生成物字段级回写形态
+    // git 只读三命令：生成物字段级回写形态
     const statusFile: import("./generated/GitStatusFile").GitStatusFile = {
       path: "a.ts",
       status: "M",
@@ -803,7 +801,7 @@ describe("生成物键面与字段级形状（信任/审计/审批/计划门/用
     };
     expect(log.commits[0]!.sha).toHaveLength(40);
 
-    // 会话日志（32 号票 #54）：tail 可缺省 = Option；lines 必有
+    // 会话日志：tail 可缺省 = Option；lines 必有
     const logArgs: import("./generated/ReadSessionLogArgs").ReadSessionLogArgs = {
       sessionId: "s1",
     };
@@ -813,7 +811,7 @@ describe("生成物键面与字段级形状（信任/审计/审批/计划门/用
     };
     expect(logResult.lines).toHaveLength(1);
 
-    // 产物面板与编辑器（28 号票，§3.3 #59l/#35）：ArtifactRow 四字段 + EditorEntry 两字段
+    // 产物面板与编辑器：ArtifactRow 四字段 + EditorEntry 两字段
     const row: import("./generated/ArtifactRow").ArtifactRow = {
       path: "/proj/a.txt",
       runCount: 2,
@@ -832,7 +830,7 @@ describe("生成物键面与字段级形状（信任/审计/审批/计划门/用
     };
     expect(editor.name).toBe("VS Code");
 
-    // 33 号票（§3.3 #59m/#59n/#59o）：更新器禁用门两字段 + 安装门六字段 + 队列快照两字段
+    // 更新器：禁用门两字段 + 安装门六字段 + 队列快照两字段
     const updateStatus: import("./generated/UpdateStatusResult").UpdateStatusResult = {
       pubkeyConfigured: false,
       endpoints: ["https://github.com/o/r/releases/latest/download/latest.json"],
@@ -854,7 +852,7 @@ describe("生成物键面与字段级形状（信任/审计/审批/计划门/用
     };
     expect(paused.size).toBe(2);
     expect(paused.paused).toBe(true);
-    // §3.2 update 配置域（enabled 缺省 true / intervalHours 缺省 24）
+    // update 配置域（enabled 缺省 true / intervalHours 缺省 24）
     const update: import("./generated/UpdateConfig").UpdateConfig = {
       enabled: true,
       intervalHours: 24,

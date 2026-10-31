@@ -1,11 +1,11 @@
 /**
- * NFR-03 压测数据源（34 号票，dev-only）：合成一条 2000 条消息的长会话。
+ * 压测数据源（dev-only）：合成一条 2000 条消息的长会话。
  *
  * 条目形状与真实会话完全同构（storage 分段 JSONL 的 StoredEntry 契约类型），
  * 经 tree-persistence 的 entriesToExported 灌入真实渲染管线——合成的是数据，
  * 消费它的是生产路径（树还原 → assistant-ui import → Thread 渲染），不是
- * 捷径渲染器。多样性覆盖票面点名四类：runMarker 分组、工具卡、长文本、
- * 图片 part；压缩边界条目单独返回（§6.3：compaction 不进消息树，投影走
+ * 捷径渲染器。多样性覆盖四类负载：runMarker 分组、工具卡、长文本、
+ * 图片 part；压缩边界条目单独返回（compaction 不进消息树，投影走
  * compaction-store，与 SessionWorkspace 的收养路径一致）。
  *
  * 仅 dev 构建可达：唯一入口在 main.tsx 的 `import.meta.env.DEV` 分支内，
@@ -17,7 +17,7 @@ import type { StoredCompactionEntry, StoredEntry, StoredMessageEntry } from "@/i
 /** 压测会话使用的虚拟 sessionId（只进前端内存态，不触碰 Rust 会话存储）。 */
 export const STRESS_SESSION_ID = "stress-perf";
 
-/** 合成会话的默认消息条数（PRD NFR-03 前半口径：单会话 ≥2000 条）。 */
+/** 合成会话的默认消息条数（口径：单会话 ≥2000 条）。 */
 export const STRESS_MESSAGE_COUNT = 2000;
 
 /** runMarker 分组粒度：每 100 条消息收口一个 run（共 20 组）。 */
@@ -59,7 +59,7 @@ function buildRound(n: number, parent: string | null): SyntheticPair {
   // 渲染管线（真实会话里经 read_image_blob 取数；压测环境 blob 不存在 →
   // 灰显占位，仍是渲染负载的一部分）
   const withImage = n % 200 === 0 && n > 0;
-  // 链头（n=0）无父：parentId 省略字段（契约口径 null→省略，§6.3）
+  // 链头（n=0）无父：parentId 省略字段（契约口径 null→省略）
   const user: StoredMessageEntry = {
     kind: "message",
     id: userId,
@@ -138,7 +138,7 @@ function buildRound(n: number, parent: string | null): SyntheticPair {
 export interface StressDataset {
   /** 会话条目全集（消息 + runMarker + meta），按存储序线性排列。 */
   entries: StoredEntry[];
-  /** 压缩边界投影（§6.3 不进树，走 compaction-store）。 */
+  /** 压缩边界投影（不进树，走 compaction-store）。 */
   compactions: StoredCompactionEntry[];
   /** 消息条目总数（user + assistant，不含 runMarker/meta）。 */
   messageCount: number;
@@ -148,7 +148,7 @@ export interface StressDataset {
  * 生成 2000 条消息的合成会话。
  *
  * 链形 = 线性（真实长会话的主路径；分支树展开另有 roundtrip 单测覆盖）；
- * runMarker 系统条目每 100 条消息收口一次（20 组，17 号票折叠分组的分组面）；
+ * runMarker 系统条目每 100 条消息收口一次（20 组，折叠分组的分组面）；
  * meta 的 activeLeafId 指向最后一条消息（整链活跃）。
  */
 export function buildStressEntries(messageCount: number = STRESS_MESSAGE_COUNT): StressDataset {
@@ -167,8 +167,8 @@ export function buildStressEntries(messageCount: number = STRESS_MESSAGE_COUNT):
     parent = assistant.id;
     lastNodeId = assistant.id;
     // 每 100 条消息（50 轮）插一个 runMarker 系统条目：role=system、链上
-    // 节点（15 号票 canonical 口径——marker 也是树节点，占位不渲染正文，
-    // 承担 17 号票折叠分组的锚点），继续把链尾接到 marker 上
+    // 节点（canonical 口径——marker 也是树节点，占位不渲染正文，
+    // 承担折叠分组的锚点），继续把链尾接到 marker 上
     const messagesSoFar = (n + 1) * 2;
     if (messagesSoFar % MESSAGES_PER_RUN === 0) {
       const runIndex = Math.floor(messagesSoFar / MESSAGES_PER_RUN);

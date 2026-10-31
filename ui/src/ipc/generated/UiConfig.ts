@@ -24,7 +24,7 @@ aiLanguage?: string,
  */
 fontSize?: number, 
 /**
- * 关闭按钮行为（FR-13-06/§9.6，29 号票）：true（缺省，serde default
+ * 关闭按钮行为：true（缺省，serde default
  * 回填旧配置零迁移）= 点关闭按钮收进托盘继续运行（hide）；false =
  * 点关闭按钮走退出拦截协议（活跃 run 时 app:exit_requested → 前端确认
  * → resolve_exit_request）。托盘菜单「退出」恒走退出拦截协议，不受
@@ -32,6 +32,6 @@ fontSize?: number,
  */
 closeToTray: boolean, 
 /**
- * 全局热键（FR-13-11/§10.7，29 号票）：系统级一键唤起/隐藏主窗。
+ * 全局热键：系统级一键唤起/隐藏主窗。
  */
 hotkey: HotkeyConfig, };

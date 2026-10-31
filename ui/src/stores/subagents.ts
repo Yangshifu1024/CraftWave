@@ -1,16 +1,16 @@
 /**
- * 子代理 store（§10.1 zustand，10 号票）：Inspector 子代理页与 subagent
+ * 子代理 store（zustand）：Inspector 子代理页与 subagent
  * 工具卡的共享数据面。
  *
  * 数据源双通道（幂等合并，subId 去重）：
- * - **事件**（sub:spawn/step/report/usage/done/error，§3.5 跨 Tab 广播）——
+ * - **事件**（sub:spawn/step/report/usage/done/error，跨 Tab 广播）——
  *   event-bridge 订阅后调用对应显式方法（`subXxx` 系列）；
- * - **帧**（subStarted/subFrame/subReport/subDone，§3.4 父 run 帧面）——
+ * - **帧**（subStarted/subFrame/subReport/subDone，父 run 帧面）——
  *   实时（runtime onFrame）与重连重放（run-reconnect）两条路径都经过，
  *   经 [`applySubagentFrame`] 分发；重载后子代理进行中状态由重放恢复。
  *
  * 状态收口语义：done/error 之前每条记录 state=running；step 推进 turn
- * 计数；usage 为子代理自身累计（Q40：仅子面板展示，不再累进会话总量——
+ * 计数；usage 为子代理自身累计（仅子面板展示，不再累进会话总量——
  * 会话累计由 tokens:update 单一出口承担）。
  */
 
@@ -33,7 +33,7 @@ export interface SubagentItem {
   state: "running" | SubOutcome;
   /** 已推进的模型轮次（sub:step / subFrame(stepStarted) 驱动）。 */
   turn: number;
-  /** 子代理自身用量累计（Q40：子面板展示面）。 */
+  /** 子代理自身用量累计（子面板展示面）。 */
   usage: UsageTotal;
   /** `<report>` 结构化汇报全文（subReport 帧后可展开）。 */
   report: string;
@@ -134,7 +134,7 @@ export function subStep(event: { sessionId: string; subId: string; turn: number 
   upsertItem(event.sessionId, event.subId, {}, { turn: event.turn });
 }
 
-/** sub:usage（子代理自身消耗，Q40 子面板展示面）。 */
+/** sub:usage（子代理自身消耗，子面板展示面）。 */
 export function subUsage(event: { sessionId: string; subId: string; usage: UsageTotal }): void {
   upsertItem(event.sessionId, event.subId, {}, { usage: event.usage });
 }
@@ -231,7 +231,7 @@ export function setHistoryLoaded(subId: string, messages: unknown[], error: stri
 }
 
 /** 终态徽标的展示文案（四象限着色语义，Inspector/工具卡共用）：经字典
- *  查词（31 号票 i18n，模块级 t()）。 */
+ *  查词（i18n，模块级 t()）。 */
 export function outcomeLabel(state: SubagentItem["state"]): string {
   switch (state) {
     case "report":

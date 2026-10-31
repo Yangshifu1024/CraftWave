@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 /**
- * AskPanel 交互测试（§3.2 两形态，14 号票）：问卷作答 / 审批允许拒绝 →
+ * AskPanel 交互测试：问卷作答 / 审批允许拒绝 →
  * resolveAsk 载荷形状。client.resolveAsk 注入 fake。
  * 精简版：每形态留代表 1 例；对称载荷循环断言；安全语义（三选项载荷/
  * 白名单写入/审计注记）保留。
@@ -161,7 +161,7 @@ describe("AskPanel 形态代表", () => {
     });
   });
 
-  it("mcpTrust（08 号票）：应用级桶在任意会话上下文渲染；三选项载荷 allow_once/remember/deny", () => {
+  it("mcpTrust：应用级桶在任意会话上下文渲染；三选项载荷 allow_once/remember/deny", () => {
     // MCP 启动信任载荷样例（后端 ask:opened 的 sessionId="" 形态）
     const trustPayload: AskPayload = {
       kind: "mcpTrust",
@@ -196,7 +196,7 @@ describe("AskPanel 形态代表", () => {
   });
 });
 
-describe("23 号票：审批记忆与白名单（ApprovalForm 增量）", () => {
+describe("审批记忆与白名单（ApprovalForm 增量）", () => {
   /** 命令类审批载荷样例（③ 开：后端下发 always_session 选项）。 */
   const commandApprovalPayload: AskPayload = {
     kind: "approval",
@@ -259,9 +259,9 @@ describe("23 号票：审批记忆与白名单（ApprovalForm 增量）", () => 
   });
 });
 
-describe("变体审批卡（24 / 25 号票）", () => {
+describe("变体审批卡", () => {
   it("externalDir 路径卡与计划范围卡：关键行渲染 + allow/deny/always_session 载荷", () => {
-    // externalDir 外部目录授权（24 号票，§9.9）：路径 + 粒度说明
+    // externalDir 外部目录授权：路径 + 粒度说明
     const externalDirPayload: AskPayload = {
       kind: "externalDir",
       path: "/Users/demo/外部资料",
@@ -285,7 +285,7 @@ describe("变体审批卡（24 / 25 号票）", () => {
     }
     cleanup();
 
-    // 计划范围卡（25 号票，§8.6）：范围行明示 + 三选项（无推荐项不参与
+    // 计划范围卡：范围行明示 + 三选项（无推荐项不参与
     // autoConfirm 的 UI 面；recommended 全 None 的载荷断言在后端契约锚点）
     const planScopePayload: AskPayload = {
       kind: "approval",
@@ -316,7 +316,7 @@ describe("变体审批卡（24 / 25 号票）", () => {
     }
   });
 
-  it("灰区命令审计注记（36 号票，approval.audit）：ask 显建议、manual 显转人工；无注记不渲染", () => {
+  it("灰区命令审计注记（approval.audit）：ask 显建议、manual 显转人工；无注记不渲染", () => {
     // audit.state=ask：模型审计建议行（含理由）
     useAskStore.getState().open("s1", "ask-audit-1", {
       ...approvalPayload,

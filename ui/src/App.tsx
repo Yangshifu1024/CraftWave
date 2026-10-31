@@ -3,8 +3,8 @@
  * 1. 启动期的两个副作用：自绘标题栏激活（useTitlebarActivation，防闪启动）与
  *    主题应用（useThemeBoot，按已保存配置换肤）；
  * 2. 顶层页面装配：多会话工作区（SessionWorkspace）；
- * 3. 全局反馈层：ToastHost（29 号票，顶部轻提示统一出口）；
- * 4. 全局热键：按配置注册系统级唤起/隐藏（29 号票；WebView 重载后重放
+ * 3. 全局反馈层：ToastHost（顶部轻提示统一出口）；
+ * 4. 全局热键：按配置注册系统级唤起/隐藏（WebView 重载后重放
  *    挂载逻辑，applyHotkey 幂等）。
  * 调试后门：URL 带 ?mirror=1 时进入镜像工具演示页（MirrorDemo）。
  */
@@ -26,10 +26,10 @@ const ACTIVATION_FLAG = "data-tauri-plugin-decoration-active";
 const ACTIVATION_TIMEOUT_MS = 5000;
 
 /**
- * 启动主题应用（FR-13-03）：通过 IPC 读配置里的 ui.theme 并应用。
+ * 启动主题应用：通过 IPC 读配置里的 ui.theme 并应用。
  * invoke 是 Tauri 的 IPC 调用函数（前端请求 Rust 后端执行命令）；IPC 失败
  * （例如纯浏览器环境）时保持默认 system 主题，不阻断启动。
- * 31 号票同通道追加：界面语言初始化（config.ui.language → i18n 内存态，
+ * 同一 IPC 通道追加：界面语言初始化（config.ui.language → i18n 内存态，
  * zh-CN 兜底）。
  */
 function useThemeBoot() {
@@ -62,7 +62,7 @@ function useThemeBoot() {
 }
 
 /**
- * 全局热键启动注册（29 号票，FR-13-11）：读配置 ui.hotkey → applyHotkey
+ * 全局热键启动注册：读配置 ui.hotkey → applyHotkey
  * （enabled=开才注册；冲突错误经 applyHotkey 内部 Toast + store 呈现，
  * 启动路径不重试不阻塞）。与主题同一个 get_config 拉取即可，但热键注册
  * 失败面（Toast/store）已内聚，独立 hook 保持两副作用互不拖累。
@@ -147,8 +147,8 @@ function useTitlebarActivation() {
 }
 
 /**
- * 启动静默更新检查（33 号票，FR-16-03「检查可开关可调频率」）：
- * App 挂载后按配置判定——`update.enabled=false` 不发起任何请求（NFR-11）；
+ * 启动静默更新检查（检查可开关、可调频率）：
+ * App 挂载后按配置判定——`update.enabled=false` 不发起任何请求；
  * updater pubkey 未实配（HITL 密钥未配，占位空串）同样不发起（入口兜底门
  * 同源）；距上次静默检查不足 intervalHours 小时跳过（记账在 ui-state 的
  * lastUpdateCheckAt，本轮检查完成后立即记账）。检查到新版仅 Toast 轻提示
@@ -164,7 +164,7 @@ function useSilentUpdateCheck() {
         if (cancelled) return;
         const update = config.update;
         if (!update?.enabled) return;
-        // pubkey 门：与设置页入口同一兜底（update_status 命令，33 号票 #59m）
+        // pubkey 门：与设置页入口同一兜底（update_status 命令）
         const status = await invoke<{
           pubkeyConfigured: boolean;
           endpoints: string[];
@@ -213,16 +213,16 @@ export default function App() {
   return (
     <>
       <SkeletonApp />
-      {/* 顶部 Toast 反馈层（29 号票）：主界面单例（镜像演示页不挂） */}
+      {/* 顶部 Toast 反馈层：主界面单例（镜像演示页不挂） */}
       <ToastHost />
     </>
   );
 }
 
 /**
- * 主界面骨架（M1 多会话工作区挂载点，16 号票）：左栏 / 会话大圆角卡 /
+ * 主界面骨架（M1 多会话工作区挂载点）：左栏 / 会话大圆角卡 /
  * 每个会话独立的聊天运行时都在 SessionWorkspace 内部装配；设置页浮层也
- * 由 SessionWorkspace 挂载（入口在左栏底部，17 号票后调整）。
+ * 由 SessionWorkspace 挂载（入口在左栏底部）。
  */
 function SkeletonApp() {
   return <SessionWorkspace />;

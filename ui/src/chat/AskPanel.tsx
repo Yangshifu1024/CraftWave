@@ -1,17 +1,17 @@
 /**
- * AskPanel（§3.2 AskPayload 五形态，14 号票起 question/approval，08 号票
- * 增 mcpTrust，09 号票增 projectTrust，24 号票增 externalDir）：
+ * AskPanel（AskPayload 五形态：question / approval / mcpTrust /
+ * projectTrust / externalDir）：
  * - question：逐题选项点选 + 自由文本输入 → resolveAsk(kind=question)；
  * - approval：diff 预览 / 命令行 + 围栏原因 → 允许/拒绝 → resolveAsk(kind=approval，
- *   optionId = allow_once/always_session/deny；23 号票起命令类审批增
+ *   optionId = allow_once/always_session/deny；命令类审批增
  *   「始终允许（本会话）」选项与「加入白名单」勾选——选项由后端按
  *   approval.sessionMemoryEnabled 下发，勾选经 save_config 持久白名单)；
  * - mcpTrust：MCP 启动信任（TOFU）摘要 + 三选项 → resolveAsk(kind=approval，
  *   optionId = allow_once/remember/deny)。后端以 sessionId=""（应用级询问）
  *   发 ask:opened——不属任何会话桶，任意会话上下文都渲染（设置页连接触发）；
- * - projectTrust：项目资源信任（技能/项目指令首用，§9.8）摘要 + 三选项 →
+ * - projectTrust：项目资源信任（技能/项目指令首用）摘要 + 三选项 →
  *   应答同 Approval 协议；sessionId="" 应用级桶（run 开始装配时触发）；
- * - externalDir：外部目录授权（§9.9，24 号票）——AI 访问会话 roots 外
+ * - externalDir：外部目录授权——AI 访问会话 roots 外
  *   路径前的「始终允许」确认：路径 + 粒度说明 + 允许/拒绝 → 应答同
  *   Approval 协议（optionId = allow/deny），允许后后端把该目录并入会话
  *   roots 快照（授权仅本会话有效）。
@@ -21,7 +21,7 @@
  * mcpTrust/projectTrust/externalDir 无推荐项，不参与自动批准（高危外部
  * 资源永远过人）。
  *
- * 失效面（05 号票，§5.6 待审批恢复）：重连后恢复的审批可能在重连期间已被
+ * 失效面（待审批恢复）：重连后恢复的审批可能在重连期间已被
  * 解决/取消——resolveAsk 返回 E_NOT_FOUND 时按 askId 关闭弹窗（不残留可
  * 操作面板）；其余错误原位显示可重试。
  */
@@ -38,7 +38,7 @@ import { useAskStore } from "@/stores/ask";
 import { useSettingsStore } from "@/stores/settings";
 
 /**
- * 从审批命令文本提取白名单前缀（23 号票，§3.2 approval 注记的词序列前缀
+ * 从审批命令文本提取白名单前缀（approval 注记的词序列前缀
  * 语义）：按空白切词取前两词（单词命令取一词）——与后端 allowlist_hit 的
  * 「首词+子命令」匹配口径一致（`git status --short` → `git status`）。
  * 空文本返回 null（无法构成条目）。
@@ -69,7 +69,7 @@ export function AskPanel() {
       </div>
     );
   }
-  // 应用级项目资源信任询问（09 号票，§9.8）：run 开始装配触发，不属任何 run。
+  // 应用级项目资源信任询问：run 开始装配触发，不属任何 run。
   if (!current && appLevel?.payload.kind === "projectTrust") {
     return (
       <div
@@ -106,7 +106,7 @@ export function AskPanel() {
 /** 应答提交的共享错误面：resolveAsk 失败（槽失效/IPC 异常）时在卡片内
  *  原位显示错误——点击无反馈会让审批永远卡死，静默失败不可接受。
  *  E_NOT_FOUND（询问已失效——重连期间已被解决/取消）例外：按 askId 关闭
- *  弹窗，不残留可操作面板（§5.6，05 号票）。 */
+ *  弹窗，不残留可操作面板。 */
 function useSubmitError(sessionId: string): [string | null, (err: unknown) => void, () => void] {
   const t = useT();
   const [error, setError] = useState<string | null>(null);
@@ -202,7 +202,7 @@ function QuestionForm({
 
 /** 审批表单：命令行与 diff 预览 + 允许/拒绝按钮（点击即提交所选选项）。
  *  命令类审批（载荷含 always_session 选项 = 后端 ③ 开）增「加入白名单」
- *  勾选（23 号票，④ 开才展示）：勾选后点允许类选项，先把命令前缀经
+ *  勾选（④ 开才展示）：勾选后点允许类选项，先把命令前缀经
  *  save_config 追加进 commandAllowlist 持久化，再提交应答。 */
 function ApprovalForm({
   sessionId,
@@ -215,10 +215,10 @@ function ApprovalForm({
 }) {
   const t = useT();
   const [error, reportError, clearError] = useSubmitError(sessionId);
-  // 「查看预览」展开态（FR-12-04，14 号票）：默认收起——展开才挂载沙箱
+  // 「查看预览」展开态：默认收起——展开才挂载沙箱
   // iframe（防闪烁、防未经查看的脚本执行，与 render_html 卡同口径）。
   const [previewOpen, setPreviewOpen] = useState(false);
-  // 「加入白名单」勾选态（23 号票）
+  // 「加入白名单」勾选态
   const [addToList, setAddToList] = useState(false);
   // 白名单配置面（④ 整体开关）：settings store 全局状态
   const allowlistEnabled = useSettingsStore((s) => s.config?.approval.allowlistEnabled ?? false);
@@ -252,7 +252,7 @@ function ApprovalForm({
           {payload.fenceReason}
         </p>
       )}
-      {/* 灰区命令审计注记（36 号票，§8.7）：ask = 模型审计建议人工确认
+      {/* 灰区命令审计注记：ask = 模型审计建议人工确认
           （reason = 简短依据）；manual = 审计失败/超时/输出无效转人工
           （reason = 失败原因）。allow/block 不产生审批卡。 */}
       {payload.audit && (
@@ -269,7 +269,7 @@ function ApprovalForm({
             : t("dialogs.auditAskNote", { reason: payload.audit.reason })}
         </p>
       )}
-      {/* 计划范围门（25 号票，§8.6）：载荷带 planScope = 范围卡——明示
+      {/* 计划范围门：载荷带 planScope = 范围卡——明示
           计划外写路径；三选项由后端下发（允许一次 / 本会话始终允许（写入
           所在目录）/ 拒绝），选中 always_session 后后端把目标父目录并入
           会话基线扩展。 */}
@@ -282,7 +282,7 @@ function ApprovalForm({
         </p>
       )}
       {payload.diff && <DiffView diff={payload.diff} testId="ask-diff" />}
-      {/* HTML 产出预览入口（14 号票）：载荷附带 previewHtml（write/edit 目标
+      {/* HTML 产出预览入口：载荷附带 previewHtml（write/edit 目标
           为 .html/.htm 时由宿主构造）才显示，render_html 同款沙箱渲染 */}
       {payload.previewHtml && (
         <div data-testid="ask-preview">
@@ -346,7 +346,7 @@ function ApprovalForm({
   );
 }
 
-/** MCP 启动信任表单（08 号票，§9.7 TOFU 第三形态）：server/transport/
+/** MCP 启动信任表单（TOFU 形态）：server/transport/
  *  commandOrUrl/fingerprint 摘要 + 三选项按钮 → resolveAsk(approval)。
  *  应答与普通审批同协议（optionId：allow_once / remember / deny），
  *  后端在 resolve_ask 的 run 槽未命中时落到 MCP 信任槽。 */
@@ -416,7 +416,7 @@ function McpTrustForm({
   );
 }
 
-/** 项目资源信任表单（09 号票，§9.8 第四形态）：技能名/作用域/指纹摘要 +
+/** 项目资源信任表单：技能名/作用域/指纹摘要 +
  *  三选项按钮 → resolveAsk(approval)。技能首用未信任时后端在 run 装配时
  *  弹出（挂应用级槽），「记住此版本」后同指纹免问；拒绝后该技能本次运行
  *  不可用，模型侧调用回 E_PROJECT_UNTRUSTED。 */
@@ -485,7 +485,7 @@ function ProjectTrustForm({
   );
 }
 
-/** 外部目录授权表单（24 号票，§9.9 第五形态）：授权目标路径 + 粒度说明 +
+/** 外部目录授权表单：授权目标路径 + 粒度说明 +
  *  允许/拒绝按钮 → resolveAsk(approval，optionId = allow/deny)。工具访问
  *  会话 roots 外路径时后端在审批门挂起弹出；允许后后端把该目录并入会话
  *  roots 快照（「该目录及子目录的读/写/列」粒度，授权仅本会话有效，
@@ -548,5 +548,5 @@ function ExternalDirForm({
   );
 }
 
-/** diff 行配色与预览渲染已抽为公共组件 DiffView（26 号票，FR-11-02）：
+/** diff 行配色与预览渲染已抽为公共组件 DiffView：
  *  审批卡与变更面板共用同一套渲染（见 DiffView.tsx）。 */

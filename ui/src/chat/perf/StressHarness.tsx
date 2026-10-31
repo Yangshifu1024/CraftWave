@@ -1,8 +1,8 @@
 /**
- * NFR-03 长会话压测 harness（34 号票，dev-only）。
+ * 长会话压测 harness（dev-only）。
  *
- * 目的：在真实硬件上量化「单会话 ≥2000 条消息（含压缩后）滚动与发送不卡顿」
- * （PRD NFR-03 前半口径）。做法：合成 2000 条消息灌入**真实渲染管线**
+ * 目的：在真实硬件上量化「单会话 ≥2000 条消息（含压缩后）滚动与发送不卡顿」。
+ * 做法：合成 2000 条消息灌入**真实渲染管线**
  * （entriesToExported → assistant-ui thread.import → 生产 ChatThread，含
  * Markdown 流式组件、工具卡、折叠分组、压缩分隔投影），两种负载各跑一遍：
  *
@@ -10,17 +10,16 @@
  * 2. 发送负载：ScriptedBackend 流式一轮（reasoning + 文本增量分片），
  *    在 2000 条会话尾部追加渲染。
  *
- * 指标：rAF 采样帧间隔，>100ms 渲染长帧计数 = 0 为通过线（与 NFR-02 同
- * 量级；该量化口径 PRD 未给数值，34 号票定为评审可调注记，见
- * docs/specs/m2-release/nfr-checklist.md 的 NFR-03 行）。
+ * 指标：rAF 采样帧间隔，>100ms 渲染长帧计数 = 0 为通过线
+ * （该量化口径为评审可调注记）。
  *
  * 跑法两态：
- * - 手动：URL ?stress=1 进入后点控制条按钮（35 号用户自验/复测用）；
+ * - 手动：URL ?stress=1 进入后点控制条按钮（用户自验/复测用）；
  * - 无人值守：URL ?stress=1&auto=1 挂载后自动跑完整序列并把报告 POST 回
  *   dev server（vite.config.ts 的 dev-only 中间件落盘 target/stress-report.json）。
  *
  * 仅 dev 构建可达：唯一入口在 main.tsx 的 `import.meta.env.DEV` 分支，
- * 生产构建常量折叠后模块整体剔除（已在 34 号票实测产物零残留）。
+ * 生产构建常量折叠后模块整体剔除（已实测产物零残留）。
  */
 
 import type { ChatModelAdapter } from "@assistant-ui/react";
@@ -39,7 +38,7 @@ import { buildStressEntries, STRESS_MESSAGE_COUNT, STRESS_SESSION_ID } from "./s
 /** 生产同款工具卡注册（压测页与主界面共用同一渲染管线）。 */
 const stressAuiConfig = AuiConfig({ tools: Tools({ toolkit: cwToolkit }) });
 
-/** 滚动压测往返次数（票面口径：首尾往返 10 次）。 */
+/** 滚动压测往返次数（口径：首尾往返 10 次）。 */
 const SCROLL_ROUNDS = 10;
 
 /** 发送负载剧本：reasoning 10 段 + 文本 60 段（每段 8~14 字），模拟一次
@@ -275,7 +274,7 @@ export function StressHarness() {
           <div className="fixed inset-x-0 top-0 z-50 border-b border-[var(--border)] bg-[var(--card)] px-4 py-2 text-[var(--foreground)] shadow">
             <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-3">
               <span className="text-ui-sm font-medium">
-                NFR-03 压测 harness（dev-only，{dataset.messageCount} 条合成消息）
+                压测 harness（dev-only，{dataset.messageCount} 条合成消息）
               </span>
               <button
                 type="button"

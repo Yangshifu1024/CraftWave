@@ -2,7 +2,7 @@
 import type { SearxngConfig } from "./SearxngConfig";
 
 /**
- * 网络搜索配置（§3.2 search 组，FR-05-05/C-12 本地优先三通道，13 号票
+ * 网络搜索配置（search 组，/ 本地优先三通道，
  * 实装）：web_search 工具按「SearXNG（启用且探活成功）→ 内置直接抓取
  * （默认兜底）→ Tavily（Key 已配才参与）」的钉死优先级自动选通道。
  */
@@ -14,7 +14,7 @@ searxng: SearxngConfig,
 /**
  * Tavily API Key（通道 3，BYOK 高级区）：空白归一为 None（"没填"与
  * "填了又删掉"等价，未配 Key 该通道不参与优先级链）；明文随 config.json
- * 0600 落盘（v2.5 存储协议，§9.4——票面"钥匙串协议"按现行协议落
- * config.json，票内决议记录说明）。旧配置无该组时 serde default 回填。
+ * 0600 落盘（v2.5 存储协议：明文落 config.json）。旧配置无该组时
+ * serde default 回填。
  */
 tavilyApiKey?: string, };

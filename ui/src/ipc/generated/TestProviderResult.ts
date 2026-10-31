@@ -2,7 +2,7 @@
 import type { ProbeError } from "./ProbeError";
 
 /**
- * `test_provider` 返回契约（§3.3 #32）：`{ ok, latencyMs?, models?, error? }`
+ * `test_provider` 返回契约：`{ ok, latencyMs?, models?, error? }`
  * （error = `{ code, message }` 脱敏，code 为供应商七类之一）。
  */
 export type TestProviderResult = { ok: boolean, latencyMs?: number, models?: Array<string>, error?: ProbeError, };

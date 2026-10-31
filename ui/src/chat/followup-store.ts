@@ -1,7 +1,7 @@
 /**
- * steer / followUp 的前端状态面（§5.5，06 号票）。
+ * steer / followUp 的前端状态面。
  *
- * - steerNodes：steer 插话的时间线承载（§5.5 回写定稿——§3.4 无 user 消息帧，
+ * - steerNodes：steer 插话的时间线承载（回写定稿——帧协议无 user 消息帧，
  *   前端以 run:inject 回执本地插入带「插话」徽标的时间线节点；canonical 由
  *   Rust 侧同 id 落盘，树重载收养后本节点与之重合，按 entryId 去重防双显）；
  * - 队列条数据在 sessions store（queues/queuePaused，ui-state 持久化），
@@ -88,7 +88,7 @@ export const defaultFollowUpDeps: FollowUpDeps = {
  * followUp 排队（Alt+Enter / 运行中带图入队）：调后端入队（queue.json 即刻
  * 持久化），本地队列条同步追加（run:queue 事件到达时以 size 校正）。返回
  * 队列条目（失败返回 null，输入由调用方保留处理）。attachments 为图片附件
- * 引用（17 号票，§5.5 带图不入 steer、经此通路进 followUp；投递时展开为
+ * 引用（带图不入 steer、经此通路进 followUp；投递时展开为
  * image part）。
  */
 export async function queueFollowUp(
@@ -107,7 +107,7 @@ export async function queueFollowUp(
       ...(attachments.length > 0 ? { attachments } : {}),
     });
     if (!result.queued) return null;
-    // entryId 由后端返回（队列条删除/编辑取出的回传键，§3.3 #21）
+    // entryId 由后端返回（队列条删除/编辑取出的回传键）
     const entry: QueuedFollowUp = { id: result.entryId ?? `local-${Date.now()}`, text };
     const store = useSessionsStore.getState();
     store.setQueue(sessionId, [...(store.queues[sessionId] ?? []), entry]);
@@ -175,7 +175,7 @@ export async function resumeFollowUpQueue(
 }
 
 /**
- * 主动暂停队列（33 号票 #59o，更新门配套）：用户在更新前须「明确暂停并
+ * 主动暂停队列（更新门配套）：用户在更新前须「明确暂停并
  * 持久保留队列」——后端置 queue.json paused=true 持久化；本地暂停横幅由
  * run:queue 事件回推驱动（与失败暂停同一展示接缝）。
  */

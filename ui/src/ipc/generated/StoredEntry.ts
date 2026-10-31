@@ -5,9 +5,9 @@ import type { SessionEntry } from "./SessionEntry";
 import type { StoredCompactionEntry } from "./StoredCompactionEntry";
 
 /**
- * §6.1 存储条目（会话 JSONL 每行一个，serde tag=kind）。
- * compaction 为 M2 首个新增变体（04 号票）：**这是本应用首次存储格式升级**，
- * 首次写入前必须成功创建一次可恢复备份（Q34，`storage::backup` 守卫——
+ * 存储条目（会话 JSONL 每行一个，serde tag=kind）。
+ * compaction 为 M2 首个新增变体：**这是本应用首次存储格式升级**，
+ * 首次写入前必须成功创建一次可恢复备份（`storage::backup` 守卫——
  * 失败暂停写入并告知用户；旧版本读到本变体按损坏行处理，属预期的不前向兼容）。
  * branchSummary 仍属 M2 可选项，随分支需求另立。
  */

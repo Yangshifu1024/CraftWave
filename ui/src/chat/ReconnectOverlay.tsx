@@ -1,12 +1,12 @@
 /**
- * 重连观察态覆盖层（§5.8/§10.7，05 号票）：WebView 重载后 Rust run 仍存活
+ * 重连观察态覆盖层：WebView 重载后 Rust run 仍存活
  * 时的只读实时视图。挂在会话 Tab 内容之上（absolute inset-0）——天然禁用
  * 输入（防 start_chat 撞 E_SESSION_RUNNING），与正常流式视觉区分（顶部细条
  * 「已重连到运行中的任务」）。
  *
  * 内容渲染：重放帧与续流帧经独立 FrameBuffer 累积（chat/run-reconnect.ts
  * 驱动），此处按快照段列表增量呈现（思考行 / Markdown 正文 / 工具行）——
- * 不注入 assistant-ui LocalRuntime，不触碰运行态节点记账（§6.3 双写旁路）。
+ * 不注入 assistant-ui LocalRuntime，不触碰运行态节点记账（双写旁路）。
  * runEnded 后覆盖层消失，canonical 树重载由收口信号驱动（SessionTab）。
  */
 
@@ -48,7 +48,7 @@ export function ReconnectOverlay({ sessionId }: { sessionId: string }) {
       data-testid="reconnect-overlay"
       className="absolute inset-0 z-40 flex min-h-0 flex-col bg-[var(--cw-bg-main)]"
     >
-      {/* 顶部细条（§5.8：观察态视觉与正常流式区分）+ 取消按钮 */}
+      {/* 顶部细条（观察态视觉与正常流式区分）+ 取消按钮 */}
       <div
         data-testid="reconnect-banner"
         className="flex h-9 shrink-0 items-center gap-2 border-b border-[var(--border)] bg-[var(--card)] px-4 text-ui-sm text-[var(--muted-foreground)]"

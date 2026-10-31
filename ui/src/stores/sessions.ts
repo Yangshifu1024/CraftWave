@@ -1,12 +1,12 @@
 /**
- * 会话域全局状态（16 号票，FR-01-01/02）：多 Tab 状态 + 左栏数据面。
+ * 会话域全局状态：多 Tab 状态 + 左栏数据面。
  * （zustand store：组件可订阅的全局状态仓库，见 stores/ask.ts 文件头说明）
  *
  * - tabs：打开的 Tab（SessionMeta 快照，标题/计数条显示用）；activeId 当前 Tab；
  * - projects/sessions：左栏列表（list_projects / list_sessions 全量，操作后刷新）；
  * - running：Tab 运行指示（SessionTab 内 useThread 桥进 store）；
  * - ui-state：界面状态持久化（Tab 布局 { tabIds, activeId }、自动折叠开关、
- *   Inspector 开合、各会话输入框草稿，§3.3 #30/#31 命令读写），写侧带
+ *   Inspector 开合、各会话输入框草稿，get/set_ui_state 命令读写），写侧带
  *   防抖（见 persistUiState）。
  */
 
@@ -20,28 +20,28 @@ import { type OnboardingState, sanitizeOnboarding } from "@/onboarding/onboardin
 export interface UiStatePayload {
   tabIds: string[];
   activeId: string | null;
-  /** 右栏 Inspector 开合（FR-13-01；缺省 false = 收起）。 */
+  /** 右栏 Inspector 开合（缺省 false = 收起）。 */
   inspectorOpen?: boolean;
-  /** 会话草稿（§10.6 按 Tab 存；sessionId → 输入框文本，缺省无）。 */
+  /** 会话草稿（按 Tab 存；sessionId → 输入框文本，缺省无）。 */
   drafts?: Record<string, string>;
-  /** 会话待发队列（FR-01-11 队列半，06 号票：sessionId → 排队消息数组，
+  /** 会话待发队列（sessionId → 排队消息数组，
    *  队头在前；后端 queue.json 为投递权威，此处承载 UI 现场恢复）。 */
   queues?: Record<string, QueuedFollowUp[]>;
-  /** 会话队列暂停态（06 号票失败暂停的展示面；跨重启保留）。 */
+  /** 会话队列暂停态（失败暂停的展示面；跨重启保留）。 */
   queuePaused?: Record<string, boolean>;
-  /** 会话滚动锚点（FR-01-11 收口，29 号票：sessionId → { leafId, offset }，
+  /** 会话滚动锚点（sessionId → { leafId, offset }，
    *  随既有 300ms 防抖落盘；锚点失效回底部，见 chat/scroll-anchor.ts）。 */
   scrollAnchors?: Record<string, ScrollAnchor>;
-  /** 首启引导状态（FR-13-18，30 号票：{ completed, step, skippedAt? }，
+  /** 首启引导状态：{ completed, step, skippedAt? }，
    *  前端自管域 schema 见 onboarding/onboarding-state.ts；无记录 = 全新
    *  数据目录，触发自动弹向导）。 */
   onboarding?: OnboardingState;
-  /** 上次更新检查时刻（33 号票，FR-16-03 静默检查间隔记账；Unix 毫秒，
-   *  0/缺省 = 从未检查过。不敏感、不进 config——§3.2 update 组注记）。 */
+  /** 上次更新检查时刻（静默检查间隔记账；Unix 毫秒，
+   *  0/缺省 = 从未检查过。不敏感、不进 config）。 */
   lastUpdateCheckAt?: number;
 }
 
-/** 一条待发消息的 UI 侧形状（后端 FollowUpEntry 的展示投影；06 号票）。 */
+/** 一条待发消息的 UI 侧形状（后端 FollowUpEntry 的展示投影）。 */
 export interface QueuedFollowUp {
   /** 后端队列条目 id（fu-*，删除/编辑取出时回传）。 */
   id: string;
@@ -61,21 +61,21 @@ export interface SessionsStore {
   running: Record<string, boolean>;
   /** 启动恢复已就绪（首帧渲染前避免闪建 Tab）。 */
   ready: boolean;
-  /** 右栏 Inspector 开合（FR-13-01，ui-state 持久化）。 */
+  /** 右栏 Inspector 开合（ui-state 持久化）。 */
   inspectorOpen: boolean;
-  /** 会话草稿（§10.6，ui-state 持久化；写侧防抖由 persistUiState 承担）。 */
+  /** 会话草稿（ui-state 持久化；写侧防抖由 persistUiState 承担）。 */
   drafts: Record<string, string>;
-  /** 会话待发队列（FR-01-11 队列半，06 号票；事件与本地操作共同驱动，
+  /** 会话待发队列（事件与本地操作共同驱动，
    *  ui-state 持久化；后端 queue.json 为投递权威）。 */
   queues: Record<string, QueuedFollowUp[]>;
-  /** 会话队列暂停态（06 号票失败暂停的展示面，ui-state 持久化）。 */
+  /** 会话队列暂停态（失败暂停的展示面，ui-state 持久化）。 */
   queuePaused: Record<string, boolean>;
-  /** 会话滚动锚点（FR-01-11 收口，29 号票，ui-state 持久化）。 */
+  /** 会话滚动锚点（ui-state 持久化）。 */
   scrollAnchors: Record<string, ScrollAnchor>;
-  /** 首启引导状态（FR-13-18，30 号票，ui-state 持久化；null = 无记录
+  /** 首启引导状态（ui-state 持久化；null = 无记录
    *  = 全新数据目录，首启自动弹向导的唯一判定输入）。 */
   onboarding: OnboardingState | null;
-  /** 上次更新检查时刻（33 号票静默检查间隔记账；0 = 从未检查）。 */
+  /** 上次更新检查时刻（静默检查间隔记账；0 = 从未检查）。 */
   lastUpdateCheckAt: number;
 
   /** 启动恢复：并行拉项目/会话/ui-state，重建 Tab 布局（空则兜底最新会话或新建）。 */
@@ -90,31 +90,31 @@ export interface SessionsStore {
   closeTab: (sessionId: string) => void;
   /** 会话标题/计数的就地更新（run 期间 index 推进后由调用方刷新）。 */
   patchTab: (meta: SessionMeta) => void;
-  /** 自动起名的标题就地更新（27 号票 session:title 事件驱动）：tabs 内
+  /** 自动起名的标题就地更新（session:title 事件驱动）：tabs 内
    *  对应快照与左栏缓存列表同改；会话不在当前 tabs（后台项目会话）时
    *  只更新缓存列表，不强行开 Tab。 */
   applyTitle: (sessionId: string, title: string) => void;
   /** 运行指示桥（SessionTab 内写）。 */
   setRunning: (sessionId: string, running: boolean) => void;
-  /** 右栏开合切换（FR-13-01）。 */
+  /** 右栏开合切换。 */
   setInspectorOpen: (open: boolean) => void;
   /** 草稿写入（sessionId 维度替换；空串清除该键）。 */
   setDraft: (sessionId: string, text: string) => void;
-  /** 待发队列全量替换（06 号票：本地入队/删除/清空与 run:queue 事件校正
+  /** 待发队列全量替换（本地入队/删除/清空与 run:queue 事件校正
    *  共用；空数组清除该键）。 */
   setQueue: (sessionId: string, entries: QueuedFollowUp[]) => void;
-  /** 队列暂停态写入（06 号票 run:queue.paused 事件驱动）。 */
+  /** 队列暂停态写入（run:queue.paused 事件驱动）。 */
   setQueuePaused: (sessionId: string, paused: boolean) => void;
-  /** 会话滚动锚点写入（29 号票滚动记账面；防抖由调用侧承担）。 */
+  /** 会话滚动锚点写入（滚动记账面；防抖由调用侧承担）。 */
   setScrollAnchor: (sessionId: string, anchor: ScrollAnchor) => void;
   /** 会话滚动锚点清理（删除会话随清）。 */
   forgetScrollAnchor: (sessionId: string) => void;
-  /** 首启引导状态写入（30 号票：完成/单步跳过/整包关闭均即时落盘——
+  /** 首启引导状态写入（完成/单步跳过/整包关闭均即时落盘——
    *  经既有 persistUiState 防抖写通道，与滚动锚点同一条路径）。 */
   setOnboarding: (next: OnboardingState) => void;
-  /** 上次更新检查时刻记账（33 号票，Unix 毫秒；静默检查间隔判定输入）。 */
+  /** 上次更新检查时刻记账（Unix 毫秒；静默检查间隔判定输入）。 */
   setLastUpdateCheckAt: (at: number) => void;
-  /** 清空队列并把返还文本合并回草稿（06 号票取消/失败返还面；returned
+  /** 清空队列并把返还文本合并回草稿（取消/失败返还面；returned
    *  为后端 run:queue.returned 交还的权威文本，追加在原草稿之后）。 */
   returnQueueToDraft: (sessionId: string, returned: string[]) => void;
   /** Tab 布局落盘（setUiState；失败静默——布局可丢，数据不可）。 */
@@ -127,7 +127,7 @@ export interface SessionsStore {
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
 
 /**
- * 左栏显示纪律（FR-01-01 行为约定）：新建未发送的会话不出现在列表里，
+ * 左栏显示纪律（行为约定）：新建未发送的会话不出现在列表里，
  * 首条消息落盘（save 推进索引 messageCount）后才可见。判定用 messageCount>0：
  * Rust 侧 save_session_tree 成功即同步索引，发送瞬间数据面就绪。
  */
@@ -198,7 +198,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
       scrollAnchors: sanitizeScrollAnchors(uiState.scrollAnchors),
       // 引导记录同域同口径：形状不可信，清洗（损坏回 null = 视作首启）
       onboarding: sanitizeOnboarding(uiState.onboarding),
-      // 上次更新检查时刻（33 号票）：非正数视作从未检查
+      // 上次更新检查时刻：非正数视作从未检查
       lastUpdateCheckAt:
         typeof uiState.lastUpdateCheckAt === "number" && uiState.lastUpdateCheckAt > 0
           ? uiState.lastUpdateCheckAt
@@ -333,7 +333,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
     get().persistUiState();
   },
 
-  /** 上次更新检查时刻记账（33 号票，FR-16-03 静默检查间隔判定输入）。 */
+  /** 上次更新检查时刻记账（静默检查间隔判定输入）。 */
   setLastUpdateCheckAt: (at: number) => {
     set({ lastUpdateCheckAt: at });
     get().persistUiState();

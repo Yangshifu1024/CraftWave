@@ -2,7 +2,7 @@
 import type { ThinkingLevel } from "./ThinkingLevel";
 
 /**
- * `get_session_prefs` 返回契约（§3.3 #24）：modelId/thinking 未设置时省略
+ * `get_session_prefs` 返回契约：modelId/thinking 未设置时省略
  * （前端按「跟随默认 / per-model reasoningEffort 回落」处理）。
  */
 export type GetSessionPrefsResult = { 
@@ -11,6 +11,6 @@ export type GetSessionPrefsResult = {
  */
 modelId?: string, 
 /**
- * 会话 thinking 档（FR-02-08 五档）。
+ * 会话 thinking 档（五档）。
  */
 thinking?: ThinkingLevel, };

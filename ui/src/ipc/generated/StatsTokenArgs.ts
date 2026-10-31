@@ -2,6 +2,6 @@
 import type { StatsRange } from "./StatsRange";
 
 /**
- * `stats_token` 参数契约（§3.3 #52）。
+ * `stats_token` 参数契约。
  */
 export type StatsTokenArgs = { range?: StatsRange, };

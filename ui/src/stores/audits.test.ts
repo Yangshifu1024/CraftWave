@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 /**
- * 灰区命令审计 store 单元测试（36 号票，§3.4 toolAudit 帧 → audits store）：
+ * 灰区命令审计 store 单元测试（toolAudit 帧 → audits store）：
  * 帧分发写入、五态覆盖、会话分桶隔离、非审计帧忽略。
  */
 

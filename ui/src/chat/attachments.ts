@@ -1,5 +1,5 @@
 /**
- * Composer 图片附件体系（FR-12-02/FR-13-16 拖拽半边，17 号票）。
+ * Composer 图片附件体系（含拖拽半边）。
  *
  * 职责（纯逻辑与事件提取，React 状态归 ComposerBar 组件态）：
  * - 附件校验：单条消息 ≤4 张、单张 ≤5MiB、png/jpeg/gif/webp 白名单
@@ -129,7 +129,7 @@ export async function createAttachment(
   };
 }
 
-/** 拖拽/粘贴投递的分类（FR-13-16 拖拽路由）：图片走附件、目录提议添加
+/** 拖拽/粘贴投递的分类（拖拽路由）：图片走附件、目录提议添加
  *  项目、普通文件转路径引用。 */
 export type DropRoute =
   | { kind: "image"; files: File[] }
@@ -142,14 +142,14 @@ function isImageFile(file: File): boolean {
 }
 
 /**
- * 从拖拽事件提取投递物（FR-13-16 路由回归的判定核心）：
+ * 从拖拽事件提取投递物（路由判定的核心）：
  * - 事件里有目录条目（webkitGetAsEntry 判 isDirectory）→ directory 路由
  *   （目录名作提议添加项目的默认名；多目录取第一个）；
  * - 其余按 mime 分流：图片文件（可多张）→ image；普通文件 → file。
  *
  * 用 items 优先（能识别目录），items 不可用时退回 files（粘贴事件没有
  * entry 概念，直接按 mime 分流）。读取 entries 是同步 API（webkitGetAsEntry
- * 不返回承诺），但目录**内部**遍历不在本票范围——目录只做「添加为项目」。
+ * 不返回承诺），但目录**内部**遍历不在处理范围——目录只做「添加为项目」。
  */
 export function classifyDrop(
   items: DataTransferItemList | null,

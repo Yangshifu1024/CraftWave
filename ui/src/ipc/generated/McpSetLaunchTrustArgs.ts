@@ -2,7 +2,7 @@
 import type { TrustDecision } from "./TrustDecision";
 
 /**
- * `mcp_set_launch_trust` 参数契约（§3.3 #46）：管理页直接写/撤销信任。
+ * `mcp_set_launch_trust` 参数契约：管理页直接写/撤销信任。
  */
 export type McpSetLaunchTrustArgs = { 
 /**

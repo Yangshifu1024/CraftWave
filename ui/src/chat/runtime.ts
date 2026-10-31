@@ -79,16 +79,16 @@ export const echoAdapter: ChatModelAdapter = {
   },
 };
 
-// ---- tauri 后端适配器（§10.2：start_chat + Channel 帧 → assistant-ui） ----
+// ---- tauri 后端适配器（start_chat + Channel 帧 → assistant-ui） ----
 
 /**
- * 单会话调试常量（S6 骨架遗留）：生产路径已由 sessions store 提供
- * 真实会话 id（16 号票）；保留供测试与 ?mirror 入口。
+ * 单会话调试常量（骨架遗留）：生产路径已由 sessions store 提供
+ * 真实会话 id；保留供测试与 ?mirror 入口。
  */
 export const LOCAL_SESSION_ID = "local";
 
-/** M1 默认运行配置（auto_edit 档直写 roots；maxTurns 文档默认 24）。
- *  steer 恒 false（06 号票复审：后端队列接管后前端不再以 steer=true 调
+/** 默认运行配置（auto_edit 档直写 roots；maxTurns 文档默认 24）。
+ *  steer 恒 false（后端队列接管后前端不再以 steer=true 调
  *  start_chat，插话/排队统一走 inject_run_message——字段为契约兼容占位）。 */
 export const DEFAULT_RUN_CONFIG: RunConfig = {
   tier: "autoEdit",
@@ -97,11 +97,11 @@ export const DEFAULT_RUN_CONFIG: RunConfig = {
 };
 
 /**
- * assistant-ui 消息 → wire 中立消息（MessageEntry 形态，§3.2/§6.1）。
+ * assistant-ui 消息 → wire 中立消息（MessageEntry 形态）。
  * 取活动路径线性序（assistant-ui 传入序）；工具调用 part 为已合并形态
- * （tool-call 带 result），拆回 toolCall + toolResult 双 part（§6.2 配对面）。
+ * （tool-call 带 result），拆回 toolCall + toolResult 双 part（存储配对面）。
  * status/runId 原样透传——canonical 条目往返（import → save）字段集一致，
- * 否则 save_session_tree 内容比对漂移（§6.3，15 号票）。
+ * 否则 save_session_tree 内容比对漂移。
  */
 export function toWire(messages: readonly ThreadMessage[]): MessageEntry[] {
   return messages.map((message) => {
@@ -147,7 +147,7 @@ export function toWire(messages: readonly ThreadMessage[]): MessageEntry[] {
           break;
         }
         case "image": {
-          // 图片 part（17 号票，§3.2 image part）：树内 image 字段为 cwimg
+          // 图片 part（image part）：树内 image 字段为 cwimg
           // 引用——解析回 { blobHash, mimeType } 存储形态（不含图片本体）。
           const ref = parseCwImageUrl(part.image);
           if (ref !== null) {
@@ -186,16 +186,16 @@ export function toWire(messages: readonly ThreadMessage[]): MessageEntry[] {
   });
 }
 
-/** adapter 依赖（生产 = ipc/client；测试注入 fake）。17 号票起 runConfig
+/** adapter 依赖（生产 = ipc/client；测试注入 fake）。runConfig
  *  支持惰性取值（发送时读会话权限档，Shift+Tab 循环的内存态）。 */
 export interface TauriAdapterDeps {
   sessionId: string;
   runConfig: RunConfig | (() => RunConfig);
   startChat: typeof client.startChat;
   cancelRun: (sessionId: string) => Promise<boolean>;
-  /** 帧旁路（生产：runMetrics.ingest；§10.2 onmessage 双写） */
+  /** 帧旁路（生产：runMetrics.ingest；onmessage 双写） */
   onFrame?: (frame: SequencedFrame) => void;
-  /** 发送前树同步（15 号票；测试注入 no-op 绕开 IPC）。 */
+  /** 发送前树同步（测试注入 no-op 绕开 IPC）。 */
   syncTree?: (messages: readonly ThreadMessage[]) => Promise<void>;
 }
 
@@ -232,14 +232,14 @@ function toFrameError(err: unknown): { code: string; message: string } {
   return { code: "E_START_CHAT", message: String(err) };
 }
 
-/** 生产 adapter（§10.2 伪代码的产品化落地，S6 骨架遗留单例形态）。 */
+/** 生产 adapter（骨架遗留单例形态）。 */
 export const tauriChatModel: ChatModelAdapter = createTauriChatAdapter({
   ...defaultDeps,
   onFrame: (frame) => useRunMetricsStore.getState().ingest(defaultDeps.sessionId, frame),
 });
 
 /**
- * 会话 runConfig 的惰性取值（§10.2，17/18 号票）：发送时读会话内存态——
+ * 会话 runConfig 的惰性取值：发送时读会话内存态——
  * 权限档（tierOf）、模型覆盖（modelOf）、thinking 档（thinkingOf）；未设置
  * 的字段省略（serde default 后端兜底）。独立导出供 sessionAdapter 与测试
  * 共用同一形状。
@@ -254,10 +254,10 @@ export function sessionRunConfig(sessionId: string): RunConfig {
 }
 
 /**
- * 按会话产出生产 adapter（16 号票多会话）：每 Tab 一个实例——帧入本会话的
+ * 按会话产出生产 adapter（多会话）：每 Tab 一个实例——帧入本会话的
  * metrics 桶，运行态节点记账记到本会话的 persist 分桶；runConfig 惰性取值
- * （17 号票：发送时读会话权限档与模型覆盖；18 号票追加 thinking 档——
- * 三者均为内存态，运行中切换由后端每拍请求前重读 prefs 生效，§11.1）。
+ * （发送时读会话权限档、模型覆盖与 thinking 档——
+ * 三者均为内存态，运行中切换由后端每拍请求前重读 prefs 生效）。
  */
 export function sessionAdapter(sessionId: string): ChatModelAdapter {
   return createTauriChatAdapter({
@@ -269,7 +269,7 @@ export function sessionAdapter(sessionId: string): ChatModelAdapter {
 }
 
 /**
- * 发送变换（28 号票，§10.6 合成引用段）：对最后一条 user 消息的文本 part
+ * 发送变换（合成引用段）：对最后一条 user 消息的文本 part
  * 尾部追加 @ 引用段（相对路径准入、去重、上限 20——collectRefs）。
  * 输入框原文与树落盘不受影响：syncTree 在变换前用原始 messages（树里存
  * 原文），本变换只作用于 start_chat 的 wire 面——模型侧按需 read，不复制
@@ -299,16 +299,16 @@ function withAtRefSection(messages: readonly ThreadMessage[]): ThreadMessage[] {
 
 /**
  * 可注入 adapter 工厂：start_chat 带 channel → FrameBuffer 累积 → 64ms 节流
- * 快照全量 yield（打字机，§10.2）→ runEnded 快照以终态 status 收口；abortSignal
+ * 快照全量 yield（打字机）→ runEnded 快照以终态 status 收口；abortSignal
  * 桥 cancel_run（S5：fire-and-forget，终态以 runEnded 帧为权威）。
  *
- * 15 号票双写协议：run() 开头先 save（新 user 拓扑先落盘）再 start_chat；
- * 运行态 assistant 节点 id 记账（save 载荷剔除与引用改写用，§6.3）。
+ * 双写协议：run() 开头先 save（新 user 拓扑先落盘）再 start_chat；
+ * 运行态 assistant 节点 id 记账（save 载荷剔除与引用改写用）。
  */
 export function createTauriChatAdapter(deps: TauriAdapterDeps): ChatModelAdapter {
   return {
     async *run({ messages, abortSignal, unstable_assistantMessageId }) {
-      // 发送时解析 runConfig（值或惰性函数——权限档内存态，17 号票）
+      // 发送时解析 runConfig（值或惰性函数——权限档内存态）
       const runConfig = typeof deps.runConfig === "function" ? deps.runConfig() : deps.runConfig;
       // 发送前树同步（失败不阻断发送：Rust 侧 user 兜底 + 下次 save 自愈）
       const syncTree =
@@ -353,9 +353,9 @@ export function createTauriChatAdapter(deps: TauriAdapterDeps): ChatModelAdapter
               }
               buffer.push(frame);
               deps.onFrame?.(frame);
-              // 子代理 4 帧（10 号票）：实时路径同步 subagents store
+              // 子代理 4 帧：实时路径同步 subagents store
               applySubagentFrame(deps.sessionId, frame);
-              // 审计状态帧（36 号票）：实时路径同步 audits store
+              // 审计状态帧：实时路径同步 audits store
               applyAuditFrame(deps.sessionId, frame);
             },
           })
@@ -363,7 +363,7 @@ export function createTauriChatAdapter(deps: TauriAdapterDeps): ChatModelAdapter
             // 命令面失败（未配模型/参数非法等，后端注册 run 前即 reject、
             // 零帧）：合成错误终态帧让 run 收口，避免线程挂死「处理中」；
             // 原始错误进 console（排障线索，webview + tauri dev 终端）。
-            // 29 号票：顶部 Toast 同步轻提示（行内 ChatErrorBanner 在消息
+            // 顶部 Toast 同步轻提示（行内 ChatErrorBanner 在消息
             // 流里可能被折叠，发送失败需要即时可见）
             console.error("[start_chat] 命令失败：", err);
             const frameError = toFrameError(err);
@@ -378,7 +378,7 @@ export function createTauriChatAdapter(deps: TauriAdapterDeps): ChatModelAdapter
               error: frameError,
             });
           });
-        // 64ms 节流快照迭代：runEnded 快照 yield 后迭代自然收口（§10.2）
+        // 64ms 节流快照迭代：runEnded 快照 yield 后迭代自然收口
         for await (const snapshot of buffer.snapshots()) {
           if (signal.aborted && !snapshot.ended) {
             // 本地 abort 已触发而终态帧未到（命令面异常路径）：停止产出，

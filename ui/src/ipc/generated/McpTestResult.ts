@@ -2,7 +2,7 @@
 import type { McpTestTool } from "./McpTestTool";
 
 /**
- * `mcp_test` 返回契约（§3.3 #45）：ok + 工具清单或错误（总预算 60s）。
+ * `mcp_test` 返回契约：ok + 工具清单或错误（总预算 60s）。
  */
 export type McpTestResult = { 
 /**

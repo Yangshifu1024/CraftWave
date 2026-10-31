@@ -1,9 +1,9 @@
 // @vitest-environment happy-dom
 /**
- * 产物面板测试（28 号票，FR-10-06 / §10.7）：
+ * 产物面板测试：
  * - 清单渲染（文件名 + 相对路径 + ×runCount 徽标）、exists=false 灰显置底；
  * - 预览 Dialog（truncated 提示、读取失败行内提示）；
- * - 变更面板联动接缝（openChangesPanel，26 号票约定接口）。
+ * - 变更面板联动接缝（openChangesPanel 约定接口）。
  *
  * IPC 经 vi.mock 替换（ChangesPanel.test 同款桩面）。
  * 精简版：清单与置底合并；预览成败合并。

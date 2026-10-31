@@ -1,16 +1,16 @@
 /**
- * 会话偏好持久化（FR-14-05 / FR-02-07，18 号票）：前端对 set_session_prefs
+ * 会话偏好持久化：前端对 set_session_prefs
  * 的统一写入口——防抖合并 + 会话进入时的恢复链路。
  *
  * 为什么要防抖：Composer thinking 钮与 Ctrl+L 模型选择都是高频交互面
  * （连续点按/滚动选择），每次变更立即 invoke 会刷出大量碎片写盘；本模块
- * 把同一会话短时间内的多字段变更合并进一次 set_session_prefs（票面定案
- * 「变更时 set_session_prefs 落盘（防抖）」）。
+ * 把同一会话短时间内的多字段变更合并进一次 set_session_prefs
+ * （变更时落盘，防抖）。
  *
- * merge 语义（§3.3 #25）：载荷字段缺省 = 不动、null = 清除、设值 = 覆盖。
+ * merge 语义：载荷字段缺省 = 不动、null = 清除、设值 = 覆盖。
  * 防抖窗口内同字段多次变更只保留最后值（后写覆盖先写，与用户感知一致）。
  *
- * 恢复链路（票面「进入会话 get_session_prefs → 回填」）：restoreSessionPrefs
+ * 恢复链路（进入会话 get_session_prefs → 回填）：restoreSessionPrefs
  * 由 SessionTab 挂载时调用，回填模型与 thinking 两个内存态 store——恢复走
  * store 纯方法（不经防抖写回），避免「读取 → 原样写回」的冗余落盘。
  */
@@ -70,13 +70,13 @@ export function resetPendingPrefs(): void {
 }
 
 /**
- * 进入会话的恢复链路（票面「恢复链路」条目）：get_session_prefs 读取
+ * 进入会话的恢复链路：get_session_prefs 读取
  * 持久化偏好 → 回填模型 store 与 thinking store（会话未显式设置的字段
  * 不动——保持「跟随全局默认 / per-model 回落」的缺省语义）。
  *
  * 恢复走 store 纯方法（不落盘）：数据来源就是盘，写回是无意义回环。
  * 会话不存在（E_NOT_FOUND，刚删除的竞态）等 IPC 失败静默忽略——偏好
- * 缺失不阻塞会话加载（FR-14-05 容错口径）。
+ * 缺失不阻塞会话加载（容错口径）。
  */
 export async function restoreSessionPrefs(sessionId: string): Promise<void> {
   let prefs: Awaited<ReturnType<typeof getSessionPrefs>>;

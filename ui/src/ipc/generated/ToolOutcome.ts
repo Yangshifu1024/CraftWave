@@ -3,7 +3,7 @@ import type { ToolError } from "./ToolError";
 import type { JsonValue } from "./serde_json/JsonValue";
 
 /**
- * 工具结果（§3.2 ToolOutcomeJson 镜像）：一次工具调用的返回，
+ * 工具结果（ToolOutcomeJson 镜像）：一次工具调用的返回，
  * 同时承载模型通道（data/error）与 UI 通道（ui_summary/detail）。
  */
 export type ToolOutcome = { 
@@ -24,12 +24,12 @@ error?: ToolError,
  */
 uiSummary: string, 
 /**
- * 全量细节（toolres 边车；warnings 仅 UI 显示不进模型文本，§8.2）。
+ * 全量细节（toolres 边车；warnings 仅 UI 显示不进模型文本）。
  */
 detail?: JsonValue, 
 /**
- * 截断标记（02 号票收编：toolres 超限占位载荷此前是绕过本结构体的
- * 手拼 JSON，字段收编后边车文件形状单一来源；正常结果恒 None 不序列化，
- * 线上字节不变）。
+ * 截断标记：toolres 超限占位载荷统一走本字段（此前是绕过本结构体的
+ * 手拼 JSON），边车文件形状单一来源；正常结果恒 None 不序列化，
+ * 线上字节不变。
  */
 truncated?: boolean, };

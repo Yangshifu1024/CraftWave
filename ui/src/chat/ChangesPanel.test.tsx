@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 /**
- * 变更面板测试（26 号票，FR-11-02 / §10.7）：
+ * 变更面板测试：
  * - 文件列表渲染（状态徽标 + 增删统计）、点选切换 diff；
  * - 非 git 仓库空态（isRepo=false）、干净工作区空态与加载失败态；
  * - recent log 折叠条与手动刷新按钮、关闭按钮回写 store。

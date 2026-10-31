@@ -1,5 +1,5 @@
 /**
- * cwimg 图片引用编解码与附件校验的单元测试（17 号票）。
+ * cwimg 图片引用编解码与附件校验的单元测试。
  *
  * image-ref：引用 URL 的构造/解析往返（树内 image part ↔ 存储 image part
  * 的桥）；非法形态（非 cwimg、坏哈希、白名单外 mime）拒识。
@@ -37,7 +37,7 @@ function filesOf(files: { name: string; type: string }[]): FileList {
   return Object.assign([...files], { length: files.length }) as unknown as FileList;
 }
 
-describe("attachments（17 号票）", () => {
+describe("attachments", () => {
   const HASH = "a".repeat(32);
 
   it("image-ref：cwimg 引用编解码往返、非法形态拒识、哈希与白名单判定", () => {
@@ -103,7 +103,7 @@ describe("attachments（17 号票）", () => {
     expect(formatBytes(5 * 1024 * 1024)).toBe("5.0 MiB");
   });
 
-  it("拖拽/粘贴分类路由（FR-13-16）：目录/图片/文件/混合/空投递", () => {
+  it("拖拽/粘贴分类路由：目录/图片/文件/混合/空投递", () => {
     // 目录条目 → directory 路由（提议添加项目，目录名带出）
     expect(classifyDrop(itemsOf([{ isDirectory: true, name: "my-proj" }]), null)).toStrictEqual({
       kind: "directory",

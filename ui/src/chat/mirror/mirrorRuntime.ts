@@ -2,7 +2,7 @@
  * 【S1 spike 原型，随时可弃】镜像工具桥接的 runtime 侧：
  * ChatModelAdapter 消费 mock 帧源 → FrameBuffer 累积 → 全量累计快照 yield。
  *
- * 对齐技术设计文档 §10.2 的「每次 yield 为全量累计快照（替换而非增量）」语义；
+ * 对齐「每次 yield 为全量累计快照（替换而非增量）」语义；
  * 64ms 节流属 S2/S3 优化，原型按帧节拍直出。
  */
 import type { ChatModelAdapter, ChatModelRunResult } from "@assistant-ui/react";

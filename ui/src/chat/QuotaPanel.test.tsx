@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 /**
- * QuotaPanel 交互测试（21 号票，FR-02-15 Inspector 配额页）：
+ * QuotaPanel 交互测试（Inspector 配额页）：
  * - 首屏大卡 = 当前会话所用 provider（ok 态：名称/剩余%/进度条/明细缺省展开）；
  * - 六态行渲染：ok / error（原因 + 重试 + 离线兜底明细标注）/ rejected /
  *   no_key（「去设置」跳转）/ unsupported（灰行占位与超 3 家折叠）；
@@ -132,7 +132,7 @@ async function renderPanel(props?: { sessionId?: string; onOpenSettings?: () => 
   return { onOpenSettings, ...view };
 }
 
-describe("QuotaPanel（21 号票）", () => {
+describe("QuotaPanel", () => {
   it("ok 态首屏大卡：名称 + 剩余% + 明细缺省展开窗口", async () => {
     mocks.quotaSnapshotsMock.mockResolvedValue([
       row({

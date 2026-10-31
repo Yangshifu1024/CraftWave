@@ -1,5 +1,5 @@
 /**
- * settings store 单测（§10.1 zustand settings 草稿模型）。
+ * settings store 单测（zustand settings 草稿模型）。
  * mock 唯一 invoke 出口（@/ipc/client，即所有后端调用的收口模块），
  * 断言草稿流转与调用契约——不依赖真实后端。
  */
@@ -147,10 +147,10 @@ describe("settings store", () => {
     expect(useSettingsStore.getState().config?.providers).toHaveLength(0);
   });
 
-  it("预设单源与实例化：BUILTIN_PRESETS 与 Rust 权威清单同源（03 号票）；实例化远端 https/本地回环（19 号票）", () => {
+  it("预设单源与实例化：BUILTIN_PRESETS 与 Rust 权威清单同源；实例化远端 https/本地回环", () => {
     // 单源定稿后清单不再手写副本：消费面直接来自 ui/src/ipc/generated/
     // BuiltinPresets.ts（cargo test 从 providers/presets.rs 序列化导出）。
-    // 这里钉住消费链路：9 家 slug 齐全（19 号票 +3 本地）、字段形态与
+    // 这里钉住消费链路：9 家 slug 齐全（含 3 家本地）、字段形态与
     // ProviderConfig 实例化兼容。
     expect(BUILTIN_PRESETS.map((p) => p.slug)).toEqual([
       "openai",
@@ -185,7 +185,7 @@ describe("settings store", () => {
       expect(provider?.local ?? false).toBe(false);
       expect(provider?.models.length).toBeGreaterThan(0);
     }
-    // 本地模型三家（19 号票 FR-02-04）：http 回环 + local=true + 免 Key
+    // 本地模型三家：http 回环 + local=true + 免 Key
     for (const [slug, base] of [
       ["ollama", "http://127.0.0.1:11434/v1"],
       ["llamacpp", "http://127.0.0.1:8080/v1"],
@@ -200,7 +200,7 @@ describe("settings store", () => {
     expect(newProviderFromPreset("nope")).toBeNull();
   });
 
-  it("customPrompt 草稿-提交-回显（03 号票 agent.customPrompt）：归一化空串回显无该键", async () => {
+  it("customPrompt 草稿-提交-回显（agent.customPrompt）：归一化空串回显无该键", async () => {
     const draft = configFixture([]);
     useSettingsStore.setState({ config: structuredClone(draft) });
     // 草稿层写入 agent.customPrompt（工作区与智能体页的文本框路径）

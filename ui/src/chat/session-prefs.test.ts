@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 /**
- * 会话偏好前端面测试（18 号票，FR-14-05/FR-02-07/FR-13-05）：
+ * 会话偏好前端面测试：
  * - thinking store：五档循环顺序锚定、setLevel 内存态切换；
  * - setModelPersisted / setLevelPersisted：防抖合并落盘（set_session_prefs
  *   只 invoke 一次、同字段后写覆盖先写、null 清除语义）、flushSessionPrefs
@@ -43,9 +43,9 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("session-prefs（18 号票）", () => {
-  it("thinking store（FR-02-08 五档）：循环顺序锚定、五档均有用户可读名、setLevel 切换与清除", () => {
-    // 循环顺序锚定票面定案
+describe("session-prefs", () => {
+  it("thinking store（五档）：循环顺序锚定、五档均有用户可读名、setLevel 切换与清除", () => {
+    // 循环顺序锚定
     expect(THINKING_LEVELS).toEqual(["off", "minimal", "low", "medium", "high"]);
     // 五档均有用户可读名（Composer 钮显示面不缺行）
     for (const level of THINKING_LEVELS) {
@@ -58,7 +58,7 @@ describe("session-prefs（18 号票）", () => {
     expect(thinkingOf("sess-1")).toBeUndefined();
   });
 
-  it("防抖落盘（FR-14-05）：窗口合并一次取最后值、跨字段合并载荷、null 清除、flush 冲刷、各会话独立窗口", () => {
+  it("防抖落盘：窗口合并一次取最后值、跨字段合并载荷、null 清除、flush 冲刷、各会话独立窗口", () => {
     // 窗口内多次变更只 invoke 一次，字段取最后值
     setLevelPersisted("sess-1", "low");
     setLevelPersisted("sess-1", "high");
@@ -101,7 +101,7 @@ describe("session-prefs（18 号票）", () => {
     expect(setSessionPrefs).toHaveBeenLastCalledWith("sess-b", { thinking: "high" });
   });
 
-  it("restoreSessionPrefs 回填与容错 + Ctrl+L 打开信号（FR-13-05）", async () => {
+  it("restoreSessionPrefs 回填与容错 + Ctrl+L 打开信号", async () => {
     // 持久化偏好回填模型与 thinking 两个 store
     getSessionPrefs.mockResolvedValue({ modelId: "model-1", thinking: "medium" });
     await restoreSessionPrefs("sess-r1");
@@ -122,7 +122,7 @@ describe("session-prefs（18 号票）", () => {
     vi.advanceTimersByTime(1000);
     expect(setSessionPrefs).not.toHaveBeenCalled();
 
-    // IPC 失败静默忽略（偏好缺失不阻塞会话加载，FR-14-05 容错口径）
+    // IPC 失败静默忽略（偏好缺失不阻塞会话加载，容错口径）
     getSessionPrefs.mockRejectedValue({ code: "E_NOT_FOUND", message: "会话不存在" });
     await expect(restoreSessionPrefs("sess-r4")).resolves.toBeUndefined();
 
